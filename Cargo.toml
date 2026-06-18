@@ -1,0 +1,18 @@
+[package]
+name = "nomo"
+version = "0.1.0"
+edition = "2024"
+license = "MIT"
+
+[lib]
+name = "nomo"
+path = "src/lib.rs"
+
+[[bin]]
+name = "nomo"
+path = "src/bin/nomo.rs"
+
+[[bin]]
+name = "nomoc"
+path = "src/bin/nomoc.rs"
+

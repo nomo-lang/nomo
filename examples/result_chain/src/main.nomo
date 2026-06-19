@@ -1,0 +1,22 @@
+package app.main
+
+import std.io
+import std.result
+
+fn parse_label() -> Result<string, string> {
+    return Result.Ok("result ok")
+}
+
+fn decorate_label() -> Result<string, string> {
+    let label: string = parse_label()?
+    return Result.Ok(label)
+}
+
+fn main() -> void {
+    let result: Result<string, string> = decorate_label()
+    let message: string = match result {
+        Result.Ok(text) => text
+        Result.Err(err) => err
+    }
+    io.println(message)
+}

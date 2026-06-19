@@ -127,7 +127,34 @@ mod tests {
             "let x = \"a\"",
         );
 
-        assert!(diagnostic.json().contains("bad \\\"token\\\""));
-        assert!(diagnostic.json().contains("let x = \\\"a\\\""));
+        assert_eq!(
+            diagnostic.json(),
+            "{\"status\":\"error\",\"error_code\":\"N0200\",\"severity\":\"error\",\"message\":\"bad \\\"token\\\"\",\"source\":{\"file\":\"main.nomo\",\"line\":1,\"column\":2,\"length\":3,\"text\":\"let x = \\\"a\\\"\"},\"suggestions\":[]}"
+        );
+    }
+
+    #[test]
+    fn json_includes_stable_suggestions_shape() {
+        let mut diagnostic = Diagnostic::new(
+            "N0301",
+            "missing import",
+            Path::new("src/main.nomo"),
+            4,
+            5,
+            7,
+            "println(\"hi\")",
+        );
+        diagnostic.suggestions.push(Suggestion {
+            line: 2,
+            column: 1,
+            length: 0,
+            text: "import std.io.println\n".to_string(),
+            description: "add the concrete println import".to_string(),
+        });
+
+        assert_eq!(
+            diagnostic.json(),
+            "{\"status\":\"error\",\"error_code\":\"N0301\",\"severity\":\"error\",\"message\":\"missing import\",\"source\":{\"file\":\"src/main.nomo\",\"line\":4,\"column\":5,\"length\":7,\"text\":\"println(\\\"hi\\\")\"},\"suggestions\":[{\"action\":\"replace_text\",\"range\":{\"line\":2,\"column\":1,\"length\":0},\"text\":\"import std.io.println\\n\",\"description\":\"add the concrete println import\"}]}"
+        );
     }
 }

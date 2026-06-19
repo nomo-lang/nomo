@@ -6,7 +6,7 @@ use crate::codegen;
 use crate::diagnostic::Diagnostic;
 use crate::lexer;
 use crate::parser;
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::Path;
 
@@ -22,6 +22,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructType {
     pub name: String,
+    pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
 }
 
@@ -77,6 +78,11 @@ pub enum Statement {
         name: String,
         value: ValueExpr,
     },
+    AssignField {
+        base: String,
+        field: String,
+        value: ValueExpr,
+    },
     Println(ValueExpr),
     Eprintln(ValueExpr),
     Panic(ValueExpr),
@@ -94,7 +100,7 @@ pub enum ValueType {
     Char,
     Bool,
     Array(Box<ValueType>),
-    Struct(String),
+    Struct(String, Vec<ValueType>),
     Enum(String, Vec<ValueType>),
     TypeParam(String),
     Void,
@@ -165,6 +171,7 @@ pub enum ValueExpr {
     },
     StructLiteral {
         type_name: String,
+        struct_args: Vec<ValueType>,
         fields: Vec<(String, ValueExpr)>,
     },
     FieldAccess {
@@ -223,8 +230,15 @@ pub enum BinaryOp {
 
 #[derive(Debug, Clone)]
 struct FunctionSignature {
-    params: Vec<ValueType>,
+    type_params: Vec<String>,
+    params: Vec<ParamSignature>,
     return_type: ValueType,
+}
+
+#[derive(Debug, Clone)]
+struct ParamSignature {
+    value_type: ValueType,
+    mutable: bool,
 }
 
 #[derive(Debug, Clone)]
@@ -238,6 +252,12 @@ struct Binding {
 enum BindingSource {
     Local,
     EnumPayload { value: ValueExpr, variant: String },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct FunctionInstance {
+    name: String,
+    args: Vec<ValueType>,
 }
 
 pub fn check_source(path: &Path) -> Result<Program, Diagnostic> {
@@ -273,21 +293,26 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
     let mut structs = lower_structs(path, &ast.structs)?;
-    let mut enums = lower_enums(path, &ast.enums)?;
+    let mut enums = lower_enums(path, &structs, &ast.enums)?;
     inject_standard_types(
         StandardTypeNeeds {
-            fs: imports.iter().any(|item| item == "std.fs") || source_uses_fs_builtin(&ast),
-            env: imports.iter().any(|item| item == "std.env") || source_uses_env_builtin(&ast),
+            fs: imports
+                .iter()
+                .any(|item| item == "std.fs" || item.starts_with("std.fs."))
+                || source_uses_fs_builtin(&ast),
+            env: imports
+                .iter()
+                .any(|item| item == "std.env" || item.starts_with("std.env."))
+                || source_uses_env_builtin(&ast),
             result: imports
                 .iter()
                 .any(|item| item == "std.result" || item == "std.result.Result"),
             option: imports
                 .iter()
                 .any(|item| item == "std.option" || item == "std.option.Option"),
-            array: imports
-                .iter()
-                .any(|item| item == "std.array" || item == "std.array.Array")
-                || source_uses_array_builtin(&ast),
+            array: imports.iter().any(|item| {
+                item == "std.array" || item == "std.array.Array" || item.starts_with("std.array.")
+            }) || source_uses_array_builtin(&ast),
         },
         &mut structs,
         &mut enums,
@@ -334,7 +359,7 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
                     "",
                 )
             })?;
-        let ValueType::Struct(owner_name) = owner else {
+        let ValueType::Struct(owner_name, owner_args) = owner else {
             return Err(Diagnostic::new(
                 "N0255",
                 "v0.1 impl blocks can only target structs",
@@ -345,6 +370,17 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
                 "",
             ));
         };
+        if !owner_args.is_empty() {
+            return Err(Diagnostic::new(
+                "N0255",
+                "v0.1 impl blocks can only target non-generic structs",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
         for method in &impl_block.methods {
             validate_method_self(path, method, &owner_name, &struct_map, &enum_map)?;
             let lowered_name = method_internal_name(&owner_name, &method.name);
@@ -388,9 +424,47 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
             "",
         ));
     }
+    if !main_signature.type_params.is_empty() {
+        return Err(Diagnostic::new(
+            "N0401",
+            "stage-0 `main` cannot be generic",
+            path,
+            1,
+            1,
+            1,
+            "",
+        ));
+    }
+
+    let function_defs = ast
+        .functions
+        .iter()
+        .map(|function| (function.name.clone(), function))
+        .collect::<HashMap<_, _>>();
+    let generic_instances = collect_generic_function_instances(
+        path,
+        &ast,
+        &imports,
+        &signatures,
+        &struct_map,
+        &enum_map,
+    )?;
+    for instance in &generic_instances {
+        let signature = signatures
+            .get(&instance.name)
+            .expect("generic function instance must refer to a known function");
+        let instance_name = generic_function_instance_name(&instance.name, &instance.args);
+        signatures.insert(
+            instance_name,
+            instantiate_function_signature(signature, &instance.args),
+        );
+    }
 
     let mut functions = Vec::new();
     for function in &ast.functions {
+        if !function.type_params.is_empty() {
+            continue;
+        }
         functions.push(lower_function_as(
             path,
             function,
@@ -415,6 +489,21 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
                 &enum_map,
             )?);
         }
+    }
+    for instance in &generic_instances {
+        let Some(function) = function_defs.get(&instance.name) else {
+            continue;
+        };
+        let lowered_name = generic_function_instance_name(&instance.name, &instance.args);
+        functions.push(lower_function_as(
+            path,
+            function,
+            &lowered_name,
+            &imports,
+            &signatures,
+            &struct_map,
+            &enum_map,
+        )?);
     }
 
     Ok(Program {
@@ -441,8 +530,12 @@ fn lower_structs(path: &Path, structs: &[AstStructDef]) -> Result<Vec<StructType
                 "",
             ));
         }
-        known.insert(item.name.clone(), ());
+        known.insert(item.name.clone(), item.type_params.len());
     }
+    let known_structs = known
+        .iter()
+        .map(|(name, arity)| (name.clone(), *arity))
+        .collect::<Vec<_>>();
 
     for item in structs {
         let mut fields = Vec::new();
@@ -465,9 +558,9 @@ fn lower_structs(path: &Path, structs: &[AstStructDef]) -> Result<Vec<StructType
             field_names.insert(field.name.clone(), ());
             let value_type = parse_value_type_with_names(
                 &field.type_ref,
-                &known.keys().cloned().collect::<Vec<_>>(),
+                &known_structs,
                 &[],
-                &[],
+                &item.type_params,
             )
             .ok_or_else(|| {
                 Diagnostic::new(
@@ -501,6 +594,7 @@ fn lower_structs(path: &Path, structs: &[AstStructDef]) -> Result<Vec<StructType
         }
         lowered.push(StructType {
             name: item.name.clone(),
+            type_params: item.type_params.clone(),
             fields,
         });
     }
@@ -508,7 +602,11 @@ fn lower_structs(path: &Path, structs: &[AstStructDef]) -> Result<Vec<StructType
     Ok(lowered)
 }
 
-fn lower_enums(path: &Path, enums: &[AstEnumDef]) -> Result<Vec<EnumType>, Diagnostic> {
+fn lower_enums(
+    path: &Path,
+    structs: &[StructType],
+    enums: &[AstEnumDef],
+) -> Result<Vec<EnumType>, Diagnostic> {
     let mut lowered = Vec::new();
     let mut known = HashMap::new();
     for item in enums {
@@ -544,7 +642,10 @@ fn lower_enums(path: &Path, enums: &[AstEnumDef]) -> Result<Vec<EnumType>, Diagn
             variant_names.insert(variant.name.clone(), ());
             let payload = if let Some(type_ref) = &variant.payload {
                 let type_name = type_ref.path.first().cloned().unwrap_or_default();
-                let known_structs = Vec::new();
+                let known_structs = structs
+                    .iter()
+                    .map(|item| (item.name.clone(), item.type_params.len()))
+                    .collect::<Vec<_>>();
                 let known_enums = enums
                     .iter()
                     .map(|item| item.name.clone())
@@ -615,6 +716,7 @@ fn inject_standard_types(
     if needs.fs && !structs.iter().any(|item| item.name == "FsError") {
         structs.push(StructType {
             name: "FsError".to_string(),
+            type_params: Vec::new(),
             fields: vec![StructField {
                 name: "message".to_string(),
                 value_type: ValueType::String,
@@ -680,6 +782,219 @@ fn ast_functions(ast: &SourceFile) -> impl Iterator<Item = &AstFunction> {
         .chain(ast.impls.iter().flat_map(|item| item.methods.iter()))
 }
 
+fn collect_generic_function_instances(
+    path: &Path,
+    ast: &SourceFile,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<Vec<FunctionInstance>, Diagnostic> {
+    let mut out = Vec::new();
+    for function in ast_functions(ast) {
+        for stmt in &function.body {
+            collect_stmt_generic_function_instances(
+                path, stmt, imports, signatures, structs, enums, &mut out,
+            )?;
+        }
+    }
+    Ok(out)
+}
+
+fn collect_stmt_generic_function_instances(
+    path: &Path,
+    stmt: &Stmt,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    out: &mut Vec<FunctionInstance>,
+) -> Result<(), Diagnostic> {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
+            collect_expr_generic_function_instances(
+                path, value, imports, signatures, structs, enums, out,
+            )
+        }
+        Stmt::Return { value, .. } => {
+            if let Some(value) = value {
+                collect_expr_generic_function_instances(
+                    path, value, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
+        Stmt::Expr { expr, .. } => collect_expr_generic_function_instances(
+            path, expr, imports, signatures, structs, enums, out,
+        ),
+    }
+}
+
+fn collect_expr_generic_function_instances(
+    path: &Path,
+    expr: &AstExpr,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    out: &mut Vec<FunctionInstance>,
+) -> Result<(), Diagnostic> {
+    match expr {
+        AstExpr::Call {
+            callee,
+            type_args,
+            args,
+        } => {
+            if callee.len() == 1 && !type_args.is_empty() {
+                let name = &callee[0];
+                if resolve_specific_value_builtin(name, imports).is_some() {
+                    for arg in args {
+                        collect_expr_generic_function_instances(
+                            path, arg, imports, signatures, structs, enums, out,
+                        )?;
+                    }
+                    return Ok(());
+                }
+                let signature = signatures.get(name).ok_or_else(|| {
+                    Diagnostic::new(
+                        "N0305",
+                        format!("unknown function `{name}`"),
+                        path,
+                        1,
+                        1,
+                        1,
+                        "",
+                    )
+                })?;
+                if signature.type_params.is_empty() {
+                    return Err(Diagnostic::new(
+                        "N0404",
+                        format!("function `{name}` does not accept type arguments"),
+                        path,
+                        1,
+                        1,
+                        1,
+                        "",
+                    ));
+                }
+                if type_args.len() != signature.type_params.len() {
+                    return Err(Diagnostic::new(
+                        "N0407",
+                        format!(
+                            "function `{name}` expects {} type argument(s), got {}",
+                            signature.type_params.len(),
+                            type_args.len()
+                        ),
+                        path,
+                        1,
+                        1,
+                        1,
+                        "",
+                    ));
+                }
+                let args = type_args
+                    .iter()
+                    .map(|arg| parse_non_void_type(arg, structs, enums))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        Diagnostic::new(
+                            "N0403",
+                            format!("unsupported type argument for `{name}`"),
+                            path,
+                            1,
+                            1,
+                            1,
+                            "",
+                        )
+                    })?;
+                let instance = FunctionInstance {
+                    name: name.clone(),
+                    args,
+                };
+                if !out.contains(&instance) {
+                    out.push(instance);
+                }
+            }
+            for arg in args {
+                collect_expr_generic_function_instances(
+                    path, arg, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
+        AstExpr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                collect_expr_generic_function_instances(
+                    path, value, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
+        AstExpr::Match { value, arms } => {
+            collect_expr_generic_function_instances(
+                path, value, imports, signatures, structs, enums, out,
+            )?;
+            for arm in arms {
+                collect_expr_generic_function_instances(
+                    path, &arm.value, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_generic_function_instances(
+                path, condition, imports, signatures, structs, enums, out,
+            )?;
+            collect_expr_generic_function_instances(
+                path,
+                then_branch,
+                imports,
+                signatures,
+                structs,
+                enums,
+                out,
+            )?;
+            collect_expr_generic_function_instances(
+                path,
+                else_branch,
+                imports,
+                signatures,
+                structs,
+                enums,
+                out,
+            )
+        }
+        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
+            collect_expr_generic_function_instances(
+                path, message, imports, signatures, structs, enums, out,
+            )
+        }
+        AstExpr::Cast { expr, .. } => collect_expr_generic_function_instances(
+            path, expr, imports, signatures, structs, enums, out,
+        ),
+        AstExpr::Binary { left, right, .. } => {
+            collect_expr_generic_function_instances(
+                path, left, imports, signatures, structs, enums, out,
+            )?;
+            collect_expr_generic_function_instances(
+                path, right, imports, signatures, structs, enums, out,
+            )
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => Ok(()),
+    }
+}
+
 fn stmt_uses_fs_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_fs_builtin(value),
@@ -728,6 +1043,7 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
         AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
             expr_uses_fs_builtin(message)
         }
+        AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_fs_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_fs_builtin(left) || expr_uses_fs_builtin(right)
@@ -767,6 +1083,7 @@ fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
         AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
             expr_uses_env_builtin(message)
         }
+        AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_env_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_env_builtin(left) || expr_uses_env_builtin(right)
@@ -808,6 +1125,7 @@ fn expr_uses_array_builtin(expr: &AstExpr) -> bool {
         AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
             expr_uses_array_builtin(message)
         }
+        AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_array_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_array_builtin(left) || expr_uses_array_builtin(right)
@@ -828,10 +1146,26 @@ fn function_signature(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Result<FunctionSignature, Diagnostic> {
+    let struct_names = structs
+        .values()
+        .map(|item| (item.name.clone(), item.type_params.len()))
+        .collect::<Vec<_>>();
+    let enum_names = enums.keys().cloned().collect::<Vec<_>>();
     let params = function
         .params
         .iter()
-        .map(|param| parse_value_type(&param.type_ref, structs, enums))
+        .map(|param| {
+            parse_value_type_with_names(
+                &param.type_ref,
+                &struct_names,
+                &enum_names,
+                &function.type_params,
+            )
+            .map(|value_type| ParamSignature {
+                value_type,
+                mutable: param.mutable,
+            })
+        })
         .collect::<Option<Vec<_>>>()
         .ok_or_else(|| {
             Diagnostic::new(
@@ -844,7 +1178,13 @@ fn function_signature(
                 "",
             )
         })?;
-    let return_type = parse_value_type(&function.return_type, structs, enums).ok_or_else(|| {
+    let return_type = parse_value_type_with_names(
+        &function.return_type,
+        &struct_names,
+        &enum_names,
+        &function.type_params,
+    )
+    .ok_or_else(|| {
         Diagnostic::new(
             "N0403",
             format!(
@@ -859,6 +1199,7 @@ fn function_signature(
         )
     })?;
     Ok(FunctionSignature {
+        type_params: function.type_params.clone(),
         params,
         return_type,
     })
@@ -896,7 +1237,7 @@ fn lower_function_as(
         scope.insert(
             param.name.clone(),
             Binding {
-                value_type: value_type.clone(),
+                value_type: value_type.value_type.clone(),
                 mutable: param.mutable,
                 source: BindingSource::Local,
             },
@@ -904,7 +1245,7 @@ fn lower_function_as(
         params.push(Parameter {
             name: param.name.clone(),
             mutable: param.mutable,
-            value_type: value_type.clone(),
+            value_type: value_type.value_type.clone(),
         });
     }
 
@@ -982,7 +1323,8 @@ fn validate_method_self(
             "",
         ));
     }
-    let Some(ValueType::Struct(self_type)) = parse_value_type(&self_param.type_ref, structs, enums)
+    let Some(ValueType::Struct(self_type, self_args)) =
+        parse_value_type(&self_param.type_ref, structs, enums)
     else {
         return Err(Diagnostic::new(
             "N0257",
@@ -997,7 +1339,7 @@ fn validate_method_self(
             "",
         ));
     };
-    if self_type != owner_name {
+    if self_type != owner_name || !self_args.is_empty() {
         return Err(Diagnostic::new(
             "N0257",
             format!(
@@ -1061,7 +1403,7 @@ fn lower_stmt(
                         )
                     })?;
                 let (result_type, result_expr) =
-                    lower_value_expr(path, expr, scope, signatures, structs, enums, span)?;
+                    lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
                 let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
                     Diagnostic::new(
                         "N0420",
@@ -1147,6 +1489,7 @@ fn lower_stmt(
                 path,
                 value,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -1184,7 +1527,132 @@ fn lower_stmt(
                 initializer,
             })
         }
-        Stmt::Assign { name, value, span } => {
+        Stmt::Assign {
+            target,
+            value,
+            span,
+        } => lower_assign_stmt(
+            path, target, value, scope, imports, signatures, structs, enums, span,
+        ),
+        Stmt::Return { value, span } => lower_return_stmt(
+            path,
+            value.as_ref(),
+            scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            return_type,
+            span,
+        ),
+        Stmt::Expr { expr, span } if is_tail && return_type != &ValueType::Void => {
+            let (expr_type, lowered) = lower_value_expr_with_expected(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(return_type),
+                span,
+            )?;
+            if &expr_type != return_type {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "tail expression returns `{}` but function expects `{}`",
+                        expr_type.name(),
+                        return_type.name()
+                    ),
+                ));
+            }
+            Ok(Statement::Return(Some(lowered)))
+        }
+        Stmt::Expr {
+            expr: AstExpr::Call { callee, args, .. },
+            span,
+        } if is_io_print_call(callee) => {
+            let Some(function_name) = resolve_io_print_function(callee, imports) else {
+                return Err(Diagnostic::new(
+                    "N0301",
+                    io_print_import_error(callee),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let [arg] = args.as_slice() else {
+                return Err(println_type_error(path, span, function_name));
+            };
+            let (arg_type, lowered) =
+                lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
+            if arg_type != ValueType::String {
+                return Err(println_type_error(path, span, function_name));
+            }
+            if function_name == "eprintln" {
+                Ok(Statement::Eprintln(lowered))
+            } else {
+                Ok(Statement::Println(lowered))
+            }
+        }
+        Stmt::Expr {
+            expr: AstExpr::Panic { message },
+            span,
+        } => {
+            let lowered = lower_panic_message(
+                path, message, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok(Statement::Panic(lowered))
+        }
+        Stmt::Expr {
+            expr:
+                AstExpr::Call {
+                    callee,
+                    type_args,
+                    args,
+                },
+            span,
+        } if callee.len() == 2
+            && (callee[1] == "push" || callee[1] == "set")
+            && type_args.is_empty() =>
+        {
+            let lowered = lower_array_mutation(
+                path, callee, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok(Statement::Assign {
+                name: callee[0].clone(),
+                value: lowered,
+            })
+        }
+        Stmt::Expr { span, .. } => Err(Diagnostic::new(
+            "N0203",
+            "unsupported statement in v0.1 stage-0 subset; expected `let ... = ...`, `return ...`, `panic(...)`, `io.println(...)`, or `io.eprintln(...)`",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+    }
+}
+
+fn lower_assign_stmt(
+    path: &Path,
+    target: &[String],
+    value: &AstExpr,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<Statement, Diagnostic> {
+    match target {
+        [name] => {
             let Some(binding) = scope.get(name) else {
                 return Err(Diagnostic::new(
                     "N0303",
@@ -1212,6 +1680,7 @@ fn lower_stmt(
                 path,
                 value,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -1234,49 +1703,22 @@ fn lower_stmt(
                 value,
             })
         }
-        Stmt::Return { value, span } => lower_return_stmt(
-            path,
-            value.as_ref(),
-            scope,
-            signatures,
-            structs,
-            enums,
-            return_type,
-            span,
-        ),
-        Stmt::Expr { expr, span } if is_tail && return_type != &ValueType::Void => {
-            let (expr_type, lowered) = lower_value_expr_with_expected(
-                path,
-                expr,
-                scope,
-                signatures,
-                structs,
-                enums,
-                Some(return_type),
-                span,
-            )?;
-            if &expr_type != return_type {
-                return Err(type_mismatch(
-                    path,
-                    span,
-                    format!(
-                        "tail expression returns `{}` but function expects `{}`",
-                        expr_type.name(),
-                        return_type.name()
-                    ),
-                ));
-            }
-            Ok(Statement::Return(Some(lowered)))
-        }
-        Stmt::Expr {
-            expr: AstExpr::Call { callee, args, .. },
-            span,
-        } if callee == &["io", "println"] || callee == &["io", "eprintln"] => {
-            let function_name = callee[1].as_str();
-            if !imports.iter().any(|item| item == "std.io") {
+        [base, field] => {
+            let Some(binding) = scope.get(base) else {
                 return Err(Diagnostic::new(
-                    "N0301",
-                    format!("stage-0 subset requires `import std.io` for `io.{function_name}`"),
+                    "N0303",
+                    format!("unknown variable `{base}`"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            if !binding.mutable {
+                return Err(Diagnostic::new(
+                    "N0410",
+                    format!("cannot assign to field of immutable variable `{base}`"),
                     path,
                     span.line,
                     span.column,
@@ -1284,50 +1726,65 @@ fn lower_stmt(
                     &span.text,
                 ));
             }
-            let [arg] = args.as_slice() else {
-                return Err(println_type_error(path, span, function_name));
+            let ValueType::Struct(struct_name, struct_args) = &binding.value_type else {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`{base}` is not a struct"),
+                ));
             };
-            let (arg_type, lowered) =
-                lower_value_expr(path, arg, scope, signatures, structs, enums, span)?;
-            if arg_type != ValueType::String {
-                return Err(println_type_error(path, span, function_name));
+            let struct_type = structs
+                .get(struct_name)
+                .expect("struct binding must refer to a known struct");
+            let Some(field_type) = struct_type
+                .fields
+                .iter()
+                .find(|item| item.name == *field)
+                .map(|item| {
+                    substitute_type_params(&item.value_type, &struct_type.type_params, struct_args)
+                })
+            else {
+                return Err(Diagnostic::new(
+                    "N0316",
+                    format!("struct `{struct_name}` has no field `{field}`"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (actual_type, value) = lower_value_expr_with_expected(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&field_type),
+                span,
+            )?;
+            if actual_type != field_type {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "cannot assign `{}` to field `{field}` of type `{}`",
+                        actual_type.name(),
+                        field_type.name()
+                    ),
+                ));
             }
-            if function_name == "eprintln" {
-                Ok(Statement::Eprintln(lowered))
-            } else {
-                Ok(Statement::Println(lowered))
-            }
-        }
-        Stmt::Expr {
-            expr: AstExpr::Panic { message },
-            span,
-        } => {
-            let lowered =
-                lower_panic_message(path, message, scope, signatures, structs, enums, span)?;
-            Ok(Statement::Panic(lowered))
-        }
-        Stmt::Expr {
-            expr:
-                AstExpr::Call {
-                    callee,
-                    type_args,
-                    args,
-                },
-            span,
-        } if callee.len() == 2
-            && (callee[1] == "push" || callee[1] == "set")
-            && type_args.is_empty() =>
-        {
-            let lowered =
-                lower_array_mutation(path, callee, args, scope, signatures, structs, enums, span)?;
-            Ok(Statement::Assign {
-                name: callee[0].clone(),
-                value: lowered,
+            Ok(Statement::AssignField {
+                base: base.clone(),
+                field: field.clone(),
+                value,
             })
         }
-        Stmt::Expr { span, .. } => Err(Diagnostic::new(
-            "N0203",
-            "unsupported statement in v0.1 stage-0 subset; expected `let ... = ...`, `return ...`, `panic(...)`, `io.println(...)`, or `io.eprintln(...)`",
+        _ => Err(Diagnostic::new(
+            "N0217",
+            "assignment target must be a variable or field",
             path,
             span.line,
             span.column,
@@ -1341,6 +1798,7 @@ fn lower_return_stmt(
     path: &Path,
     value: Option<&AstExpr>,
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -1364,6 +1822,7 @@ fn lower_return_stmt(
                 path,
                 value,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -1390,18 +1849,22 @@ fn lower_value_expr(
     path: &Path,
     expr: &AstExpr,
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
-    lower_value_expr_with_expected(path, expr, scope, signatures, structs, enums, None, span)
+    lower_value_expr_with_expected(
+        path, expr, scope, imports, signatures, structs, enums, None, span,
+    )
 }
 
 fn lower_value_expr_with_expected(
     path: &Path,
     expr: &AstExpr,
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -1415,6 +1878,15 @@ fn lower_value_expr_with_expected(
         AstExpr::Char(value) => Ok((ValueType::Char, ValueExpr::CharLiteral(*value))),
         AstExpr::Bool(value) => Ok((ValueType::Bool, ValueExpr::BoolLiteral(*value))),
         AstExpr::Void => Ok((ValueType::Void, ValueExpr::VoidLiteral)),
+        AstExpr::MutArg { .. } => Err(Diagnostic::new(
+            "N0505",
+            "`mut` is only valid in function call arguments",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
         AstExpr::Name(name) if name.len() == 1 => {
             let name = &name[0];
             let Some(binding) = scope.get(name) else {
@@ -1515,7 +1987,7 @@ fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             };
-            let ValueType::Struct(type_name) = &binding.value_type else {
+            let ValueType::Struct(type_name, struct_args) = &binding.value_type else {
                 return Err(type_mismatch(
                     path,
                     span,
@@ -1529,7 +2001,9 @@ fn lower_value_expr_with_expected(
                 .fields
                 .iter()
                 .find(|item| item.name == *field)
-                .map(|item| item.value_type.clone())
+                .map(|item| {
+                    substitute_type_params(&item.value_type, &struct_type.type_params, struct_args)
+                })
             else {
                 return Err(Diagnostic::new(
                     "N0308",
@@ -1557,8 +2031,9 @@ fn lower_value_expr_with_expected(
             Ok((field_type, value))
         }
         AstExpr::Match { value, arms } => {
-            let (value_type, lowered_value) =
-                lower_value_expr(path, value, scope, signatures, structs, enums, span)?;
+            let (value_type, lowered_value) = lower_value_expr(
+                path, value, scope, imports, signatures, structs, enums, span,
+            )?;
             let ValueType::Enum(enum_name, enum_args) = value_type else {
                 return Err(type_mismatch(path, span, "`match` expects an enum value"));
             };
@@ -1600,6 +2075,17 @@ fn lower_value_expr_with_expected(
                 });
                 match (&payload_type, &arm.binding) {
                     (Some(payload_type), Some(binding)) => {
+                        if scope.contains_key(binding) {
+                            return Err(Diagnostic::new(
+                                "N0302",
+                                format!("variable `{binding}` is already defined in this scope"),
+                                path,
+                                span.line,
+                                span.column,
+                                span.length,
+                                &span.text,
+                            ));
+                        }
                         arm_scope.insert(
                             binding.clone(),
                             Binding {
@@ -1651,6 +2137,7 @@ fn lower_value_expr_with_expected(
                     path,
                     &arm.value,
                     &arm_scope,
+                    imports,
                     signatures,
                     structs,
                     enums,
@@ -1724,8 +2211,9 @@ fn lower_value_expr_with_expected(
             then_branch,
             else_branch,
         } => {
-            let (condition_type, lowered_condition) =
-                lower_value_expr(path, condition, scope, signatures, structs, enums, span)?;
+            let (condition_type, lowered_condition) = lower_value_expr(
+                path, condition, scope, imports, signatures, structs, enums, span,
+            )?;
             if condition_type != ValueType::Bool {
                 return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
             }
@@ -1734,6 +2222,7 @@ fn lower_value_expr_with_expected(
                 path,
                 then_branch,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -1749,6 +2238,7 @@ fn lower_value_expr_with_expected(
                 path,
                 else_branch,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -1787,8 +2277,9 @@ fn lower_value_expr_with_expected(
             ))
         }
         AstExpr::Panic { message } => {
-            let message =
-                lower_panic_message(path, message, scope, signatures, structs, enums, span)?;
+            let message = lower_panic_message(
+                path, message, scope, imports, signatures, structs, enums, span,
+            )?;
             let fallback_type = expected.cloned().unwrap_or(ValueType::Never);
             Ok((
                 fallback_type.clone(),
@@ -1820,7 +2311,7 @@ fn lower_value_expr_with_expected(
                 ));
             };
             let (source_type, lowered) =
-                lower_value_expr(path, expr, scope, signatures, structs, enums, span)?;
+                lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
             match (&source_type, &target_type) {
                 (source, ValueType::Float) if source.is_integer() => Ok((
                     target_type.clone(),
@@ -1855,8 +2346,9 @@ fn lower_value_expr_with_expected(
             }
         }
         AstExpr::Binary { left, op, right } => {
-            let ((left_type, left), (right_type, right)) =
-                lower_binary_operands(path, left, right, scope, signatures, structs, enums, span)?;
+            let ((left_type, left), (right_type, right)) = lower_binary_operands(
+                path, left, right, scope, imports, signatures, structs, enums, span,
+            )?;
             let lowered_op = match op {
                 AstBinaryOp::Add => BinaryOp::Add,
                 AstBinaryOp::Equal => BinaryOp::Equal,
@@ -1946,9 +2438,38 @@ fn lower_value_expr_with_expected(
             callee,
             args,
             type_args,
-        } if callee.len() == 1 && type_args.is_empty() => {
+        } if callee.len() == 1 => {
             let name = &callee[0];
-            let Some(signature) = signatures.get(name) else {
+            if let Some(qualified) = resolve_specific_value_builtin(name, imports) {
+                if qualified == ["Array", "new"] {
+                    return lower_array_new(path, type_args, args, structs, enums, span);
+                }
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        format!(
+                            "standard library function `{name}` does not accept type arguments"
+                        ),
+                    ));
+                }
+                if qualified[0] == "string" {
+                    return lower_string_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
+                if qualified[0] == "fs" {
+                    return lower_fs_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
+                if qualified[0] == "env" {
+                    return lower_env_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
+            }
+            let Some(template_signature) = signatures.get(name) else {
                 return Err(Diagnostic::new(
                     "N0305",
                     format!("unknown function `{name}`"),
@@ -1959,18 +2480,74 @@ fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             };
+            let (call_name, signature) = if type_args.is_empty() {
+                if !template_signature.type_params.is_empty() {
+                    return Err(Diagnostic::new(
+                        "N0407",
+                        format!("generic function `{name}` requires explicit type arguments"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                (name.clone(), template_signature.clone())
+            } else {
+                if template_signature.type_params.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        format!("function `{name}` does not accept type arguments"),
+                    ));
+                }
+                if type_args.len() != template_signature.type_params.len() {
+                    return Err(Diagnostic::new(
+                        "N0407",
+                        format!(
+                            "function `{name}` expects {} type argument(s), got {}",
+                            template_signature.type_params.len(),
+                            type_args.len()
+                        ),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let instance_args = type_args
+                    .iter()
+                    .map(|arg| parse_non_void_type(arg, structs, enums))
+                    .collect::<Option<Vec<_>>>()
+                    .ok_or_else(|| {
+                        Diagnostic::new(
+                            "N0403",
+                            format!("unsupported type argument for `{name}`"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        )
+                    })?;
+                (
+                    generic_function_instance_name(name, &instance_args),
+                    instantiate_function_signature(template_signature, &instance_args),
+                )
+            };
             if signature.return_type == ValueType::Void {
                 return Err(type_mismatch(
                     path,
                     span,
-                    format!("function `{name}` returns `void` and cannot be used as a value"),
+                    format!("function `{call_name}` returns `void` and cannot be used as a value"),
                 ));
             }
             if args.len() != signature.params.len() {
                 return Err(Diagnostic::new(
                     "N0407",
                     format!(
-                        "function `{name}` expects {} argument(s), got {}",
+                        "function `{call_name}` expects {} argument(s), got {}",
                         signature.params.len(),
                         args.len()
                     ),
@@ -1983,36 +2560,28 @@ fn lower_value_expr_with_expected(
             }
 
             let mut lowered_args = Vec::new();
+            let mut mutable_borrows = HashSet::new();
             for (index, (arg, expected)) in args.iter().zip(signature.params.iter()).enumerate() {
-                let (actual, lowered) = lower_value_expr_with_expected(
+                lowered_args.push(lower_call_arg_for_param(
                     path,
                     arg,
+                    expected,
                     scope,
+                    imports,
                     signatures,
                     structs,
                     enums,
-                    Some(expected),
                     span,
-                )?;
-                if &actual != expected {
-                    return Err(type_mismatch(
-                        path,
-                        span,
-                        format!(
-                            "argument {} to `{name}` is `{}` but expected `{}`",
-                            index + 1,
-                            actual.name(),
-                            expected.name()
-                        ),
-                    ));
-                }
-                lowered_args.push(lowered);
+                    &call_name,
+                    index + 1,
+                    &mut mutable_borrows,
+                )?);
             }
 
             Ok((
                 signature.return_type.clone(),
                 ValueExpr::Call {
-                    name: name.clone(),
+                    name: call_name,
                     args: lowered_args,
                 },
             ))
@@ -2034,7 +2603,7 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_string_builtin(
-                    path, callee, args, scope, signatures, structs, enums, span,
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
             if callee == &["fs", "read_to_string"] || callee == &["fs", "write_string"] {
@@ -2046,7 +2615,7 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_fs_builtin(
-                    path, callee, args, scope, signatures, structs, enums, span,
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
             if callee == &["env", "get"] || callee == &["env", "args"] {
@@ -2058,17 +2627,17 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_env_builtin(
-                    path, callee, args, scope, signatures, structs, enums, span,
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
             if type_args.is_empty() && is_array_value_method(callee, scope) {
                 return lower_array_value_method(
-                    path, callee, args, scope, signatures, structs, enums, span,
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
             if type_args.is_empty() {
                 if let Some(lowered) = lower_struct_value_method(
-                    path, callee, args, scope, signatures, structs, enums, span,
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
                 )? {
                     return Ok(lowered);
                 }
@@ -2157,6 +2726,7 @@ fn lower_value_expr_with_expected(
                 path,
                 arg,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -2197,6 +2767,25 @@ fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             };
+            let struct_args = match expected {
+                Some(ValueType::Struct(expected_name, expected_args))
+                    if expected_name == type_name =>
+                {
+                    expected_args.clone()
+                }
+                _ if struct_type.type_params.is_empty() => Vec::new(),
+                _ => {
+                    return Err(Diagnostic::new(
+                        "N0317",
+                        format!("generic struct literal `{type_name}` needs a type annotation"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            };
             let mut seen = HashMap::new();
             for (field_name, _) in fields {
                 if seen.insert(field_name.clone(), ()).is_some() {
@@ -2213,6 +2802,11 @@ fn lower_value_expr_with_expected(
             }
             let mut lowered_fields = Vec::new();
             for expected_field in &struct_type.fields {
+                let expected_field_type = substitute_type_params(
+                    &expected_field.value_type,
+                    &struct_type.type_params,
+                    &struct_args,
+                );
                 let Some((_, value)) = fields
                     .iter()
                     .find(|(field_name, _)| field_name == &expected_field.name)
@@ -2234,13 +2828,14 @@ fn lower_value_expr_with_expected(
                     path,
                     value,
                     scope,
+                    imports,
                     signatures,
                     structs,
                     enums,
-                    Some(&expected_field.value_type),
+                    Some(&expected_field_type),
                     span,
                 )?;
-                if actual_type != expected_field.value_type {
+                if actual_type != expected_field_type {
                     return Err(type_mismatch(
                         path,
                         span,
@@ -2248,7 +2843,7 @@ fn lower_value_expr_with_expected(
                             "field `{}` is `{}` but expected `{}`",
                             expected_field.name,
                             actual_type.name(),
-                            expected_field.value_type.name()
+                            expected_field_type.name()
                         ),
                     ));
                 }
@@ -2272,9 +2867,10 @@ fn lower_value_expr_with_expected(
                 }
             }
             Ok((
-                ValueType::Struct(type_name.clone()),
+                ValueType::Struct(type_name.clone(), struct_args.clone()),
                 ValueExpr::StructLiteral {
                     type_name: type_name.clone(),
+                    struct_args,
                     fields: lowered_fields,
                 },
             ))
@@ -2295,13 +2891,15 @@ fn lower_panic_message(
     path: &Path,
     message: &AstExpr,
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<ValueExpr, Diagnostic> {
-    let (message_type, lowered) =
-        lower_value_expr(path, message, scope, signatures, structs, enums, span)?;
+    let (message_type, lowered) = lower_value_expr(
+        path, message, scope, imports, signatures, structs, enums, span,
+    )?;
     if message_type != ValueType::String {
         return Err(type_mismatch(
             path,
@@ -2317,6 +2915,7 @@ fn lower_string_builtin(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -2336,7 +2935,7 @@ fn lower_string_builtin(
                 ));
             };
             let (arg_type, lowered) =
-                lower_value_expr(path, arg, scope, signatures, structs, enums, span)?;
+                lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
             if arg_type != ValueType::String {
                 return Err(type_mismatch(path, span, "`string.len` expects a string"));
             }
@@ -2360,9 +2959,10 @@ fn lower_string_builtin(
                 ));
             };
             let (left_type, lowered_left) =
-                lower_value_expr(path, left, scope, signatures, structs, enums, span)?;
-            let (right_type, lowered_right) =
-                lower_value_expr(path, right, scope, signatures, structs, enums, span)?;
+                lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
+            let (right_type, lowered_right) = lower_value_expr(
+                path, right, scope, imports, signatures, structs, enums, span,
+            )?;
             if left_type != ValueType::String || right_type != ValueType::String {
                 return Err(type_mismatch(
                     path,
@@ -2387,12 +2987,13 @@ fn lower_fs_builtin(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
-    let fs_error = ValueType::Struct("FsError".to_string());
+    let fs_error = ValueType::Struct("FsError".to_string(), Vec::new());
     match callee {
         [module, name] if module == "fs" && name == "read_to_string" => {
             let [path_arg] = args else {
@@ -2406,8 +3007,9 @@ fn lower_fs_builtin(
                     &span.text,
                 ));
             };
-            let (path_type, lowered_path) =
-                lower_value_expr(path, path_arg, scope, signatures, structs, enums, span)?;
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
             if path_type != ValueType::String {
                 return Err(type_mismatch(
                     path,
@@ -2434,10 +3036,19 @@ fn lower_fs_builtin(
                     &span.text,
                 ));
             };
-            let (path_type, lowered_path) =
-                lower_value_expr(path, path_arg, scope, signatures, structs, enums, span)?;
-            let (content_type, lowered_content) =
-                lower_value_expr(path, content_arg, scope, signatures, structs, enums, span)?;
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let (content_type, lowered_content) = lower_value_expr(
+                path,
+                content_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
             if path_type != ValueType::String || content_type != ValueType::String {
                 return Err(type_mismatch(
                     path,
@@ -2462,6 +3073,7 @@ fn lower_env_builtin(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -2480,8 +3092,9 @@ fn lower_env_builtin(
                     &span.text,
                 ));
             };
-            let (name_type, lowered_name) =
-                lower_value_expr(path, name_arg, scope, signatures, structs, enums, span)?;
+            let (name_type, lowered_name) = lower_value_expr(
+                path, name_arg, scope, imports, signatures, structs, enums, span,
+            )?;
             if name_type != ValueType::String {
                 return Err(type_mismatch(
                     path,
@@ -2579,6 +3192,7 @@ fn lower_array_value_method(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -2627,6 +3241,7 @@ fn lower_array_value_method(
                 path,
                 index,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -2662,6 +3277,7 @@ fn lower_struct_value_method(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -2675,9 +3291,12 @@ fn lower_struct_value_method(
     let Some(binding) = scope.get(receiver_name) else {
         return Ok(None);
     };
-    let ValueType::Struct(owner_name) = &binding.value_type else {
+    let ValueType::Struct(owner_name, owner_args) = &binding.value_type else {
         return Ok(None);
     };
+    if !owner_args.is_empty() {
+        return Ok(None);
+    }
     let lowered_name = method_internal_name(owner_name, method_name);
     let Some(signature) = signatures.get(&lowered_name) else {
         return Err(Diagnostic::new(
@@ -2714,7 +3333,10 @@ fn lower_struct_value_method(
             &span.text,
         ));
     }
-    if signature.params.first() != Some(&binding.value_type) {
+    let Some(receiver_param) = signature.params.first() else {
+        return Ok(None);
+    };
+    if receiver_param.value_type != binding.value_type {
         return Err(Diagnostic::new(
             "N0257",
             format!("method `{owner_name}.{method_name}` has invalid receiver type"),
@@ -2725,32 +3347,37 @@ fn lower_struct_value_method(
             &span.text,
         ));
     }
+    if receiver_param.mutable && !binding.mutable {
+        return Err(Diagnostic::new(
+            "N0501",
+            format!(
+                "cannot call mutating method `{owner_name}.{method_name}` on immutable variable `{receiver_name}`"
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
 
     let mut lowered_args = vec![ValueExpr::Variable(receiver_name.clone())];
+    let mut mutable_borrows = HashSet::new();
     for (index, (arg, expected)) in args.iter().zip(signature.params.iter().skip(1)).enumerate() {
-        let (actual, lowered) = lower_value_expr_with_expected(
+        lowered_args.push(lower_call_arg_for_param(
             path,
             arg,
+            expected,
             scope,
+            imports,
             signatures,
             structs,
             enums,
-            Some(expected),
             span,
-        )?;
-        if &actual != expected {
-            return Err(type_mismatch(
-                path,
-                span,
-                format!(
-                    "argument {} to `{owner_name}.{method_name}` is `{}` but expected `{}`",
-                    index + 1,
-                    actual.name(),
-                    expected.name()
-                ),
-            ));
-        }
-        lowered_args.push(lowered);
+            &format!("{owner_name}.{method_name}"),
+            index + 1,
+            &mut mutable_borrows,
+        )?);
     }
 
     Ok(Some((
@@ -2762,11 +3389,130 @@ fn lower_struct_value_method(
     )))
 }
 
+fn lower_call_arg_for_param(
+    path: &Path,
+    arg: &AstExpr,
+    expected: &ParamSignature,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+    callable: &str,
+    position: usize,
+    mutable_borrows: &mut HashSet<String>,
+) -> Result<ValueExpr, Diagnostic> {
+    match (expected.mutable, arg) {
+        (true, AstExpr::MutArg { name }) if name.len() == 1 => {
+            let name = &name[0];
+            let Some(binding) = scope.get(name) else {
+                return Err(Diagnostic::new(
+                    "N0303",
+                    format!("unknown variable `{name}`"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            if !binding.mutable {
+                return Err(Diagnostic::new(
+                    "N0501",
+                    format!("cannot pass immutable variable `{name}` as `mut`"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            if !mutable_borrows.insert(name.clone()) {
+                return Err(Diagnostic::new(
+                    "N0502",
+                    format!("variable `{name}` is mutably borrowed more than once in this call"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            if binding.value_type != expected.value_type {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "argument {position} to `{callable}` is `{}` but expected `{}`",
+                        binding.value_type.name(),
+                        expected.value_type.name()
+                    ),
+                ));
+            }
+            Ok(ValueExpr::Variable(name.clone()))
+        }
+        (true, AstExpr::MutArg { .. }) => Err(Diagnostic::new(
+            "N0503",
+            "`mut` call arguments must be local variables",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+        (true, _) => Err(Diagnostic::new(
+            "N0500",
+            format!("argument {position} to `{callable}` must be passed as `mut`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+        (false, AstExpr::MutArg { .. }) => Err(Diagnostic::new(
+            "N0504",
+            format!("argument {position} to `{callable}` is not declared `mut`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+        (false, _) => {
+            let (actual, lowered) = lower_value_expr_with_expected(
+                path,
+                arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&expected.value_type),
+                span,
+            )?;
+            if actual != expected.value_type {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "argument {position} to `{callable}` is `{}` but expected `{}`",
+                        actual.name(),
+                        expected.value_type.name()
+                    ),
+                ));
+            }
+            Ok(lowered)
+        }
+    }
+}
+
 fn lower_array_mutation(
     path: &Path,
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
@@ -2821,6 +3567,7 @@ fn lower_array_mutation(
                 path,
                 value,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -2860,6 +3607,7 @@ fn lower_array_mutation(
                 path,
                 index,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -2873,6 +3621,7 @@ fn lower_array_mutation(
                 path,
                 value,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -2914,18 +3663,32 @@ fn ensure_supported_array_element(
     element_type: &ValueType,
     span: &Span,
 ) -> Result<(), Diagnostic> {
-    if element_type == &ValueType::String {
+    if is_supported_array_element(element_type) {
         Ok(())
     } else {
         Err(type_mismatch(
             path,
             span,
             format!(
-                "stage-0 Array currently supports `string` elements, got `{}`",
+                "stage-0 Array currently supports primitive and string elements, got `{}`",
                 element_type.name()
             ),
         ))
     }
+}
+
+fn is_supported_array_element(element_type: &ValueType) -> bool {
+    matches!(
+        element_type,
+        ValueType::String
+            | ValueType::Int
+            | ValueType::I32
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::Float
+            | ValueType::Char
+            | ValueType::Bool
+    )
 }
 
 type LoweredValue = (ValueType, ValueExpr);
@@ -2935,16 +3698,19 @@ fn lower_binary_operands(
     left: &AstExpr,
     right: &AstExpr,
     scope: &HashMap<String, Binding>,
+    imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<(LoweredValue, LoweredValue), Diagnostic> {
-    let left_default = lower_value_expr(path, left, scope, signatures, structs, enums, span)?;
+    let left_default =
+        lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
     let right_with_left = lower_value_expr_with_expected(
         path,
         right,
         scope,
+        imports,
         signatures,
         structs,
         enums,
@@ -2956,12 +3722,15 @@ fn lower_binary_operands(
     }
 
     if matches!(left, AstExpr::Int(_)) {
-        let right_default = lower_value_expr(path, right, scope, signatures, structs, enums, span)?;
+        let right_default = lower_value_expr(
+            path, right, scope, imports, signatures, structs, enums, span,
+        )?;
         if right_default.0.is_integer() {
             let left_with_right = lower_value_expr_with_expected(
                 path,
                 left,
                 scope,
+                imports,
                 signatures,
                 structs,
                 enums,
@@ -3049,10 +3818,35 @@ fn substitute_type_params(
                 .map(|arg| substitute_type_params(arg, type_params, args))
                 .collect(),
         ),
+        ValueType::Struct(name, nested_args) => ValueType::Struct(
+            name.clone(),
+            nested_args
+                .iter()
+                .map(|arg| substitute_type_params(arg, type_params, args))
+                .collect(),
+        ),
         ValueType::Array(element) => {
             ValueType::Array(Box::new(substitute_type_params(element, type_params, args)))
         }
         _ => value_type.clone(),
+    }
+}
+
+fn instantiate_function_signature(
+    signature: &FunctionSignature,
+    args: &[ValueType],
+) -> FunctionSignature {
+    FunctionSignature {
+        type_params: Vec::new(),
+        params: signature
+            .params
+            .iter()
+            .map(|param| ParamSignature {
+                value_type: substitute_type_params(&param.value_type, &signature.type_params, args),
+                mutable: param.mutable,
+            })
+            .collect(),
+        return_type: substitute_type_params(&signature.return_type, &signature.type_params, args),
     }
 }
 
@@ -3083,14 +3877,17 @@ fn parse_value_type(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Option<ValueType> {
-    let struct_names = structs.keys().cloned().collect::<Vec<_>>();
+    let struct_names = structs
+        .values()
+        .map(|item| (item.name.clone(), item.type_params.len()))
+        .collect::<Vec<_>>();
     let enum_names = enums.keys().cloned().collect::<Vec<_>>();
     parse_value_type_with_names(type_ref, &struct_names, &enum_names, &[])
 }
 
 fn parse_value_type_with_names(
     type_ref: &crate::ast::TypeRef,
-    struct_names: &[String],
+    struct_names: &[(String, usize)],
     enum_names: &[String],
     type_params: &[String],
 ) -> Option<ValueType> {
@@ -3112,11 +3909,20 @@ fn parse_value_type_with_names(
                 parse_value_type_with_names(element, struct_names, enum_names, type_params)?;
             Some(ValueType::Array(Box::new(element_type)))
         }
-        [name] if struct_names.iter().any(|item| item == name) => {
-            if !type_ref.args.is_empty() {
+        [name] if struct_names.iter().any(|(item, _)| item == name) => {
+            let arity = struct_names
+                .iter()
+                .find(|(item, _)| item == name)
+                .map(|(_, arity)| *arity)?;
+            if type_ref.args.len() != arity {
                 return None;
             }
-            Some(ValueType::Struct(name.to_string()))
+            let args = type_ref
+                .args
+                .iter()
+                .map(|arg| parse_value_type_with_names(arg, struct_names, enum_names, type_params))
+                .collect::<Option<Vec<_>>>()?;
+            Some(ValueType::Struct(name.to_string(), args))
         }
         [name] if enum_names.iter().any(|item| item == name) => {
             let args = type_ref
@@ -3138,6 +3944,112 @@ fn parse_value_type_with_names(
 
 fn method_internal_name(owner_name: &str, method_name: &str) -> String {
     format!("{owner_name}_{method_name}")
+}
+
+fn generic_function_instance_name(name: &str, args: &[ValueType]) -> String {
+    let suffix = args
+        .iter()
+        .map(value_type_key_part)
+        .collect::<Vec<_>>()
+        .join("_");
+    format!("{name}_{suffix}")
+}
+
+fn value_type_key_part(value_type: &ValueType) -> String {
+    match value_type {
+        ValueType::String => "string".to_string(),
+        ValueType::Int => "i64".to_string(),
+        ValueType::I32 => "i32".to_string(),
+        ValueType::U32 => "u32".to_string(),
+        ValueType::U64 => "u64".to_string(),
+        ValueType::Float => "f64".to_string(),
+        ValueType::Char => "char".to_string(),
+        ValueType::Bool => "bool".to_string(),
+        ValueType::Array(element) => format!("array_{}", value_type_key_part(element)),
+        ValueType::Struct(name, args) => format!("struct_{}{}", name, generic_type_suffix(args)),
+        ValueType::Enum(name, args) => format!("enum_{}{}", name, generic_type_suffix(args)),
+        ValueType::TypeParam(name) => format!("param_{name}"),
+        ValueType::Void => "void".to_string(),
+        ValueType::Never => "never".to_string(),
+    }
+}
+
+fn generic_type_suffix(args: &[ValueType]) -> String {
+    if args.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "_{}",
+            args.iter()
+                .map(value_type_key_part)
+                .collect::<Vec<_>>()
+                .join("_")
+        )
+    }
+}
+
+fn is_io_print_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "io" && matches!(name.as_str(), "println" | "eprintln")
+    ) || matches!(callee, [name] if matches!(name.as_str(), "println" | "eprintln"))
+}
+
+fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<String>> {
+    let qualified = match name {
+        "len" if imports.iter().any(|item| item == "std.string.len") => {
+            vec!["string".to_string(), "len".to_string()]
+        }
+        "concat" if imports.iter().any(|item| item == "std.string.concat") => {
+            vec!["string".to_string(), "concat".to_string()]
+        }
+        "read_to_string" if imports.iter().any(|item| item == "std.fs.read_to_string") => {
+            vec!["fs".to_string(), "read_to_string".to_string()]
+        }
+        "write_string" if imports.iter().any(|item| item == "std.fs.write_string") => {
+            vec!["fs".to_string(), "write_string".to_string()]
+        }
+        "get" if imports.iter().any(|item| item == "std.env.get") => {
+            vec!["env".to_string(), "get".to_string()]
+        }
+        "args" if imports.iter().any(|item| item == "std.env.args") => {
+            vec!["env".to_string(), "args".to_string()]
+        }
+        "new" if imports.iter().any(|item| item == "std.array.new") => {
+            vec!["Array".to_string(), "new".to_string()]
+        }
+        _ => return None,
+    };
+    Some(qualified)
+}
+
+fn resolve_io_print_function<'a>(callee: &'a [String], imports: &[String]) -> Option<&'a str> {
+    match callee {
+        [module, name]
+            if module == "io"
+                && matches!(name.as_str(), "println" | "eprintln")
+                && imports.iter().any(|item| item == "std.io") =>
+        {
+            Some(name.as_str())
+        }
+        [name]
+            if matches!(name.as_str(), "println" | "eprintln")
+                && imports.iter().any(|item| item == &format!("std.io.{name}")) =>
+        {
+            Some(name.as_str())
+        }
+        _ => None,
+    }
+}
+
+fn io_print_import_error(callee: &[String]) -> String {
+    match callee {
+        [module, name] if module == "io" => {
+            format!("stage-0 subset requires `import std.io` for `io.{name}`")
+        }
+        [name] => format!("stage-0 subset requires `import std.io.{name}` for `{name}`"),
+        _ => "stage-0 subset requires an io import".to_string(),
+    }
 }
 
 fn println_type_error(path: &Path, span: &Span, function_name: &str) -> Diagnostic {
@@ -3176,7 +4088,13 @@ impl ValueType {
             ValueType::Char => "char",
             ValueType::Bool => "bool",
             ValueType::Array(_) => "Array",
-            ValueType::Struct(name) => name,
+            ValueType::Struct(name, args) => {
+                if args.is_empty() {
+                    name
+                } else {
+                    "struct"
+                }
+            }
             ValueType::Enum(name, _) => name,
             ValueType::TypeParam(name) => name,
             ValueType::Void => "void",
@@ -3254,6 +4172,28 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_specific_println_import() {
+        let source = r#"package app.main
+
+import std.io.println
+
+fn main() -> void {
+    println("Hello, Nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert_eq!(program.imports, vec!["std.io.println"]);
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(
+            main.body,
+            vec![Statement::Println(ValueExpr::StringLiteral(
+                "Hello, Nomo".to_string()
+            ))]
+        );
+    }
+
+    #[test]
     fn accepts_eprintln() {
         let source = r#"package app.main
 
@@ -3309,6 +4249,41 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_specific_string_builtin_imports() {
+        let source = r#"package app.main
+
+import std.io
+import std.string.concat
+import std.string.len
+
+fn main() -> void {
+    let message: string = concat("No", "mo")
+    let count: u64 = len(message)
+    io.println(message)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringConcat { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::StringLen { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn accepts_fs_read_and_write_builtins() {
         let source = r#"package app.main
 
@@ -3339,9 +4314,54 @@ fn main() -> void {
             load.return_type,
             ValueType::Enum(
                 "Result".to_string(),
-                vec![ValueType::String, ValueType::Struct("FsError".to_string())],
+                vec![
+                    ValueType::String,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
             )
         );
+        assert!(matches!(
+            load.body[0],
+            Statement::TryLet {
+                result_expr: ValueExpr::FsReadToString { .. },
+                ..
+            }
+        ));
+        let save = program.functions.iter().find(|f| f.name == "save").unwrap();
+        assert!(matches!(
+            save.body[0],
+            Statement::Return(Some(ValueExpr::FsWriteString { .. }))
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_fs_builtin_imports() {
+        let source = r#"package app.main
+
+import std.fs.read_to_string
+import std.fs.write_string
+import std.io
+
+fn load(path: string) -> Result<string, FsError> {
+    let text: string = read_to_string(path)?
+    return Result.Ok(text)
+}
+
+fn save(path: string, content: string) -> Result<void, FsError> {
+    return write_string(path, content)
+}
+
+fn main() -> void {
+    let write_result: Result<void, FsError> = save("/tmp/nomo-fs-test.txt", "hello")
+    let read_result: Result<string, FsError> = load("/tmp/nomo-fs-test.txt")
+    io.println("done")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "FsError"));
+        assert!(program.enums.iter().any(|item| item.name == "Result"));
+        let load = program.functions.iter().find(|f| f.name == "load").unwrap();
         assert!(matches!(
             load.body[0],
             Statement::TryLet {
@@ -3423,6 +4443,46 @@ fn main() -> void {
                     element_type: ValueType::String,
                     ..
                 },
+                ..
+            } if name == "Option" && args == &vec![ValueType::String]
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_env_builtin_imports() {
+        let source = r#"package app.main
+
+import std.env.args
+import std.env.get
+import std.io
+
+fn main() -> void {
+    let values: Array<string> = args()
+    let home: Option<string> = get("HOME")
+    let message: string = match home {
+        Option.Some(text) => text
+        Option.None => "missing"
+    }
+    io.println(message)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Array(ref element),
+                initializer: ValueExpr::EnvArgs,
+                ..
+            } if element.as_ref() == &ValueType::String
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::EnvGet { .. },
                 ..
             } if name == "Option" && args == &vec![ValueType::String]
         ));
@@ -3576,6 +4636,181 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_i32_array_builtins() {
+        let source = r#"package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    items.push(2)
+    items.set(0, 7)
+    let first: Option<i32> = items.get(0)
+    let message: string = match first {
+        Option.Some(value) => if value == 7 {
+            "array ok"
+        } else {
+            "wrong"
+        }
+        Option.None => "missing"
+    }
+    io.println(message)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Array(ref element),
+                initializer: ValueExpr::ArrayNew {
+                    element_type: ValueType::I32,
+                },
+                ..
+            } if element.as_ref() == &ValueType::I32
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Assign {
+                ref name,
+                value: ValueExpr::ArrayPush {
+                    element_type: ValueType::I32,
+                    ..
+                },
+            } if name == "items"
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::ArrayGet {
+                    element_type: ValueType::I32,
+                    ..
+                },
+                ..
+            } if name == "Option" && args == &vec![ValueType::I32]
+        ));
+    }
+
+    #[test]
+    fn accepts_arrays_for_all_v0_1_primitive_elements() {
+        let source = r#"package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut strings: Array<string> = Array.new<string>()
+    strings.push("nomo")
+    let mut ints: Array<i64> = Array.new<i64>()
+    ints.push(1)
+    let mut i32s: Array<i32> = Array.new<i32>()
+    i32s.push(2)
+    let mut u32s: Array<u32> = Array.new<u32>()
+    u32s.push(3 as u32)
+    let mut u64s: Array<u64> = Array.new<u64>()
+    u64s.push(4 as u64)
+    let mut floats: Array<f64> = Array.new<f64>()
+    floats.push(1.5)
+    let mut chars: Array<char> = Array.new<char>()
+    chars.push('n')
+    let mut bools: Array<bool> = Array.new<bool>()
+    bools.push(true)
+    io.println("arrays ok")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        let array_elements = main
+            .body
+            .iter()
+            .filter_map(|statement| match statement {
+                Statement::Let {
+                    value_type: ValueType::Array(element),
+                    initializer: ValueExpr::ArrayNew { element_type },
+                    ..
+                } if element.as_ref() == element_type => Some(element_type.clone()),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            array_elements,
+            vec![
+                ValueType::String,
+                ValueType::Int,
+                ValueType::I32,
+                ValueType::U32,
+                ValueType::U64,
+                ValueType::Float,
+                ValueType::Char,
+                ValueType::Bool,
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_specific_array_new_import() {
+        let source = r#"package app.main
+
+import std.array.new
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = new<i32>()
+    items.push(7)
+    let first: Option<i32> = items.get(0)
+    let message: string = match first {
+        Option.Some(value) => if value == 7 {
+            "array new import ok"
+        } else {
+            "wrong"
+        }
+        Option.None => "missing"
+    }
+    io.println(message)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Array(ref element),
+                initializer: ValueExpr::ArrayNew {
+                    element_type: ValueType::I32,
+                },
+                ..
+            } if element.as_ref() == &ValueType::I32
+        ));
+    }
+
+    #[test]
+    fn rejects_unqualified_array_new_without_specific_import() {
+        let source = r#"package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = new<i32>()
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0305");
+        assert!(err.message.contains("new"));
+    }
+
+    #[test]
     fn rejects_string_len_as_i64() {
         let source = r#"package app.main
 
@@ -3617,6 +4852,181 @@ fn main() -> void {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn accepts_generic_function_instances() {
+        let source = r#"package app.main
+
+import std.io
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn main() -> void {
+    let number: i32 = identity<i32>(7)
+    let text: string = identity<string>("generic")
+    io.println(text)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(
+            program
+                .functions
+                .iter()
+                .all(|function| function.name != "identity")
+        );
+        let identity_i32 = program
+            .functions
+            .iter()
+            .find(|function| function.name == "identity_i32")
+            .unwrap();
+        assert_eq!(identity_i32.params[0].value_type, ValueType::I32);
+        assert_eq!(identity_i32.return_type, ValueType::I32);
+        let identity_string = program
+            .functions
+            .iter()
+            .find(|function| function.name == "identity_string")
+            .unwrap();
+        assert_eq!(identity_string.params[0].value_type, ValueType::String);
+        assert_eq!(identity_string.return_type, ValueType::String);
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::Call { ref name, .. },
+                ..
+            } if name == "identity_i32"
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::Call { ref name, .. },
+                ..
+            } if name == "identity_string"
+        ));
+    }
+
+    #[test]
+    fn rejects_generic_function_call_without_type_arguments() {
+        let source = r#"package app.main
+
+import std.io
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn main() -> void {
+    let number: i32 = identity(7)
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0407");
+    }
+
+    #[test]
+    fn accepts_mut_call_argument_for_mut_parameter() {
+        let source = r#"package app.main
+
+import std.io
+
+fn inspect(mut value: i64) -> i64 {
+    return value
+}
+
+fn main() -> void {
+    let mut count: i64 = 41
+    let answer: i64 = inspect(mut count) + 1
+    io.println("done")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            &main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::Binary {
+                    left,
+                    ..
+                },
+                ..
+            } if matches!(
+                left.as_ref(),
+                ValueExpr::Call {
+                    name,
+                    args,
+                } if name == "inspect" && args == &vec![ValueExpr::Variable("count".to_string())]
+            )
+        ));
+    }
+
+    #[test]
+    fn rejects_missing_mut_call_argument_for_mut_parameter() {
+        let source = r#"package app.main
+
+import std.io
+
+fn inspect(mut value: i64) -> i64 {
+    return value
+}
+
+fn main() -> void {
+    let mut count: i64 = 41
+    let answer: i64 = inspect(count)
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0500");
+    }
+
+    #[test]
+    fn rejects_immutable_variable_as_mut_call_argument() {
+        let source = r#"package app.main
+
+import std.io
+
+fn inspect(mut value: i64) -> i64 {
+    return value
+}
+
+fn main() -> void {
+    let count: i64 = 41
+    let answer: i64 = inspect(mut count)
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0501");
+    }
+
+    #[test]
+    fn rejects_duplicate_mut_call_argument() {
+        let source = r#"package app.main
+
+import std.io
+
+fn combine(mut left: i64, mut right: i64) -> i64 {
+    return left + right
+}
+
+fn main() -> void {
+    let mut count: i64 = 41
+    let answer: i64 = combine(mut count, mut count)
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0502");
     }
 
     #[test]
@@ -4084,6 +5494,56 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_assignment_to_mut_struct_field() {
+        let source = r#"package app.main
+
+import std.io
+
+struct Counter {
+    value: i64
+}
+
+fn main() -> void {
+    let mut counter: Counter = Counter { value: 1 }
+    counter.value = counter.value + 1
+    io.println("done")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[1],
+            Statement::AssignField {
+                ref base,
+                ref field,
+                value: ValueExpr::Binary { .. },
+            } if base == "counter" && field == "value"
+        ));
+    }
+
+    #[test]
+    fn rejects_assignment_to_immutable_struct_field() {
+        let source = r#"package app.main
+
+import std.io
+
+struct Counter {
+    value: i64
+}
+
+fn main() -> void {
+    let counter: Counter = Counter { value: 1 }
+    counter.value = counter.value + 1
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0410");
+    }
+
+    #[test]
     fn rejects_assignment_type_mismatch() {
         let source = r#"package app.main
 
@@ -4128,12 +5588,75 @@ fn main() -> void {
         let sum = program.functions.iter().find(|f| f.name == "sum").unwrap();
         assert_eq!(
             sum.params[0].value_type,
-            ValueType::Struct("Point".to_string())
+            ValueType::Struct("Point".to_string(), Vec::new())
         );
         assert!(matches!(
             sum.body[0],
             Statement::Return(Some(ValueExpr::Binary { .. }))
         ));
+    }
+
+    #[test]
+    fn accepts_generic_struct_literal_and_field_access() {
+        let source = r#"package app.main
+
+import std.io
+
+struct Box<T> {
+    value: T
+}
+
+fn main() -> void {
+    let item: Box<i32> = Box { value: 7 }
+    let value: i32 = item.value
+    io.println("done")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert_eq!(program.structs[0].type_params, ["T"]);
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::StructLiteral {
+                    struct_args: ref literal_args,
+                    ..
+                },
+                ..
+            } if name == "Box"
+                && args == &vec![ValueType::I32]
+                && literal_args == &vec![ValueType::I32]
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::I32,
+                initializer: ValueExpr::FieldAccess { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_generic_struct_literal_without_type_annotation() {
+        let source = r#"package app.main
+
+import std.io
+
+struct Box<T> {
+    value: T
+}
+
+fn main() -> void {
+    let item = Box { value: 7 }
+    io.println("done")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0317");
     }
 
     #[test]
@@ -4167,7 +5690,7 @@ fn main() -> void {
             .unwrap();
         assert_eq!(
             method.params[0].value_type,
-            ValueType::Struct("User".to_string())
+            ValueType::Struct("User".to_string(), Vec::new())
         );
         let main = program.functions.iter().find(|f| f.name == "main").unwrap();
         assert!(matches!(
@@ -4381,6 +5904,85 @@ fn main() -> void {
             unwrap.body[0],
             Statement::Return(Some(ValueExpr::Match { .. }))
         ));
+    }
+
+    #[test]
+    fn accepts_struct_payload_enum_and_match_field_access() {
+        let source = r#"package app.main
+
+import std.io
+
+struct User {
+    email: string
+}
+
+enum MaybeUser {
+    Some(User)
+    None
+}
+
+fn label(value: MaybeUser) -> string {
+    return match value {
+        MaybeUser.Some(user) => user.email
+        MaybeUser.None => "missing"
+    }
+}
+
+fn main() -> void {
+    let value: MaybeUser = MaybeUser.Some(User { email: "a@nomo.dev" })
+    io.println(label(value))
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert_eq!(
+            program.enums[0].variants[0].payload,
+            Some(ValueType::Struct("User".to_string(), Vec::new()))
+        );
+        let label = program
+            .functions
+            .iter()
+            .find(|function| function.name == "label")
+            .unwrap();
+        assert!(matches!(
+            label.body[0],
+            Statement::Return(Some(ValueExpr::Match { ref arms, .. }))
+                if matches!(
+                    arms[0].value,
+                    ValueExpr::EnumPayloadFieldAccess {
+                        ref variant,
+                        ref field,
+                        ..
+                    } if variant == "Some" && field == "email"
+                )
+        ));
+    }
+
+    #[test]
+    fn rejects_match_payload_binding_shadowing_outer_variable() {
+        let source = r#"package app.main
+
+import std.io
+
+enum Option<T> {
+    Some(T)
+    None
+}
+
+fn main() -> void {
+    let text: string = "outer"
+    let value: Option<string> = Option.Some("inner")
+    let result: string = match value {
+        Option.Some(text) => text
+        Option.None => text
+    }
+    io.println(result)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0302");
+        assert!(err.message.contains("text"));
     }
 
     #[test]
@@ -4608,5 +6210,37 @@ fn main() -> void {
 "#;
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "N0301");
+    }
+
+    #[test]
+    fn rejects_unqualified_println_without_specific_import() {
+        let source = r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    println("Hello")
+}
+"#;
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0301");
+        assert!(err.message.contains("std.io.println"));
+    }
+
+    #[test]
+    fn rejects_unqualified_string_len_without_specific_import() {
+        let source = r#"package app.main
+
+import std.io
+import std.string
+
+fn main() -> void {
+    let size: u64 = len("Nomo")
+    io.println("done")
+}
+"#;
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0305");
+        assert!(err.message.contains("len"));
     }
 }

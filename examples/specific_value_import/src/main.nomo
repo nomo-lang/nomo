@@ -1,0 +1,15 @@
+package app.main
+
+import std.io.println
+import std.string.concat
+import std.string.len
+
+fn main() -> void {
+    let message: string = concat("specific ", "value import ok")
+    let output: string = if len(message) == 24 {
+        message
+    } else {
+        "wrong"
+    }
+    println(output)
+}

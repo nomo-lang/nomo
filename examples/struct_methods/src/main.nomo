@@ -1,0 +1,19 @@
+package app.main
+
+import std.io
+
+struct User {
+    email: string
+}
+
+impl User {
+    pub fn get_email(self) -> string {
+        return self.email
+    }
+}
+
+fn main() -> void {
+    let user: User = User { email: "a@nomo.dev" }
+    let email: string = user.get_email()
+    io.println(email)
+}

@@ -12,6 +12,7 @@ pub struct SourceFile {
 pub struct StructDef {
     pub public: bool,
     pub name: String,
+    pub type_params: Vec<String>,
     pub fields: Vec<Field>,
 }
 
@@ -46,6 +47,7 @@ pub struct ImplBlock {
 pub struct Function {
     pub public: bool,
     pub name: String,
+    pub type_params: Vec<String>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub body: Vec<Stmt>,
@@ -74,7 +76,7 @@ pub enum Stmt {
         span: Span,
     },
     Assign {
-        name: String,
+        target: Vec<String>,
         value: Expr,
         span: Span,
     },
@@ -113,6 +115,9 @@ pub enum Expr {
     },
     Try {
         expr: Box<Expr>,
+    },
+    MutArg {
+        name: Vec<String>,
     },
     Cast {
         expr: Box<Expr>,

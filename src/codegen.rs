@@ -26,8 +26,13 @@ pub fn emit_c(program: &Program) -> String {
     out.push_str("    return out;\n");
     out.push_str("}\n\n");
 
-    for struct_type in &program.structs {
-        emit_struct_type(&mut out, struct_type);
+    for (struct_name, struct_args) in collect_struct_instances(program) {
+        let struct_type = program
+            .structs
+            .iter()
+            .find(|item| item.name == struct_name)
+            .expect("checked programs only use known structs");
+        emit_struct_type(&mut out, struct_type, &struct_args);
         out.push('\n');
     }
     for (enum_name, enum_args) in collect_enum_instances(program) {
@@ -39,8 +44,9 @@ pub fn emit_c(program: &Program) -> String {
         emit_enum_type(&mut out, enum_type, &enum_args);
         out.push('\n');
     }
-    if uses_array_string(program) {
-        emit_array_string_helpers(&mut out);
+    let array_element_types = collect_array_element_types(program);
+    for element_type in &array_element_types {
+        emit_array_helpers(&mut out, element_type);
         out.push('\n');
     }
     if uses_env_args(program) {
@@ -111,19 +117,23 @@ fn emit_prototype(out: &mut String, function: &Function) {
     out.push_str(";\n");
 }
 
-fn emit_struct_type(out: &mut String, struct_type: &StructType) {
+fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[ValueType]) {
     out.push_str("typedef struct ");
-    out.push_str(&c_struct_ident(&struct_type.name));
+    out.push_str(&c_struct_ident(&struct_type.name, struct_args));
     out.push_str(" {\n");
     for field in &struct_type.fields {
         out.push_str("    ");
-        out.push_str(&c_type(&field.value_type));
+        out.push_str(&c_type(&subst_type(
+            &field.value_type,
+            &struct_type.type_params,
+            struct_args,
+        )));
         out.push(' ');
         out.push_str(&field.name);
         out.push_str(";\n");
     }
     out.push_str("} ");
-    out.push_str(&c_struct_ident(&struct_type.name));
+    out.push_str(&c_struct_ident(&struct_type.name, struct_args));
     out.push_str(";\n");
 }
 
@@ -181,19 +191,28 @@ fn emit_enum_type(out: &mut String, enum_type: &EnumType, enum_args: &[ValueType
 }
 
 fn emit_fs_read_to_string_helper(out: &mut String) {
-    let fs_error = c_struct_ident("FsError");
+    let fs_error = c_struct_ident("FsError", &[]);
     let result = c_enum_ident(
         "Result",
-        &[ValueType::String, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
     );
     let ok = c_enum_variant_ident(
         "Result",
-        &[ValueType::String, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
         "Ok",
     );
     let err = c_enum_variant_ident(
         "Result",
-        &[ValueType::String, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
         "Err",
     );
     out.push_str("static ");
@@ -263,19 +282,28 @@ fn emit_fs_read_to_string_helper(out: &mut String) {
 }
 
 fn emit_fs_write_string_helper(out: &mut String) {
-    let fs_error = c_struct_ident("FsError");
+    let fs_error = c_struct_ident("FsError", &[]);
     let result = c_enum_ident(
         "Result",
-        &[ValueType::Void, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
     );
     let ok = c_enum_variant_ident(
         "Result",
-        &[ValueType::Void, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
         "Ok",
     );
     let err = c_enum_variant_ident(
         "Result",
-        &[ValueType::Void, ValueType::Struct("FsError".to_string())],
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
         "Err",
     );
     out.push_str("static ");
@@ -353,39 +381,76 @@ fn emit_env_args_helper(out: &mut String) {
     out.push_str("}\n");
 }
 
-fn emit_array_string_helpers(out: &mut String) {
-    let option = c_enum_ident("Option", &[ValueType::String]);
-    let some = c_enum_variant_ident("Option", &[ValueType::String], "Some");
-    let none = c_enum_variant_ident("Option", &[ValueType::String], "None");
-    out.push_str("typedef struct nomo_array_string {\n");
+fn emit_array_helpers(out: &mut String, element_type: &ValueType) {
+    let array = c_array_ident(element_type);
+    let option = c_enum_ident("Option", &[element_type.clone()]);
+    let some = c_enum_variant_ident("Option", &[element_type.clone()], "Some");
+    let none = c_enum_variant_ident("Option", &[element_type.clone()], "None");
+    out.push_str("typedef struct ");
+    out.push_str(&array);
+    out.push_str(" {\n");
     out.push_str("    size_t len;\n");
     out.push_str("    size_t cap;\n");
-    out.push_str("    const char **data;\n");
-    out.push_str("} nomo_array_string;\n\n");
-    out.push_str("static nomo_array_string nomo_array_string_new(void) {\n");
-    out.push_str("    return (nomo_array_string){.len = 0, .cap = 0, .data = NULL};\n");
+    out.push_str("    ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" *data;\n");
+    out.push_str("} ");
+    out.push_str(&array);
+    out.push_str(";\n\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_new(void) {\n");
+    out.push_str("    return (");
+    out.push_str(&array);
+    out.push_str("){.len = 0, .cap = 0, .data = NULL};\n");
     out.push_str("}\n\n");
-    out.push_str("static nomo_array_string nomo_array_string_reserve(nomo_array_string array, size_t needed) {\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_reserve(");
+    out.push_str(&array);
+    out.push_str(" array, size_t needed) {\n");
     out.push_str("    if (array.cap >= needed) { return array; }\n");
     out.push_str("    size_t cap = array.cap == 0 ? 4 : array.cap;\n");
     out.push_str("    while (cap < needed) { cap *= 2; }\n");
-    out.push_str(
-        "    const char **data = (const char **)realloc(array.data, cap * sizeof(const char *));\n",
-    );
+    out.push_str("    ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" *data = (");
+    out.push_str(&c_type(element_type));
+    out.push_str(" *)realloc(array.data, cap * sizeof(");
+    out.push_str(&c_type(element_type));
+    out.push_str("));\n");
     out.push_str("    if (data == NULL) { nomo_panic(\"out of memory\"); }\n");
     out.push_str("    array.data = data;\n");
     out.push_str("    array.cap = cap;\n");
     out.push_str("    return array;\n");
     out.push_str("}\n\n");
-    out.push_str("static nomo_array_string nomo_array_string_push(nomo_array_string array, const char *value) {\n");
-    out.push_str("    array = nomo_array_string_reserve(array, array.len + 1);\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_push(");
+    out.push_str(&array);
+    out.push_str(" array, ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value) {\n");
+    out.push_str("    array = ");
+    out.push_str(&array);
+    out.push_str("_reserve(array, array.len + 1);\n");
     out.push_str("    array.data[array.len] = value;\n");
     out.push_str("    array.len += 1;\n");
     out.push_str("    return array;\n");
     out.push_str("}\n\n");
     out.push_str("static ");
     out.push_str(&option);
-    out.push_str(" nomo_array_string_get(nomo_array_string array, uint64_t index) {\n");
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_get(");
+    out.push_str(&array);
+    out.push_str(" array, uint64_t index) {\n");
     out.push_str("    if (index >= array.len) {\n");
     out.push_str("        return (");
     out.push_str(&option);
@@ -399,7 +464,15 @@ fn emit_array_string_helpers(out: &mut String) {
     out.push_str(&some);
     out.push_str(", .payload.Some = array.data[index]};\n");
     out.push_str("}\n\n");
-    out.push_str("static nomo_array_string nomo_array_string_set(nomo_array_string array, uint64_t index, const char *value) {\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_set(");
+    out.push_str(&array);
+    out.push_str(" array, uint64_t index, ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value) {\n");
     out.push_str(
         "    if (index >= array.len) { nomo_panic(\"Array.set index out of bounds\"); }\n",
     );
@@ -456,6 +529,15 @@ fn emit_body(out: &mut String, function: &Function) {
             Statement::Assign { name, value } => {
                 out.push_str("    ");
                 out.push_str(&c_var_ident(name));
+                out.push_str(" = ");
+                emit_expr(out, value);
+                out.push_str(";\n");
+            }
+            Statement::AssignField { base, field, value } => {
+                out.push_str("    ");
+                out.push_str(&c_var_ident(base));
+                out.push('.');
+                out.push_str(field);
                 out.push_str(" = ");
                 emit_expr(out, value);
                 out.push_str(";\n");
@@ -561,9 +643,13 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, expr);
             out.push(')');
         }
-        ValueExpr::StructLiteral { type_name, fields } => {
+        ValueExpr::StructLiteral {
+            type_name,
+            struct_args,
+            fields,
+        } => {
             out.push('(');
-            out.push_str(&c_struct_ident(type_name));
+            out.push_str(&c_struct_ident(type_name, struct_args));
             out.push_str("){");
             for (index, (field_name, value)) in fields.iter().enumerate() {
                 if index > 0 {
@@ -689,8 +775,9 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push(')');
         }
         ValueExpr::EnvArgs => out.push_str("nomo_env_args(nomo_argc, nomo_argv)"),
-        ValueExpr::ArrayNew { element_type } if element_type == &ValueType::String => {
-            out.push_str("nomo_array_string_new()");
+        ValueExpr::ArrayNew { element_type } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_new()");
         }
         ValueExpr::ArrayLen { array } => {
             out.push_str("((uint64_t)");
@@ -701,8 +788,9 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             array,
             index,
             element_type,
-        } if element_type == &ValueType::String => {
-            out.push_str("nomo_array_string_get(");
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_get(");
             emit_expr(out, array);
             out.push_str(", ");
             emit_expr(out, index);
@@ -712,8 +800,9 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             array,
             value,
             element_type,
-        } if element_type == &ValueType::String => {
-            out.push_str("nomo_array_string_push(");
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_push(");
             out.push_str(&c_var_ident(array));
             out.push_str(", ");
             emit_expr(out, value);
@@ -724,8 +813,9 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             index,
             value,
             element_type,
-        } if element_type == &ValueType::String => {
-            out.push_str("nomo_array_string_set(");
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_set(");
             out.push_str(&c_var_ident(array));
             out.push_str(", ");
             emit_expr(out, index);
@@ -774,6 +864,203 @@ fn emit_match_arm(
     out.push(')');
 }
 
+fn collect_struct_instances(program: &Program) -> Vec<(String, Vec<ValueType>)> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for struct_type in &program.structs {
+        if struct_type.type_params.is_empty() {
+            push_struct_instance(&mut seen, &mut out, &struct_type.name, &[]);
+        }
+    }
+    for function in &program.functions {
+        collect_type_struct(&function.return_type, &mut seen, &mut out);
+        for param in &function.params {
+            collect_type_struct(&param.value_type, &mut seen, &mut out);
+        }
+        for statement in &function.body {
+            match statement {
+                Statement::Let {
+                    value_type,
+                    initializer,
+                    ..
+                } => {
+                    collect_type_struct(value_type, &mut seen, &mut out);
+                    collect_expr_struct(initializer, &mut seen, &mut out);
+                }
+                Statement::TryLet {
+                    value_type,
+                    result_type,
+                    return_type,
+                    result_expr,
+                    ..
+                } => {
+                    collect_type_struct(value_type, &mut seen, &mut out);
+                    collect_type_struct(result_type, &mut seen, &mut out);
+                    collect_type_struct(return_type, &mut seen, &mut out);
+                    collect_expr_struct(result_expr, &mut seen, &mut out);
+                }
+                Statement::Assign { value, .. }
+                | Statement::AssignField { value, .. }
+                | Statement::Println(value)
+                | Statement::Eprintln(value)
+                | Statement::Panic(value)
+                | Statement::Return(Some(value)) => {
+                    collect_expr_struct(value, &mut seen, &mut out);
+                }
+                Statement::Return(None) => {}
+            }
+        }
+    }
+    out
+}
+
+fn collect_type_struct(
+    value_type: &ValueType,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    match value_type {
+        ValueType::Struct(name, args) => {
+            push_struct_instance(seen, out, name, args);
+            for arg in args {
+                collect_type_struct(arg, seen, out);
+            }
+        }
+        ValueType::Enum(_, args) => {
+            for arg in args {
+                collect_type_struct(arg, seen, out);
+            }
+        }
+        ValueType::Array(element) => collect_type_struct(element, seen, out),
+        _ => {}
+    }
+}
+
+fn collect_expr_struct(
+    expr: &ValueExpr,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    match expr {
+        ValueExpr::Binary { left, right, .. } => {
+            collect_expr_struct(left, seen, out);
+            collect_expr_struct(right, seen, out);
+        }
+        ValueExpr::Call { args, .. } => {
+            for arg in args {
+                collect_expr_struct(arg, seen, out);
+            }
+        }
+        ValueExpr::StringLen { value } => collect_expr_struct(value, seen, out),
+        ValueExpr::StringConcat { left, right } => {
+            collect_expr_struct(left, seen, out);
+            collect_expr_struct(right, seen, out);
+        }
+        ValueExpr::FsReadToString { path } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(path, seen, out);
+        }
+        ValueExpr::FsWriteString { path, content } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(path, seen, out);
+            collect_expr_struct(content, seen, out);
+        }
+        ValueExpr::EnvGet { name } => collect_expr_struct(name, seen, out),
+        ValueExpr::EnvArgs => {}
+        ValueExpr::ArrayNew { element_type } => collect_type_struct(element_type, seen, out),
+        ValueExpr::ArrayLen { array } => collect_expr_struct(array, seen, out),
+        ValueExpr::ArrayGet {
+            array,
+            index,
+            element_type,
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(array, seen, out);
+            collect_expr_struct(index, seen, out);
+        }
+        ValueExpr::ArrayPush {
+            value,
+            element_type,
+            ..
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::ArraySet {
+            index,
+            value,
+            element_type,
+            ..
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(index, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::Cast { expr, target_type } => {
+            collect_type_struct(target_type, seen, out);
+            collect_expr_struct(expr, seen, out);
+        }
+        ValueExpr::StructLiteral {
+            type_name,
+            struct_args,
+            fields,
+        } => {
+            push_struct_instance(seen, out, type_name, struct_args);
+            for arg in struct_args {
+                collect_type_struct(arg, seen, out);
+            }
+            for (_, value) in fields {
+                collect_expr_struct(value, seen, out);
+            }
+        }
+        ValueExpr::EnumVariant {
+            enum_args, payload, ..
+        } => {
+            for arg in enum_args {
+                collect_type_struct(arg, seen, out);
+            }
+            if let Some(payload) = payload {
+                collect_expr_struct(payload, seen, out);
+            }
+        }
+        ValueExpr::EnumPayload { value, .. } => collect_expr_struct(value, seen, out),
+        ValueExpr::EnumPayloadFieldAccess { value, .. } => collect_expr_struct(value, seen, out),
+        ValueExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            collect_expr_struct(condition, seen, out);
+            collect_expr_struct(then_branch, seen, out);
+            collect_expr_struct(else_branch, seen, out);
+        }
+        ValueExpr::Panic {
+            message,
+            fallback_type,
+        } => {
+            collect_type_struct(fallback_type, seen, out);
+            collect_expr_struct(message, seen, out);
+        }
+        ValueExpr::Match { value, arms } => {
+            collect_expr_struct(value, seen, out);
+            for arm in arms {
+                for arg in &arm.enum_args {
+                    collect_type_struct(arg, seen, out);
+                }
+                collect_expr_struct(&arm.value, seen, out);
+            }
+        }
+        ValueExpr::StringLiteral(_)
+        | ValueExpr::IntLiteral(_)
+        | ValueExpr::FloatLiteral(_)
+        | ValueExpr::CharLiteral(_)
+        | ValueExpr::BoolLiteral(_)
+        | ValueExpr::VoidLiteral
+        | ValueExpr::Variable(_)
+        | ValueExpr::FieldAccess { .. } => {}
+    }
+}
+
 fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<ValueType>)> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -810,6 +1097,7 @@ fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<ValueType>)> {
                     collect_expr_enum(result_expr, &mut seen, &mut out);
                 }
                 Statement::Assign { value, .. }
+                | Statement::AssignField { value, .. }
                 | Statement::Println(value)
                 | Statement::Eprintln(value)
                 | Statement::Panic(value)
@@ -820,8 +1108,8 @@ fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<ValueType>)> {
             }
         }
     }
-    if uses_array_string(program) {
-        push_enum_instance(&mut seen, &mut out, "Option", &[ValueType::String]);
+    for element_type in collect_array_element_types(program) {
+        push_enum_instance(&mut seen, &mut out, "Option", &[element_type]);
     }
     out
 }
@@ -869,7 +1157,10 @@ fn collect_expr_enum(
                 seen,
                 out,
                 "Result",
-                &[ValueType::String, ValueType::Struct("FsError".to_string())],
+                &[
+                    ValueType::String,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
             );
             collect_expr_enum(path, seen, out);
         }
@@ -878,7 +1169,10 @@ fn collect_expr_enum(
                 seen,
                 out,
                 "Result",
-                &[ValueType::Void, ValueType::Struct("FsError".to_string())],
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
             );
             collect_expr_enum(path, seen, out);
             collect_expr_enum(content, seen, out);
@@ -987,25 +1281,50 @@ fn uses_env_args(program: &Program) -> bool {
     })
 }
 
-fn uses_array_string(program: &Program) -> bool {
-    program.functions.iter().any(|function| {
-        collect_type_uses_array_string(&function.return_type)
-            || function
-                .params
-                .iter()
-                .any(|param| collect_type_uses_array_string(&param.value_type))
-            || function
-                .body
-                .iter()
-                .any(|statement| statement_uses_array_string(statement))
-    })
+fn collect_array_element_types(program: &Program) -> Vec<ValueType> {
+    let mut seen = BTreeSet::new();
+    let mut out = Vec::new();
+    for function in &program.functions {
+        collect_type_array_elements(&function.return_type, &mut seen, &mut out);
+        for param in &function.params {
+            collect_type_array_elements(&param.value_type, &mut seen, &mut out);
+        }
+        for statement in &function.body {
+            collect_statement_array_elements(statement, &mut seen, &mut out);
+        }
+    }
+    out
 }
 
-fn collect_type_uses_array_string(value_type: &ValueType) -> bool {
+fn collect_type_array_elements(
+    value_type: &ValueType,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<ValueType>,
+) {
     match value_type {
-        ValueType::Array(element) => element.as_ref() == &ValueType::String,
-        ValueType::Enum(_, args) => args.iter().any(collect_type_uses_array_string),
-        _ => false,
+        ValueType::Array(element) => {
+            push_array_element_type(seen, out, element);
+            collect_type_array_elements(element, seen, out);
+        }
+        ValueType::Enum(_, args) => {
+            for arg in args {
+                collect_type_array_elements(arg, seen, out);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn push_array_element_type(
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<ValueType>,
+    element_type: &ValueType,
+) {
+    if is_supported_array_element(element_type) {
+        let key = c_type_name_part(element_type);
+        if seen.insert(key) {
+            out.push(element_type.clone());
+        }
     }
 }
 
@@ -1014,6 +1333,7 @@ fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
         Statement::Let { initializer, .. } => expr_uses_fs_read_to_string(initializer),
         Statement::TryLet { result_expr, .. } => expr_uses_fs_read_to_string(result_expr),
         Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
         | Statement::Println(value)
         | Statement::Eprintln(value)
         | Statement::Panic(value)
@@ -1027,6 +1347,7 @@ fn statement_uses_fs_write_string(statement: &Statement) -> bool {
         Statement::Let { initializer, .. } => expr_uses_fs_write_string(initializer),
         Statement::TryLet { result_expr, .. } => expr_uses_fs_write_string(result_expr),
         Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
         | Statement::Println(value)
         | Statement::Eprintln(value)
         | Statement::Panic(value)
@@ -1040,6 +1361,7 @@ fn statement_uses_env_get(statement: &Statement) -> bool {
         Statement::Let { initializer, .. } => expr_uses_env_get(initializer),
         Statement::TryLet { result_expr, .. } => expr_uses_env_get(result_expr),
         Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
         | Statement::Println(value)
         | Statement::Eprintln(value)
         | Statement::Panic(value)
@@ -1053,6 +1375,7 @@ fn statement_uses_env_args(statement: &Statement) -> bool {
         Statement::Let { initializer, .. } => expr_uses_env_args(initializer),
         Statement::TryLet { result_expr, .. } => expr_uses_env_args(result_expr),
         Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
         | Statement::Println(value)
         | Statement::Eprintln(value)
         | Statement::Panic(value)
@@ -1061,13 +1384,20 @@ fn statement_uses_env_args(statement: &Statement) -> bool {
     }
 }
 
-fn statement_uses_array_string(statement: &Statement) -> bool {
+fn collect_statement_array_elements(
+    statement: &Statement,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<ValueType>,
+) {
     match statement {
         Statement::Let {
             value_type,
             initializer,
             ..
-        } => collect_type_uses_array_string(value_type) || expr_uses_array_string(initializer),
+        } => {
+            collect_type_array_elements(value_type, seen, out);
+            collect_expr_array_elements(initializer, seen, out);
+        }
         Statement::TryLet {
             value_type,
             result_type,
@@ -1075,17 +1405,18 @@ fn statement_uses_array_string(statement: &Statement) -> bool {
             result_expr,
             ..
         } => {
-            collect_type_uses_array_string(value_type)
-                || collect_type_uses_array_string(result_type)
-                || collect_type_uses_array_string(return_type)
-                || expr_uses_array_string(result_expr)
+            collect_type_array_elements(value_type, seen, out);
+            collect_type_array_elements(result_type, seen, out);
+            collect_type_array_elements(return_type, seen, out);
+            collect_expr_array_elements(result_expr, seen, out);
         }
         Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
         | Statement::Println(value)
         | Statement::Eprintln(value)
         | Statement::Panic(value)
-        | Statement::Return(Some(value)) => expr_uses_array_string(value),
-        Statement::Return(None) => false,
+        | Statement::Return(Some(value)) => collect_expr_array_elements(value, seen, out),
+        Statement::Return(None) => {}
     }
 }
 
@@ -1309,47 +1640,67 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
     }
 }
 
-fn expr_uses_array_string(expr: &ValueExpr) -> bool {
+fn collect_expr_array_elements(
+    expr: &ValueExpr,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<ValueType>,
+) {
     match expr {
-        ValueExpr::EnvArgs => true,
+        ValueExpr::EnvArgs => push_array_element_type(seen, out, &ValueType::String),
         ValueExpr::ArrayNew { element_type }
         | ValueExpr::ArrayGet { element_type, .. }
         | ValueExpr::ArrayPush { element_type, .. }
-        | ValueExpr::ArraySet { element_type, .. } => element_type == &ValueType::String,
-        ValueExpr::ArrayLen { array } => expr_uses_array_string(array),
+        | ValueExpr::ArraySet { element_type, .. } => {
+            push_array_element_type(seen, out, element_type);
+        }
+        ValueExpr::ArrayLen { array } => collect_expr_array_elements(array, seen, out),
         ValueExpr::Binary { left, right, .. } | ValueExpr::StringConcat { left, right } => {
-            expr_uses_array_string(left) || expr_uses_array_string(right)
+            collect_expr_array_elements(left, seen, out);
+            collect_expr_array_elements(right, seen, out);
         }
         ValueExpr::FsReadToString { path } | ValueExpr::EnvGet { name: path } => {
-            expr_uses_array_string(path)
+            collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FsWriteString { path, content } => {
-            expr_uses_array_string(path) || expr_uses_array_string(content)
+            collect_expr_array_elements(path, seen, out);
+            collect_expr_array_elements(content, seen, out);
         }
-        ValueExpr::Call { args, .. } => args.iter().any(expr_uses_array_string),
+        ValueExpr::Call { args, .. } => {
+            for arg in args {
+                collect_expr_array_elements(arg, seen, out);
+            }
+        }
         ValueExpr::StringLen { value }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
-        | ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_array_string(value),
-        ValueExpr::StructLiteral { fields, .. } => fields
-            .iter()
-            .any(|(_, value)| expr_uses_array_string(value)),
+        | ValueExpr::EnumPayloadFieldAccess { value, .. } => {
+            collect_expr_array_elements(value, seen, out);
+        }
+        ValueExpr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                collect_expr_array_elements(value, seen, out);
+            }
+        }
         ValueExpr::EnumVariant { payload, .. } => {
-            payload.as_deref().is_some_and(expr_uses_array_string)
+            if let Some(payload) = payload {
+                collect_expr_array_elements(payload, seen, out);
+            }
         }
         ValueExpr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            expr_uses_array_string(condition)
-                || expr_uses_array_string(then_branch)
-                || expr_uses_array_string(else_branch)
+            collect_expr_array_elements(condition, seen, out);
+            collect_expr_array_elements(then_branch, seen, out);
+            collect_expr_array_elements(else_branch, seen, out);
         }
-        ValueExpr::Panic { message, .. } => expr_uses_array_string(message),
+        ValueExpr::Panic { message, .. } => collect_expr_array_elements(message, seen, out),
         ValueExpr::Match { value, arms } => {
-            expr_uses_array_string(value)
-                || arms.iter().any(|arm| expr_uses_array_string(&arm.value))
+            collect_expr_array_elements(value, seen, out);
+            for arm in arms {
+                collect_expr_array_elements(&arm.value, seen, out);
+            }
         }
         ValueExpr::StringLiteral(_)
         | ValueExpr::IntLiteral(_)
@@ -1358,11 +1709,23 @@ fn expr_uses_array_string(expr: &ValueExpr) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
-        | ValueExpr::FieldAccess { .. } => false,
+        | ValueExpr::FieldAccess { .. } => {}
     }
 }
 
 fn push_enum_instance(
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+    name: &str,
+    args: &[ValueType],
+) {
+    let key = format!("{name}{}", c_type_suffix(args));
+    if seen.insert(key) {
+        out.push((name.to_string(), args.to_vec()));
+    }
+}
+
+fn push_struct_instance(
     seen: &mut BTreeSet<String>,
     out: &mut Vec<(String, Vec<ValueType>)>,
     name: &str,
@@ -1382,6 +1745,13 @@ fn subst_type(value_type: &ValueType, type_params: &[String], args: &[ValueType]
             .and_then(|index| args.get(index).cloned())
             .unwrap_or_else(|| value_type.clone()),
         ValueType::Enum(name, nested_args) => ValueType::Enum(
+            name.clone(),
+            nested_args
+                .iter()
+                .map(|arg| subst_type(arg, type_params, args))
+                .collect(),
+        ),
+        ValueType::Struct(name, nested_args) => ValueType::Struct(
             name.clone(),
             nested_args
                 .iter()
@@ -1417,11 +1787,9 @@ fn c_type(value_type: &ValueType) -> String {
         ValueType::Float => "double".to_string(),
         ValueType::Char => "unsigned int".to_string(),
         ValueType::Bool => "int".to_string(),
-        ValueType::Array(element) if element.as_ref() == &ValueType::String => {
-            "nomo_array_string".to_string()
-        }
+        ValueType::Array(element) if is_supported_array_element(element) => c_array_ident(element),
         ValueType::Array(element) => format!("/*unsupported Array<{}>*/ void", element.name()),
-        ValueType::Struct(name) => c_struct_ident(name),
+        ValueType::Struct(name, args) => c_struct_ident(name, args),
         ValueType::Enum(name, args) => c_enum_ident(name, args),
         ValueType::TypeParam(name) => format!("/*unsubstituted {name}*/ void"),
         ValueType::Void => "void".to_string(),
@@ -1445,11 +1813,11 @@ fn c_zero_value(value_type: &ValueType) -> String {
         ValueType::Float => "0.0".to_string(),
         ValueType::Char => "0".to_string(),
         ValueType::Bool => "0".to_string(),
-        ValueType::Array(element) if element.as_ref() == &ValueType::String => {
-            "nomo_array_string_new()".to_string()
+        ValueType::Array(element) if is_supported_array_element(element) => {
+            format!("{}_new()", c_array_ident(element))
         }
         ValueType::Array(_) => "0".to_string(),
-        ValueType::Struct(name) => format!("({}){{0}}", c_struct_ident(name)),
+        ValueType::Struct(name, args) => format!("({}){{0}}", c_struct_ident(name, args)),
         ValueType::Enum(name, args) => format!("({}){{0}}", c_enum_ident(name, args)),
         ValueType::TypeParam(_) => "0".to_string(),
         ValueType::Void | ValueType::Never => "(void)0".to_string(),
@@ -1475,7 +1843,7 @@ fn c_type_name_part(value_type: &ValueType) -> String {
         ValueType::Char => "char".to_string(),
         ValueType::Bool => "bool".to_string(),
         ValueType::Array(element) => format!("array_{}", c_type_name_part(element)),
-        ValueType::Struct(name) => format!("struct_{name}"),
+        ValueType::Struct(name, args) => format!("struct_{}{}", name, c_type_suffix(args)),
         ValueType::Enum(name, args) => format!("enum_{}{}", name, c_type_suffix(args)),
         ValueType::TypeParam(name) => format!("param_{name}"),
         ValueType::Void => "void".to_string(),
@@ -1491,8 +1859,12 @@ fn c_fn_ident(name: &str) -> String {
     format!("nomo_fn_{name}")
 }
 
-fn c_struct_ident(name: &str) -> String {
-    format!("nomo_struct_{name}")
+fn c_struct_ident(name: &str, args: &[ValueType]) -> String {
+    format!("nomo_struct_{}{}", name, c_type_suffix(args))
+}
+
+fn c_array_ident(element_type: &ValueType) -> String {
+    format!("nomo_array_{}", c_type_name_part(element_type))
 }
 
 fn c_enum_ident(name: &str, args: &[ValueType]) -> String {
@@ -1520,6 +1892,20 @@ fn escape_c_string(value: &str) -> String {
         }
     }
     escaped
+}
+
+fn is_supported_array_element(value_type: &ValueType) -> bool {
+    matches!(
+        value_type,
+        ValueType::String
+            | ValueType::Int
+            | ValueType::I32
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::Float
+            | ValueType::Char
+            | ValueType::Bool
+    )
 }
 
 #[cfg(test)]
@@ -1811,7 +2197,7 @@ mod tests {
 
     #[test]
     fn emits_fs_read_and_write_helpers() {
-        let fs_error = ValueType::Struct("FsError".to_string());
+        let fs_error = ValueType::Struct("FsError".to_string(), Vec::new());
         let result_string_error = ValueType::Enum(
             "Result".to_string(),
             vec![ValueType::String, fs_error.clone()],
@@ -1823,6 +2209,7 @@ mod tests {
             imports: vec!["std.fs".to_string()],
             structs: vec![StructType {
                 name: "FsError".to_string(),
+                type_params: Vec::new(),
                 fields: vec![StructField {
                     name: "message".to_string(),
                     value_type: ValueType::String,
@@ -2030,6 +2417,134 @@ mod tests {
     }
 
     #[test]
+    fn emits_i32_array_helpers() {
+        let array_i32 = ValueType::Array(Box::new(ValueType::I32));
+        let option_i32 = ValueType::Enum("Option".to_string(), vec![ValueType::I32]);
+        let program = Program {
+            package: "app.main".to_string(),
+            imports: vec!["std.array".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Some".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "items".to_string(),
+                        value_type: array_i32.clone(),
+                        initializer: ValueExpr::ArrayNew {
+                            element_type: ValueType::I32,
+                        },
+                    },
+                    Statement::Assign {
+                        name: "items".to_string(),
+                        value: ValueExpr::ArrayPush {
+                            array: "items".to_string(),
+                            value: Box::new(ValueExpr::IntLiteral(7)),
+                            element_type: ValueType::I32,
+                        },
+                    },
+                    Statement::Let {
+                        name: "first".to_string(),
+                        value_type: option_i32,
+                        initializer: ValueExpr::ArrayGet {
+                            array: Box::new(ValueExpr::Variable("items".to_string())),
+                            index: Box::new(ValueExpr::IntLiteral(0)),
+                            element_type: ValueType::I32,
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_array_i32"));
+        assert!(c.contains("int32_t *data;"));
+        assert!(c.contains("nomo_array_i32 nomo_items = nomo_array_i32_new();"));
+        assert!(c.contains("nomo_items = nomo_array_i32_push(nomo_items, 7);"));
+        assert!(c.contains("nomo_array_i32_get(nomo_items, 0)"));
+    }
+
+    #[test]
+    fn emits_array_helpers_for_all_v0_1_primitive_elements() {
+        let elements = vec![
+            ValueType::String,
+            ValueType::Int,
+            ValueType::I32,
+            ValueType::U32,
+            ValueType::U64,
+            ValueType::Float,
+            ValueType::Char,
+            ValueType::Bool,
+        ];
+        let program = Program {
+            package: "app.main".to_string(),
+            imports: vec!["std.array".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Some".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: elements
+                    .iter()
+                    .map(|element_type| Statement::Let {
+                        name: format!("items_{}", c_type_name_part(element_type)),
+                        value_type: ValueType::Array(Box::new(element_type.clone())),
+                        initializer: ValueExpr::ArrayNew {
+                            element_type: element_type.clone(),
+                        },
+                    })
+                    .collect(),
+            }],
+        };
+
+        let c = emit_c(&program);
+        for (element_type, c_data_type) in [
+            (ValueType::String, "const char *"),
+            (ValueType::Int, "long long"),
+            (ValueType::I32, "int32_t"),
+            (ValueType::U32, "uint32_t"),
+            (ValueType::U64, "uint64_t"),
+            (ValueType::Float, "double"),
+            (ValueType::Char, "unsigned int"),
+            (ValueType::Bool, "int"),
+        ] {
+            let array = c_array_ident(&element_type);
+            assert!(c.contains(&format!("typedef struct {array}")));
+            assert!(c.contains(&format!("{c_data_type} *data;")));
+            assert!(c.contains(&format!("static {array} {array}_new(void)")));
+        }
+    }
+
+    #[test]
     fn emits_if_expression_and_comparison() {
         let program = Program {
             package: "app.main".to_string(),
@@ -2147,12 +2662,61 @@ mod tests {
     }
 
     #[test]
+    fn emits_field_assignment() {
+        let program = Program {
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: vec![StructType {
+                name: "Counter".to_string(),
+                type_params: Vec::new(),
+                fields: vec![StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::Int,
+                }],
+            }],
+            enums: Vec::new(),
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "counter".to_string(),
+                        value_type: ValueType::Struct("Counter".to_string(), Vec::new()),
+                        initializer: ValueExpr::StructLiteral {
+                            type_name: "Counter".to_string(),
+                            struct_args: Vec::new(),
+                            fields: vec![("value".to_string(), ValueExpr::IntLiteral(1))],
+                        },
+                    },
+                    Statement::AssignField {
+                        base: "counter".to_string(),
+                        field: "value".to_string(),
+                        value: ValueExpr::Binary {
+                            left: Box::new(ValueExpr::FieldAccess {
+                                base: "counter".to_string(),
+                                field: "value".to_string(),
+                            }),
+                            op: BinaryOp::Add,
+                            right: Box::new(ValueExpr::IntLiteral(1)),
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("nomo_counter.value = (nomo_counter.value + 1);"));
+    }
+
+    #[test]
     fn emits_struct_type_literal_and_field_access() {
         let program = Program {
             package: "app.main".to_string(),
             imports: vec!["std.io".to_string()],
             structs: vec![StructType {
                 name: "Point".to_string(),
+                type_params: Vec::new(),
                 fields: vec![
                     StructField {
                         name: "x".to_string(),
@@ -2172,9 +2736,10 @@ mod tests {
                 body: vec![
                     Statement::Let {
                         name: "point".to_string(),
-                        value_type: ValueType::Struct("Point".to_string()),
+                        value_type: ValueType::Struct("Point".to_string(), Vec::new()),
                         initializer: ValueExpr::StructLiteral {
                             type_name: "Point".to_string(),
+                            struct_args: Vec::new(),
                             fields: vec![
                                 ("x".to_string(), ValueExpr::IntLiteral(1)),
                                 ("y".to_string(), ValueExpr::IntLiteral(2)),
@@ -2197,6 +2762,42 @@ mod tests {
         assert!(c.contains("typedef struct nomo_struct_Point"));
         assert!(c.contains("nomo_struct_Point nomo_point = (nomo_struct_Point){.x = 1, .y = 2};"));
         assert!(c.contains("long long nomo_x = nomo_point.x;"));
+    }
+
+    #[test]
+    fn emits_generic_struct_instance() {
+        let program = Program {
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: vec![StructType {
+                name: "Box".to_string(),
+                type_params: vec!["T".to_string()],
+                fields: vec![StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::TypeParam("T".to_string()),
+                }],
+            }],
+            enums: Vec::new(),
+            functions: vec![Function {
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Let {
+                    name: "item".to_string(),
+                    value_type: ValueType::Struct("Box".to_string(), vec![ValueType::I32]),
+                    initializer: ValueExpr::StructLiteral {
+                        type_name: "Box".to_string(),
+                        struct_args: vec![ValueType::I32],
+                        fields: vec![("value".to_string(), ValueExpr::IntLiteral(7))],
+                    },
+                }],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_Box_i32"));
+        assert!(c.contains("int32_t value;"));
+        assert!(c.contains("nomo_struct_Box_i32 nomo_item = (nomo_struct_Box_i32){.value = 7};"));
     }
 
     #[test]

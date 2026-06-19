@@ -1,0 +1,24 @@
+package app.main
+
+import std.io
+
+struct User {
+    email: string
+}
+
+enum MaybeUser {
+    Some(User)
+    None
+}
+
+fn label(value: MaybeUser) -> string {
+    return match value {
+        MaybeUser.Some(user) => user.email
+        MaybeUser.None => "missing"
+    }
+}
+
+fn main() -> void {
+    let value: MaybeUser = MaybeUser.Some(User { email: "a@nomo.dev" })
+    io.println(label(value))
+}

@@ -137,7 +137,15 @@ impl Parser<'_> {
         self.advance();
         let mut params = Vec::new();
         loop {
-            params.push(self.expect_ident("expected generic type parameter name")?);
+            let name = self.expect_ident("expected generic type parameter name")?;
+            if params.iter().any(|param| param == &name) {
+                return Err(self.error(
+                    "N0237",
+                    format!("generic type parameter `{name}` is already defined"),
+                    self.peek().length(),
+                ));
+            }
+            params.push(name);
             match self.peek().kind {
                 TokenKind::Comma => {
                     self.advance();
@@ -161,6 +169,7 @@ impl Parser<'_> {
     fn parse_struct(&mut self, public: bool) -> Result<StructDef, Diagnostic> {
         self.expect_kind(TokenKind::Struct, "N0218", "expected `struct`")?;
         let name = self.expect_ident("expected struct name")?;
+        let type_params = self.parse_type_params()?;
         self.expect_kind(
             TokenKind::LBrace,
             "N0219",
@@ -198,6 +207,7 @@ impl Parser<'_> {
         Ok(StructDef {
             public,
             name,
+            type_params,
             fields,
         })
     }
@@ -205,6 +215,7 @@ impl Parser<'_> {
     fn parse_function(&mut self, public: bool) -> Result<Function, Diagnostic> {
         self.expect_kind(TokenKind::Fn, "N0202", "expected `fn`")?;
         let name = self.expect_ident("expected function name")?;
+        let type_params = self.parse_type_params()?;
         self.expect_kind(
             TokenKind::LParen,
             "N0203",
@@ -246,6 +257,7 @@ impl Parser<'_> {
         Ok(Function {
             public,
             name,
+            type_params,
             params,
             return_type,
             body,
@@ -374,7 +386,9 @@ impl Parser<'_> {
             return self.parse_return_stmt(token);
         }
         if matches!(token.kind, TokenKind::Ident(_))
-            && matches!(self.peek_n(1).kind, TokenKind::Equal)
+            && (matches!(self.peek_n(1).kind, TokenKind::Equal)
+                || (matches!(self.peek_n(1).kind, TokenKind::Dot)
+                    && matches!(self.peek_n(3).kind, TokenKind::Equal)))
         {
             return self.parse_assign_stmt(token);
         }
@@ -390,11 +404,18 @@ impl Parser<'_> {
     }
 
     fn parse_assign_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        let name = self.expect_ident("expected assignment target")?;
+        let target = self.parse_path()?;
+        if target.len() > 2 {
+            return Err(self.error(
+                "N0217",
+                "assignment target must be a variable or field",
+                token.length(),
+            ));
+        }
         self.expect_kind(TokenKind::Equal, "N0217", "expected `=` in assignment")?;
         let value = self.parse_expr()?;
         Ok(Stmt::Assign {
-            name,
+            target,
             value,
             span: Span {
                 line: token.line,
@@ -681,9 +702,7 @@ impl Parser<'_> {
         if self.allow_struct_literals && matches!(self.peek().kind, TokenKind::LBrace) {
             return self.parse_struct_literal(path);
         }
-        let type_args = if path == ["Array".to_string(), "new".to_string()]
-            && matches!(self.peek().kind, TokenKind::Less)
-        {
+        let type_args = if self.next_tokens_are_call_type_args() {
             self.parse_type_args()?
         } else {
             Vec::new()
@@ -701,10 +720,10 @@ impl Parser<'_> {
         self.advance();
         let mut args = Vec::new();
         if !matches!(self.peek().kind, TokenKind::RParen) {
-            args.push(self.parse_expr()?);
+            args.push(self.parse_call_arg()?);
             while matches!(self.peek().kind, TokenKind::Comma) {
                 self.advance();
-                args.push(self.parse_expr()?);
+                args.push(self.parse_call_arg()?);
             }
         }
         self.expect_kind(
@@ -717,6 +736,45 @@ impl Parser<'_> {
             type_args,
             args,
         })
+    }
+
+    fn parse_call_arg(&mut self) -> Result<Expr, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::Mut) {
+            self.advance();
+            return Ok(Expr::MutArg {
+                name: self.parse_path()?,
+            });
+        }
+        self.parse_expr()
+    }
+
+    fn next_tokens_are_call_type_args(&self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Less) {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut index = self.index;
+        while let Some(token) = self.tokens.get(index) {
+            match token.kind {
+                TokenKind::Less => depth += 1,
+                TokenKind::Greater => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                    if depth == 0 {
+                        return self
+                            .tokens
+                            .get(index + 1)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::LParen));
+                    }
+                }
+                TokenKind::Newline | TokenKind::Eof => return false,
+                _ => {}
+            }
+            index += 1;
+        }
+        false
     }
 
     fn parse_struct_literal(&mut self, type_name: Vec<String>) -> Result<Expr, Diagnostic> {
@@ -969,6 +1027,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_mut_call_argument() {
+        let source = "package app.main\n\nfn touch(mut count: i64) -> i64 {\n    return count\n}\n\nfn main() -> void {\n    let mut count: i64 = 1\n    let value: i64 = touch(mut count)\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(ast.functions[0].params[0].mutable);
+        assert!(matches!(
+            ast.functions[1].body[1],
+            Stmt::Let {
+                value:
+                    Expr::Call {
+                        ref args,
+                        ..
+                    },
+                ..
+            } if args == &[Expr::MutArg {
+                name: vec!["count".to_string()]
+            }]
+        ));
+    }
+
+    #[test]
     fn parses_if_expression_and_comparison() {
         let source = "package app.main\n\nfn label(score: i64) -> string {\n    return if score >= 60 {\n        \"pass\"\n    } else {\n        \"fail\"\n    }\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -1033,10 +1113,26 @@ mod tests {
         assert!(matches!(
             ast.functions[0].body[1],
             Stmt::Assign {
-                ref name,
+                ref target,
                 value: Expr::Binary { .. },
                 ..
-            } if name == "count"
+            } if target == &["count".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_field_assignment_statement() {
+        let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value = counter.value + 1\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Assign {
+                ref target,
+                value: Expr::Binary { .. },
+                ..
+            } if target == &["counter".to_string(), "value".to_string()]
         ));
     }
 
@@ -1056,6 +1152,24 @@ mod tests {
                 ..
             } if type_name == &["Point".to_string()]
         ));
+    }
+
+    #[test]
+    fn parses_generic_struct_definition() {
+        let source = "package app.main\n\nstruct Box<T> {\n    value: T\n}\n\nfn main() -> void {\n    let item: Box<i32> = Box { value: 7 }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.structs[0].name, "Box");
+        assert_eq!(ast.structs[0].type_params, ["T"]);
+        let type_annotation = match &ast.functions[0].body[0] {
+            Stmt::Let {
+                type_annotation, ..
+            } => type_annotation.as_ref().expect("expected type annotation"),
+            other => panic!("unexpected statement: {other:?}"),
+        };
+        assert_eq!(type_annotation.path, ["Box"]);
+        assert_eq!(type_annotation.args[0].path, ["i32"]);
     }
 
     #[test]
@@ -1217,6 +1331,45 @@ mod tests {
                 && type_args.len() == 1
                 && type_args[0].path == ["string"]
                 && args.is_empty()
+        ));
+    }
+
+    #[test]
+    fn parses_generic_function_call() {
+        let source = "package app.main\n\nfn identity<T>(value: T) -> T {\n    return value\n}\n\nfn main() -> void {\n    let value: i32 = identity<i32>(7)\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.functions[0].type_params, ["T"]);
+        assert!(matches!(
+            ast.functions[1].body[0],
+            Stmt::Let {
+                value:
+                    Expr::Call {
+                        ref callee,
+                        ref type_args,
+                        ..
+                    },
+                ..
+            } if callee == &["identity".to_string()] && type_args[0].path == ["i32"]
+        ));
+    }
+
+    #[test]
+    fn keeps_less_than_as_comparison_after_name() {
+        let source = "package app.main\n\nfn main() -> void {\n    let left: i32 = 1\n    let right: i32 = 2\n    let ok: bool = left < right\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[2],
+            Stmt::Let {
+                value: Expr::Binary {
+                    op: BinaryOp::Less,
+                    ..
+                },
+                ..
+            }
         ));
     }
 }

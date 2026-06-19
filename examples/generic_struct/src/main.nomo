@@ -1,0 +1,17 @@
+package app.main
+
+import std.io
+
+struct Box<T> {
+    value: T
+}
+
+fn main() -> void {
+    let item: Box<i32> = Box { value: 7 }
+    let message: string = if item.value == 7 {
+        "generic struct ok"
+    } else {
+        "wrong"
+    }
+    io.println(message)
+}

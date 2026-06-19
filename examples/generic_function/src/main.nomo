@@ -1,0 +1,18 @@
+package app.main
+
+import std.io
+
+fn identity<T>(value: T) -> T {
+    return value
+}
+
+fn main() -> void {
+    let number: i32 = identity<i32>(7)
+    let label: string = identity<string>("generic function ok")
+    let message: string = if number == 7 {
+        label
+    } else {
+        "wrong"
+    }
+    io.println(message)
+}

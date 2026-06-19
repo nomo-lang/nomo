@@ -1,0 +1,7 @@
+package app.main
+
+import std.io.println
+
+fn main() -> void {
+    println("specific import ok")
+}

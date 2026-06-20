@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, EnumDef, EnumVariant, Expr, Field, Function, ImplBlock, MatchArm, Param, SourceFile,
-    Span, Stmt, StructDef, TypeRef,
+    BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, Field, ForVariant, Function, ImplBlock,
+    MatchArm, MatchStmtArm, Param, SourceFile, Span, Stmt, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -39,13 +39,14 @@ impl Parser<'_> {
                 break;
             }
             self.advance();
-            imports.push(self.parse_path()?);
+            imports.push(self.parse_import_path()?);
             self.expect_newline("expected newline after import declaration")?;
         }
 
         let mut structs = Vec::new();
         let mut enums = Vec::new();
         let mut impls = Vec::new();
+        let mut consts = Vec::new();
         let mut functions = Vec::new();
         loop {
             self.skip_newlines();
@@ -54,12 +55,13 @@ impl Parser<'_> {
                 TokenKind::Struct => structs.push(self.parse_struct(public)?),
                 TokenKind::Enum => enums.push(self.parse_enum(public)?),
                 TokenKind::Impl if !public => impls.push(self.parse_impl()?),
+                TokenKind::Const => consts.push(self.parse_const(public)?),
                 TokenKind::Fn => functions.push(self.parse_function(public)?),
                 TokenKind::Eof if !public => break,
                 _ => {
                     return Err(self.error(
                         "N0201",
-                        "expected struct, enum, impl, function declaration, or end of file",
+                        "expected struct, enum, impl, const, function declaration, or end of file",
                         self.peek().length(),
                     ));
                 }
@@ -72,6 +74,7 @@ impl Parser<'_> {
             structs,
             enums,
             impls,
+            consts,
             functions,
         })
     }
@@ -213,6 +216,7 @@ impl Parser<'_> {
     }
 
     fn parse_function(&mut self, public: bool) -> Result<Function, Diagnostic> {
+        let function_token = self.peek().clone();
         self.expect_kind(TokenKind::Fn, "N0202", "expected `fn`")?;
         let name = self.expect_ident("expected function name")?;
         let type_params = self.parse_type_params()?;
@@ -222,12 +226,15 @@ impl Parser<'_> {
             "expected `(` after function name",
         )?;
         let params = self.parse_params()?;
-        self.expect_kind(
-            TokenKind::Arrow,
-            "N0205",
-            "expected `->` before return type",
-        )?;
-        let return_type = self.parse_type_ref()?;
+        let return_type = if matches!(self.peek().kind, TokenKind::Arrow) {
+            self.advance();
+            self.parse_type_ref()?
+        } else {
+            TypeRef {
+                path: vec!["void".to_string()],
+                args: Vec::new(),
+            }
+        };
         self.expect_kind(
             TokenKind::LBrace,
             "N0206",
@@ -261,6 +268,7 @@ impl Parser<'_> {
             params,
             return_type,
             body,
+            span: token_span(&function_token),
         })
     }
 
@@ -382,8 +390,42 @@ impl Parser<'_> {
         if matches!(token.kind, TokenKind::Let) {
             return self.parse_let_stmt(token);
         }
+        if matches!(token.kind, TokenKind::If) && matches!(self.peek_n(1).kind, TokenKind::Let) {
+            return self.parse_if_let_stmt(token);
+        }
         if matches!(token.kind, TokenKind::Return) {
             return self.parse_return_stmt(token);
+        }
+        if matches!(token.kind, TokenKind::For) {
+            return self.parse_for_stmt(token);
+        }
+        if matches!(token.kind, TokenKind::Match) {
+            return self.parse_match_stmt(token);
+        }
+        if matches!(token.kind, TokenKind::Break) {
+            self.advance();
+            return Ok(Stmt::Break {
+                span: Span {
+                    line: token.line,
+                    column: token.column,
+                    length: token.length(),
+                    text: token.text,
+                },
+            });
+        }
+        if matches!(token.kind, TokenKind::Continue) {
+            self.advance();
+            return Ok(Stmt::Continue {
+                span: Span {
+                    line: token.line,
+                    column: token.column,
+                    length: token.length(),
+                    text: token.text,
+                },
+            });
+        }
+        if matches!(token.kind, TokenKind::Defer) {
+            return self.parse_defer_stmt(token);
         }
         if matches!(token.kind, TokenKind::Ident(_))
             && (matches!(self.peek_n(1).kind, TokenKind::Equal)
@@ -452,7 +494,53 @@ impl Parser<'_> {
         } else {
             false
         };
-        let name = self.expect_ident("expected variable name after `let`")?;
+        let name_token = self.peek().clone();
+        let path = self.parse_path()?;
+        if !mutable && matches!(self.peek().kind, TokenKind::LParen) {
+            let binding = self.parse_match_binding()?.ok_or_else(|| {
+                Diagnostic::new(
+                    "N0234",
+                    "expected binding name in let-else pattern",
+                    self.path,
+                    name_token.line,
+                    name_token.column,
+                    name_token.length(),
+                    &name_token.text,
+                )
+            })?;
+            self.expect_kind(TokenKind::Equal, "N0213", "expected `=` before initializer")?;
+            let value = self.parse_expr()?;
+            self.expect_kind(
+                TokenKind::Else,
+                "N0267",
+                "expected `else` after let-else initializer",
+            )?;
+            let else_body = self.parse_stmt_block("N0268", "expected `{` before let-else body")?;
+            return Ok(Stmt::LetElse {
+                pattern: path,
+                binding,
+                value,
+                else_body,
+                span: Span {
+                    line: token.line,
+                    column: token.column,
+                    length: token.length(),
+                    text: token.text,
+                },
+            });
+        }
+        let [name] = path.as_slice() else {
+            return Err(Diagnostic::new(
+                "N0212",
+                "expected variable name after `let`",
+                self.path,
+                name_token.line,
+                name_token.column,
+                name_token.length(),
+                &name_token.text,
+            ));
+        };
+        let name = name.clone();
         let type_annotation = if matches!(self.peek().kind, TokenKind::Colon) {
             self.advance();
             Some(self.parse_type_ref()?)
@@ -465,6 +553,206 @@ impl Parser<'_> {
             name,
             mutable,
             type_annotation,
+            value,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_if_let_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        self.expect_kind(TokenKind::If, "N0269", "expected `if`")?;
+        self.expect_kind(TokenKind::Let, "N0270", "expected `let` after `if`")?;
+        let pattern = self.parse_match_pattern()?;
+        let binding = self.parse_match_binding()?;
+        self.expect_kind(
+            TokenKind::Equal,
+            "N0271",
+            "expected `=` before if-let value",
+        )?;
+        let value = self.parse_expr_no_struct_literals()?;
+        let body = self.parse_stmt_block("N0272", "expected `{` before if-let body")?;
+        let else_body = if matches!(self.peek().kind, TokenKind::Else) {
+            self.advance();
+            Some(self.parse_stmt_block("N0273", "expected `{` before if-let else body")?)
+        } else {
+            None
+        };
+        Ok(Stmt::IfLet {
+            pattern,
+            binding,
+            value,
+            body,
+            else_body,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_for_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        self.expect_kind(TokenKind::For, "N0260", "expected `for`")?;
+        let variant = if matches!(self.peek().kind, TokenKind::LBrace) {
+            // for {}
+            ForVariant::Infinite {
+                body: self.parse_stmt_block("N0261", "expected `{` before `for` body")?,
+            }
+        } else if matches!(self.peek().kind, TokenKind::Ident(_))
+            && matches!(self.peek_n(1).kind, TokenKind::In)
+        {
+            // for binding in iterable {}
+            let binding = self.expect_ident("expected binding name after `for`")?;
+            self.expect_kind(TokenKind::In, "N0262", "expected `in` after `for` binding")?;
+            let iterable = self.parse_expr_no_struct_literals()?;
+            let body = self.parse_stmt_block("N0263", "expected `{` before `for` body")?;
+            ForVariant::Iterate {
+                binding,
+                iterable,
+                body,
+            }
+        } else {
+            // for cond {}
+            let condition = self.parse_expr_no_struct_literals()?;
+            let body = self.parse_stmt_block("N0264", "expected `{` before `for` body")?;
+            ForVariant::While { condition, body }
+        };
+        Ok(Stmt::For {
+            variant,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_match_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        self.expect_kind(TokenKind::Match, "N0229", "expected `match`")?;
+        let value = self.parse_expr_no_struct_literals()?;
+        self.expect_kind(TokenKind::LBrace, "N0230", "expected `{` before match arms")?;
+        self.expect_newline("expected newline after `{`")?;
+
+        let mut arms = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::RBrace => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::Eof => {
+                    return Err(self.error("N0231", "unterminated match body; expected `}`", 1));
+                }
+                _ => {
+                    let pattern = self.parse_match_pattern()?;
+                    let binding = self.parse_match_binding()?;
+                    self.expect_kind(
+                        TokenKind::FatArrow,
+                        "N0232",
+                        "expected `=>` after match pattern",
+                    )?;
+                    self.skip_newlines();
+                    let body =
+                        self.parse_stmt_block("N0235", "expected `{` before match arm body")?;
+                    arms.push(MatchStmtArm {
+                        pattern,
+                        binding,
+                        body,
+                    });
+                    self.expect_newline("expected newline after match arm")?;
+                }
+            }
+        }
+
+        Ok(Stmt::Match {
+            value,
+            arms,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_expr_no_struct_literals(&mut self) -> Result<Expr, Diagnostic> {
+        let previous = self.allow_struct_literals;
+        self.allow_struct_literals = false;
+        let expr = self.parse_expr();
+        self.allow_struct_literals = previous;
+        expr
+    }
+
+    fn parse_defer_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        self.expect_kind(TokenKind::Defer, "N0265", "expected `defer`")?;
+        let stmt = self.parse_stmt()?;
+        Ok(Stmt::Defer {
+            stmt: Box::new(stmt),
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_stmt_block(
+        &mut self,
+        open_code: &'static str,
+        open_message: &'static str,
+    ) -> Result<Vec<Stmt>, Diagnostic> {
+        self.expect_kind(TokenKind::LBrace, open_code, open_message)?;
+        self.skip_newlines();
+        let mut body = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::RBrace => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::Eof => {
+                    return Err(self.error("N0266", "unterminated block; expected `}`", 1));
+                }
+                _ => {
+                    body.push(self.parse_stmt()?);
+                    self.expect_newline("expected newline after statement")?;
+                }
+            }
+        }
+        Ok(body)
+    }
+
+    fn parse_const(&mut self, public: bool) -> Result<ConstDef, Diagnostic> {
+        let token = self.peek().clone();
+        self.expect_kind(TokenKind::Const, "N0267", "expected `const`")?;
+        let name = self.expect_ident("expected constant name after `const`")?;
+        self.expect_kind(
+            TokenKind::Colon,
+            "N0268",
+            "expected `:` after constant name",
+        )?;
+        let type_ref = self.parse_type_ref()?;
+        self.expect_kind(
+            TokenKind::Equal,
+            "N0269",
+            "expected `=` before constant value",
+        )?;
+        let value = self.parse_expr()?;
+        self.consume_newline();
+        Ok(ConstDef {
+            public,
+            name,
+            type_ref,
             value,
             span: Span {
                 line: token.line,
@@ -509,6 +797,7 @@ impl Parser<'_> {
                 _ => break,
             };
             self.advance();
+            self.skip_newlines();
             let right = self.parse_additive_expr()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
@@ -523,6 +812,7 @@ impl Parser<'_> {
         let mut expr = self.parse_cast_expr()?;
         while matches!(self.peek().kind, TokenKind::Plus) {
             self.advance();
+            self.skip_newlines();
             let right = self.parse_cast_expr()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
@@ -537,6 +827,7 @@ impl Parser<'_> {
         let mut expr = self.parse_postfix_expr()?;
         while matches!(self.peek().kind, TokenKind::As) {
             self.advance();
+            self.skip_newlines();
             let target = self.parse_type_ref()?;
             expr = Expr::Cast {
                 expr: Box::new(expr),
@@ -646,7 +937,7 @@ impl Parser<'_> {
 
     fn parse_match_expr(&mut self) -> Result<Expr, Diagnostic> {
         self.expect_kind(TokenKind::Match, "N0229", "expected `match`")?;
-        let value = Expr::Name(self.parse_path()?);
+        let value = self.parse_expr_no_struct_literals()?;
         self.expect_kind(TokenKind::LBrace, "N0230", "expected `{` before match arms")?;
         self.expect_newline("expected newline after `{`")?;
 
@@ -662,25 +953,14 @@ impl Parser<'_> {
                     return Err(self.error("N0231", "unterminated match body; expected `}`", 1));
                 }
                 _ => {
-                    let pattern = self.parse_path()?;
-                    let binding = if matches!(self.peek().kind, TokenKind::LParen) {
-                        self.advance();
-                        let binding =
-                            self.expect_ident("expected binding name in match pattern")?;
-                        self.expect_kind(
-                            TokenKind::RParen,
-                            "N0234",
-                            "expected `)` after match pattern binding",
-                        )?;
-                        Some(binding)
-                    } else {
-                        None
-                    };
+                    let pattern = self.parse_match_pattern()?;
+                    let binding = self.parse_match_binding()?;
                     self.expect_kind(
                         TokenKind::FatArrow,
                         "N0232",
                         "expected `=>` after match pattern",
                     )?;
+                    self.skip_newlines();
                     let value = self.parse_expr()?;
                     arms.push(MatchArm {
                         pattern,
@@ -695,6 +975,49 @@ impl Parser<'_> {
             value: Box::new(value),
             arms,
         })
+    }
+
+    fn parse_match_binding(&mut self) -> Result<Option<String>, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::LParen) {
+            return Ok(None);
+        }
+        self.advance();
+        let binding_token = self.peek().clone();
+        let binding = self.expect_ident("expected binding name in match pattern")?;
+        if binding == "_" {
+            return Err(Diagnostic::new(
+                "N0238",
+                "`_` match bindings are not supported in v0.1",
+                self.path,
+                binding_token.line,
+                binding_token.column,
+                binding_token.length(),
+                &binding_token.text,
+            ));
+        }
+        self.expect_kind(
+            TokenKind::RParen,
+            "N0234",
+            "expected `)` after match pattern binding",
+        )?;
+        Ok(Some(binding))
+    }
+
+    fn parse_match_pattern(&mut self) -> Result<Vec<String>, Diagnostic> {
+        let pattern_token = self.peek().clone();
+        let pattern = self.parse_path()?;
+        if pattern.len() == 1 && pattern[0] == "_" {
+            return Err(Diagnostic::new(
+                "N0238",
+                "`_` match patterns are not supported in v0.1",
+                self.path,
+                pattern_token.line,
+                pattern_token.column,
+                pattern_token.length(),
+                &pattern_token.text,
+            ));
+        }
+        Ok(pattern)
     }
 
     fn parse_name_or_call(&mut self) -> Result<Expr, Diagnostic> {
@@ -719,13 +1042,20 @@ impl Parser<'_> {
         }
         self.advance();
         let mut args = Vec::new();
+        self.skip_newlines();
         if !matches!(self.peek().kind, TokenKind::RParen) {
             args.push(self.parse_call_arg()?);
-            while matches!(self.peek().kind, TokenKind::Comma) {
+            loop {
+                self.skip_newlines();
+                if !matches!(self.peek().kind, TokenKind::Comma) {
+                    break;
+                }
                 self.advance();
+                self.skip_newlines();
                 args.push(self.parse_call_arg()?);
             }
         }
+        self.skip_newlines();
         self.expect_kind(
             TokenKind::RParen,
             "N0210",
@@ -763,13 +1093,21 @@ impl Parser<'_> {
                     }
                     depth -= 1;
                     if depth == 0 {
+                        let mut next_index = index + 1;
+                        while self
+                            .tokens
+                            .get(next_index)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::Newline))
+                        {
+                            next_index += 1;
+                        }
                         return self
                             .tokens
-                            .get(index + 1)
+                            .get(next_index)
                             .is_some_and(|next| matches!(next.kind, TokenKind::LParen));
                     }
                 }
-                TokenKind::Newline | TokenKind::Eof => return false,
+                TokenKind::Eof => return false,
                 _ => {}
             }
             index += 1;
@@ -784,6 +1122,7 @@ impl Parser<'_> {
             "expected `{` before struct literal fields",
         )?;
         let mut fields = Vec::new();
+        self.skip_newlines();
         if !matches!(self.peek().kind, TokenKind::RBrace) {
             loop {
                 let field_name = self.expect_ident("expected struct literal field name")?;
@@ -794,9 +1133,14 @@ impl Parser<'_> {
                 )?;
                 let value = self.parse_expr()?;
                 fields.push((field_name, value));
+                self.skip_newlines();
                 match self.peek().kind {
                     TokenKind::Comma => {
                         self.advance();
+                        self.skip_newlines();
+                        if matches!(self.peek().kind, TokenKind::RBrace) {
+                            break;
+                        }
                     }
                     TokenKind::RBrace => break,
                     _ => {
@@ -809,6 +1153,7 @@ impl Parser<'_> {
                 }
             }
         }
+        self.skip_newlines();
         self.expect_kind(
             TokenKind::RBrace,
             "N0225",
@@ -836,11 +1181,14 @@ impl Parser<'_> {
         }
         self.advance();
         let mut args = Vec::new();
+        self.skip_newlines();
         loop {
             args.push(self.parse_type_ref()?);
+            self.skip_newlines();
             match self.peek().kind {
                 TokenKind::Comma => {
                     self.advance();
+                    self.skip_newlines();
                 }
                 TokenKind::Greater => {
                     self.advance();
@@ -860,11 +1208,40 @@ impl Parser<'_> {
 
     fn parse_path(&mut self) -> Result<Vec<String>, Diagnostic> {
         let mut parts = vec![self.expect_ident("expected identifier")?];
-        while matches!(self.peek().kind, TokenKind::Dot) {
+        while self.consume_dot_path_separator() {
             self.advance();
             parts.push(self.expect_ident("expected identifier after `.`")?);
         }
         Ok(parts)
+    }
+
+    fn parse_import_path(&mut self) -> Result<Vec<String>, Diagnostic> {
+        let mut parts = vec![self.expect_ident("expected import path")?];
+        while self.consume_dot_path_separator() {
+            self.advance();
+            if matches!(self.peek().kind, TokenKind::Star) {
+                return Err(self.error(
+                    "N0274",
+                    "wildcard imports are not supported in v0.1",
+                    self.peek().length(),
+                ));
+            }
+            parts.push(self.expect_ident("expected identifier after `.`")?);
+        }
+        Ok(parts)
+    }
+
+    fn consume_dot_path_separator(&mut self) -> bool {
+        if matches!(self.peek().kind, TokenKind::Dot) {
+            return true;
+        }
+        if matches!(self.peek().kind, TokenKind::Newline)
+            && matches!(self.peek_n(1).kind, TokenKind::Dot)
+        {
+            self.consume_newline();
+            return true;
+        }
+        false
     }
 
     fn expect_ident(&mut self, message: &'static str) -> Result<String, Diagnostic> {
@@ -958,6 +1335,15 @@ impl Token {
     }
 }
 
+fn token_span(token: &Token) -> Span {
+    Span {
+        line: token.line,
+        column: token.column,
+        length: token.length(),
+        text: token.text.clone(),
+    }
+}
+
 fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
     std::mem::discriminant(left) == std::mem::discriminant(right)
 }
@@ -968,7 +1354,7 @@ mod tests {
     use crate::lexer::lex;
 
     #[test]
-    fn parses_stage0_ast() {
+    fn parses_v0_1_ast() {
         let source = "package app.main\n\nimport std.io\n\nfn main() -> void {\n    io.println(\"Hello\")\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
@@ -979,6 +1365,17 @@ mod tests {
         assert!(ast.enums.is_empty());
         assert_eq!(ast.functions.len(), 1);
         assert!(ast.functions[0].params.is_empty());
+    }
+
+    #[test]
+    fn rejects_wildcard_imports_in_v0_1() {
+        let source = "package app.main\n\nimport std.io.*\n\nfn main() -> void {\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+        assert_eq!(err.code, "N0274");
+        assert!(err.message.contains("wildcard imports"));
+        assert!(err.message.contains("v0.1"));
     }
 
     #[test]
@@ -1024,6 +1421,17 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_omitted_function_return_type_as_void() {
+        let source = "package app.main\n\nfn main() {\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.functions[0].name, "main");
+        assert_eq!(ast.functions[0].return_type.path, ["void"]);
+        assert!(ast.functions[0].return_type.args.is_empty());
     }
 
     #[test]
@@ -1297,6 +1705,225 @@ mod tests {
     }
 
     #[test]
+    fn parses_dot_chain_line_continuation() {
+        let source = "package app\n    .main\n\nimport std\n    .io\n\nfn main() -> void {\n    let count: u64 = message\n        .len()\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.package, ["app", "main"]);
+        assert_eq!(ast.imports[0], ["std", "io"]);
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Let {
+                value: Expr::Call { ref callee, .. },
+                ..
+            } if callee == &vec!["message".to_string(), "len".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_repeated_line_start_dot_continuations_on_named_values() {
+        let source = "package app.main\n\nfn make() -> Result<string, string> {\n    let prefix: string = \"newline\"\n    let with_dot: string = prefix\n        .concat(\" dot\")\n    return Result\n        .Ok(with_dot\n            .concat(\" ok\"))\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Let {
+                value: Expr::Call { ref callee, .. },
+                ..
+            } if callee == &vec!["prefix".to_string(), "concat".to_string()]
+        ));
+        assert!(matches!(
+            ast.functions[0].body[2],
+            Stmt::Return {
+                value: Some(Expr::Call {
+                    ref callee,
+                    ref args,
+                    ..
+                }),
+                ..
+            } if callee == &vec!["Result".to_string(), "Ok".to_string()]
+                && matches!(
+                    args.as_slice(),
+                    [Expr::Call { callee: arg_callee, .. }]
+                        if arg_callee == &vec!["with_dot".to_string(), "concat".to_string()]
+                )
+        ));
+    }
+
+    #[test]
+    fn parses_operator_call_and_type_arg_line_continuations() {
+        let source = "package app.main\n\nstruct Box<T> {\n    value: T\n}\n\nfn add(left: i32, right: i32) -> i32 {\n    return left +\n        right\n}\n\nfn main() -> void {\n    let total: i32 = add(\n        1,\n        2\n    )\n    let ratio: f64 = total as\n        f64\n    let boxed: Box<i32> = Box.new<\n        i32\n    >(\n        total\n    )\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Binary {
+                    op: BinaryOp::Add,
+                    ..
+                }),
+                ..
+            }
+        ));
+        assert!(matches!(
+            ast.functions[1].body[0],
+            Stmt::Let {
+                value: Expr::Call { ref args, .. },
+                ..
+            } if args.len() == 2
+        ));
+        assert!(matches!(
+            ast.functions[1].body[1],
+            Stmt::Let {
+                value: Expr::Cast { ref target, .. },
+                ..
+            } if target.path == ["f64"]
+        ));
+        assert!(matches!(
+            ast.functions[1].body[2],
+            Stmt::Let {
+                ref type_annotation,
+                value: Expr::Call { ref type_args, .. },
+                ..
+            } if type_annotation.as_ref().unwrap().args.len() == 1 && type_args.len() == 1
+        ));
+    }
+
+    #[test]
+    fn parses_match_arrow_line_continuation() {
+        let source = "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(n) =>\n            \"some\"\n        Option.None =>\n            \"none\"\n    }\n}\n\nfn print(value: Option<i32>) -> void {\n    match value {\n        Option.Some(n) =>\n            {\n                println(\"some\")\n            }\n        Option.None =>\n            {\n                println(\"none\")\n            }\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Match { ref arms, .. }),
+                ..
+            } if arms.len() == 2
+        ));
+        assert!(matches!(
+            ast.functions[1].body[0],
+            Stmt::Match { ref arms, .. } if arms.len() == 2
+        ));
+    }
+
+    #[test]
+    fn rejects_multiple_newline_separated_items_on_one_line() {
+        for (source, message) in [
+            (
+                "package app.main\n\nstruct User {\n    id: string email: string\n}\n\nfn main() -> void {\n}\n",
+                "expected newline after struct field",
+            ),
+            (
+                "package app.main\n\nenum Color {\n    Red Blue\n}\n\nfn main() -> void {\n}\n",
+                "expected newline after enum variant",
+            ),
+            (
+                "package app.main\n\nfn main() -> void {\n    let left: i32 = 1 let right: i32 = 2\n}\n",
+                "expected newline after statement",
+            ),
+            (
+                "package app.main\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\" Color.Blue => \"blue\"\n    }\n}\n\nfn main() -> void {\n}\n",
+                "expected newline after match arm",
+            ),
+        ] {
+            let tokens = lex(Path::new("main.nomo"), source).unwrap();
+            let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+            assert_eq!(err.code, "N0211");
+            assert!(err.message.contains(message), "{:?}", err.message);
+        }
+    }
+
+    #[test]
+    fn parses_match_scrutinee_as_expression() {
+        let source = "package app.main\n\nfn print() -> void {\n    match load()? {\n        Some(text) => {\n            println(text)\n        }\n        None => {\n            println(\"none\")\n        }\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Match {
+                value: Expr::Try { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn parses_let_else_statement() {
+        let source = "package app.main\n\nfn label(value: Option<string>) -> string {\n    let Some(text) = value else {\n        return \"missing\"\n    }\n    return text\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::LetElse {
+                ref pattern,
+                ref binding,
+                ref else_body,
+                ..
+            } if pattern == &vec!["Some".to_string()]
+                && binding == "text"
+                && matches!(else_body.as_slice(), [Stmt::Return { .. }])
+        ));
+    }
+
+    #[test]
+    fn parses_if_let_statement() {
+        let source = "package app.main\n\nfn label(value: Option<string>) -> string {\n    if let Some(text) = value {\n        return text\n    } else {\n        return \"missing\"\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::IfLet {
+                ref pattern,
+                ref binding,
+                ref body,
+                ref else_body,
+                ..
+            } if pattern == &vec!["Some".to_string()]
+                && binding.as_deref() == Some("text")
+                && matches!(body.as_slice(), [Stmt::Return { .. }])
+                && matches!(else_body.as_deref(), Some([Stmt::Return { .. }]))
+        ));
+    }
+
+    #[test]
+    fn parses_multiline_struct_literal() {
+        let source = "package app.main\n\nstruct Point {\n    x: i32\n    y: i32\n}\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 3,\n        y: 4,\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Let {
+                value: Expr::StructLiteral { ref fields, .. },
+                ..
+            } if fields.len() == 2
+        ));
+    }
+
+    #[test]
+    fn rejects_match_wildcards_in_v0_1() {
+        for source in [
+            "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        _ => \"wild\"\n        Option.None => \"none\"\n    }\n}\n",
+            "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(_) => \"some\"\n        Option.None => \"none\"\n    }\n}\n",
+        ] {
+            let tokens = lex(Path::new("main.nomo"), source).unwrap();
+            let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+            assert_eq!(err.code, "N0238");
+            assert!(err.message.contains("not supported in v0.1"));
+        }
+    }
+
+    #[test]
     fn parses_char_literal() {
         let source = "package app.main\n\nfn main() -> void {\n    let letter: char = 'N'\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -1371,5 +1998,209 @@ mod tests {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn parses_for_loop_three_forms() {
+        let source = "package app.main\n\nfn main() -> void {\n    for {}\n    for done {}\n    for x in xs {}\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::For {
+                variant: ForVariant::Infinite { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::For {
+                variant: ForVariant::While { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            ast.functions[0].body[2],
+            Stmt::For {
+                variant: ForVariant::Iterate { ref binding, .. },
+                ..
+            } if binding == "x"
+        ));
+    }
+
+    #[test]
+    fn parses_break_continue_and_defer() {
+        let source = "package app.main\n\nfn main() -> void {\n    for {\n        break\n        continue\n        defer cleanup()\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        let Stmt::For {
+            variant: ForVariant::Infinite { body },
+            ..
+        } = &ast.functions[0].body[0]
+        else {
+            panic!("expected infinite for loop");
+        };
+        assert!(matches!(body[0], Stmt::Break { .. }));
+        assert!(matches!(body[1], Stmt::Continue { .. }));
+        assert!(matches!(body[2], Stmt::Defer { .. }));
+    }
+
+    #[test]
+    fn parses_top_level_const() {
+        let source = "package app.main\n\nconst MAX: i32 = 100\n\nfn main() -> void {\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.consts.len(), 1);
+        assert_eq!(ast.consts[0].name, "MAX");
+        assert_eq!(ast.consts[0].type_ref.path, vec!["i32"]);
+        assert!(matches!(ast.consts[0].value, Expr::Int(100)));
+    }
+
+    #[test]
+    fn parser_ast_golden_snapshot() {
+        let source = "package app.main\n\nimport std.option.Option\n\nstruct Box<T> {\n    value: T\n}\n\nenum State {\n    Ready\n    Done(i32)\n}\n\nfn label(value: State) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(
+            format!("{ast:#?}"),
+            r#"SourceFile {
+    package: [
+        "app",
+        "main",
+    ],
+    imports: [
+        [
+            "std",
+            "option",
+            "Option",
+        ],
+    ],
+    structs: [
+        StructDef {
+            public: false,
+            name: "Box",
+            type_params: [
+                "T",
+            ],
+            fields: [
+                Field {
+                    public: false,
+                    name: "value",
+                    type_ref: TypeRef {
+                        path: [
+                            "T",
+                        ],
+                        args: [],
+                    },
+                },
+            ],
+        },
+    ],
+    enums: [
+        EnumDef {
+            public: false,
+            name: "State",
+            type_params: [],
+            variants: [
+                EnumVariant {
+                    name: "Ready",
+                    payload: None,
+                },
+                EnumVariant {
+                    name: "Done",
+                    payload: Some(
+                        TypeRef {
+                            path: [
+                                "i32",
+                            ],
+                            args: [],
+                        },
+                    ),
+                },
+            ],
+        },
+    ],
+    impls: [],
+    consts: [],
+    functions: [
+        Function {
+            public: false,
+            name: "label",
+            type_params: [],
+            params: [
+                Param {
+                    name: "value",
+                    mutable: false,
+                    type_ref: TypeRef {
+                        path: [
+                            "State",
+                        ],
+                        args: [],
+                    },
+                },
+            ],
+            return_type: TypeRef {
+                path: [
+                    "string",
+                ],
+                args: [],
+            },
+            body: [
+                Return {
+                    value: Some(
+                        Match {
+                            value: Name(
+                                [
+                                    "value",
+                                ],
+                            ),
+                            arms: [
+                                MatchArm {
+                                    pattern: [
+                                        "State",
+                                        "Ready",
+                                    ],
+                                    binding: None,
+                                    value: String(
+                                        "ready",
+                                    ),
+                                },
+                                MatchArm {
+                                    pattern: [
+                                        "State",
+                                        "Done",
+                                    ],
+                                    binding: Some(
+                                        "code",
+                                    ),
+                                    value: String(
+                                        "done",
+                                    ),
+                                },
+                            ],
+                        },
+                    ),
+                    span: Span {
+                        line: 15,
+                        column: 5,
+                        length: 1,
+                        text: "    return match value {",
+                    },
+                },
+            ],
+            span: Span {
+                line: 14,
+                column: 1,
+                length: 1,
+                text: "fn label(value: State) -> string {",
+            },
+        },
+    ],
+}"#
+        );
     }
 }

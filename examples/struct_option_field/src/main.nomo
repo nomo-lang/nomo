@@ -1,0 +1,21 @@
+package app.main
+
+import std.io
+import std.option
+
+struct Box {
+    value: Option<i32>
+}
+
+fn main() -> void {
+    let box: Box = Box { value: Some(7) }
+    let message: string = match box.value {
+        Some(number) => if number == 7 {
+            "struct option field ok"
+        } else {
+            "wrong"
+        }
+        None => "missing"
+    }
+    io.println(message)
+}

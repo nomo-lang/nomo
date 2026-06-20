@@ -1,0 +1,29 @@
+package app.main
+
+import std.array
+import std.io
+
+fn label(values: Array<i32>) -> string {
+    let value: Option<i32> = values.get(0)
+    return match value {
+        Some(number) => if number == 7 {
+            "nested array ok"
+        } else {
+            "wrong"
+        }
+        None => "inner missing"
+    }
+}
+
+fn main() -> void {
+    let mut inner: Array<i32> = Array.new<i32>()
+    inner.push(7)
+    let mut outer: Array<Array<i32>> = Array.new<Array<i32>>()
+    outer.push(inner)
+    let first: Option<Array<i32>> = outer.get(0)
+    let message: string = match first {
+        Some(values) => label(values)
+        None => "outer missing"
+    }
+    io.println(message)
+}

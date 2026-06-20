@@ -2,21 +2,139 @@ package app.main
 
 import std.io
 import std.result
+import std.array
 
-fn parse_label() -> Result<string, string> {
-    return Result.Ok("result ok")
+struct Label {
+    value: string
 }
 
-fn decorate_label() -> Result<string, string> {
+fn parse_label() -> Result<string, string> {
+    return Ok("result ok")
+}
+
+fn identity(value: string) -> string {
+    return value
+}
+
+fn consume(value: string) -> void {
+}
+
+fn maybe_label(flag: bool) -> Result<Option<string>, string> {
     let label: string = parse_label()?
-    return Result.Ok(label)
+    return if flag {
+        Ok(Some(label))
+    } else {
+        Ok(None)
+    }
+}
+
+fn should_use_label() -> Result<bool, string> {
+    return Ok(true)
+}
+
+fn labels() -> Result<Array<string>, string> {
+    let mut values: Array<string> = Array.new<string>()
+    values.push(parse_label()?)
+    return Ok(values)
+}
+
+fn resolve_with_tail_match(flag: bool) -> Result<string, string> {
+    return match maybe_label(flag)? {
+        Some(text) => Ok(text)
+        None => Ok(parse_label()?)
+    }
+}
+
+fn resolve_with_tail_if() -> Result<string, string> {
+    if should_use_label()? {
+        Ok(parse_label()?)
+    } else {
+        Ok("wrong")
+    }
+}
+
+fn resolve_with_return_if() -> Result<string, string> {
+    return if should_use_label()? {
+        Ok(parse_label()?)
+    } else {
+        Ok("wrong")
+    }
+}
+
+fn resolve_with_return_ok_if() -> Result<string, string> {
+    return Ok(if should_use_label()? {
+        parse_label()?
+    } else {
+        "wrong"
+    })
+}
+
+fn resolve_with_return_ok_match(flag: bool) -> Result<string, string> {
+    return Ok(match maybe_label(flag)? {
+        Some(text) => text
+        None => parse_label()?
+    })
+}
+
+fn decorate_label(flag: bool) -> Result<string, string> {
+    let label: Label = Label { value: parse_label()? }
+    let mut reassigned: string = label.value
+    reassigned = parse_label()?
+    reassigned = if should_use_label()? {
+        parse_label()?
+    } else {
+        "wrong"
+    }
+    reassigned = match maybe_label(false)? {
+        Some(text) => text
+        None => parse_label()?
+    }
+    defer consume(parse_label()?)
+    let Some(seed) = maybe_label(true)? else {
+        return Err("missing")
+    }
+    let selected: string = if should_use_label()? {
+        seed
+    } else {
+        "wrong"
+    }
+    for extra in labels()? {
+        let copy: string = extra
+    }
+    for should_use_label()? {
+        break
+    }
+    if let Some(extra) = maybe_label(true)? {
+        let copy: string = extra
+    } else {
+        return Err("missing")
+    }
+    match maybe_label(false)? {
+        Some(extra) => {
+            return Ok(extra)
+        }
+        None => {
+        }
+    }
+    let tail: string = resolve_with_tail_if()?
+    let returned_if: string = resolve_with_return_if()?
+    let returned_ok_if: string = resolve_with_return_ok_if()?
+    let returned_ok_match: string = resolve_with_return_ok_match(false)?
+    let tail_match: string = resolve_with_tail_match(false)?
+    let resolved: string = match maybe_label(flag)? {
+        Some(text) => text
+        None => tail
+    }
+    return Ok(identity(resolved))
 }
 
 fn main() -> void {
-    let result: Result<string, string> = decorate_label()
+    let result: Result<string, string> = decorate_label(false)
     let message: string = match result {
-        Result.Ok(text) => text
-        Result.Err(err) => err
+        Ok(text) =>
+            text
+        Err(err) =>
+            err
     }
     io.println(message)
 }

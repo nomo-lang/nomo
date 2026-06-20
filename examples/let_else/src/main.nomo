@@ -1,0 +1,13 @@
+package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut values: Array<string> = Array.new<string>()
+    values.push("let else ok")
+    let Some(message) = values.get(0) else {
+        panic("missing value")
+    }
+    io.println(message)
+}

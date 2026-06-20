@@ -1,0 +1,35 @@
+package app.main
+
+import std.io
+
+pub struct User {
+    pub id: string
+    email: string
+}
+
+pub enum Access {
+    Public(User)
+    Private
+}
+
+impl User {
+    pub fn label(self) -> string {
+        return self.email
+    }
+}
+
+pub fn describe(value: Access) -> string {
+    return match value {
+        Access.Public(user) => if user.id == "u-1" {
+            user.label()
+        } else {
+            "wrong"
+        }
+        Access.Private => "private"
+    }
+}
+
+fn main() -> void {
+    let user: User = User { id: "u-1", email: "pub visibility ok" }
+    io.println(describe(Access.Public(user)))
+}

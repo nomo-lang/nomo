@@ -1,0 +1,15 @@
+package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    let value: Option<i32> = items.get(3)
+    let message: string = match value {
+        Some(ignored) => "wrong"
+        None => "array get none ok"
+    }
+    io.println(message)
+}

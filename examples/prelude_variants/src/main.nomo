@@ -1,0 +1,27 @@
+package app.main
+
+import std.io
+
+fn parse(flag: bool) -> Result<string, string> {
+    return if flag {
+        Ok("prelude variants ok")
+    } else {
+        Err("bad")
+    }
+}
+
+fn label(value: Option<string>) -> string {
+    return match value {
+        Some(text) => text
+        None => "missing"
+    }
+}
+
+fn main() -> void {
+    let result: Result<string, string> = parse(true)
+    let message: string = match result {
+        Ok(text) => label(Some(text))
+        Err(err) => err
+    }
+    io.println(message)
+}

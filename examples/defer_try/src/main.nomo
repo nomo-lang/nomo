@@ -1,0 +1,29 @@
+package app.main
+
+import std.io
+
+fn fail_label() -> Result<string, string> {
+    return Err("fail")
+}
+
+fn cleanup(label: string) -> void {
+    io.println(label)
+}
+
+fn run() -> Result<string, string> {
+    defer cleanup("defer before try error")
+    let label: string = fail_label()?
+    return Ok(label)
+}
+
+fn main() -> void {
+    let result: Result<string, string> = run()
+    match result {
+        Ok(label) => {
+            io.println(label)
+        }
+        Err(err) => {
+            io.println(err)
+        }
+    }
+}

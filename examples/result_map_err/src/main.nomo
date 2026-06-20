@@ -1,0 +1,35 @@
+package app.main
+
+import std.io
+import std.result
+
+struct AppError {
+    message: string
+}
+
+fn parse_label(flag: bool) -> Result<string, string> {
+    return if flag {
+        Ok("map err ok")
+    } else {
+        Err("mapped err ok")
+    }
+}
+
+fn app_error_from_string(message: string) -> AppError {
+    return AppError { message: message }
+}
+
+fn decorate_label(flag: bool) -> Result<string, AppError> {
+    let raw: Result<string, string> = parse_label(flag)
+    let label: string = raw.map_err(app_error_from_string)?
+    return Ok(label)
+}
+
+fn main() -> void {
+    let result: Result<string, AppError> = decorate_label(false)
+    let message: string = match result {
+        Ok(text) => text
+        Err(err) => err.message
+    }
+    io.println(message)
+}

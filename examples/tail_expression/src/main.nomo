@@ -1,0 +1,15 @@
+package app.main
+
+import std.io
+
+fn label(score: i32) -> string {
+    if score >= 60 {
+        "tail expression ok"
+    } else {
+        "wrong"
+    }
+}
+
+fn main() -> void {
+    io.println(label(90))
+}

@@ -1,0 +1,36 @@
+package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut left: Array<i32> = Array.new<i32>()
+    left.push(1)
+
+    let mut right: Array<i32> = Array.new<i32>()
+    right.push(2)
+
+    left = right
+    left = left
+    right.set(0, 3)
+
+    let left_value: Option<i32> = left.get(0)
+    let right_value: Option<i32> = right.get(0)
+    let message: string = match left_value {
+        Some(left_number) => match right_value {
+            Some(right_number) => if left_number == 2 {
+                if right_number == 3 {
+                    "array reassign ok"
+                } else {
+                    "wrong"
+                }
+            } else {
+                "wrong"
+            }
+            None => "right missing"
+        }
+        None => "left missing"
+    }
+
+    io.println(message)
+}

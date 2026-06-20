@@ -1,19 +1,29 @@
 package app.main
 
+import std.array.get
+import std.array.len
 import std.array.new
+import std.array.push
+import std.array.set
 import std.io.println
 
 fn main() -> void {
-    let mut items: Array<i32> = new<i32>()
+    let mut items = new<i32>()
     items.push(7)
+    items.set(0, 8)
+    let size: u64 = items.len()
     let first: Option<i32> = items.get(0)
     let message: string = match first {
-        Option.Some(value) => if value == 7 {
-            "specific array new ok"
+        Some(value) => if value == 8 {
+            if size == 1 {
+                "specific array new ok"
+            } else {
+                "wrong"
+            }
         } else {
             "wrong"
         }
-        Option.None => "missing"
+        None => "missing"
     }
     println(message)
 }

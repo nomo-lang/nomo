@@ -1,0 +1,26 @@
+package app.main
+
+import std.io
+import std.string
+
+fn echo(value: string) -> string {
+    let copy: string = value
+    return copy
+}
+
+fn main() -> void {
+    let base: string = "string "
+    let echoed: string = echo(base)
+    let message: string = echoed.concat("lifecycle ok")
+    let original: string = base.concat("still alive")
+    let output: string = if message.len() == 19 {
+        if original.len() == 18 {
+            message
+        } else {
+            "wrong"
+        }
+    } else {
+        "wrong"
+    }
+    io.println(output)
+}

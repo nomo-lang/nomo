@@ -1,0 +1,25 @@
+package app.main
+
+import std.io
+import std.result
+
+struct Report {
+    outcome: Result<string, string>
+}
+
+fn make_report(flag: bool) -> Report {
+    if flag {
+        Report { outcome: Ok("struct result field ok") }
+    } else {
+        Report { outcome: Err("wrong") }
+    }
+}
+
+fn main() -> void {
+    let report: Report = make_report(true)
+    let message: string = match report.outcome {
+        Ok(text) => text
+        Err(error) => error
+    }
+    io.println(message)
+}

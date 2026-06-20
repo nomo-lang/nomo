@@ -1,0 +1,24 @@
+package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut i: i32 = 0
+    for i < 3 {
+        io.println("counted")
+        i = i + 1
+    }
+
+    let mut words: Array<string> = Array.new<string>()
+    words.push("a")
+    words.push("b")
+    for word in words {
+        io.println(word)
+    }
+
+    for {
+        io.println("once")
+        break
+    }
+}

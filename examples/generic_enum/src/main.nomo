@@ -1,0 +1,37 @@
+package app.main
+
+import std.io
+
+pub enum Slot<T> {
+    Full(T)
+    Empty
+}
+
+fn read_text(value: Slot<string>) -> string {
+    return match value {
+        Slot.Full(text) => text
+        Slot.Empty => "wrong"
+    }
+}
+
+fn read_number(value: Slot<i32>) -> string {
+    return match value {
+        Slot.Full(number) => if number == 7 {
+            "generic enum ok"
+        } else {
+            "wrong"
+        }
+        Slot.Empty => "wrong"
+    }
+}
+
+fn main() -> void {
+    let text: Slot<string> = Slot.Full("generic enum ok")
+    let number: Slot<i32> = Slot.Full(7)
+    let message: string = if read_text(text) == "generic enum ok" {
+        read_number(number)
+    } else {
+        "wrong"
+    }
+    io.println(message)
+}

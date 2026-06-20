@@ -1,0 +1,8 @@
+package app.main
+
+import std.io
+
+fn main() -> void {
+    io.println("stdout ok")
+    io.eprintln("stderr ok")
+}

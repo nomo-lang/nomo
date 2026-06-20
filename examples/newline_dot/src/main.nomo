@@ -1,0 +1,26 @@
+package app.main
+
+import std.io
+import std.string
+
+fn make_message() -> string {
+    let prefix: string = "newline"
+    let with_dot: string = prefix
+        .concat(" dot")
+    return with_dot
+        .concat(" ok")
+}
+
+fn parse() -> Result<string, string> {
+    return Result
+        .Ok(make_message())
+}
+
+fn main() -> void {
+    let result: Result<string, string> = parse()
+    let message: string = match result {
+        Ok(text) => text
+        Err(err) => err
+    }
+    io.println(message)
+}

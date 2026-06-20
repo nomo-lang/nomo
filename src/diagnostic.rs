@@ -20,6 +20,8 @@ pub struct Diagnostic {
     pub column: usize,
     pub length: usize,
     pub text: String,
+    pub expected: Option<String>,
+    pub found: Option<String>,
     pub suggestions: Vec<Suggestion>,
 }
 
@@ -42,8 +44,20 @@ impl Diagnostic {
             column,
             length,
             text: text.into(),
+            expected: None,
+            found: None,
             suggestions: Vec::new(),
         }
+    }
+
+    pub fn with_expected_found(
+        mut self,
+        expected: impl Into<String>,
+        found: impl Into<String>,
+    ) -> Self {
+        self.expected = Some(expected.into());
+        self.found = Some(found.into());
+        self
     }
 
     pub fn human(&self) -> String {
@@ -77,9 +91,16 @@ impl Diagnostic {
             })
             .collect::<Vec<_>>()
             .join(",");
+        let mut type_context = String::new();
+        if let Some(expected) = &self.expected {
+            let _ = write!(type_context, ",\"expected\":\"{}\"", escape_json(expected));
+        }
+        if let Some(found) = &self.found {
+            let _ = write!(type_context, ",\"found\":\"{}\"", escape_json(found));
+        }
 
         format!(
-            "{{\"status\":\"error\",\"error_code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"source\":{{\"file\":\"{}\",\"line\":{},\"column\":{},\"length\":{},\"text\":\"{}\"}},\"suggestions\":[{}]}}",
+            "{{\"status\":\"error\",\"error_code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"source\":{{\"file\":\"{}\",\"line\":{},\"column\":{},\"length\":{},\"text\":\"{}\"}}{},\"suggestions\":[{}]}}",
             self.code,
             self.severity,
             escape_json(&self.message),
@@ -88,6 +109,7 @@ impl Diagnostic {
             self.column,
             self.length,
             escape_json(&self.text),
+            type_context,
             suggestions
         )
     }
@@ -155,6 +177,37 @@ mod tests {
         assert_eq!(
             diagnostic.json(),
             "{\"status\":\"error\",\"error_code\":\"N0301\",\"severity\":\"error\",\"message\":\"missing import\",\"source\":{\"file\":\"src/main.nomo\",\"line\":4,\"column\":5,\"length\":7,\"text\":\"println(\\\"hi\\\")\"},\"suggestions\":[{\"action\":\"replace_text\",\"range\":{\"line\":2,\"column\":1,\"length\":0},\"text\":\"import std.io.println\\n\",\"description\":\"add the concrete println import\"}]}"
+        );
+    }
+
+    #[test]
+    fn json_includes_expected_and_found_when_available() {
+        let diagnostic = Diagnostic::new(
+            "N0404",
+            "type mismatch",
+            Path::new("src/main.nomo"),
+            3,
+            9,
+            5,
+            "let value: i32 = \"bad\"",
+        )
+        .with_expected_found("i32", "string");
+
+        assert_eq!(
+            diagnostic.json(),
+            "{\"status\":\"error\",\"error_code\":\"N0404\",\"severity\":\"error\",\"message\":\"type mismatch\",\"source\":{\"file\":\"src/main.nomo\",\"line\":3,\"column\":9,\"length\":5,\"text\":\"let value: i32 = \\\"bad\\\"\"},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}"
+        );
+    }
+
+    #[test]
+    fn json_diagnostic_sample_snapshot() {
+        let diagnostic =
+            crate::check_source_text(Path::new("samples/invalid.nomo"), "package main\n@\n")
+                .expect_err("source should produce a lexer diagnostic");
+
+        assert_eq!(
+            diagnostic.json(),
+            "{\"status\":\"error\",\"error_code\":\"N0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{\"file\":\"samples/invalid.nomo\",\"line\":2,\"column\":1,\"length\":1,\"text\":\"@\"},\"suggestions\":[]}"
         );
     }
 }

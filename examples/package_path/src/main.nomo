@@ -1,0 +1,11 @@
+package tools.greeter
+
+import std.io
+
+fn label() -> string {
+    return "package path ok"
+}
+
+fn main() -> void {
+    io.println(label())
+}

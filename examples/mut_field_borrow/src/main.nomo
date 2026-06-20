@@ -1,0 +1,40 @@
+package app.main
+
+import std.io
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn bump(mut value: i32) -> void {
+    value = value + 1
+}
+
+fn bump_twice(mut value: i32) -> void {
+    bump(mut value)
+    bump(mut value)
+}
+
+fn swap_values(mut left: i32, mut right: i32) -> void {
+    let temp: i32 = left
+    left = right
+    right = temp
+}
+
+fn main() -> void {
+    let mut point: Point = Point { x: 1, y: 7 }
+    bump_twice(mut point.x)
+    swap_values(mut point.x, mut point.y)
+
+    let message: string = if point.x == 7 {
+        if point.y == 3 {
+            "mut field borrow ok"
+        } else {
+            "wrong"
+        }
+    } else {
+        "wrong"
+    }
+    io.println(message)
+}

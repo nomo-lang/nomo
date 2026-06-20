@@ -1,7 +1,32 @@
 package app.main
 
+import std.fs.open
+import std.fs.read_to_string
+import std.fs.write_string
 import std.io.println
 
+fn close_and_label(file: File) -> string {
+    file.close()
+    return "specific import ok"
+}
+
 fn main() -> void {
-    println("specific import ok")
+    let write_result: Result<void, FsError> = write_string("/private/tmp/nomo-specific-import-example.txt", "ok")
+    let read_result: Result<string, FsError> = match write_result {
+        Ok(value) => read_to_string("/private/tmp/nomo-specific-import-example.txt")
+        Err(err) => Err(err)
+    }
+    let open_result: Result<File, FsError> = match read_result {
+        Ok(text) => if text == "ok" {
+            open("/private/tmp/nomo-specific-import-example.txt")
+        } else {
+            open("/private/tmp/nomo-specific-import-missing.txt")
+        }
+        Err(err) => Err(err)
+    }
+    let message: string = match open_result {
+        Ok(file) => close_and_label(file)
+        Err(err) => err.message
+    }
+    println(message)
 }

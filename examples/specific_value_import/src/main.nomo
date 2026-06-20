@@ -1,15 +1,26 @@
 package app.main
 
+import std.env.args
+import std.env.get
 import std.io.println
 import std.string.concat
 import std.string.len
 
 fn main() -> void {
     let message: string = concat("specific ", "value import ok")
-    let output: string = if len(message) == 24 {
-        message
-    } else {
-        "wrong"
+    let env_value: Option<string> = get("NOMO_EXAMPLE_ENV")
+    let values = args()
+    let output: string = match env_value {
+        Some(text) => if len(message) == 24 {
+            if len(text) == 10 {
+                message
+            } else {
+                "wrong"
+            }
+        } else {
+            "wrong"
+        }
+        None => "missing"
     }
     println(output)
 }

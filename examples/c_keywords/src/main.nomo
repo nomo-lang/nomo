@@ -1,0 +1,29 @@
+package app.main
+
+import std.io
+
+struct KeywordBox {
+    default: i32
+}
+
+enum KeywordResult {
+    long(KeywordBox)
+    case
+}
+
+fn label(value: KeywordResult) -> string {
+    return match value {
+        KeywordResult.long(item) => if item.default == 7 {
+            "c keywords ok"
+        } else {
+            "wrong"
+        }
+        KeywordResult.case => "wrong"
+    }
+}
+
+fn main() -> void {
+    let item: KeywordBox = KeywordBox { default: 7 }
+    let result: KeywordResult = KeywordResult.long(item)
+    io.println(label(result))
+}

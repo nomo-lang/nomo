@@ -2,13 +2,14 @@ package app.main
 
 import std.env
 import std.io
+import std.array
 
 fn main() -> void {
     let args: Array<string> = env.args()
     let first: Option<string> = args.get(1)
     let message: string = match first {
-        Option.Some(text) => text
-        Option.None => "missing"
+        Some(text) => text
+        None => "missing"
     }
     io.println(message)
 }

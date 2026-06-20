@@ -1,0 +1,27 @@
+package app.main
+
+import std.array
+import std.io
+
+struct Point {
+    x: i32
+    y: i32
+}
+
+fn main() -> void {
+    let mut points: Array<Point> = Array.new<Point>()
+    points.push(Point {
+        x: 3,
+        y: 4,
+    })
+    let first: Option<Point> = points.get(0)
+    let message: string = match first {
+        Some(point) => if point.x == 3 {
+            "struct array ok"
+        } else {
+            "wrong"
+        }
+        None => "missing"
+    }
+    io.println(message)
+}

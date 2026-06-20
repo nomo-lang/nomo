@@ -29,6 +29,12 @@ pub enum TokenKind {
     Void,
     True,
     False,
+    For,
+    In,
+    Break,
+    Continue,
+    Defer,
+    Const,
     Ident(String),
     String(String),
     Int(i64),
@@ -41,6 +47,7 @@ pub enum TokenKind {
     EqualEqual,
     BangEqual,
     Plus,
+    Star,
     Question,
     Less,
     LessEqual,
@@ -97,6 +104,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                 }
                 '+' => tokens.push(token(TokenKind::Plus, line, column, line_text)),
+                '*' => tokens.push(token(TokenKind::Star, line, column, line_text)),
                 '?' => tokens.push(token(TokenKind::Question, line, column, line_text)),
                 '<' => {
                     if matches!(chars.peek(), Some((_, '='))) {
@@ -118,6 +126,17 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 ')' => tokens.push(token(TokenKind::RParen, line, column, line_text)),
                 '{' => tokens.push(token(TokenKind::LBrace, line, column, line_text)),
                 '}' => tokens.push(token(TokenKind::RBrace, line, column, line_text)),
+                ';' => {
+                    return Err(Diagnostic::new(
+                        "N0102",
+                        "semicolons are not supported in v0.1; use a newline to separate statements",
+                        path,
+                        line,
+                        column,
+                        1,
+                        line_text,
+                    ));
+                }
                 '-' => {
                     if matches!(chars.peek(), Some((_, '>'))) {
                         chars.next();
@@ -290,6 +309,17 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                             break;
                         }
                     }
+                    if is_reserved_word(&value) {
+                        return Err(Diagnostic::new(
+                            "N0104",
+                            format!("`{value}` is reserved for future Nomo versions"),
+                            path,
+                            line,
+                            column,
+                            value.len(),
+                            line_text,
+                        ));
+                    }
                     let kind = match value.as_str() {
                         "package" => TokenKind::Package,
                         "import" => TokenKind::Import,
@@ -309,6 +339,12 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         "void" => TokenKind::Void,
                         "true" => TokenKind::True,
                         "false" => TokenKind::False,
+                        "for" => TokenKind::For,
+                        "in" => TokenKind::In,
+                        "break" => TokenKind::Break,
+                        "continue" => TokenKind::Continue,
+                        "defer" => TokenKind::Defer,
+                        "const" => TokenKind::Const,
                         _ => TokenKind::Ident(value),
                     };
                     tokens.push(token(kind, line, column, line_text));
@@ -362,6 +398,13 @@ fn is_ident_continue(ch: char) -> bool {
     ch == '_' || ch.is_ascii_alphanumeric()
 }
 
+fn is_reserved_word(value: &str) -> bool {
+    matches!(
+        value,
+        "interface" | "unsafe" | "extern" | "export" | "go" | "chan" | "null"
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -405,6 +448,13 @@ mod tests {
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Return));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Plus));
+    }
+
+    #[test]
+    fn lexes_star_token() {
+        let tokens = lex(Path::new("main.nomo"), "import std.io.*\n").unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Star));
     }
 
     #[test]
@@ -484,5 +534,118 @@ mod tests {
                 .iter()
                 .any(|token| token.kind == TokenKind::Char('\n'))
         );
+    }
+
+    #[test]
+    fn lexer_token_sequence_golden() {
+        let source = "package app.main\n\nimport std.array.Array\n\nconst LIMIT: i32 = 3\n\nfn main() -> void {\n    let mut items = Array.new<i32>()\n    items.push(mut items, LIMIT)\n    for item in items {\n        if item >= 1 {\n            break\n        } else {\n            continue\n        }\n    }\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let snapshot = tokens
+            .iter()
+            .map(|token| format!("{:?}", token.kind))
+            .collect::<Vec<_>>()
+            .join("\n");
+
+        assert_eq!(
+            snapshot,
+            r#"Package
+Ident("app")
+Dot
+Ident("main")
+Newline
+Newline
+Import
+Ident("std")
+Dot
+Ident("array")
+Dot
+Ident("Array")
+Newline
+Newline
+Const
+Ident("LIMIT")
+Colon
+Ident("i32")
+Equal
+Int(3)
+Newline
+Newline
+Fn
+Ident("main")
+LParen
+RParen
+Arrow
+Void
+LBrace
+Newline
+Let
+Mut
+Ident("items")
+Equal
+Ident("Array")
+Dot
+Ident("new")
+Less
+Ident("i32")
+Greater
+LParen
+RParen
+Newline
+Ident("items")
+Dot
+Ident("push")
+LParen
+Mut
+Ident("items")
+Comma
+Ident("LIMIT")
+RParen
+Newline
+For
+Ident("item")
+In
+Ident("items")
+LBrace
+Newline
+If
+Ident("item")
+GreaterEqual
+Int(1)
+LBrace
+Newline
+Break
+Newline
+RBrace
+Else
+LBrace
+Newline
+Continue
+Newline
+RBrace
+Newline
+RBrace
+Newline
+RBrace
+Newline
+Eof"#
+        );
+    }
+
+    #[test]
+    fn rejects_reserved_future_words() {
+        for word in ["interface", "unsafe", "extern", "export", "go", "chan"] {
+            let source = format!("let {word}: i32 = 1\n");
+            let err = lex(Path::new("main.nomo"), &source).unwrap_err();
+            assert_eq!(err.code, "N0104");
+            assert!(err.message.contains(word));
+        }
+    }
+
+    #[test]
+    fn rejects_null_special_name() {
+        let err = lex(Path::new("main.nomo"), "let value = null\n").unwrap_err();
+
+        assert_eq!(err.code, "N0104");
+        assert!(err.message.contains("null"));
     }
 }

@@ -1,0 +1,21 @@
+package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    let snapshot: Array<i32> = items
+    items.set(0, 2)
+    let first: Option<i32> = snapshot.get(0)
+    let message: string = match first {
+        Some(value) => if value == 1 {
+            "array value semantics ok"
+        } else {
+            "wrong"
+        }
+        None => "missing"
+    }
+    io.println(message)
+}

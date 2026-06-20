@@ -1,0 +1,19 @@
+package app.main
+
+import std.io
+
+struct User {
+    email: string
+}
+
+impl User {
+    pub fn set_email(mut self, email: string) -> void {
+        self.email = email
+    }
+}
+
+fn main() -> void {
+    let mut user: User = User { email: "old@nomo.dev" }
+    user.set_email("mut method ok")
+    io.println(user.email)
+}

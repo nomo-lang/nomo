@@ -1,0 +1,50 @@
+package app.main
+
+import std.io
+
+const GREETING: string = "hello"
+const TIMES: i32 = 3
+const ENABLED: bool = true
+const LIMIT: i64 = 41
+const SMALL: u32 = 1
+const LARGE: u64 = 2
+const RATIO: f64 = 3.5
+const INITIAL: char = 'N'
+const STATUS: string = "const primitives ok"
+
+fn check_primitives() -> void {
+    if ENABLED {
+        if LIMIT < 42 {
+            if SMALL < 2 as u32 {
+                if LARGE > 1 as u64 {
+                    if RATIO > 3.0 {
+                        if INITIAL == 'N' {
+                            io.println(STATUS)
+                        } else {
+                            io.println("wrong")
+                        }
+                    } else {
+                        io.println("wrong")
+                    }
+                } else {
+                    io.println("wrong")
+                }
+            } else {
+                io.println("wrong")
+            }
+        } else {
+            io.println("wrong")
+        }
+    } else {
+        io.println("wrong")
+    }
+}
+
+fn main() -> void {
+    let mut i: i32 = 0
+    for i < TIMES {
+        io.println(GREETING)
+        i = i + 1
+    }
+    check_primitives()
+}

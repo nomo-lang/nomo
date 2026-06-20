@@ -5,18 +5,18 @@ import std.io
 
 fn load(path: string) -> Result<string, FsError> {
     let text: string = fs.read_to_string(path)?
-    return Result.Ok(text)
+    return Ok(text)
 }
 
 fn main() -> void {
     let write_result: Result<void, FsError> = fs.write_string("/private/tmp/nomo-read-file-example.txt", "file ok")
     let read_result: Result<string, FsError> = match write_result {
-        Result.Ok(_) => load("/private/tmp/nomo-read-file-example.txt")
-        Result.Err(err) => Result.Err(err)
+        Ok(ignored) => load("/private/tmp/nomo-read-file-example.txt")
+        Err(err) => Err(err)
     }
     let message: string = match read_result {
-        Result.Ok(text) => text
-        Result.Err(err) => err.message
+        Ok(text) => text
+        Err(err) => err.message
     }
     io.println(message)
 }

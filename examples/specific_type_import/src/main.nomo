@@ -1,0 +1,30 @@
+package app.main
+
+import std.io
+import std.result.Result
+import std.option.Option
+import std.fs.FsError
+
+fn make_error() -> FsError {
+    return FsError { message: "specific type import ok" }
+}
+
+fn maybe_error(flag: bool) -> Result<Option<FsError>, string> {
+    return if flag {
+        Ok(Some(make_error()))
+    } else {
+        Ok(None)
+    }
+}
+
+fn main() -> void {
+    let result: Result<Option<FsError>, string> = maybe_error(true)
+    let message: string = match result {
+        Ok(value) => match value {
+            Some(error) => error.message
+            None => "wrong"
+        }
+        Err(err) => err
+    }
+    io.println(message)
+}

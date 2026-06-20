@@ -1,0 +1,25 @@
+package app.main
+
+import std.fs
+import std.io
+import std.result
+
+pub enum AppError {
+    ReadFailed(string)
+}
+
+fn app_error_from_fs(error: FsError) -> AppError {
+    return AppError.ReadFailed(error.message)
+}
+
+fn read_config(path: string) -> Result<string, AppError> {
+    let raw: Result<string, FsError> = fs.read_to_string(path)
+    let text: string = raw.map_err(app_error_from_fs)?
+    return Ok(text)
+}
+
+fn main() -> Result<void, AppError> {
+    let text: string = read_config("nomo.toml")?
+    io.println("result main ok")
+    Ok(void)
+}

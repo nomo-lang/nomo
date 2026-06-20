@@ -1,0 +1,23 @@
+package app.main
+
+import std.io
+import std.string
+
+fn Ok(value: string) -> string {
+    return value
+}
+
+fn parse() -> Result<string, string> {
+    return Result.Ok("qualified ok")
+}
+
+fn main() -> void {
+    let local: string = Ok("shadow ok")
+    let separator: string = " / "
+    let result: Result<string, string> = parse()
+    let message: string = match result {
+        Ok(value) => local.concat(separator.concat(value))
+        Err(err) => err
+    }
+    io.println(message)
+}

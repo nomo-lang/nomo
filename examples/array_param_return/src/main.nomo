@@ -1,0 +1,36 @@
+package app.main
+
+import std.array
+import std.io
+
+fn id(values: Array<i32>) -> Array<i32> {
+    values
+}
+
+fn main() -> void {
+    let mut original: Array<i32> = Array.new<i32>()
+    original.push(5)
+
+    let copy: Array<i32> = id(original)
+    original.set(0, 8)
+
+    let copied_value: Option<i32> = copy.get(0)
+    let original_value: Option<i32> = original.get(0)
+    let message: string = match copied_value {
+        Some(copy_number) => match original_value {
+            Some(original_number) => if copy_number == 5 {
+                if original_number == 8 {
+                    "array param return ok"
+                } else {
+                    "wrong"
+                }
+            } else {
+                "wrong"
+            }
+            None => "original missing"
+        }
+        None => "copy missing"
+    }
+
+    io.println(message)
+}

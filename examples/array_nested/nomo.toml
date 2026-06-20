@@ -1,0 +1,6 @@
+[package]
+name = "array_nested"
+version = "0.1.0"
+
+[dependencies]
+std = "0.1.0"

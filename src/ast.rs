@@ -5,6 +5,7 @@ pub struct SourceFile {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub impls: Vec<ImplBlock>,
+    pub consts: Vec<ConstDef>,
     pub functions: Vec<Function>,
 }
 
@@ -44,6 +45,15 @@ pub struct ImplBlock {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConstDef {
+    pub public: bool,
+    pub name: String,
+    pub type_ref: TypeRef,
+    pub value: Expr,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub public: bool,
     pub name: String,
@@ -51,6 +61,7 @@ pub struct Function {
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub body: Vec<Stmt>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -75,6 +86,21 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    LetElse {
+        pattern: Vec<String>,
+        binding: String,
+        value: Expr,
+        else_body: Vec<Stmt>,
+        span: Span,
+    },
+    IfLet {
+        pattern: Vec<String>,
+        binding: Option<String>,
+        value: Expr,
+        body: Vec<Stmt>,
+        else_body: Option<Vec<Stmt>>,
+        span: Span,
+    },
     Assign {
         target: Vec<String>,
         value: Expr,
@@ -84,9 +110,44 @@ pub enum Stmt {
         value: Option<Expr>,
         span: Span,
     },
+    Match {
+        value: Expr,
+        arms: Vec<MatchStmtArm>,
+        span: Span,
+    },
     Expr {
         expr: Expr,
         span: Span,
+    },
+    For {
+        variant: ForVariant,
+        span: Span,
+    },
+    Break {
+        span: Span,
+    },
+    Continue {
+        span: Span,
+    },
+    Defer {
+        stmt: Box<Stmt>,
+        span: Span,
+    },
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ForVariant {
+    Infinite {
+        body: Vec<Stmt>,
+    },
+    While {
+        condition: Expr,
+        body: Vec<Stmt>,
+    },
+    Iterate {
+        binding: String,
+        iterable: Expr,
+        body: Vec<Stmt>,
     },
 }
 
@@ -142,6 +203,13 @@ pub struct MatchArm {
     pub pattern: Vec<String>,
     pub binding: Option<String>,
     pub value: Expr,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct MatchStmtArm {
+    pub pattern: Vec<String>,
+    pub binding: Option<String>,
+    pub body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

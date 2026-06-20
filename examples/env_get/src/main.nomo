@@ -1,0 +1,13 @@
+package app.main
+
+import std.env
+import std.io
+
+fn main() -> void {
+    let value: Option<string> = env.get("NOMO_EXAMPLE_ENV")
+    let message: string = match value {
+        Some(text) => text
+        None => "missing"
+    }
+    io.println(message)
+}

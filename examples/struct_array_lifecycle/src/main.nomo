@@ -1,0 +1,50 @@
+package app.main
+
+import std.array
+import std.io
+
+struct Bag {
+    items: Array<i32>
+}
+
+enum Slot {
+    Full(Bag)
+    Empty
+}
+
+fn label_seven(bag: Bag) -> string {
+    let items: Array<i32> = bag.items
+    let value: Option<i32> = items.get(0)
+    return match value {
+        Some(number) => if number == 7 {
+            "struct array lifecycle ok"
+        } else {
+            "wrong"
+        }
+        None => "missing"
+    }
+}
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(5)
+
+    let mut bag: Bag = Bag { items: items }
+    let mut replacement: Array<i32> = Array.new<i32>()
+    replacement.push(7)
+    bag.items = replacement
+    replacement.set(0, 9)
+
+    let snapshot: Bag = bag
+    let mut slot: Slot = Slot.Full(snapshot)
+    slot = slot
+
+    items.set(0, 9)
+
+    let message: string = match slot {
+        Slot.Full(value) => label_seven(value)
+        Slot.Empty => "empty"
+    }
+
+    io.println(message)
+}

@@ -1,0 +1,28 @@
+package app.main
+
+import std.io
+
+fn load(flag: bool) -> Result<Option<string>, string> {
+    return if flag {
+        Ok(Some("lang items ok"))
+    } else {
+        Ok(None)
+    }
+}
+
+fn label(flag: bool) -> Result<string, string> {
+    let value: Option<string> = load(flag)?
+    return match value {
+        Some(text) => Ok(text)
+        None => Err("missing")
+    }
+}
+
+fn main() -> void {
+    let result: Result<string, string> = label(true)
+    let message: string = match result {
+        Ok(text) => text
+        Err(err) => err
+    }
+    io.println(message)
+}

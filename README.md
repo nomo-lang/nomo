@@ -46,8 +46,9 @@ cargo install --path .
 ```bash
 nomo new <name>                  # scaffold a new project (nomo.toml + src/main.nomo)
 nomo check [path] [--json-errors] # type-check the project
-nomo build [path] [--emit-c]     # compile to a native binary (or stop at C with --emit-c)
-nomo run [path] [-- args...]     # build then run, forwarding args after `--`
+nomo build [path] [--emit-c] [--json-errors] # compile to a native binary (or stop at C with --emit-c)
+nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
+nomo clean [path]                 # remove generated build artifacts
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
@@ -66,11 +67,11 @@ nomo run
 
 ```bash
 nomoc check <source.nomo> [--json-errors]        # parse and type-check
-nomoc build <source.nomo> [--emit-c] [--out path] # emit C99 (stdout, or --out file)
+nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors] # emit C99
 ```
 
 The `--json-errors` flag produces machine-readable diagnostics (with positions
-and fix suggestions) suitable for tooling.
+and fix suggestions) suitable for tooling on `check` and `build`.
 
 ## Library crate
 

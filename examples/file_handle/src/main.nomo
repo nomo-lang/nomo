@@ -1,0 +1,22 @@
+package app.main
+
+import std.fs
+import std.io
+
+fn close_and_label(file: File) -> string {
+    defer file.close()
+    return "file handle ok"
+}
+
+fn main() -> void {
+    let write_result: Result<void, FsError> = fs.write_string("/private/tmp/nomo-file-handle-example.txt", "file handle ok")
+    let open_result: Result<File, FsError> = match write_result {
+        Ok(ignored) => fs.open("/private/tmp/nomo-file-handle-example.txt")
+        Err(err) => Err(err)
+    }
+    let message: string = match open_result {
+        Ok(file) => close_and_label(file)
+        Err(err) => err.message
+    }
+    io.println(message)
+}

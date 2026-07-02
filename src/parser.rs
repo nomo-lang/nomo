@@ -68,6 +68,22 @@ impl Parser<'_> {
             }
         }
 
+        let package_for_items = package.clone();
+        for item in &mut structs {
+            item.package = package_for_items.clone();
+        }
+        for item in &mut enums {
+            item.package = package_for_items.clone();
+        }
+        for function in &mut functions {
+            function.package = package_for_items.clone();
+        }
+        for impl_block in &mut impls {
+            for method in &mut impl_block.methods {
+                method.package = package_for_items.clone();
+            }
+        }
+
         Ok(SourceFile {
             package,
             imports,
@@ -127,6 +143,7 @@ impl Parser<'_> {
 
         Ok(EnumDef {
             public,
+            package: Vec::new(),
             name,
             type_params,
             variants,
@@ -209,6 +226,7 @@ impl Parser<'_> {
 
         Ok(StructDef {
             public,
+            package: Vec::new(),
             name,
             type_params,
             fields,
@@ -263,6 +281,7 @@ impl Parser<'_> {
 
         Ok(Function {
             public,
+            package: Vec::new(),
             name,
             type_params,
             params,
@@ -2082,6 +2101,10 @@ mod tests {
     structs: [
         StructDef {
             public: false,
+            package: [
+                "app",
+                "main",
+            ],
             name: "Box",
             type_params: [
                 "T",
@@ -2103,6 +2126,10 @@ mod tests {
     enums: [
         EnumDef {
             public: false,
+            package: [
+                "app",
+                "main",
+            ],
             name: "State",
             type_params: [],
             variants: [
@@ -2129,6 +2156,10 @@ mod tests {
     functions: [
         Function {
             public: false,
+            package: [
+                "app",
+                "main",
+            ],
             name: "label",
             type_params: [],
             params: [

@@ -12,6 +12,7 @@ pub struct SourceFile {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructDef {
     pub public: bool,
+    pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<Field>,
@@ -27,6 +28,7 @@ pub struct Field {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumDef {
     pub public: bool,
+    pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
@@ -56,6 +58,7 @@ pub struct ConstDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub public: bool,
+    pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,
     pub params: Vec<Param>,

@@ -10,6 +10,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "result_chain",
     "struct_methods",
     "array_basic",
+    "mut_field_borrow",
 ];
 
 #[test]

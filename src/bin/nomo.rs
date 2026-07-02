@@ -1,6 +1,7 @@
 use nomo::project::{
     BuildError, build_project_with_diagnostics, check_project, clean_project, create_project,
-    discover_project, run_project_with_args_and_diagnostics,
+    dependency_tree, discover_project, resolve_project_dependencies,
+    run_project_with_args_and_diagnostics,
 };
 use std::env;
 use std::path::PathBuf;
@@ -75,6 +76,28 @@ fn run() -> Result<(), String> {
             println!("cleaned {}", cleaned.display());
             Ok(())
         }
+        "deps" => {
+            let [subcommand, rest @ ..] = args.as_slice() else {
+                return Err("usage: nomo deps <resolve|tree> [path]".to_string());
+            };
+            let path = parse_optional_path(
+                rest.to_vec(),
+                &format!("usage: nomo deps {subcommand} [path]"),
+            )?;
+            let project = discover_project(&path)?;
+            match subcommand.as_str() {
+                "resolve" => {
+                    let lock = resolve_project_dependencies(&project)?;
+                    println!("resolved {}", lock.display());
+                    Ok(())
+                }
+                "tree" => {
+                    print!("{}", dependency_tree(&project)?);
+                    Ok(())
+                }
+                other => Err(format!("unknown deps command `{other}`")),
+            }
+        }
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())
@@ -123,7 +146,7 @@ fn parse_path_and_emit_c_and_json(args: Vec<String>) -> Result<(PathBuf, bool, b
     ))
 }
 
-fn parse_optional_path(args: Vec<String>, usage: &'static str) -> Result<PathBuf, String> {
+fn parse_optional_path(args: Vec<String>, usage: &str) -> Result<PathBuf, String> {
     match args.as_slice() {
         [] => env::current_dir().map_err(|err| err.to_string()),
         [path] => Ok(PathBuf::from(path)),
@@ -158,6 +181,6 @@ fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), Str
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo clean [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n"
     );
 }

@@ -9,7 +9,7 @@ use crate::lexer;
 use crate::parser;
 use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
 const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
@@ -25,6 +25,12 @@ pub struct Program {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternalModule {
+    pub import_root: String,
+    pub source_path: PathBuf,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Const {
     pub name: String,
     pub value_type: ValueType,
@@ -33,6 +39,7 @@ pub struct Const {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructType {
+    pub package: String,
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<StructField>,
@@ -46,6 +53,7 @@ pub struct StructField {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct EnumType {
+    pub package: String,
     pub name: String,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariantType>,
@@ -59,6 +67,7 @@ pub struct EnumVariantType {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
+    pub package: String,
     pub name: String,
     pub params: Vec<Parameter>,
     pub return_type: ValueType,
@@ -397,6 +406,21 @@ struct FunctionInstance {
 }
 
 pub fn check_source(path: &Path) -> Result<Program, Diagnostic> {
+    check_source_with_external_imports(path, &[])
+}
+
+pub fn check_source_with_external_imports(
+    path: &Path,
+    external_import_roots: &[String],
+) -> Result<Program, Diagnostic> {
+    check_source_with_external_modules(path, external_import_roots, &[])
+}
+
+pub fn check_source_with_external_modules(
+    path: &Path,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<Program, Diagnostic> {
     let source = fs::read_to_string(path).map_err(|err| {
         Diagnostic::new(
             "N0001",
@@ -408,27 +432,133 @@ pub fn check_source(path: &Path) -> Result<Program, Diagnostic> {
             "",
         )
     })?;
-    check_source_text(path, &source)
+    check_source_text_with_external_modules(path, &source, external_import_roots, external_modules)
 }
 
 pub fn check_source_text(path: &Path, source: &str) -> Result<Program, Diagnostic> {
+    check_source_text_with_external_imports(path, source, &[])
+}
+
+pub fn check_source_text_with_external_imports(
+    path: &Path,
+    source: &str,
+    external_import_roots: &[String],
+) -> Result<Program, Diagnostic> {
+    check_source_text_with_external_modules(path, source, external_import_roots, &[])
+}
+
+pub fn check_source_text_with_external_modules(
+    path: &Path,
+    source: &str,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<Program, Diagnostic> {
     let tokens = lexer::lex(path, source)?;
-    let ast = parser::parse(path, &tokens)?;
-    lower_program(path, ast)
+    let mut ast = parser::parse(path, &tokens)?;
+    merge_external_public_api(path, &mut ast, external_modules)?;
+    lower_program(path, ast, external_import_roots)
 }
 
 pub fn compile_source_to_c(path: &Path) -> Result<String, Diagnostic> {
-    let program = check_source(path)?;
+    compile_source_to_c_with_external_imports(path, &[])
+}
+
+pub fn compile_source_to_c_with_external_imports(
+    path: &Path,
+    external_import_roots: &[String],
+) -> Result<String, Diagnostic> {
+    let program = check_source_with_external_modules(path, external_import_roots, &[])?;
     Ok(codegen::emit_c(&program))
 }
 
-fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
+pub fn compile_source_to_c_with_external_modules(
+    path: &Path,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<String, Diagnostic> {
+    let program =
+        check_source_with_external_modules(path, external_import_roots, external_modules)?;
+    Ok(codegen::emit_c(&program))
+}
+
+fn merge_external_public_api(
+    importer_path: &Path,
+    ast: &mut SourceFile,
+    external_modules: &[ExternalModule],
+) -> Result<(), Diagnostic> {
+    let active_roots = ast
+        .imports
+        .iter()
+        .filter_map(|import| import.first().cloned())
+        .collect::<HashSet<_>>();
+    for module in external_modules {
+        if !active_roots.contains(&module.import_root) {
+            continue;
+        }
+        let source = fs::read_to_string(&module.source_path).map_err(|err| {
+            Diagnostic::new(
+                "N0902",
+                format!(
+                    "failed to read dependency source `{}`: {err}",
+                    module.source_path.display()
+                ),
+                importer_path,
+                1,
+                1,
+                1,
+                "",
+            )
+        })?;
+        let tokens = lexer::lex(&module.source_path, &source)?;
+        let module_ast = parser::parse(&module.source_path, &tokens)?;
+        let public_structs = module_ast
+            .structs
+            .iter()
+            .filter(|item| item.public)
+            .map(|item| item.name.clone())
+            .collect::<HashSet<_>>();
+
+        ast.imports.extend(module_ast.imports);
+        ast.structs
+            .extend(module_ast.structs.into_iter().filter(|item| item.public));
+        ast.enums
+            .extend(module_ast.enums.into_iter().filter(|item| item.public));
+        ast.consts
+            .extend(module_ast.consts.into_iter().filter(|item| item.public));
+        ast.functions.extend(
+            module_ast
+                .functions
+                .into_iter()
+                .filter(|item| item.public && item.name != "main"),
+        );
+        ast.impls
+            .extend(module_ast.impls.into_iter().filter_map(|mut item| {
+                let target = item.type_name.path.first()?;
+                if !public_structs.contains(target) {
+                    return None;
+                }
+                item.methods.retain(|method| method.public);
+                if item.methods.is_empty() {
+                    None
+                } else {
+                    Some(item)
+                }
+            }));
+    }
+    Ok(())
+}
+
+fn lower_program(
+    path: &Path,
+    ast: SourceFile,
+    external_import_roots: &[String],
+) -> Result<Program, Diagnostic> {
     let imports = ast
         .imports
         .iter()
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
-    validate_imports(path, &imports)?;
+    validate_imports(path, &imports, external_import_roots)?;
     validate_standard_type_imports(path, &imports, &ast)?;
     let standard_type_needs = standard_type_needs(&imports, &ast);
     validate_standard_type_conflicts(path, standard_type_needs, &ast.structs, &ast.enums)?;
@@ -745,9 +875,13 @@ fn lower_program(path: &Path, ast: SourceFile) -> Result<Program, Diagnostic> {
     })
 }
 
-fn validate_imports(path: &Path, imports: &[String]) -> Result<(), Diagnostic> {
+fn validate_imports(
+    path: &Path,
+    imports: &[String],
+    external_import_roots: &[String],
+) -> Result<(), Diagnostic> {
     for import in imports {
-        if !is_supported_import(import) {
+        if !is_supported_import(import, external_import_roots) {
             return Err(Diagnostic::new(
                 "N0301",
                 format!("unsupported import `{import}` in v0.1"),
@@ -975,7 +1109,7 @@ fn validate_type_ref_imports(
     Ok(())
 }
 
-fn is_supported_import(import: &str) -> bool {
+fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
     matches!(
         import,
         "std.io"
@@ -1005,7 +1139,14 @@ fn is_supported_import(import: &str) -> bool {
             | "std.string"
             | "std.string.len"
             | "std.string.concat"
-    )
+    ) || is_supported_external_import(import, external_import_roots)
+}
+
+fn is_supported_external_import(import: &str, external_import_roots: &[String]) -> bool {
+    let Some((root, _rest)) = import.split_once('.') else {
+        return false;
+    };
+    root != "std" && external_import_roots.iter().any(|alias| alias == root)
 }
 
 fn is_constant_expr(expr: &ValueExpr) -> bool {
@@ -1369,6 +1510,7 @@ fn lower_structs(
             });
         }
         lowered.push(StructType {
+            package: item.package.join("."),
             name: item.name.clone(),
             type_params: item.type_params.clone(),
             fields,
@@ -1470,6 +1612,7 @@ fn lower_enums(
             });
         }
         lowered.push(EnumType {
+            package: item.package.join("."),
             name: item.name.clone(),
             type_params: item.type_params.clone(),
             variants,
@@ -1538,6 +1681,7 @@ fn inject_standard_types(
 ) {
     if needs.fs && !structs.iter().any(|item| item.name == "FsError") {
         structs.push(StructType {
+            package: "std.fs".to_string(),
             name: "FsError".to_string(),
             type_params: Vec::new(),
             fields: vec![StructField {
@@ -1548,6 +1692,7 @@ fn inject_standard_types(
     }
     if needs.fs && !structs.iter().any(|item| item.name == "File") {
         structs.push(StructType {
+            package: "std.fs".to_string(),
             name: "File".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
@@ -1555,6 +1700,7 @@ fn inject_standard_types(
     }
     if (needs.fs || needs.result) && !enums.iter().any(|item| item.name == "Result") {
         enums.push(EnumType {
+            package: "std.result".to_string(),
             name: "Result".to_string(),
             type_params: vec!["T".to_string(), "E".to_string()],
             variants: vec![
@@ -1572,6 +1718,7 @@ fn inject_standard_types(
     if (needs.env || needs.option || needs.array) && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {
+            package: "std.option".to_string(),
             name: "Option".to_string(),
             type_params: vec!["T".to_string()],
             variants: vec![
@@ -2484,6 +2631,7 @@ fn lower_function_as(
     }
 
     Ok(Function {
+        package: function.package.join("."),
         name: lowered_name.to_string(),
         params,
         return_type: signature.return_type.clone(),
@@ -9261,7 +9409,7 @@ mod tests {
         let path = Path::new("main.nomo");
         let tokens = lexer::lex(path, source)?;
         let ast = parser::parse(path, &tokens)?;
-        lower_program(path, ast)
+        lower_program(path, ast, &[])
     }
 
     #[test]

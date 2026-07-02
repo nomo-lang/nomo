@@ -205,8 +205,8 @@ fn emit_string_runtime(out: &mut String) {
 }
 
 fn emit_function_name_macros(out: &mut String, program: &Program) {
-    let package = c_package_ident(&program.package);
     for function in &program.functions {
+        let package = c_package_ident(&function.package);
         out.push_str("#define ");
         out.push_str(&c_fn_ident(&function.name));
         out.push(' ');
@@ -222,8 +222,13 @@ fn emit_function_name_macros(out: &mut String, program: &Program) {
 }
 
 fn emit_type_name_macros(out: &mut String, program: &Program) {
-    let package = c_package_ident(&program.package);
     for (struct_name, struct_args) in collect_struct_instances(program) {
+        let struct_type = program
+            .structs
+            .iter()
+            .find(|item| item.name == struct_name)
+            .expect("checked programs only use known structs");
+        let package = c_package_ident(&struct_type.package);
         let local = c_struct_ident(&struct_name, &struct_args);
         let suffix = c_type_suffix(&struct_args);
         out.push_str("#define ");
@@ -236,6 +241,12 @@ fn emit_type_name_macros(out: &mut String, program: &Program) {
         out.push('\n');
     }
     for (enum_name, enum_args) in collect_enum_instances(program) {
+        let enum_type = program
+            .enums
+            .iter()
+            .find(|item| item.name == enum_name)
+            .expect("checked programs only use known enums");
+        let package = c_package_ident(&enum_type.package);
         let suffix = c_type_suffix(&enum_args);
         out.push_str("#define ");
         out.push_str(&c_enum_tag_ident(&enum_name, &enum_args));
@@ -253,19 +264,17 @@ fn emit_type_name_macros(out: &mut String, program: &Program) {
         out.push_str(&enum_name);
         out.push_str(&suffix);
         out.push('\n');
-        if let Some(enum_type) = program.enums.iter().find(|item| item.name == enum_name) {
-            for variant in &enum_type.variants {
-                out.push_str("#define ");
-                out.push_str(&c_enum_variant_ident(&enum_name, &enum_args, &variant.name));
-                out.push_str(" nomo_pkg_");
-                out.push_str(&package);
-                out.push_str("_enum_");
-                out.push_str(&enum_name);
-                out.push_str(&suffix);
-                out.push('_');
-                out.push_str(&variant.name);
-                out.push('\n');
-            }
+        for variant in &enum_type.variants {
+            out.push_str("#define ");
+            out.push_str(&c_enum_variant_ident(&enum_name, &enum_args, &variant.name));
+            out.push_str(" nomo_pkg_");
+            out.push_str(&package);
+            out.push_str("_enum_");
+            out.push_str(&enum_name);
+            out.push_str(&suffix);
+            out.push('_');
+            out.push_str(&variant.name);
+            out.push('\n');
         }
     }
     if !program.structs.is_empty() || !program.enums.is_empty() {
@@ -5378,6 +5387,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -5402,6 +5412,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "add".to_string(),
                     params: vec![
                         Parameter {
@@ -5423,6 +5434,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5449,6 +5461,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: Vec::new(),
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Point".to_string(),
                 type_params: Vec::new(),
                 fields: vec![StructField {
@@ -5457,6 +5470,7 @@ mod tests {
                 }],
             }],
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Color".to_string(),
                 type_params: Vec::new(),
                 variants: vec![
@@ -5471,6 +5485,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -5516,6 +5531,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -5540,6 +5556,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "add".to_string(),
                     params: vec![
                         Parameter {
@@ -5561,6 +5578,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5596,6 +5614,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "bump".to_string(),
                     params: vec![Parameter {
                         name: "value".to_string(),
@@ -5613,6 +5632,7 @@ mod tests {
                     }],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5646,6 +5666,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: Vec::new(),
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Point".to_string(),
                 type_params: Vec::new(),
                 fields: vec![
@@ -5662,6 +5683,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "bump".to_string(),
                     params: vec![Parameter {
                         name: "value".to_string(),
@@ -5672,6 +5694,7 @@ mod tests {
                     body: Vec::new(),
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5714,6 +5737,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "ratio".to_string(),
                     params: vec![Parameter {
                         name: "age".to_string(),
@@ -5727,6 +5751,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5758,12 +5783,14 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "initial".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Char,
                     body: vec![Statement::Return(Some(ValueExpr::CharLiteral('語')))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5798,6 +5825,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "add32".to_string(),
                     params: vec![
                         Parameter {
@@ -5819,6 +5847,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -5861,6 +5890,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -5903,6 +5933,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -5954,6 +5985,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "echo".to_string(),
                     params: vec![Parameter {
                         name: "value".to_string(),
@@ -5966,6 +5998,7 @@ mod tests {
                     )))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -6011,6 +6044,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: vec!["std.fs".to_string()],
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "FsError".to_string(),
                 type_params: Vec::new(),
                 fields: vec![StructField {
@@ -6019,6 +6053,7 @@ mod tests {
                 }],
             }],
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Result".to_string(),
                 type_params: vec!["T".to_string(), "E".to_string()],
                 variants: vec![
@@ -6033,6 +6068,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6076,6 +6112,7 @@ mod tests {
             imports: vec!["std.env".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6090,6 +6127,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6119,6 +6157,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6144,6 +6183,7 @@ mod tests {
             imports: vec!["std.env".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6158,6 +6198,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6189,6 +6230,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6203,6 +6245,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6262,6 +6305,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6276,6 +6320,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6338,6 +6383,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6352,6 +6398,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6423,6 +6470,7 @@ mod tests {
             structs: Vec::new(),
             enums: vec![
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Option".to_string(),
                     type_params: vec!["T".to_string()],
                     variants: vec![
@@ -6437,6 +6485,7 @@ mod tests {
                     ],
                 },
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Result".to_string(),
                     type_params: vec!["T".to_string(), "E".to_string()],
                     variants: vec![
@@ -6453,6 +6502,7 @@ mod tests {
             ],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "parse".to_string(),
                     params: Vec::new(),
                     return_type: result_i32_string.clone(),
@@ -6464,6 +6514,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "compute".to_string(),
                     params: Vec::new(),
                     return_type: result_i32_string,
@@ -6500,6 +6551,7 @@ mod tests {
                     ],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -6540,6 +6592,7 @@ mod tests {
             structs: Vec::new(),
             enums: vec![
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Option".to_string(),
                     type_params: vec!["T".to_string()],
                     variants: vec![
@@ -6554,6 +6607,7 @@ mod tests {
                     ],
                 },
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Result".to_string(),
                     type_params: vec!["T".to_string(), "E".to_string()],
                     variants: vec![
@@ -6570,6 +6624,7 @@ mod tests {
             ],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "parse".to_string(),
                     params: Vec::new(),
                     return_type: result_i32_string.clone(),
@@ -6581,6 +6636,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "compute".to_string(),
                     params: Vec::new(),
                     return_type: result_i32_string.clone(),
@@ -6604,6 +6660,7 @@ mod tests {
                     ],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -6647,6 +6704,7 @@ mod tests {
             structs: Vec::new(),
             enums: vec![
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Option".to_string(),
                     type_params: vec!["T".to_string()],
                     variants: vec![
@@ -6661,6 +6719,7 @@ mod tests {
                     ],
                 },
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Result".to_string(),
                     type_params: vec!["T".to_string(), "E".to_string()],
                     variants: vec![
@@ -6677,6 +6736,7 @@ mod tests {
             ],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "compute".to_string(),
                     params: Vec::new(),
                     return_type: result_array_array.clone(),
@@ -6714,6 +6774,7 @@ mod tests {
                     ],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -6748,6 +6809,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6762,6 +6824,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6819,6 +6882,7 @@ mod tests {
             imports: vec!["std.env".to_string(), "std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6833,6 +6897,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6885,6 +6950,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6899,6 +6965,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -6947,6 +7014,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -6962,6 +7030,7 @@ mod tests {
             }],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "take".to_string(),
                     params: Vec::new(),
                     return_type: array_i32.clone(),
@@ -6979,6 +7048,7 @@ mod tests {
                     }],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7014,6 +7084,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7028,6 +7099,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7083,6 +7155,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7097,6 +7170,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7154,6 +7228,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7168,6 +7243,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7230,6 +7306,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7244,6 +7321,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7307,6 +7385,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7321,6 +7400,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7375,6 +7455,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: vec!["std.array".to_string()],
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Bag".to_string(),
                 type_params: Vec::new(),
                 fields: vec![StructField {
@@ -7384,6 +7465,7 @@ mod tests {
             }],
             enums: vec![
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Option".to_string(),
                     type_params: vec!["T".to_string()],
                     variants: vec![
@@ -7398,6 +7480,7 @@ mod tests {
                     ],
                 },
                 EnumType {
+                    package: "app.main".to_string(),
                     name: "Slot".to_string(),
                     type_params: Vec::new(),
                     variants: vec![
@@ -7414,6 +7497,7 @@ mod tests {
             ],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "label".to_string(),
                     params: vec![Parameter {
                         name: "bag".to_string(),
@@ -7424,6 +7508,7 @@ mod tests {
                     body: Vec::new(),
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7511,6 +7596,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7526,6 +7612,7 @@ mod tests {
             }],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "id".to_string(),
                     params: vec![Parameter {
                         name: "values".to_string(),
@@ -7538,6 +7625,7 @@ mod tests {
                     )))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "borrow".to_string(),
                     params: vec![Parameter {
                         name: "values".to_string(),
@@ -7548,6 +7636,7 @@ mod tests {
                     body: Vec::new(),
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7598,6 +7687,7 @@ mod tests {
             imports: vec!["std.array".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Option".to_string(),
                 type_params: vec!["T".to_string()],
                 variants: vec![
@@ -7612,6 +7702,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7656,6 +7747,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "label".to_string(),
                     params: vec![Parameter {
                         name: "score".to_string(),
@@ -7674,6 +7766,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7699,6 +7792,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7731,6 +7825,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "label".to_string(),
                     params: vec![Parameter {
                         name: "ok".to_string(),
@@ -7748,6 +7843,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7776,6 +7872,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "cleanup".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7784,6 +7881,7 @@ mod tests {
                     ))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7817,6 +7915,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "cleanup".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7825,6 +7924,7 @@ mod tests {
                     ))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -7857,6 +7957,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7885,6 +7986,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Color".to_string(),
                 type_params: Vec::new(),
                 variants: vec![
@@ -7899,6 +8001,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -7962,6 +8065,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Color".to_string(),
                 type_params: Vec::new(),
                 variants: vec![
@@ -7976,6 +8080,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8035,6 +8140,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8076,6 +8182,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8117,6 +8224,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8167,6 +8275,7 @@ mod tests {
             enums: Vec::new(),
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "cleanup".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -8175,12 +8284,14 @@ mod tests {
                     ))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "value".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Int,
                     body: vec![Statement::Return(Some(ValueExpr::IntLiteral(7)))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "compute".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Int,
@@ -8198,6 +8309,7 @@ mod tests {
                     ],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -8225,6 +8337,7 @@ mod tests {
             structs: Vec::new(),
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8258,6 +8371,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: vec!["std.io".to_string()],
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Counter".to_string(),
                 type_params: Vec::new(),
                 fields: vec![StructField {
@@ -8267,6 +8381,7 @@ mod tests {
             }],
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8310,6 +8425,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: vec!["std.io".to_string()],
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Point".to_string(),
                 type_params: Vec::new(),
                 fields: vec![
@@ -8325,6 +8441,7 @@ mod tests {
             }],
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8368,6 +8485,7 @@ mod tests {
             package: "app.main".to_string(),
             imports: vec!["std.io".to_string()],
             structs: vec![StructType {
+                package: "app.main".to_string(),
                 name: "Box".to_string(),
                 type_params: vec!["T".to_string()],
                 fields: vec![StructField {
@@ -8377,6 +8495,7 @@ mod tests {
             }],
             enums: Vec::new(),
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8408,6 +8527,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Color".to_string(),
                 type_params: Vec::new(),
                 variants: vec![
@@ -8422,6 +8542,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8481,6 +8602,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "MaybeInt".to_string(),
                 type_params: Vec::new(),
                 variants: vec![
@@ -8495,6 +8617,7 @@ mod tests {
                 ],
             }],
             functions: vec![Function {
+                package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
                 return_type: ValueType::Void,
@@ -8558,6 +8681,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Result".to_string(),
                 type_params: vec!["T".to_string(), "E".to_string()],
                 variants: vec![
@@ -8573,6 +8697,7 @@ mod tests {
             }],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "write".to_string(),
                     params: Vec::new(),
                     return_type: result_void_string.clone(),
@@ -8584,6 +8709,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
@@ -8612,6 +8738,7 @@ mod tests {
             imports: vec!["std.io".to_string()],
             structs: Vec::new(),
             enums: vec![EnumType {
+                package: "app.main".to_string(),
                 name: "Result".to_string(),
                 type_params: vec!["T".to_string(), "E".to_string()],
                 variants: vec![
@@ -8627,6 +8754,7 @@ mod tests {
             }],
             functions: vec![
                 Function {
+                    package: "app.main".to_string(),
                     name: "parse".to_string(),
                     params: Vec::new(),
                     return_type: result_i64_string.clone(),
@@ -8638,6 +8766,7 @@ mod tests {
                     }))],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "compute".to_string(),
                     params: Vec::new(),
                     return_type: result_i64_string.clone(),
@@ -8665,6 +8794,7 @@ mod tests {
                     ],
                 },
                 Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,

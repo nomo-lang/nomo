@@ -61,6 +61,75 @@ cd hello
 nomo run
 ```
 
+## Package manifests and dependencies
+
+Nomo uses a namespace-first package model. A package's stable identity is
+`<namespace>/<name>`; repository URLs, local paths and registry versions are
+dependency sources rather than language-level package names. The namespaces
+`std`, `nomo`, and `core` are reserved for the language and standard tooling.
+
+New projects use this manifest shape:
+
+```toml
+[package]
+namespace = "local"
+name = "hello"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+std = { package = "nomo-lang/std", version = "0.1.0" }
+```
+
+Dependency keys are local import aliases. For example:
+
+```toml
+[dependencies]
+json = { package = "nomo-lang/json", version = "0.1.0" }
+json_private = { package = "nomo-lang/json", version = "0.1.0", registry = "https://packages.example.com" }
+local_utils = { package = "fynn/utils", path = "../utils" }
+http = { package = "nomo-lang/http", git = "https://github.com/nomo-lang/http.git", rev = "2a4b8c1" }
+cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git", branch = "stable" }
+fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
+```
+
+```nomo
+import json.parser
+import local_utils.path
+import http.client
+```
+
+Project commands (`nomo check`, `nomo build`, and `nomo run`) validate those
+aliases from `nomo.toml`, so `import json.parser` is accepted only when `json`
+is declared as a dependency alias. Imported `path` and `git` dependencies
+contribute the public API from their `src/main.nomo` to the current v0.1 compile
+unit, so public functions, constants, structs, enums, and public methods can
+participate in type checking and generated C. Private dependency items are not
+exported. Generated C function and nominal type symbols use each item's source
+package path for mangling, so dependency APIs keep their dependency package
+identity instead of being emitted as part of the root application package.
+`nomoc` remains a standalone source-file driver and only accepts built-in
+`std.*` imports.
+
+`nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
+`nomo deps tree [path]` prints dependency aliases and canonical package IDs. If
+`nomo.lock` exists, `tree` reads the locked dependency graph; otherwise it
+resolves the current manifest sources. When locked `path` sources or matching
+git cache checkouts are still available, `tree` verifies their `sha256:`
+checksums before printing; missing path sources and git cache entries are
+treated as offline locked entries. Git sources are cloned into a
+project-local `.nomo/deps/git/` cache, checked out to the requested `branch`,
+`tag`, or `rev` when provided, validated against the expected canonical package
+ID, and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a
+`sha256:` checksum over `nomo.toml` and `src/` contents. Registry sources are
+recorded as leaf sources in v0.1, optionally with an explicit `registry`
+endpoint, but do not include checksums because v0.1 does not fetch registry
+archives. Public registry fetching and full version solving are deliberately
+left for later versions. A dependency must specify exactly one source among
+`path`, `git`, and `version`.
+If the same canonical package ID resolves to conflicting sources or versions,
+v0.1 reports an error instead of trying to solve multiple versions.
+
 ## Using `nomoc` (compiler driver)
 
 `nomoc` works directly on a single source file rather than a project:

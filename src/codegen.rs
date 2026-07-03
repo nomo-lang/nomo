@@ -2863,10 +2863,16 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::Binary { left, op, right } => {
             out.push('(');
             emit_expr(out, left);
-            out.push(' ');
-            out.push_str(c_binary_op(op));
-            out.push(' ');
-            emit_expr(out, right);
+            if matches!(op, BinaryOp::BitAndNot) {
+                out.push_str(" & ~(");
+                emit_expr(out, right);
+                out.push(')');
+            } else {
+                out.push(' ');
+                out.push_str(c_binary_op(op));
+                out.push(' ');
+                emit_expr(out, right);
+            }
             out.push(')');
         }
         ValueExpr::Unary { op, expr } => {
@@ -5178,9 +5184,15 @@ fn c_binary_op(op: &BinaryOp) -> &'static str {
         BinaryOp::LogicalAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Subtract => "-",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
         BinaryOp::Multiply => "*",
         BinaryOp::Divide => "/",
         BinaryOp::Remainder => "%",
+        BinaryOp::ShiftLeft => "<<",
+        BinaryOp::ShiftRight => ">>",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitAndNot => "&^",
         BinaryOp::Equal => "==",
         BinaryOp::NotEqual => "!=",
         BinaryOp::Less => "<",
@@ -8011,6 +8023,77 @@ mod tests {
         assert!(c.contains("!"));
         assert!(c.contains(" || "));
         assert!(c.contains(" && "));
+    }
+
+    #[test]
+    fn emits_bitwise_operators() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "mask".to_string(),
+                    params: vec![
+                        Parameter {
+                            name: "a".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Int,
+                        },
+                        Parameter {
+                            name: "b".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Int,
+                        },
+                    ],
+                    return_type: ValueType::Int,
+                    body: vec![Statement::Return(Some(ValueExpr::Binary {
+                        left: Box::new(ValueExpr::Binary {
+                            left: Box::new(ValueExpr::Binary {
+                                left: Box::new(ValueExpr::Variable("a".to_string())),
+                                op: BinaryOp::BitAnd,
+                                right: Box::new(ValueExpr::Variable("b".to_string())),
+                            }),
+                            op: BinaryOp::BitOr,
+                            right: Box::new(ValueExpr::Binary {
+                                left: Box::new(ValueExpr::Variable("a".to_string())),
+                                op: BinaryOp::BitXor,
+                                right: Box::new(ValueExpr::Variable("b".to_string())),
+                            }),
+                        }),
+                        op: BinaryOp::BitAndNot,
+                        right: Box::new(ValueExpr::Binary {
+                            left: Box::new(ValueExpr::Binary {
+                                left: Box::new(ValueExpr::Variable("a".to_string())),
+                                op: BinaryOp::ShiftLeft,
+                                right: Box::new(ValueExpr::IntLiteral(1)),
+                            }),
+                            op: BinaryOp::ShiftRight,
+                            right: Box::new(ValueExpr::IntLiteral(1)),
+                        }),
+                    }))],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+
+        assert!(c.contains(" & "));
+        assert!(c.contains(" | "));
+        assert!(c.contains(" ^ "));
+        assert!(c.contains(" << "));
+        assert!(c.contains(" >> "));
+        assert!(c.contains(" & ~("));
     }
 
     #[test]

@@ -778,8 +778,14 @@ fn binary_precedence(op: &BinaryOp) -> u8 {
         BinaryOp::LogicalAnd => 2,
         BinaryOp::Equal | BinaryOp::NotEqual => 3,
         BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => 4,
-        BinaryOp::Add | BinaryOp::Subtract => 5,
-        BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => 6,
+        BinaryOp::Add | BinaryOp::Subtract | BinaryOp::BitOr | BinaryOp::BitXor => 5,
+        BinaryOp::Multiply
+        | BinaryOp::Divide
+        | BinaryOp::Remainder
+        | BinaryOp::ShiftLeft
+        | BinaryOp::ShiftRight
+        | BinaryOp::BitAnd
+        | BinaryOp::BitAndNot => 6,
     }
 }
 
@@ -789,9 +795,15 @@ fn binary_op(op: &BinaryOp) -> &'static str {
         BinaryOp::LogicalAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Subtract => "-",
+        BinaryOp::BitOr => "|",
+        BinaryOp::BitXor => "^",
         BinaryOp::Multiply => "*",
         BinaryOp::Divide => "/",
         BinaryOp::Remainder => "%",
+        BinaryOp::ShiftLeft => "<<",
+        BinaryOp::ShiftRight => ">>",
+        BinaryOp::BitAnd => "&",
+        BinaryOp::BitAndNot => "&^",
         BinaryOp::Equal => "==",
         BinaryOp::NotEqual => "!=",
         BinaryOp::Less => "<",
@@ -869,12 +881,13 @@ mod tests {
 
     #[test]
     fn formats_expr_variants_and_escaping() {
-        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
+        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let mask: i64 = a&b&^c<<d>>e|f^g\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("Point { x: 1, y: 2 }"));
         assert!(formatted.contains("!left && right || fallback"));
         assert!(formatted.contains("a - b * c / d % e"));
+        assert!(formatted.contains("a & b &^ c << d >> e | f ^ g"));
         assert!(formatted.contains("total as f64"));
         assert!(formatted.contains("\"a\\n\\\"b\""));
         assert!(formatted.contains("'\\n'"));

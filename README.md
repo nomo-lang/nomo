@@ -79,10 +79,11 @@ instead of silently dropping comments.
 
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with
-short-circuit evaluation, plus equality and ordering comparisons. `%` is
-restricted to integer operands; `/` works for integer and `f64` operands.
-Runtime divide-by-zero and overflow guards are still tracked as later full-scope
-safety work.
+short-circuit evaluation, bitwise operators (`&`, `|`, `^`, `&^`, `<<`, `>>`),
+plus equality and ordering comparisons. `%` and bitwise operators are restricted
+to integer operands; `/` works for integer and `f64` operands. Runtime
+divide-by-zero, overflow and invalid shift guards are still tracked as later
+full-scope safety work.
 
 ```bash
 nomo new hello

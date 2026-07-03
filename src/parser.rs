@@ -13,6 +13,7 @@ pub fn parse(path: &Path, tokens: &[Token]) -> Result<SourceFile, Diagnostic> {
         index: 0,
         allow_struct_literals: true,
         impl_self_type: None,
+        pending_type_gt: 0,
     }
     .parse_source_file()
 }
@@ -23,6 +24,7 @@ struct Parser<'a> {
     index: usize,
     allow_struct_literals: bool,
     impl_self_type: Option<TypeRef>,
+    pending_type_gt: usize,
 }
 
 impl Parser<'_> {
@@ -884,6 +886,8 @@ impl Parser<'_> {
             let op = match self.peek().kind {
                 TokenKind::Plus => BinaryOp::Add,
                 TokenKind::Minus => BinaryOp::Subtract,
+                TokenKind::Pipe => BinaryOp::BitOr,
+                TokenKind::Caret => BinaryOp::BitXor,
                 _ => break,
             };
             self.advance();
@@ -905,6 +909,10 @@ impl Parser<'_> {
                 TokenKind::Star => BinaryOp::Multiply,
                 TokenKind::Slash => BinaryOp::Divide,
                 TokenKind::Percent => BinaryOp::Remainder,
+                TokenKind::LessLess => BinaryOp::ShiftLeft,
+                TokenKind::GreaterGreater => BinaryOp::ShiftRight,
+                TokenKind::Amp => BinaryOp::BitAnd,
+                TokenKind::AmpCaret => BinaryOp::BitAndNot,
                 _ => break,
             };
             self.advance();
@@ -1216,6 +1224,26 @@ impl Parser<'_> {
                             .is_some_and(|next| matches!(next.kind, TokenKind::LParen));
                     }
                 }
+                TokenKind::GreaterGreater => {
+                    if depth < 2 {
+                        return false;
+                    }
+                    depth -= 2;
+                    if depth == 0 {
+                        let mut next_index = index + 1;
+                        while self
+                            .tokens
+                            .get(next_index)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::Newline))
+                        {
+                            next_index += 1;
+                        }
+                        return self
+                            .tokens
+                            .get(next_index)
+                            .is_some_and(|next| matches!(next.kind, TokenKind::LParen));
+                    }
+                }
                 TokenKind::Eof => return false,
                 _ => {}
             }
@@ -1294,6 +1322,10 @@ impl Parser<'_> {
         loop {
             args.push(self.parse_type_ref()?);
             self.skip_newlines();
+            if self.pending_type_gt > 0 {
+                self.pending_type_gt -= 1;
+                break;
+            }
             match self.peek().kind {
                 TokenKind::Comma => {
                     self.advance();
@@ -1301,6 +1333,11 @@ impl Parser<'_> {
                 }
                 TokenKind::Greater => {
                     self.advance();
+                    break;
+                }
+                TokenKind::GreaterGreater => {
+                    self.advance();
+                    self.pending_type_gt += 1;
                     break;
                 }
                 _ => {
@@ -1581,6 +1618,36 @@ mod tests {
                 left,
                 ..
             } if matches!(left.as_ref(), Expr::Unary { .. }))
+        ));
+    }
+
+    #[test]
+    fn parses_bitwise_operator_precedence() {
+        let source = "package app.main\n\nfn mask(a: i64, b: i64, c: i64, d: i64) -> i64 {\n    return a | b ^ c & d << 1\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Binary {
+                    op: BinaryOp::BitXor,
+                    ref left,
+                    ref right,
+                    ..
+                }),
+                ..
+            } if matches!(left.as_ref(), Expr::Binary {
+                op: BinaryOp::BitOr,
+                ..
+            }) && matches!(right.as_ref(), Expr::Binary {
+                op: BinaryOp::ShiftLeft,
+                left,
+                ..
+            } if matches!(left.as_ref(), Expr::Binary {
+                op: BinaryOp::BitAnd,
+                ..
+            }))
         ));
     }
 

@@ -360,9 +360,15 @@ pub enum BinaryOp {
     LogicalAnd,
     Add,
     Subtract,
+    BitOr,
+    BitXor,
     Multiply,
     Divide,
     Remainder,
+    ShiftLeft,
+    ShiftRight,
+    BitAnd,
+    BitAndNot,
     Equal,
     NotEqual,
     Less,
@@ -7247,9 +7253,15 @@ fn lower_value_expr_with_expected(
                 AstBinaryOp::LogicalAnd => BinaryOp::LogicalAnd,
                 AstBinaryOp::Add => BinaryOp::Add,
                 AstBinaryOp::Subtract => BinaryOp::Subtract,
+                AstBinaryOp::BitOr => BinaryOp::BitOr,
+                AstBinaryOp::BitXor => BinaryOp::BitXor,
                 AstBinaryOp::Multiply => BinaryOp::Multiply,
                 AstBinaryOp::Divide => BinaryOp::Divide,
                 AstBinaryOp::Remainder => BinaryOp::Remainder,
+                AstBinaryOp::ShiftLeft => BinaryOp::ShiftLeft,
+                AstBinaryOp::ShiftRight => BinaryOp::ShiftRight,
+                AstBinaryOp::BitAnd => BinaryOp::BitAnd,
+                AstBinaryOp::BitAndNot => BinaryOp::BitAndNot,
                 AstBinaryOp::Equal => BinaryOp::Equal,
                 AstBinaryOp::NotEqual => BinaryOp::NotEqual,
                 AstBinaryOp::Less => BinaryOp::Less,
@@ -7268,6 +7280,16 @@ fn lower_value_expr_with_expected(
                 ) if numeric_pair_matches(left_type, right_type) => left_type.clone(),
                 (BinaryOp::Remainder, left_type, right_type)
                     if left_type == right_type && left_type.is_integer() =>
+                {
+                    left_type.clone()
+                }
+                (
+                    BinaryOp::BitOr | BinaryOp::BitXor | BinaryOp::BitAnd | BinaryOp::BitAndNot,
+                    left_type,
+                    right_type,
+                ) if left_type == right_type && left_type.is_integer() => left_type.clone(),
+                (BinaryOp::ShiftLeft | BinaryOp::ShiftRight, left_type, right_type)
+                    if left_type.is_integer() && right_type.is_integer() =>
                 {
                     left_type.clone()
                 }
@@ -7338,6 +7360,16 @@ fn lower_value_expr_with_expected(
                         "numeric"
                     } else if matches!(lowered_op, BinaryOp::LogicalOr | BinaryOp::LogicalAnd) {
                         "bool"
+                    } else if matches!(
+                        lowered_op,
+                        BinaryOp::BitOr
+                            | BinaryOp::BitXor
+                            | BinaryOp::BitAnd
+                            | BinaryOp::BitAndNot
+                            | BinaryOp::ShiftLeft
+                            | BinaryOp::ShiftRight
+                    ) {
+                        "integer"
                     } else {
                         "comparable"
                     };
@@ -9407,9 +9439,15 @@ fn ast_binary_symbol(op: &AstBinaryOp) -> &'static str {
         AstBinaryOp::LogicalAnd => "&&",
         AstBinaryOp::Add => "+",
         AstBinaryOp::Subtract => "-",
+        AstBinaryOp::BitOr => "|",
+        AstBinaryOp::BitXor => "^",
         AstBinaryOp::Multiply => "*",
         AstBinaryOp::Divide => "/",
         AstBinaryOp::Remainder => "%",
+        AstBinaryOp::ShiftLeft => "<<",
+        AstBinaryOp::ShiftRight => ">>",
+        AstBinaryOp::BitAnd => "&",
+        AstBinaryOp::BitAndNot => "&^",
         AstBinaryOp::Equal => "==",
         AstBinaryOp::NotEqual => "!=",
         AstBinaryOp::Less => "<",
@@ -11333,6 +11371,67 @@ fn main() -> void {
 
         assert_eq!(err.code, "N0404");
         assert!(err.message.contains("bool operand"));
+    }
+
+    #[test]
+    fn accepts_bitwise_operators() {
+        let source = r#"package app.main
+
+fn mask(a: i64, b: i64, c: i64, shift: u32) -> i64 {
+    return a & b | c ^ a &^ b << shift >> 1
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let mask = program.functions.iter().find(|f| f.name == "mask").unwrap();
+
+        assert_eq!(mask.return_type, ValueType::Int);
+        assert!(matches!(
+            mask.body[0],
+            Statement::Return(Some(ValueExpr::Binary {
+                op: BinaryOp::BitXor,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_non_integer_bitwise_operands() {
+        let source = r#"package app.main
+
+fn bad(left: bool, right: bool) -> bool {
+    return left & right
+}
+
+fn main() -> void {
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0404");
+        assert!(err.message.contains("integer operands"));
+    }
+
+    #[test]
+    fn rejects_non_integer_shift_rhs() {
+        let source = r#"package app.main
+
+fn bad(left: i64, right: bool) -> i64 {
+    return left << right
+}
+
+fn main() -> void {
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0404");
+        assert!(err.message.contains("integer operands"));
     }
 
     #[test]

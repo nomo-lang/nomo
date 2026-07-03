@@ -47,8 +47,12 @@ pub enum TokenKind {
     EqualEqual,
     Bang,
     BangEqual,
+    Amp,
     AmpAmp,
+    AmpCaret,
+    Pipe,
     PipePipe,
+    Caret,
     Plus,
     Minus,
     Star,
@@ -57,8 +61,10 @@ pub enum TokenKind {
     Question,
     Less,
     LessEqual,
+    LessLess,
     Greater,
     GreaterEqual,
+    GreaterGreater,
     LParen,
     RParen,
     LBrace,
@@ -135,16 +141,11 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.peek(), Some((_, '&'))) {
                         chars.next();
                         tokens.push(token(TokenKind::AmpAmp, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '^'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::AmpCaret, line, column, line_text));
                     } else {
-                        return Err(Diagnostic::new(
-                            "N0100",
-                            "unexpected `&`; did you mean `&&`?",
-                            path,
-                            line,
-                            column,
-                            1,
-                            line_text,
-                        ));
+                        tokens.push(token(TokenKind::Amp, line, column, line_text));
                     }
                 }
                 '|' => {
@@ -152,17 +153,10 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         chars.next();
                         tokens.push(token(TokenKind::PipePipe, line, column, line_text));
                     } else {
-                        return Err(Diagnostic::new(
-                            "N0100",
-                            "unexpected `|`; did you mean `||`?",
-                            path,
-                            line,
-                            column,
-                            1,
-                            line_text,
-                        ));
+                        tokens.push(token(TokenKind::Pipe, line, column, line_text));
                     }
                 }
+                '^' => tokens.push(token(TokenKind::Caret, line, column, line_text)),
                 '+' => tokens.push(token(TokenKind::Plus, line, column, line_text)),
                 '-' => {
                     if matches!(chars.peek(), Some((_, '>'))) {
@@ -179,6 +173,9 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
                         tokens.push(token(TokenKind::LessEqual, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '<'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::LessLess, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Less, line, column, line_text));
                     }
@@ -187,6 +184,9 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
                         tokens.push(token(TokenKind::GreaterEqual, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '>'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::GreaterGreater, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Greater, line, column, line_text));
                     }
@@ -532,6 +532,26 @@ mod tests {
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Bang));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::AmpAmp));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::PipePipe));
+    }
+
+    #[test]
+    fn lexes_bitwise_operators() {
+        let tokens = lex(
+            Path::new("main.nomo"),
+            "return a & b &^ c << d >> e | f ^ g\n",
+        )
+        .unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Amp));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::AmpCaret));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::LessLess));
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::GreaterGreater)
+        );
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Pipe));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Caret));
     }
 
     #[test]

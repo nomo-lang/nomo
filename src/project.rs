@@ -107,7 +107,7 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, String> {
     fs::write(
         project_root.join("nomo.toml"),
         format!(
-            "[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nstd = {{ package = \"nomo-lang/std\", version = \"0.1.0\" }}\n"
+            "[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"
         ),
     )
     .map_err(|err| err.to_string())?;
@@ -415,6 +415,9 @@ pub fn run_standalone_script_with_args_and_diagnostics(
 }
 
 fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> {
+    let document = manifest
+        .parse::<toml::Value>()
+        .map_err(|err| format!("failed to parse nomo.toml as TOML: {err}"))?;
     let root_name = root
         .file_name()
         .unwrap_or_default()
@@ -427,37 +430,29 @@ fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> 
         edition: "2026".to_string(),
     };
     let mut dependencies = Vec::new();
-    let mut aliases = BTreeSet::new();
-    let mut section = "";
-    let mut namespace_explicit = false;
 
-    for line in manifest.lines() {
-        let line = line.trim();
-        if line.is_empty() || line.starts_with('#') {
-            continue;
+    let package_table = optional_table(&document, "package")?;
+    let namespace_explicit = package_table.is_some_and(|table| table.contains_key("namespace"));
+    if let Some(table) = package_table {
+        if let Some(value) = optional_string_field(table, "package", "namespace")? {
+            package.namespace = value;
         }
-        if line.starts_with('[') && line.ends_with(']') {
-            section = &line[1..line.len() - 1];
-            continue;
+        if let Some(value) = optional_string_field(table, "package", "name")? {
+            package.name = value;
         }
-        match section {
-            "package" => {
-                if split_key_value(line).is_some_and(|(key, _)| key == "namespace") {
-                    namespace_explicit = true;
-                }
-                parse_package_field(line, &mut package)?;
-            }
-            "dependencies" => {
-                let dependency = parse_dependency_line(line)?;
-                if !aliases.insert(dependency.alias.clone()) {
-                    return Err(format!(
-                        "duplicate dependency alias `{}` in nomo.toml",
-                        dependency.alias
-                    ));
-                }
+        if let Some(value) = optional_string_field(table, "package", "version")? {
+            package.version = value;
+        }
+        if let Some(value) = optional_string_field(table, "package", "edition")? {
+            package.edition = value;
+        }
+    }
+
+    if let Some(table) = optional_table(&document, "dependencies")? {
+        for (alias, value) in table {
+            if let Some(dependency) = parse_dependency_value(alias, value)? {
                 dependencies.push(dependency);
             }
-            _ => {}
         }
     }
 
@@ -476,6 +471,160 @@ fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> 
         package,
         dependencies,
     })
+}
+
+fn optional_table<'a>(
+    document: &'a toml::Value,
+    key: &str,
+) -> Result<Option<&'a toml::map::Map<String, toml::Value>>, String> {
+    match document.get(key) {
+        Some(value) => value
+            .as_table()
+            .map(Some)
+            .ok_or_else(|| format!("manifest `{key}` must be a TOML table")),
+        None => Ok(None),
+    }
+}
+
+fn optional_string_field(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match table.get(key) {
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| format!("manifest `{section}.{key}` must be a string")),
+        None => Ok(None),
+    }
+}
+
+fn parse_dependency_value(alias: &str, value: &toml::Value) -> Result<Option<Dependency>, String> {
+    validate_dependency_alias(alias)?;
+
+    if let Some(version) = value.as_str() {
+        if alias == "std" {
+            validate_version_like("dependency `std` version", version)?;
+            return Ok(None);
+        }
+        return Err(format!(
+            "dependency `{alias}` must use an inline table with `package = \"owner/name\"`"
+        ));
+    }
+
+    let Some(fields) = value.as_table() else {
+        return Err(format!(
+            "dependency `{alias}` must be a TOML string or table"
+        ));
+    };
+
+    if fields.get("workspace").and_then(|value| value.as_bool()) == Some(true) {
+        return Err(format!(
+            "dependency `{alias}` uses workspace inheritance, which is not supported yet"
+        ));
+    }
+
+    let package = required_dependency_string(alias, fields, "package")?;
+    validate_package_id(&package)?;
+    if alias == "std" {
+        if package == "nomo-lang/std" {
+            return Ok(None);
+        }
+        return Err(
+            "dependency alias `std` is reserved for the built-in standard library".to_string(),
+        );
+    }
+
+    let source_keys = ["path", "git", "version"]
+        .into_iter()
+        .filter(|key| fields.contains_key(*key))
+        .collect::<Vec<_>>();
+    if source_keys.len() != 1 {
+        return Err(format!(
+            "dependency `{alias}` must specify exactly one source: `path`, `git`, or `version`"
+        ));
+    }
+    if fields.contains_key("registry") && !fields.contains_key("version") {
+        return Err(format!(
+            "dependency `{alias}` can only specify `registry` together with `version`"
+        ));
+    }
+    if fields.contains_key("rev") && !fields.contains_key("git") {
+        return Err(format!(
+            "dependency `{alias}` can only specify `rev` together with `git`"
+        ));
+    }
+    if fields.contains_key("branch") && !fields.contains_key("git") {
+        return Err(format!(
+            "dependency `{alias}` can only specify `branch` together with `git`"
+        ));
+    }
+    if fields.contains_key("tag") && !fields.contains_key("git") {
+        return Err(format!(
+            "dependency `{alias}` can only specify `tag` together with `git`"
+        ));
+    }
+    let git_selectors = ["branch", "tag", "rev"]
+        .into_iter()
+        .filter(|key| fields.contains_key(*key))
+        .collect::<Vec<_>>();
+    if git_selectors.len() > 1 {
+        return Err(format!(
+            "dependency `{alias}` must specify only one git checkout selector: `branch`, `tag`, or `rev`"
+        ));
+    }
+
+    let source = if fields.contains_key("path") {
+        DependencySource::Path {
+            path: required_dependency_string(alias, fields, "path")?,
+        }
+    } else if fields.contains_key("git") {
+        DependencySource::Git {
+            git: required_dependency_string(alias, fields, "git")?,
+            branch: optional_dependency_string(alias, fields, "branch")?,
+            tag: optional_dependency_string(alias, fields, "tag")?,
+            rev: optional_dependency_string(alias, fields, "rev")?,
+        }
+    } else if fields.contains_key("version") {
+        let version = required_dependency_string(alias, fields, "version")?;
+        validate_version_like(&format!("dependency `{alias}` version"), &version)?;
+        DependencySource::Registry {
+            version,
+            registry: optional_dependency_string(alias, fields, "registry")?,
+        }
+    } else {
+        unreachable!("source key count already validated")
+    };
+
+    Ok(Some(Dependency {
+        alias: alias.to_string(),
+        package,
+        source,
+    }))
+}
+
+fn required_dependency_string(
+    alias: &str,
+    fields: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<String, String> {
+    optional_dependency_string(alias, fields, key)?
+        .ok_or_else(|| format!("dependency `{alias}` is missing `{key}`"))
+}
+
+fn optional_dependency_string(
+    alias: &str,
+    fields: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<Option<String>, String> {
+    match fields.get(key) {
+        Some(value) => value
+            .as_str()
+            .map(|value| Some(value.to_string()))
+            .ok_or_else(|| format!("dependency `{alias}` field `{key}` must be a string")),
+        None => Ok(None),
+    }
 }
 
 fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
@@ -818,123 +967,6 @@ fn git_cache_key(
     format!("{}-{:016x}", alias, hasher.finish())
 }
 
-fn parse_package_field(line: &str, package: &mut PackageMetadata) -> Result<(), String> {
-    let Some((key, value)) = split_key_value(line) else {
-        return Ok(());
-    };
-    let Some(value) = parse_quoted_value(value) else {
-        return Ok(());
-    };
-    match key {
-        "namespace" => package.namespace = value,
-        "name" => package.name = value,
-        "version" => package.version = value,
-        "edition" => package.edition = value,
-        _ => {}
-    }
-    Ok(())
-}
-
-fn parse_dependency_line(line: &str) -> Result<Dependency, String> {
-    let Some((alias, value)) = split_key_value(line) else {
-        return Err(format!("invalid dependency entry `{line}`"));
-    };
-    validate_dependency_alias(alias)?;
-
-    if let Some(version) = parse_quoted_value(value) {
-        if alias != "std" {
-            return Err(format!(
-                "dependency `{alias}` must use an inline table with `package = \"owner/name\"`"
-            ));
-        }
-        return Ok(Dependency {
-            alias: alias.to_string(),
-            package: "nomo-lang/std".to_string(),
-            source: DependencySource::Registry {
-                version,
-                registry: None,
-            },
-        });
-    }
-
-    let fields = parse_inline_table(value)?;
-    let package = fields
-        .get("package")
-        .cloned()
-        .ok_or_else(|| format!("dependency `{alias}` is missing `package = \"owner/name\"`"))?;
-    validate_package_id(&package)?;
-    if alias == "std" && package != "nomo-lang/std" {
-        return Err(
-            "dependency alias `std` is reserved for the standard library package `nomo-lang/std`"
-                .to_string(),
-        );
-    }
-
-    let source_keys = ["path", "git", "version"]
-        .into_iter()
-        .filter(|key| fields.contains_key(*key))
-        .collect::<Vec<_>>();
-    if source_keys.len() != 1 {
-        return Err(format!(
-            "dependency `{alias}` must specify exactly one source: `path`, `git`, or `version`"
-        ));
-    }
-    if fields.contains_key("registry") && !fields.contains_key("version") {
-        return Err(format!(
-            "dependency `{alias}` can only specify `registry` together with `version`"
-        ));
-    }
-    if fields.contains_key("rev") && !fields.contains_key("git") {
-        return Err(format!(
-            "dependency `{alias}` can only specify `rev` together with `git`"
-        ));
-    }
-    if fields.contains_key("branch") && !fields.contains_key("git") {
-        return Err(format!(
-            "dependency `{alias}` can only specify `branch` together with `git`"
-        ));
-    }
-    if fields.contains_key("tag") && !fields.contains_key("git") {
-        return Err(format!(
-            "dependency `{alias}` can only specify `tag` together with `git`"
-        ));
-    }
-    let git_selectors = ["branch", "tag", "rev"]
-        .into_iter()
-        .filter(|key| fields.contains_key(*key))
-        .collect::<Vec<_>>();
-    if git_selectors.len() > 1 {
-        return Err(format!(
-            "dependency `{alias}` must specify only one git checkout selector: `branch`, `tag`, or `rev`"
-        ));
-    }
-
-    let source = if let Some(path) = fields.get("path") {
-        DependencySource::Path { path: path.clone() }
-    } else if let Some(git) = fields.get("git") {
-        DependencySource::Git {
-            git: git.clone(),
-            branch: fields.get("branch").cloned(),
-            tag: fields.get("tag").cloned(),
-            rev: fields.get("rev").cloned(),
-        }
-    } else if let Some(version) = fields.get("version") {
-        validate_version_like(&format!("dependency `{alias}` version"), version)?;
-        DependencySource::Registry {
-            version: version.clone(),
-            registry: fields.get("registry").cloned(),
-        }
-    } else {
-        unreachable!("source key count already validated")
-    };
-
-    Ok(Dependency {
-        alias: alias.to_string(),
-        package,
-        source,
-    })
-}
-
 fn split_key_value(line: &str) -> Option<(&str, &str)> {
     let (key, value) = line.split_once('=')?;
     Some((key.trim(), value.trim()))
@@ -945,28 +977,6 @@ fn parse_quoted_value(value: &str) -> Option<String> {
     let value = value.strip_prefix('"')?;
     let end = value.find('"')?;
     Some(value[..end].to_string())
-}
-
-fn parse_inline_table(value: &str) -> Result<BTreeMap<String, String>, String> {
-    let value = value.trim();
-    let Some(value) = value.strip_prefix('{').and_then(|v| v.strip_suffix('}')) else {
-        return Err(format!("expected inline dependency table, found `{value}`"));
-    };
-    let mut fields = BTreeMap::new();
-    for part in value.split(',') {
-        let part = part.trim();
-        if part.is_empty() {
-            continue;
-        }
-        let Some((key, value)) = split_key_value(part) else {
-            return Err(format!("invalid inline dependency field `{part}`"));
-        };
-        let Some(value) = parse_quoted_value(value) else {
-            return Err(format!("dependency field `{key}` must be a quoted string"));
-        };
-        fields.insert(key.to_string(), value);
-    }
-    Ok(fields)
 }
 
 fn render_lockfile(graph: &DependencyGraph) -> String {
@@ -1611,21 +1621,56 @@ mod tests {
 
         assert_eq!(parsed.package.namespace, "fynn");
         assert_eq!(parsed.package.name, "demo");
-        assert_eq!(parsed.dependencies.len(), 2);
-        assert_eq!(parsed.dependencies[1].alias, "utils");
-        assert_eq!(parsed.dependencies[1].package, "fynn/utils");
+        assert_eq!(parsed.dependencies.len(), 1);
+        assert_eq!(parsed.dependencies[0].alias, "utils");
+        assert_eq!(parsed.dependencies[0].package, "fynn/utils");
     }
 
     #[test]
-    fn parses_legacy_std_dependency() {
+    fn parses_legacy_std_dependency_as_implicit_builtin() {
         let manifest =
             "[package]\nname = \"demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n";
         let parsed = parse_manifest_text(manifest, Path::new("demo")).unwrap();
 
         assert_eq!(parsed.package.namespace, "local");
         assert_eq!(parsed.package.name, "demo");
-        assert_eq!(parsed.dependencies[0].alias, "std");
-        assert_eq!(parsed.dependencies[0].package, "nomo-lang/std");
+        assert!(parsed.dependencies.is_empty());
+    }
+
+    #[test]
+    fn parses_standard_toml_comments_and_escaped_strings() {
+        let manifest = r#"# package comment
+[package]
+namespace = "fynn"
+name = "escaped-demo"
+version = "0.1.0"
+edition = "2026"
+
+[dependencies]
+json = { package = "nomo-lang/json", version = "0.1.0", registry = "https://packages.example.com/v1?token=\"dev\"" }
+
+[dependencies.local_utils]
+package = "fynn/utils"
+path = "../utils"
+"#;
+        let parsed = parse_manifest_text(manifest, Path::new("demo")).unwrap();
+
+        assert_eq!(parsed.dependencies.len(), 2);
+        assert_eq!(parsed.dependencies[0].alias, "json");
+        assert_eq!(
+            parsed.dependencies[0].source,
+            DependencySource::Registry {
+                version: "0.1.0".to_string(),
+                registry: Some("https://packages.example.com/v1?token=\"dev\"".to_string()),
+            }
+        );
+        assert_eq!(parsed.dependencies[1].alias, "local_utils");
+        assert_eq!(
+            parsed.dependencies[1].source,
+            DependencySource::Path {
+                path: "../utils".to_string(),
+            }
+        );
     }
 
     #[test]

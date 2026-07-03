@@ -5,7 +5,9 @@ edition = "2024"
 license = "MIT"
 
 [dependencies]
+serde = "1"
 sha2 = "0.10"
+toml = "0.8"
 
 [lib]
 name = "nomo"

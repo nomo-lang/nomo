@@ -81,6 +81,8 @@ Nomo uses a namespace-first package model. A package's stable identity is
 `<namespace>/<name>`; repository URLs, local paths and registry versions are
 dependency sources rather than language-level package names. The namespaces
 `std`, `nomo`, and `core` are reserved for the language and standard tooling.
+`std` is built in: projects can import `std.*` modules without declaring a
+`std` dependency in `nomo.toml`, and `std` is not written to `nomo.lock`.
 
 New projects use this manifest shape:
 
@@ -90,9 +92,6 @@ namespace = "local"
 name = "hello"
 version = "0.1.0"
 edition = "2026"
-
-[dependencies]
-std = { package = "nomo-lang/std", version = "0.1.0" }
 ```
 
 Dependency keys are local import aliases. For example:
@@ -129,7 +128,10 @@ item's source package path for mangling, so dependency APIs keep their
 dependency package identity instead of being emitted as part of the root
 application package.
 `nomoc` remains a standalone source-file driver and only accepts built-in
-`std.*` imports.
+`std.*` imports. Existing manifests that still declare
+`std = { package = "nomo-lang/std", version = "0.1.0" }` or `std = "0.1.0"`
+are accepted as compatibility input, but the declaration is ignored as a normal
+dependency.
 
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps tree [path]` prints dependency aliases and canonical package IDs. If

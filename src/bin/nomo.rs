@@ -62,14 +62,28 @@ fn run() -> Result<(), String> {
             }
         }
         "build" => {
-            let (path, emit_c, json) = parse_path_and_emit_c_and_json(args)?;
-            let project = discover_project(&path)?;
-            let artifact = match build_project_with_diagnostics(&project, emit_c) {
-                Ok(artifact) => artifact,
-                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                Err(err) => return Err(err.human()),
-            };
-            println!("built {}", artifact.display());
+            let (path, emit_c, json, workspace) = parse_path_emit_c_json_workspace(
+                args,
+                "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace]",
+            )?;
+            if workspace {
+                for project in discover_workspace(&path)?.members {
+                    let artifact = match build_project_with_diagnostics(&project, emit_c) {
+                        Ok(artifact) => artifact,
+                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                        Err(err) => return Err(err.human()),
+                    };
+                    println!("built {}", artifact.display());
+                }
+            } else {
+                let project = discover_project(&path)?;
+                let artifact = match build_project_with_diagnostics(&project, emit_c) {
+                    Ok(artifact) => artifact,
+                    Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                    Err(err) => return Err(err.human()),
+                };
+                println!("built {}", artifact.display());
+            }
             Ok(())
         }
         "run" => {
@@ -185,25 +199,32 @@ fn parse_path_json_workspace(
     ))
 }
 
-fn parse_path_and_emit_c_and_json(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
+fn parse_path_emit_c_json_workspace(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, bool, bool, bool), String> {
     let mut emit_c = false;
     let mut json = false;
+    let mut workspace = false;
     let mut path = None;
     for arg in args {
         if arg == "--emit-c" {
             emit_c = true;
         } else if arg == "--json-errors" {
             json = true;
+        } else if arg == "--workspace" {
+            workspace = true;
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
-            return Err("usage: nomo build [path] [--emit-c] [--json-errors]".to_string());
+            return Err(usage.to_string());
         }
     }
     Ok((
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         emit_c,
         json,
+        workspace,
     ))
 }
 
@@ -371,6 +392,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n"
     );
 }

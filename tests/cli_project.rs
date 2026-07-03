@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -645,6 +645,34 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
         )),
         "{workspace_check}"
     );
+
+    let workspace_build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--workspace")
+        .arg("--emit-c")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        workspace_build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&workspace_build_output.stderr)
+    );
+    let workspace_build = String::from_utf8_lossy(&workspace_build_output.stdout);
+    assert!(
+        workspace_build.contains(&format!("built {}\n", app.join("build/c/main.c").display())),
+        "{workspace_build}"
+    );
+    assert!(
+        workspace_build.contains(&format!(
+            "built {}\n",
+            core.join("build/c/main.c").display()
+        )),
+        "{workspace_build}"
+    );
+    assert!(app.join("build/c/main.c").exists());
+    assert!(core.join("build/c/main.c").exists());
 
     let workspace_tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("deps")

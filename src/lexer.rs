@@ -65,14 +65,52 @@ pub enum TokenKind {
 
 pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
     let mut tokens = Vec::new();
+    let mut block_comment_depth = 0usize;
+    let mut block_comment_start: Option<(usize, usize, String)> = None;
     for (line_index, line_text) in source.lines().enumerate() {
         let line = line_index + 1;
         let mut chars = line_text.char_indices().peekable();
 
         while let Some((index, ch)) = chars.next() {
             let column = index + 1;
+            if block_comment_depth > 0 {
+                match ch {
+                    '/' if matches!(chars.peek(), Some((_, '*'))) => {
+                        chars.next();
+                        block_comment_depth += 1;
+                    }
+                    '*' if matches!(chars.peek(), Some((_, '/'))) => {
+                        chars.next();
+                        block_comment_depth -= 1;
+                        if block_comment_depth == 0 {
+                            block_comment_start = None;
+                        }
+                    }
+                    _ => {}
+                }
+                continue;
+            }
             match ch {
                 ' ' | '\t' | '\r' => {}
+                '/' => {
+                    if matches!(chars.peek(), Some((_, '/'))) {
+                        break;
+                    } else if matches!(chars.peek(), Some((_, '*'))) {
+                        chars.next();
+                        block_comment_depth = 1;
+                        block_comment_start = Some((line, column, line_text.to_string()));
+                    } else {
+                        return Err(Diagnostic::new(
+                            "N0102",
+                            "unexpected `/`; division is not supported in v0.1",
+                            path,
+                            line,
+                            column,
+                            1,
+                            line_text,
+                        ));
+                    }
+                }
                 '.' => tokens.push(token(TokenKind::Dot, line, column, line_text)),
                 ',' => tokens.push(token(TokenKind::Comma, line, column, line_text)),
                 ':' => tokens.push(token(TokenKind::Colon, line, column, line_text)),
@@ -371,6 +409,18 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
         ));
     }
 
+    if let Some((line, column, text)) = block_comment_start {
+        return Err(Diagnostic::new(
+            "N0108",
+            "unterminated block comment",
+            path,
+            line,
+            column,
+            2,
+            &text,
+        ));
+    }
+
     let eof_line = source.lines().count().max(1);
     tokens.push(Token {
         kind: TokenKind::Eof,
@@ -534,6 +584,50 @@ mod tests {
                 .iter()
                 .any(|token| token.kind == TokenKind::Char('\n'))
         );
+    }
+
+    #[test]
+    fn skips_line_and_doc_comments() {
+        let tokens = lex(
+            Path::new("main.nomo"),
+            "/// module docs\n//! crate docs\npackage app.main // trailing\nlet url = \"http://example.test/*literal*/\"\n",
+        )
+        .unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Package));
+        assert!(tokens.iter().any(|token| {
+            token.kind == TokenKind::String("http://example.test/*literal*/".to_string())
+        }));
+        assert!(tokens.iter().all(|token| {
+            !matches!(
+                &token.kind,
+                TokenKind::Ident(value)
+                    if value == "module" || value == "docs" || value == "trailing"
+            )
+        }));
+    }
+
+    #[test]
+    fn skips_nested_block_and_doc_comments() {
+        let tokens = lex(
+            Path::new("main.nomo"),
+            "/*! module docs */\npackage app.main\n/* outer\n   /* inner */\n   outer */\nfn main() -> void {\n    /** statement docs */ return\n}\n",
+        )
+        .unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Package));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Fn));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Return));
+    }
+
+    #[test]
+    fn rejects_unterminated_block_comment() {
+        let err = lex(Path::new("main.nomo"), "package app.main\n/* open\n").unwrap_err();
+
+        assert_eq!(err.code, "N0108");
+        assert_eq!(err.message, "unterminated block comment");
+        assert_eq!(err.line, 2);
+        assert_eq!(err.column, 1);
     }
 
     #[test]

@@ -72,7 +72,10 @@ discovers the project manifest and formats `src/**/*.nomo` in stable path order.
 With a direct `.nomo` file path, it formats only that file and does not require a
 manifest. `--check` prints `would format <path>` without writing and exits with
 failure if any target differs. The formatter emits canonical whitespace and
-indentation; it does not preserve original layout trivia.
+indentation; it does not preserve original layout trivia. The lexer accepts
+Rust-style line comments (`//`, `///`, `//!`) and nested block comments (`/* */`,
+`/** */`, `/*! */`) as trivia, but `nomo fmt` rejects commented input for now
+instead of silently dropping comments.
 
 ```bash
 nomo new hello

@@ -8,10 +8,83 @@ use crate::parser::parse;
 use std::path::Path;
 
 pub fn format_source(path: &Path, source: &str) -> Result<String, Diagnostic> {
+    if let Some(comment) = first_comment_span(source) {
+        return Err(Diagnostic::new(
+            "N0109",
+            "nomo fmt does not preserve comments yet",
+            path,
+            comment.line,
+            comment.column,
+            comment.length,
+            &comment.text,
+        ));
+    }
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
     validate_format_ast(path, &ast)?;
     Ok(Formatter::new(&ast, &tokens).format())
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct CommentSpan {
+    line: usize,
+    column: usize,
+    length: usize,
+    text: String,
+}
+
+fn first_comment_span(source: &str) -> Option<CommentSpan> {
+    for (line_index, line_text) in source.lines().enumerate() {
+        let line = line_index + 1;
+        let mut chars = line_text.char_indices().peekable();
+        while let Some((index, ch)) = chars.next() {
+            match ch {
+                '"' => skip_string(&mut chars),
+                '\'' => skip_char(&mut chars),
+                '/' => match chars.peek() {
+                    Some((_, '/')) => {
+                        return Some(CommentSpan {
+                            line,
+                            column: index + 1,
+                            length: 2,
+                            text: line_text.to_string(),
+                        });
+                    }
+                    Some((_, '*')) => {
+                        return Some(CommentSpan {
+                            line,
+                            column: index + 1,
+                            length: 2,
+                            text: line_text.to_string(),
+                        });
+                    }
+                    _ => {}
+                },
+                _ => {}
+            }
+        }
+    }
+    None
+}
+
+fn skip_string(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) {
+    while let Some((_, ch)) = chars.next() {
+        if ch == '\\' {
+            chars.next();
+        } else if ch == '"' {
+            break;
+        }
+    }
+}
+
+fn skip_char(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) {
+    while let Some((_, ch)) = chars.next() {
+        if ch == '\\' {
+            chars.next();
+        } else if ch == '\'' {
+            break;
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -796,6 +869,25 @@ mod tests {
         assert!(err.message.contains("non-expression `defer`"));
         assert_eq!(err.line, 4);
         assert_eq!(err.column, 11);
+    }
+
+    #[test]
+    fn rejects_comments_without_dropping_them() {
+        let source = "package app.main\n// keep me\nfn main() -> void {\n    return\n}\n";
+        let err = format_source(Path::new("main.nomo"), source).unwrap_err();
+
+        assert_eq!(err.code, "N0109");
+        assert_eq!(err.message, "nomo fmt does not preserve comments yet");
+        assert_eq!(err.line, 2);
+        assert_eq!(err.column, 1);
+    }
+
+    #[test]
+    fn comment_markers_inside_strings_are_formattable() {
+        let source = "package app.main\n\nfn main() -> void {\nlet url:string=\"http://example.test/*literal*/\"\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert!(formatted.contains("\"http://example.test/*literal*/\""));
     }
 
     #[test]

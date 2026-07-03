@@ -57,5 +57,5 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `let_else`: `let PATTERN = expr else { ... }` enum payload extraction
 - `if_let`: `if let PATTERN = expr { ... }` single-variant enum branching
 - `defer`: deferred method calls running in reverse order at scope exit
-- `defer_try`: deferred cleanup before `?` early error propagation
+- `defer_question`: deferred cleanup before `?` early error propagation
 - `const`: package-level constants referenced from functions

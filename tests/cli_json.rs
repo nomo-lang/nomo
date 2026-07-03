@@ -813,10 +813,10 @@ fn nomoc_check_emits_json_for_stdlib_arity_error() {
 }
 
 #[test]
-fn nomoc_check_emits_json_for_try_error_type_mismatch() {
-    let root = temp_test_root("nomoc-json-try-error-mismatch");
+fn nomoc_check_emits_json_for_question_error_type_mismatch() {
+    let root = temp_test_root("nomoc-json-question-error-mismatch");
     reset_dir(&root);
-    let source = root.join("try-error-mismatch.nomo");
+    let source = root.join("question-error-mismatch.nomo");
     fs::write(
         &source,
         "package app.main\n\nimport std.result\n\nstruct AppError {\n    message: string\n}\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn compute() -> Result<i32, AppError> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() -> void {\n}\n",
@@ -849,10 +849,10 @@ fn nomoc_check_emits_json_for_try_error_type_mismatch() {
 }
 
 #[test]
-fn nomoc_check_emits_json_for_try_on_non_result_value() {
-    let root = temp_test_root("nomoc-json-try-non-result");
+fn nomoc_check_emits_json_for_question_on_non_result_value() {
+    let root = temp_test_root("nomoc-json-question-non-result");
     reset_dir(&root);
-    let source = root.join("try-non-result.nomo");
+    let source = root.join("question-non-result.nomo");
     fs::write(
         &source,
         "package app.main\n\nimport std.result\n\nfn parse() -> i32 {\n    return 1\n}\n\nfn compute() -> Result<i32, string> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() -> void {\n}\n",
@@ -883,10 +883,10 @@ fn nomoc_check_emits_json_for_try_on_non_result_value() {
 }
 
 #[test]
-fn nomoc_check_emits_json_for_try_in_non_result_function() {
-    let root = temp_test_root("nomoc-json-try-non-result-function");
+fn nomoc_check_emits_json_for_question_in_non_result_function() {
+    let root = temp_test_root("nomoc-json-question-non-result-function");
     reset_dir(&root);
-    let source = root.join("try-non-result-function.nomo");
+    let source = root.join("question-non-result-function.nomo");
     fs::write(
         &source,
         "package app.main\n\nimport std.result\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn main() -> void {\n    let value: i32 = parse()?\n}\n",

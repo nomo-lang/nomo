@@ -203,7 +203,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "defer" => {
             "working\ncontinue cleanup\nbreak cleanup\nblock\ninner\nafter block\ninner early\nouter early\nclose\nflush\nlog\n"
         }
-        "defer_try" => "defer before try error\nfail\n",
+        "defer_question" => "defer before ? error\nfail\n",
         "enum_struct_payload" => "a@nomo.dev\n",
         "env_get" => "env get ok\n",
         "file_handle" => "file handle ok\n",

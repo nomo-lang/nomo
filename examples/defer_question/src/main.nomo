@@ -11,7 +11,7 @@ fn cleanup(label: string) -> void {
 }
 
 fn run() -> Result<string, string> {
-    defer cleanup("defer before try error")
+    defer cleanup("defer before ? error")
     let label: string = fail_label()?
     return Ok(label)
 }

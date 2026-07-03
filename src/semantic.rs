@@ -4,8 +4,10 @@ use crate::ast::{
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
 use crate::parser::parse;
+use crate::project::Project;
 use std::collections::BTreeMap;
-use std::path::Path;
+use std::fs;
+use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextPosition {
@@ -19,6 +21,12 @@ pub struct TextRange {
     pub end: TextPosition,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticLocation {
+    pub path: PathBuf,
+    pub range: TextRange,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SemanticSymbolKind {
     Struct,
@@ -30,6 +38,7 @@ pub enum SemanticSymbolKind {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SemanticSymbol {
+    pub source_path: PathBuf,
     pub name: String,
     pub kind: SemanticSymbolKind,
     pub signature: String,
@@ -43,7 +52,18 @@ pub fn symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
     let docs = extract_doc_comments(source);
-    Ok(symbols_from_ast(&ast, &docs))
+    Ok(symbols_from_ast(path, &ast, &docs))
+}
+
+pub fn symbols_for_project_with_overrides(
+    project: &Project,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let mut symbols = Vec::new();
+    for (path, source) in project_sources(project, source_overrides)? {
+        symbols.extend(symbols_for_text(&path, &source)?);
+    }
+    Ok(symbols)
 }
 
 pub fn identifier_at_position(source: &str, position: TextPosition) -> Option<String> {
@@ -89,12 +109,44 @@ pub fn symbol_at_position(
         .min_by_key(|symbol| symbol.line))
 }
 
+pub fn symbol_at_project_position(
+    project: &Project,
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Option<SemanticSymbol>, Diagnostic> {
+    let Some(name) = identifier_at_position(source, position) else {
+        return Ok(None);
+    };
+    let overrides = overrides_with_current(path, source, source_overrides);
+    let symbols = symbols_for_project_with_overrides(project, &overrides)?;
+    Ok(resolve_symbol(path, position, &name, symbols))
+}
+
 pub fn definition_for_text(
     path: &Path,
     source: &str,
     position: TextPosition,
 ) -> Result<Option<TextRange>, Diagnostic> {
     Ok(symbol_at_position(path, source, position)?.map(|symbol| symbol.selection_range))
+}
+
+pub fn definition_for_project_text(
+    project: &Project,
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Option<SemanticLocation>, Diagnostic> {
+    Ok(
+        symbol_at_project_position(project, path, source, position, source_overrides)?.map(
+            |symbol| SemanticLocation {
+                path: symbol.source_path,
+                range: symbol.selection_range,
+            },
+        ),
+    )
 }
 
 pub fn references_for_text(
@@ -127,10 +179,185 @@ pub fn references_for_text(
     ))
 }
 
-fn symbols_from_ast(ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol> {
+pub fn references_for_project_text(
+    project: &Project,
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    include_declaration: bool,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Option<Vec<SemanticLocation>>, Diagnostic> {
+    let Some(symbol) =
+        symbol_at_project_position(project, path, source, position, source_overrides)?
+    else {
+        return Ok(None);
+    };
+    let overrides = overrides_with_current(path, source, source_overrides);
+    let mut locations = Vec::new();
+    for (source_path, source) in project_sources(project, &overrides)? {
+        let tokens = lex(&source_path, &source)?;
+        for token in &tokens {
+            let TokenKind::Ident(name) = &token.kind else {
+                continue;
+            };
+            if name != &symbol.name {
+                continue;
+            }
+            let range = token_range(token.line, token.column, name);
+            if !include_declaration
+                && source_path == symbol.source_path
+                && range == symbol.selection_range
+            {
+                continue;
+            }
+            locations.push(SemanticLocation {
+                path: source_path.clone(),
+                range,
+            });
+        }
+    }
+    Ok(Some(locations))
+}
+
+fn resolve_symbol(
+    path: &Path,
+    position: TextPosition,
+    name: &str,
+    symbols: Vec<SemanticSymbol>,
+) -> Option<SemanticSymbol> {
+    let mut matches = symbols
+        .into_iter()
+        .filter(|symbol| symbol.name == name)
+        .collect::<Vec<_>>();
+    matches.sort_by(|left, right| {
+        left.source_path
+            .cmp(&right.source_path)
+            .then(left.line.cmp(&right.line))
+            .then(
+                left.selection_range
+                    .start
+                    .line
+                    .cmp(&right.selection_range.start.line),
+            )
+            .then(
+                left.selection_range
+                    .start
+                    .character
+                    .cmp(&right.selection_range.start.character),
+            )
+    });
+    matches
+        .iter()
+        .find(|symbol| {
+            symbol.source_path == path && range_contains(symbol.selection_range, position)
+        })
+        .cloned()
+        .or_else(|| {
+            matches
+                .iter()
+                .find(|symbol| symbol.source_path == path)
+                .cloned()
+        })
+        .or_else(|| matches.into_iter().next())
+}
+
+fn range_contains(range: TextRange, position: TextPosition) -> bool {
+    if position.line < range.start.line || position.line > range.end.line {
+        return false;
+    }
+    if position.line == range.start.line && position.character < range.start.character {
+        return false;
+    }
+    if position.line == range.end.line && position.character > range.end.character {
+        return false;
+    }
+    true
+}
+
+fn overrides_with_current(
+    path: &Path,
+    source: &str,
+    source_overrides: &[(PathBuf, String)],
+) -> Vec<(PathBuf, String)> {
+    let mut overrides = source_overrides.to_vec();
+    if let Some(existing) = overrides
+        .iter_mut()
+        .find(|(entry_path, _)| entry_path == path)
+    {
+        existing.1 = source.to_string();
+    } else {
+        overrides.push((path.to_path_buf(), source.to_string()));
+    }
+    overrides
+}
+
+fn project_sources(
+    project: &Project,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Vec<(PathBuf, String)>, Diagnostic> {
+    let src = project.root.join("src");
+    let mut files = Vec::new();
+    collect_nomo_files(&src, &mut files)
+        .map_err(|message| Diagnostic::new("E0902", message, &src, 1, 1, 1, ""))?;
+    for (path, _) in source_overrides {
+        if is_project_nomo_source(&src, path) && !files.iter().any(|file| file == path) {
+            files.push(path.clone());
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    let overrides = source_overrides
+        .iter()
+        .map(|(path, source)| (path.clone(), source.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    files
+        .into_iter()
+        .map(|path| {
+            if let Some(source) = overrides.get(&path) {
+                return Ok((path, source.clone()));
+            }
+            let source = fs::read_to_string(&path).map_err(|err| {
+                Diagnostic::new(
+                    "E0902",
+                    format!("failed to read {}: {err}", path.display()),
+                    &path,
+                    1,
+                    1,
+                    1,
+                    "",
+                )
+            })?;
+            Ok((path, source))
+        })
+        .collect()
+}
+
+fn is_project_nomo_source(source_root: &Path, path: &Path) -> bool {
+    path.starts_with(source_root) && path.extension().and_then(|ext| ext.to_str()) == Some("nomo")
+}
+
+fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    for entry in
+        fs::read_dir(dir).map_err(|err| format!("failed to read {}: {err}", dir.display()))?
+    {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nomo_files(&path, files)?;
+        } else if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("nomo") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol> {
     let mut symbols = Vec::new();
     for item in &ast.structs {
         symbols.push(SemanticSymbol {
+            source_path: path.to_path_buf(),
             name: item.name.clone(),
             kind: SemanticSymbolKind::Struct,
             signature: struct_signature(item),
@@ -146,6 +373,7 @@ fn symbols_from_ast(ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol>
     }
     for item in &ast.enums {
         symbols.push(SemanticSymbol {
+            source_path: path.to_path_buf(),
             name: item.name.clone(),
             kind: SemanticSymbolKind::Enum,
             signature: enum_signature(item),
@@ -161,6 +389,7 @@ fn symbols_from_ast(ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol>
     }
     for item in &ast.consts {
         symbols.push(SemanticSymbol {
+            source_path: path.to_path_buf(),
             name: item.name.clone(),
             kind: SemanticSymbolKind::Const,
             signature: const_signature(item),
@@ -176,6 +405,7 @@ fn symbols_from_ast(ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol>
     }
     for item in &ast.functions {
         symbols.push(SemanticSymbol {
+            source_path: path.to_path_buf(),
             name: item.name.clone(),
             kind: SemanticSymbolKind::Function,
             signature: function_signature(item),
@@ -190,17 +420,18 @@ fn symbols_from_ast(ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol>
         });
     }
     for impl_block in &ast.impls {
-        symbols.extend(method_symbols(impl_block, docs));
+        symbols.extend(method_symbols(path, impl_block, docs));
     }
     symbols
 }
 
-fn method_symbols(impl_block: &ImplBlock, docs: &DocComments) -> Vec<SemanticSymbol> {
+fn method_symbols(path: &Path, impl_block: &ImplBlock, docs: &DocComments) -> Vec<SemanticSymbol> {
     let receiver = type_ref(&impl_block.type_name);
     impl_block
         .methods
         .iter()
         .map(|method| SemanticSymbol {
+            source_path: path.to_path_buf(),
             name: method.name.clone(),
             kind: SemanticSymbolKind::Method,
             signature: method_signature(&receiver, method),
@@ -437,7 +668,10 @@ fn collect_block_doc(lines: &[&str], start: usize) -> (String, usize) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::env;
+    use std::fs;
     use std::path::Path;
+    use std::time::{SystemTime, UNIX_EPOCH};
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
@@ -545,5 +779,168 @@ mod tests {
                 },
             ]
         );
+    }
+
+    #[test]
+    fn project_definition_returns_cross_file_location() {
+        let project = test_project("semantic_definition");
+        let main = project.root.join("src/main.nomo");
+        let math = project.root.join("src/math.nomo");
+        write_source(
+            &main,
+            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+        );
+        write_source(
+            &math,
+            "package app.math\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        );
+
+        let source = fs::read_to_string(&main).unwrap();
+        let definition = definition_for_project_text(
+            &project,
+            &main,
+            &source,
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(definition.path, math);
+        assert_eq!(
+            definition.range,
+            TextRange {
+                start: TextPosition {
+                    line: 3,
+                    character: 7,
+                },
+                end: TextPosition {
+                    line: 3,
+                    character: 10,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn project_references_include_cross_file_identifier_locations() {
+        let project = test_project("semantic_references");
+        let main = project.root.join("src/main.nomo");
+        let math = project.root.join("src/math.nomo");
+        write_source(
+            &main,
+            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+        );
+        write_source(
+            &math,
+            "package app.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        );
+
+        let source = fs::read_to_string(&main).unwrap();
+        let references = references_for_project_text(
+            &project,
+            &main,
+            &source,
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(references.iter().any(|location| {
+            location.path == main
+                && location.range
+                    == TextRange {
+                        start: TextPosition {
+                            line: 5,
+                            character: 21,
+                        },
+                        end: TextPosition {
+                            line: 5,
+                            character: 24,
+                        },
+                    }
+        }));
+        assert!(references.iter().any(|location| {
+            location.path == math
+                && location.range
+                    == TextRange {
+                        start: TextPosition {
+                            line: 2,
+                            character: 7,
+                        },
+                        end: TextPosition {
+                            line: 2,
+                            character: 10,
+                        },
+                    }
+        }));
+    }
+
+    #[test]
+    fn project_symbols_use_source_overlays() {
+        let project = test_project("semantic_overlays");
+        let main = project.root.join("src/main.nomo");
+        let math = project.root.join("src/math.nomo");
+        write_source(
+            &main,
+            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+        );
+        write_source(
+            &math,
+            "package app.math\n\npub fn sub(a: i64, b: i64) -> i64 {\n    return a - b\n}\n",
+        );
+
+        let source = fs::read_to_string(&main).unwrap();
+        let overlay =
+            "package app.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n";
+        let definition = definition_for_project_text(
+            &project,
+            &main,
+            &source,
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            &[(math.clone(), overlay.to_string())],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(definition.path, math);
+        assert_eq!(definition.range.start.line, 2);
+    }
+
+    fn test_project(name: &str) -> Project {
+        let root = env::temp_dir().join(format!(
+            "nomo_{name}_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[package]\nnamespace = \"app\"\nname = \"main\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        Project {
+            main: root.join("src/main.nomo"),
+            root,
+            name: "main".to_string(),
+            workspace_root: None,
+        }
+    }
+
+    fn write_source(path: &Path, source: &str) {
+        fs::write(path, source).unwrap();
     }
 }

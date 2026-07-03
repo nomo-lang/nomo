@@ -286,8 +286,9 @@ early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 The `nomo` library exposes the compiler pipeline for embedding. Key entry points
 include `check_source`, `check_source_text` and `compile_source_to_c`, alongside
 the `lexer`, `parser`, `ast`, `compiler`, `codegen`, `diagnostic`, `semantic`
-and `project` modules. The `semantic` module exposes current-document symbol,
-definition, and reference queries for editor integrations.
+and `project` modules. The `semantic` module exposes current-document symbol
+queries plus project-aware hover, definition, and reference queries over local
+`src/**/*.nomo` modules for editor integrations.
 
 ## Tests and examples
 

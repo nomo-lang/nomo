@@ -1,6 +1,12 @@
 use std::fmt::Write;
 use std::path::Path;
 
+pub const DIAGNOSTIC_DOCS_BASE_URL: &str =
+    "https://github.com/nomo-lang/nomo/blob/main/docs/diagnostics";
+
+pub const DOCUMENTED_DIAGNOSTIC_CODES: &[&str] =
+    &["E0102", "E0200", "E0301", "E0404", "E0501", "E0901"];
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suggestion {
     pub line: usize,
@@ -115,6 +121,17 @@ impl Diagnostic {
     }
 }
 
+pub fn documented_diagnostic_codes() -> &'static [&'static str] {
+    DOCUMENTED_DIAGNOSTIC_CODES
+}
+
+pub fn diagnostic_documentation_url(code: &str) -> Option<String> {
+    DOCUMENTED_DIAGNOSTIC_CODES
+        .binary_search(&code)
+        .ok()
+        .map(|_| format!("{DIAGNOSTIC_DOCS_BASE_URL}/{code}.md"))
+}
+
 fn escape_json(value: &str) -> String {
     let mut escaped = String::with_capacity(value.len());
     for ch in value.chars() {
@@ -209,5 +226,21 @@ mod tests {
             diagnostic.json(),
             "{\"status\":\"error\",\"error_code\":\"E0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{\"file\":\"samples/invalid.nomo\",\"line\":2,\"column\":1,\"length\":1,\"text\":\"@\"},\"suggestions\":[]}"
         );
+    }
+
+    #[test]
+    fn documented_diagnostic_codes_are_sorted_and_unique() {
+        for pair in DOCUMENTED_DIAGNOSTIC_CODES.windows(2) {
+            assert!(pair[0] < pair[1], "diagnostic codes must stay sorted");
+        }
+    }
+
+    #[test]
+    fn diagnostic_documentation_url_returns_registered_doc_url() {
+        assert_eq!(
+            diagnostic_documentation_url("E0102").as_deref(),
+            Some("https://github.com/nomo-lang/nomo/blob/main/docs/diagnostics/E0102.md")
+        );
+        assert_eq!(diagnostic_documentation_url("E9999"), None);
     }
 }

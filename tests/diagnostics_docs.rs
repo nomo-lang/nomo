@@ -6,8 +6,13 @@ fn diagnostics_index_links_existing_docs_with_required_sections() {
     let docs_dir = diagnostics_dir();
     let index = fs::read_to_string(docs_dir.join("index.md")).unwrap();
     let codes = documented_codes(&index);
+    let registered_codes = registered_codes();
 
     assert!(!codes.is_empty(), "diagnostics index should list codes");
+    assert_eq!(
+        codes, registered_codes,
+        "diagnostics index must match the compiler registry"
+    );
     for code in codes {
         let path = docs_dir.join(format!("{code}.md"));
         assert!(path.exists(), "missing diagnostics doc for {code}");
@@ -38,6 +43,13 @@ fn every_diagnostics_doc_is_linked_from_index() {
 
 fn diagnostics_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/diagnostics")
+}
+
+fn registered_codes() -> Vec<String> {
+    nomo::diagnostic::documented_diagnostic_codes()
+        .iter()
+        .map(|code| (*code).to_string())
+        .collect()
 }
 
 fn documented_codes(index: &str) -> Vec<String> {

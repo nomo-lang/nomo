@@ -49,6 +49,7 @@ nomo check [path] [--json-errors] [--workspace] # type-check one project or ever
 nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
+nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
 nomo clean [path]                 # remove generated build artifacts
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
@@ -76,6 +77,14 @@ indentation; it does not preserve original layout trivia. The lexer accepts
 Rust-style line comments (`//`, `///`, `//!`) and nested block comments (`/* */`,
 `/** */`, `/*! */`) as trivia, but `nomo fmt` rejects commented input for now
 instead of silently dropping comments.
+
+`nomo test` discovers top-level `#[test]` functions under project `src/**/*.nomo`.
+Test functions must be non-generic, take no parameters, return `void`, and must
+not be named `main`. Each test is compiled through the same project module and
+dependency resolver path as `nomo build`, with a temporary runner `main()` that
+calls the test. `--filter` keeps tests whose full name contains the filter text,
+`--workspace` runs every workspace member, `--package` selects a package id or
+member name, and `--json` prints a machine-readable test report.
 
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with

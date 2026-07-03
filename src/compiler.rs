@@ -622,6 +622,23 @@ pub fn compile_source_to_c_with_project_modules(
     Ok(codegen::emit_c(&program))
 }
 
+pub fn compile_source_text_to_c_with_project_modules(
+    path: &Path,
+    source: &str,
+    local_source_root: Option<&Path>,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<String, Diagnostic> {
+    let program = check_source_text_with_project_modules(
+        path,
+        source,
+        local_source_root,
+        external_import_roots,
+        external_modules,
+    )?;
+    Ok(codegen::emit_c(&program))
+}
+
 fn merge_imported_public_api(
     importer_path: &Path,
     ast: &mut SourceFile,
@@ -1158,6 +1175,7 @@ fn prepare_entry_point(
             let span = stmt_span(&ast.script_body[0]).clone();
             ast.functions.push(AstFunction {
                 public: false,
+                is_test: false,
                 package: ast.package.clone(),
                 name: "main".to_string(),
                 type_params: Vec::new(),

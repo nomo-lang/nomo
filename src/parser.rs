@@ -55,7 +55,15 @@ impl Parser<'_> {
         let mut parsing_script_body = false;
         loop {
             self.skip_newlines();
+            let is_test = self.parse_test_attribute()?;
             let public = self.consume_pub();
+            if is_test && !matches!(self.peek().kind, TokenKind::Fn) {
+                return Err(self.error(
+                    "E1100",
+                    "`#[test]` can only be applied to a function",
+                    self.peek().length(),
+                ));
+            }
             if parsing_script_body && is_declaration_start(&self.peek().kind, public) {
                 return Err(self.error(
                     "E0201",
@@ -73,13 +81,20 @@ impl Parser<'_> {
                 }
                 TokenKind::Const if !parsing_script_body => consts.push(self.parse_const(public)?),
                 TokenKind::Fn if !parsing_script_body => {
-                    functions.push(self.parse_function(public)?)
+                    functions.push(self.parse_function(public, is_test)?)
                 }
-                TokenKind::Eof if !public => break,
+                TokenKind::Eof if !public && !is_test => break,
                 _ if public => {
                     return Err(self.error(
                         "E0201",
                         "expected struct, enum, impl, const, function declaration, or end of file",
+                        self.peek().length(),
+                    ));
+                }
+                _ if is_test => {
+                    return Err(self.error(
+                        "E1100",
+                        "`#[test]` can only be applied to a function",
                         self.peek().length(),
                     ));
                 }
@@ -117,6 +132,31 @@ impl Parser<'_> {
             functions,
             script_body,
         })
+    }
+
+    fn parse_test_attribute(&mut self) -> Result<bool, Diagnostic> {
+        if !matches!(self.peek().kind, TokenKind::Hash) {
+            return Ok(false);
+        }
+        let token = self.peek().clone();
+        self.advance();
+        self.expect_kind(TokenKind::LBracket, "E1100", "expected `[` after `#`")?;
+        let name = self.expect_ident("expected attribute name")?;
+        self.expect_kind(TokenKind::RBracket, "E1100", "expected `]` after attribute")?;
+        self.expect_newline("expected newline after attribute")?;
+        if name == "test" {
+            Ok(true)
+        } else {
+            Err(Diagnostic::new(
+                "E1100",
+                format!("unsupported attribute `#[{name}]`"),
+                self.path,
+                token.line,
+                token.column,
+                token.length(),
+                &token.text,
+            ))
+        }
     }
 
     fn parse_enum(&mut self, public: bool) -> Result<EnumDef, Diagnostic> {
@@ -257,7 +297,7 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_function(&mut self, public: bool) -> Result<Function, Diagnostic> {
+    fn parse_function(&mut self, public: bool, is_test: bool) -> Result<Function, Diagnostic> {
         let function_token = self.peek().clone();
         self.expect_kind(TokenKind::Fn, "E0202", "expected `fn`")?;
         let name = self.expect_ident("expected function name")?;
@@ -305,6 +345,7 @@ impl Parser<'_> {
 
         Ok(Function {
             public,
+            is_test,
             package: Vec::new(),
             name,
             type_params,
@@ -338,7 +379,7 @@ impl Parser<'_> {
             self.skip_newlines();
             let public = self.consume_pub();
             match self.peek().kind {
-                TokenKind::Fn => methods.push(self.parse_function(public)?),
+                TokenKind::Fn => methods.push(self.parse_function(public, false)?),
                 TokenKind::RBrace if !public => {
                     self.advance();
                     self.consume_newline();
@@ -2552,6 +2593,7 @@ mod tests {
     functions: [
         Function {
             public: false,
+            is_test: false,
             package: [
                 "app",
                 "main",

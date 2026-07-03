@@ -59,6 +59,7 @@ pub struct ConstDef {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Function {
     pub public: bool,
+    pub is_test: bool,
     pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,

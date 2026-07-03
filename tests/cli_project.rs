@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -230,6 +230,239 @@ fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("\"error_code\":\"E0102\""), "{stderr}");
     assert!(stderr.contains("semicolons are not supported"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_runs_project_tests_with_local_modules() {
+    let root = temp_test_root("test-local-modules");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/math.nomo"),
+        "package app.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.math
+
+#[test]
+fn main_test() -> void {
+}
+
+#[test]
+fn add_test() -> void {
+    let total: i64 = add(1, 2)
+    if total == 3 {
+        void
+    } else {
+        panic("bad add")
+    }
+}
+
+fn main() -> void {
+    panic("original main should not run")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "running 2 tests\nok app.main.add_test\nok app.main.main_test\n"
+    );
+    assert!(project.join("build/test/c/app_main_add_test.c").is_file());
+    assert!(project.join("build/test/c/app_main_main_test.c").is_file());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_json_reports_failures() {
+    let root = temp_test_root("test-json-failure");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\n#[test]\nfn fails() -> void {\n    panic(\"boom\")\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg("--json")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"status\":\"failed\""), "{stdout}");
+    assert!(
+        stdout.contains("\"name\":\"app.main.fails\",\"status\":\"failed\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("panic: boom"), "{stdout}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_filter_runs_matching_tests_only() {
+    let root = temp_test_root("test-filter");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\n#[test]\nfn fast() -> void {\n}\n\n#[test]\nfn slow_array() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg("--filter")
+        .arg("array")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "running 1 tests\nok app.main.slow_array\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_workspace_package_selects_one_member() {
+    let root = temp_test_root("test-workspace-package");
+    reset_dir(&root);
+    let app = root.join("apps/cli");
+    let core = root.join("packages/core");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(core.join("src")).unwrap();
+    fs::write(
+        root.join("nomo.toml"),
+        "[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\n\n[workspace.package]\nnamespace = \"fynn\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nname = \"cli\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("nomo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("src/main.nomo"),
+        "package app.main\n\n#[test]\nfn cli_test() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("src/main.nomo"),
+        "package core.main\n\n#[test]\nfn core_test() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg("--workspace")
+        .arg("--package")
+        .arg("fynn/core")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "running 1 tests\nok core.main.core_test\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_rejects_parameters() {
+    let root = temp_test_root("test-rejects-params");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\n#[test]\nfn bad(value: i32) -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E1101"), "{stderr}");
+    assert!(
+        stderr.contains("`#[test]` functions must not take parameters"),
+        "{stderr}"
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }

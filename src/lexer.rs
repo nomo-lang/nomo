@@ -70,6 +70,7 @@ pub enum TokenKind {
     Slash,
     Percent,
     Question,
+    Hash,
     Less,
     LessEqual,
     LessLess,
@@ -80,6 +81,8 @@ pub enum TokenKind {
     GreaterGreaterEqual,
     LParen,
     RParen,
+    LBracket,
+    RBracket,
     LBrace,
     RBrace,
     Arrow,
@@ -233,6 +236,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                 }
                 '?' => tokens.push(token(TokenKind::Question, line, column, line_text)),
+                '#' => tokens.push(token(TokenKind::Hash, line, column, line_text)),
                 '<' => {
                     if matches!(chars.peek(), Some((_, '<'))) {
                         chars.next();
@@ -272,6 +276,8 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 '(' => tokens.push(token(TokenKind::LParen, line, column, line_text)),
                 ')' => tokens.push(token(TokenKind::RParen, line, column, line_text)),
+                '[' => tokens.push(token(TokenKind::LBracket, line, column, line_text)),
+                ']' => tokens.push(token(TokenKind::RBracket, line, column, line_text)),
                 '{' => tokens.push(token(TokenKind::LBrace, line, column, line_text)),
                 '}' => tokens.push(token(TokenKind::RBrace, line, column, line_text)),
                 ';' => {

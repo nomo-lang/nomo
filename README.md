@@ -185,10 +185,12 @@ direct dependency edges. Invalid TOML, unknown lockfile fields, and mismatched
 field types are rejected. When locked `path` sources or matching git cache
 checkouts are still available, `tree` verifies their `sha256:` checksums before
 printing; missing path sources and git cache entries are treated as offline
-locked entries. Git sources are cloned into a
-project-local `.nomo/deps/git/` cache, checked out to the requested `branch`,
-`tag`, or `rev` when provided, validated against the expected canonical package
-ID, and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a
+locked entries. Git sources use a project-local `.nomo/deps/git/` cache keyed by
+the canonical package ID and source URL. Cache misses clone the repository;
+cache hits run `git fetch --tags --prune origin` before checking out the
+requested `branch`, `tag`, or `rev`. Branch sources also run `git pull
+--ff-only`. The checkout is validated against the expected canonical package ID
+and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a
 `sha256:` checksum over `nomo.toml` and `src/` contents. Registry sources are
 recorded as leaf sources in v0.1, optionally with an explicit `registry`
 endpoint, but do not include checksums because v0.1 does not fetch registry

@@ -961,6 +961,80 @@ fn nomo_deps_resolve_locks_git_branch_to_head_rev() {
 }
 
 #[test]
+fn nomo_deps_resolve_reuses_git_cache_and_fetches_branch_updates() {
+    let root = temp_test_root("deps-git-cache-reuse");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let json = root.join("json");
+    init_git_package(&json, "nomo-lang", "json");
+    run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
+    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
+    let first_rev = git_head_rev(&json);
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", branch = \"stable\" }}\n",
+            json.display()
+        ),
+    )
+    .unwrap();
+
+    let first_resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        first_resolve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&first_resolve.stderr)
+    );
+    let checkout = find_git_cache_checkout(&project, "json");
+    let marker = checkout.join(".cache-marker");
+    fs::write(&marker, "kept\n").unwrap();
+
+    fs::write(
+        json.join("src/main.nomo"),
+        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+    )
+    .unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable update"]);
+    let second_rev = git_head_rev(&json);
+    assert_ne!(first_rev, second_rev);
+
+    let second_resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        second_resolve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_resolve.stderr)
+    );
+    assert!(marker.exists(), "git cache checkout was recreated");
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(
+        lockfile.contains(&format!("rev = \"{second_rev}\"")),
+        "{lockfile}"
+    );
+    assert!(
+        !lockfile.contains(&format!("rev = \"{first_rev}\"")),
+        "{lockfile}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_deps_resolve_locks_git_tag_to_head_rev() {
     let root = temp_test_root("deps-git-tag");
     reset_dir(&root);
@@ -3850,19 +3924,15 @@ fn git_head_rev(path: &Path) -> String {
 }
 
 fn find_git_cache_checkout(project: &Path, alias: &str) -> PathBuf {
-    let prefix = format!("{alias}-");
     let cache_root = project.join(".nomo/deps/git");
     let entries = fs::read_dir(&cache_root)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", cache_root.display()));
-    for entry in entries {
-        let path = entry.unwrap().path();
-        if path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .is_some_and(|name| name.starts_with(&prefix))
-        {
-            return path;
-        }
+    let checkouts = entries
+        .map(|entry| entry.unwrap().path())
+        .filter(|path| path.is_dir())
+        .collect::<Vec<_>>();
+    if checkouts.len() == 1 {
+        return checkouts[0].clone();
     }
     panic!("missing git cache checkout for alias `{alias}`");
 }

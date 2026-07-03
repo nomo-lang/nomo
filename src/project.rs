@@ -417,6 +417,7 @@ fn dependency_module_root(
                 resolve_git_source_offline(
                     base_root,
                     &dependency.alias,
+                    &dependency.package,
                     git,
                     branch.as_deref(),
                     tag.as_deref(),
@@ -426,6 +427,7 @@ fn dependency_module_root(
                 resolve_git_source(
                     base_root,
                     &dependency.alias,
+                    &dependency.package,
                     git,
                     branch.as_deref(),
                     tag.as_deref(),
@@ -1398,6 +1400,7 @@ fn resolve_dependencies(
                     resolve_git_source_offline(
                         git_cache_base.unwrap_or(base_root),
                         &dependency.alias,
+                        &dependency.package,
                         git,
                         branch.as_deref(),
                         tag.as_deref(),
@@ -1407,6 +1410,7 @@ fn resolve_dependencies(
                     resolve_git_source(
                         git_cache_base.unwrap_or(base_root),
                         &dependency.alias,
+                        &dependency.package,
                         git,
                         branch.as_deref(),
                         tag.as_deref(),
@@ -1546,6 +1550,7 @@ fn remember_package_source(
 fn resolve_git_source(
     base_root: &Path,
     alias: &str,
+    package: &str,
     git: &str,
     branch: Option<&str>,
     tag: Option<&str>,
@@ -1553,87 +1558,35 @@ fn resolve_git_source(
 ) -> Result<PathBuf, String> {
     let cache_root = base_root.join(".nomo/deps/git");
     fs::create_dir_all(&cache_root).map_err(|err| err.to_string())?;
-    let checkout = cache_root.join(git_cache_key(alias, git, branch, tag, rev));
+    let checkout = cache_root.join(git_cache_key(package, git));
     if checkout.exists() {
-        fs::remove_dir_all(&checkout).map_err(|err| {
-            format!(
-                "failed to clear cached git dependency `{alias}` at {}: {err}",
-                checkout.display()
-            )
-        })?;
-    }
-
-    let output = Command::new("git")
-        .arg("clone")
-        .arg("--quiet")
-        .arg(git)
-        .arg(&checkout)
-        .output()
-        .map_err(|err| format!("failed to run git clone for dependency `{alias}`: {err}"))?;
-    if !output.status.success() {
-        return Err(format!(
-            "failed to clone git dependency `{alias}` from {git}:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
+        run_git_fetch(&checkout, alias)?;
+    } else {
+        let output = Command::new("git")
+            .arg("clone")
+            .arg("--quiet")
+            .arg(git)
+            .arg(&checkout)
+            .output()
+            .map_err(|err| format!("failed to run git clone for dependency `{alias}`: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "failed to clone git dependency `{alias}` from {git}:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
     }
 
     if let Some(branch) = branch {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&checkout)
-            .arg("checkout")
-            .arg("--quiet")
-            .arg(branch)
-            .output()
-            .map_err(|err| {
-                format!(
-                    "failed to run git checkout for dependency `{alias}` at branch `{branch}`: {err}"
-                )
-            })?;
-        if !output.status.success() {
-            return Err(format!(
-                "failed to checkout git dependency `{alias}` at branch `{branch}`:\n{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        git_checkout(&checkout, alias, "branch", branch)?;
+        git_pull_ff_only(&checkout, alias, branch)?;
     } else if let Some(tag) = tag {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&checkout)
-            .arg("checkout")
-            .arg("--quiet")
-            .arg(tag)
-            .output()
-            .map_err(|err| {
-                format!("failed to run git checkout for dependency `{alias}` at tag `{tag}`: {err}")
-            })?;
-        if !output.status.success() {
-            return Err(format!(
-                "failed to checkout git dependency `{alias}` at tag `{tag}`:\n{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        git_checkout(&checkout, alias, "tag", &format!("refs/tags/{tag}"))?;
     } else if let Some(rev) = rev {
-        let output = Command::new("git")
-            .arg("-C")
-            .arg(&checkout)
-            .arg("checkout")
-            .arg("--quiet")
-            .arg(rev)
-            .output()
-            .map_err(|err| {
-                format!("failed to run git checkout for dependency `{alias}` at rev `{rev}`: {err}")
-            })?;
-        if !output.status.success() {
-            return Err(format!(
-                "failed to checkout git dependency `{alias}` at rev `{rev}`:\n{}{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        git_checkout(&checkout, alias, "rev", rev)?;
+    } else if checkout.exists() {
+        checkout_default_branch(&checkout, alias)?;
     }
 
     fs::canonicalize(&checkout).map_err(|err| err.to_string())
@@ -1642,14 +1595,15 @@ fn resolve_git_source(
 fn resolve_git_source_offline(
     base_root: &Path,
     alias: &str,
+    package: &str,
     git: &str,
-    branch: Option<&str>,
-    tag: Option<&str>,
-    rev: Option<&str>,
+    _branch: Option<&str>,
+    _tag: Option<&str>,
+    _rev: Option<&str>,
 ) -> Result<PathBuf, String> {
     let checkout = base_root
         .join(".nomo/deps/git")
-        .join(git_cache_key(alias, git, branch, tag, rev));
+        .join(git_cache_key(package, git));
     if checkout.exists() {
         fs::canonicalize(&checkout).map_err(|err| err.to_string())
     } else {
@@ -1658,6 +1612,104 @@ fn resolve_git_source_offline(
             checkout.display()
         ))
     }
+}
+
+fn run_git_fetch(checkout: &Path, alias: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .arg("fetch")
+        .arg("--tags")
+        .arg("--prune")
+        .arg("origin")
+        .output()
+        .map_err(|err| format!("failed to run git fetch for dependency `{alias}`: {err}"))?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to fetch git dependency `{alias}`:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+fn git_checkout(
+    checkout: &Path,
+    alias: &str,
+    selector_name: &str,
+    selector: &str,
+) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .arg("checkout")
+        .arg("--quiet")
+        .arg(selector)
+        .output()
+        .map_err(|err| {
+            format!(
+                "failed to run git checkout for dependency `{alias}` at {selector_name} `{selector}`: {err}"
+            )
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to checkout git dependency `{alias}` at {selector_name} `{selector}`:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+fn git_pull_ff_only(checkout: &Path, alias: &str, branch: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .arg("pull")
+        .arg("--ff-only")
+        .arg("--quiet")
+        .output()
+        .map_err(|err| {
+            format!("failed to run git pull for dependency `{alias}` at branch `{branch}`: {err}")
+        })?;
+    if output.status.success() {
+        Ok(())
+    } else {
+        Err(format!(
+            "failed to pull git dependency `{alias}` at branch `{branch}`:\n{}{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        ))
+    }
+}
+
+fn checkout_default_branch(checkout: &Path, alias: &str) -> Result<(), String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(checkout)
+        .arg("symbolic-ref")
+        .arg("--short")
+        .arg("refs/remotes/origin/HEAD")
+        .output()
+        .map_err(|err| {
+            format!("failed to resolve default branch for git dependency `{alias}`: {err}")
+        })?;
+    if !output.status.success() {
+        return Ok(());
+    }
+    let remote_branch = String::from_utf8_lossy(&output.stdout).trim().to_string();
+    let branch = remote_branch
+        .strip_prefix("origin/")
+        .unwrap_or(&remote_branch)
+        .to_string();
+    if branch.is_empty() {
+        return Ok(());
+    }
+    git_checkout(checkout, alias, "branch", &branch)?;
+    git_pull_ff_only(checkout, alias, &branch)
 }
 
 fn git_head_rev(root: &Path) -> Result<String, String> {
@@ -1679,20 +1731,12 @@ fn git_head_rev(root: &Path) -> Result<String, String> {
     Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }
 
-fn git_cache_key(
-    alias: &str,
-    git: &str,
-    branch: Option<&str>,
-    tag: Option<&str>,
-    rev: Option<&str>,
-) -> String {
-    let mut hasher = DefaultHasher::new();
-    alias.hash(&mut hasher);
-    git.hash(&mut hasher);
-    branch.hash(&mut hasher);
-    tag.hash(&mut hasher);
-    rev.hash(&mut hasher);
-    format!("{}-{:016x}", alias, hasher.finish())
+fn git_cache_key(package: &str, git: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(package.as_bytes());
+    hasher.update(b"\0");
+    hasher.update(git.as_bytes());
+    format!("git-{}", hex_lower(&hasher.finalize()))
 }
 
 fn render_lockfile(graph: &DependencyGraph) -> String {
@@ -1984,34 +2028,23 @@ fn locked_git_root(
     if !cache_root.is_dir() {
         return Ok(None);
     }
-    let prefix = format!("{}-", dependency.alias);
-    for entry in fs::read_dir(&cache_root).map_err(|err| err.to_string())? {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let path = entry.path();
-        if !path.is_dir() {
-            continue;
-        }
-        let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
-            continue;
-        };
-        if !name.starts_with(&prefix) {
-            continue;
-        }
-        let Ok(manifest) = parse_manifest_at_root(&path) else {
-            continue;
-        };
-        let actual_id = format!("{}/{}", manifest.package.namespace, manifest.package.name);
-        if actual_id != dependency.package {
-            continue;
-        }
-        if git_remote_url(&path).as_deref() != Some(git) {
-            continue;
-        }
-        return fs::canonicalize(&path)
-            .map(Some)
-            .map_err(|err| err.to_string());
+    let path = cache_root.join(git_cache_key(&dependency.package, git));
+    if !path.is_dir() {
+        return Ok(None);
     }
-    Ok(None)
+    let Ok(manifest) = parse_manifest_at_root(&path) else {
+        return Ok(None);
+    };
+    let actual_id = format!("{}/{}", manifest.package.namespace, manifest.package.name);
+    if actual_id != dependency.package {
+        return Ok(None);
+    }
+    if git_remote_url(&path).as_deref() != Some(git) {
+        return Ok(None);
+    }
+    fs::canonicalize(&path)
+        .map(Some)
+        .map_err(|err| err.to_string())
 }
 
 fn git_remote_url(root: &Path) -> Option<String> {

@@ -1,7 +1,7 @@
 use nomo::project::{
     BuildError, build_project_with_diagnostics, check_project, clean_project, create_project,
-    dependency_tree, dependency_tree_current_sources, discover_project, discover_workspace,
-    resolve_project_dependencies, run_project_with_args_and_diagnostics,
+    dependency_tree, discover_project, discover_workspace, resolve_project_dependencies,
+    resolve_workspace_dependencies, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::{Diagnostic, format_source};
@@ -143,9 +143,10 @@ fn run() -> Result<(), String> {
             match subcommand.as_str() {
                 "resolve" => {
                     if workspace {
-                        return Err(
-                            "nomo deps resolve --workspace is not supported yet".to_string()
-                        );
+                        let workspace = discover_workspace(&path)?;
+                        let lock = resolve_workspace_dependencies(&workspace)?;
+                        println!("resolved {}", lock.display());
+                        return Ok(());
                     }
                     let project = discover_project(&path)?;
                     let lock = resolve_project_dependencies(&project)?;
@@ -155,7 +156,7 @@ fn run() -> Result<(), String> {
                 "tree" => {
                     if workspace {
                         for project in discover_workspace(&path)?.members {
-                            print!("{}", dependency_tree_current_sources(&project)?);
+                            print!("{}", dependency_tree(&project)?);
                         }
                     } else {
                         let project = discover_project(&path)?;

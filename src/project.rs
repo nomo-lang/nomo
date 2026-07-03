@@ -246,6 +246,21 @@ pub fn resolve_project_dependencies(project: &Project) -> Result<PathBuf, String
     Ok(lock_path)
 }
 
+pub fn resolve_workspace_dependencies(workspace: &WorkspaceGraph) -> Result<PathBuf, String> {
+    let mut graphs = Vec::new();
+    for project in &workspace.members {
+        graphs.push(resolve_dependency_graph_for_lock(
+            &project.root,
+            Some(&workspace.root),
+            Some(&workspace.root),
+        )?);
+    }
+    let lock = render_workspace_lockfile(&graphs)?;
+    let lock_path = workspace.root.join("nomo.lock");
+    fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
+    Ok(lock_path)
+}
+
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
     let lock_root = project.lock_root();
     let graph = if lock_root.join("nomo.lock").is_file() {
@@ -1128,7 +1143,23 @@ fn optional_dependency_string(
 }
 
 fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
+    resolve_dependency_graph_for_lock(root, None, None)
+}
+
+fn resolve_dependency_graph_for_lock(
+    root: &Path,
+    lock_source_base: Option<&Path>,
+    git_cache_base: Option<&Path>,
+) -> Result<DependencyGraph, String> {
     let root = fs::canonicalize(root).map_err(|err| err.to_string())?;
+    let lock_source_base = lock_source_base
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|err| err.to_string())?;
+    let git_cache_base = git_cache_base
+        .map(fs::canonicalize)
+        .transpose()
+        .map_err(|err| err.to_string())?;
     let manifest = parse_manifest_at_root(&root)?;
     let mut package_sources = BTreeMap::new();
     let mut path_stack = vec![root.clone()];
@@ -1137,6 +1168,8 @@ fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
         &root,
         &mut path_stack,
         &mut package_sources,
+        lock_source_base.as_deref(),
+        git_cache_base.as_deref(),
     )?;
     Ok(DependencyGraph {
         root: manifest.package,
@@ -1149,6 +1182,8 @@ fn resolve_dependencies(
     base_root: &Path,
     path_stack: &mut Vec<PathBuf>,
     package_sources: &mut BTreeMap<String, DependencySource>,
+    lock_source_base: Option<&Path>,
+    git_cache_base: Option<&Path>,
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
     for dependency in dependencies {
@@ -1186,14 +1221,21 @@ fn resolve_dependencies(
                     &dep_root,
                     path_stack,
                     package_sources,
+                    lock_source_base,
+                    git_cache_base,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 path_stack.pop();
-                (
-                    dependency.source.clone(),
-                    Some(checksum),
-                    child_dependencies,
-                )
+                let resolved_source = match lock_source_base {
+                    Some(lock_source_base) => DependencySource::Path {
+                        path: relative_path(lock_source_base, &dep_root)
+                            .unwrap_or_else(|| dep_root.clone())
+                            .to_string_lossy()
+                            .replace('\\', "/"),
+                    },
+                    None => dependency.source.clone(),
+                };
+                (resolved_source, Some(checksum), child_dependencies)
             }
             DependencySource::Git {
                 git,
@@ -1202,7 +1244,7 @@ fn resolve_dependencies(
                 rev,
             } => {
                 let dep_root = resolve_git_source(
-                    base_root,
+                    git_cache_base.unwrap_or(base_root),
                     &dependency.alias,
                     git,
                     branch.as_deref(),
@@ -1235,6 +1277,8 @@ fn resolve_dependencies(
                     &dep_root,
                     path_stack,
                     package_sources,
+                    lock_source_base,
+                    git_cache_base,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 path_stack.pop();
@@ -1469,11 +1513,60 @@ fn git_cache_key(
 
 fn render_lockfile(graph: &DependencyGraph) -> String {
     let document = LockfileDocument {
+        root: Vec::new(),
         package: flatten_dependencies(&graph.dependencies)
             .into_iter()
             .map(LockPackage::from_resolved)
             .collect(),
     };
+    render_lockfile_document(&document)
+}
+
+fn render_workspace_lockfile(graphs: &[DependencyGraph]) -> Result<String, String> {
+    let mut root_ids = BTreeSet::new();
+    let mut packages = BTreeMap::new();
+    let mut package_sources = BTreeMap::new();
+    let mut roots = Vec::new();
+
+    for graph in graphs {
+        let root_id = format!("{}/{}", graph.root.namespace, graph.root.name);
+        if !root_ids.insert(root_id.clone()) {
+            return Err(format!(
+                "workspace lockfile has duplicate root package `{root_id}`"
+            ));
+        }
+        roots.push(LockRoot::from_graph(graph));
+        for dependency in flatten_dependencies(&graph.dependencies) {
+            remember_package_source(
+                &mut package_sources,
+                &dependency.package,
+                &dependency.source,
+            )?;
+            let package = LockPackage::from_resolved(dependency);
+            let key = (package.alias.clone(), package.id.clone());
+            match packages.get(&key) {
+                Some(existing) if existing != &package => {
+                    return Err(format!(
+                        "workspace lockfile has conflicting entries for `{} -> {}`",
+                        package.alias, package.id
+                    ));
+                }
+                Some(_) => {}
+                None => {
+                    packages.insert(key, package);
+                }
+            }
+        }
+    }
+
+    let document = LockfileDocument {
+        root: roots,
+        package: packages.into_values().collect(),
+    };
+    Ok(render_lockfile_document(&document))
+}
+
+fn render_lockfile_document(document: &LockfileDocument) -> String {
     let mut out = String::from("# This file is generated by `nomo deps resolve`.\n\n");
     out.push_str(&toml::to_string(&document).expect("lockfile document should serialize"));
     out
@@ -1486,22 +1579,46 @@ fn dependency_graph_from_lockfile(
     let manifest = parse_manifest_at_root(root)?;
     let lock_path = lock_root.join("nomo.lock");
     let text = fs::read_to_string(&lock_path).map_err(|err| err.to_string())?;
-    let packages = parse_lockfile_text(&text)?;
-    let referenced_packages = packages
+    let document = parse_lockfile_document(&text)?;
+    let root_id = format!("{}/{}", manifest.package.namespace, manifest.package.name);
+    let root_edges = document
+        .root
         .iter()
-        .flat_map(|package| {
-            package
-                .dependencies
-                .iter()
-                .map(|dependency| dependency.package.clone())
-        })
-        .collect::<BTreeSet<_>>();
-    let dependencies = packages
-        .iter()
-        .filter(|package| !referenced_packages.contains(&package.package))
-        .map(|package| build_locked_dependency(package, &packages, &mut Vec::new()))
+        .find(|root| root.id == root_id)
+        .map(LockRoot::dependency_edges)
+        .transpose()?;
+    let has_workspace_roots = !document.root.is_empty();
+    let packages = document
+        .package
+        .into_iter()
+        .map(LockPackage::into_resolved)
         .collect::<Result<Vec<_>, _>>()?;
-    verify_locked_source_checksums(root, &dependencies)?;
+    let dependencies = match root_edges {
+        Some(edges) => build_locked_dependencies_from_edges(&edges, &packages)?,
+        None if has_workspace_roots => {
+            return Err(format!(
+                "nomo.lock does not contain workspace root `{root_id}`"
+            ));
+        }
+        None => {
+            let referenced_packages = packages
+                .iter()
+                .flat_map(|package| {
+                    package
+                        .dependencies
+                        .iter()
+                        .map(|dependency| dependency.package.clone())
+                })
+                .collect::<BTreeSet<_>>();
+            packages
+                .iter()
+                .filter(|package| !referenced_packages.contains(&package.package))
+                .map(|package| build_locked_dependency(package, &packages, &mut Vec::new()))
+                .collect::<Result<Vec<_>, _>>()?
+        }
+    };
+    let checksum_base = if has_workspace_roots { lock_root } else { root };
+    verify_locked_source_checksums(checksum_base, &dependencies)?;
     Ok(DependencyGraph {
         root: manifest.package,
         dependencies,
@@ -1666,24 +1783,84 @@ fn build_locked_dependency(
     })
 }
 
+fn build_locked_dependencies_from_edges(
+    edges: &[DependencyEdge],
+    packages: &[ResolvedDependency],
+) -> Result<Vec<ResolvedDependency>, String> {
+    edges
+        .iter()
+        .map(|edge| {
+            let locked_child = packages
+                .iter()
+                .find(|package| package.package == edge.package && package.alias == edge.alias)
+                .or_else(|| {
+                    packages
+                        .iter()
+                        .find(|package| package.package == edge.package)
+                })
+                .ok_or_else(|| {
+                    format!(
+                        "nomo.lock references missing dependency `{} -> {}`",
+                        edge.alias, edge.package
+                    )
+                })?;
+            build_locked_dependency(locked_child, packages, &mut Vec::new())
+        })
+        .collect()
+}
+
+#[cfg(test)]
 fn parse_lockfile_text(lockfile: &str) -> Result<Vec<ResolvedDependency>, String> {
-    let document: LockfileDocument = toml::from_str(lockfile)
-        .map_err(|err| format!("failed to parse nomo.lock as TOML: {err}"))?;
-    document
+    parse_lockfile_document(lockfile)?
         .package
         .into_iter()
         .map(LockPackage::into_resolved)
         .collect()
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+fn parse_lockfile_document(lockfile: &str) -> Result<LockfileDocument, String> {
+    toml::from_str(lockfile).map_err(|err| format!("failed to parse nomo.lock as TOML: {err}"))
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct LockfileDocument {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    root: Vec<LockRoot>,
     #[serde(default)]
     package: Vec<LockPackage>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct LockRoot {
+    id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    dependencies: Vec<String>,
+}
+
+impl LockRoot {
+    fn from_graph(graph: &DependencyGraph) -> Self {
+        Self {
+            id: format!("{}/{}", graph.root.namespace, graph.root.name),
+            dependencies: graph
+                .dependencies
+                .iter()
+                .map(|dependency| format!("{} -> {}", dependency.alias, dependency.package))
+                .collect(),
+        }
+    }
+
+    fn dependency_edges(&self) -> Result<Vec<DependencyEdge>, String> {
+        validate_package_id(&self.id)?;
+        self.dependencies
+            .iter()
+            .map(|entry| parse_lock_dependency_entry(entry))
+            .collect()
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
 struct LockPackage {
     id: String,

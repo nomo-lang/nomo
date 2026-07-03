@@ -50,6 +50,7 @@ nomo build [path] [--emit-c] [--json-errors] [--workspace] # compile one project
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo clean [path]                 # remove generated build artifacts
+nomo deps resolve [path] [--workspace] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] # print one package dependency tree or all workspace member trees
 ```
 
@@ -164,21 +165,27 @@ application package.
 are accepted as compatibility input, but the declaration is ignored as a normal
 dependency.
 `nomo deps resolve` for a workspace member writes `nomo.lock` at the workspace
-root. `nomo check --workspace`, `nomo build --workspace`, and
-`nomo deps tree --workspace` discover the workspace root, expand `members` minus
-`exclude`, and visit each member package in stable path order. Other
+root. `nomo check --workspace`, `nomo build --workspace`,
+`nomo deps resolve --workspace`, and `nomo deps tree --workspace` discover the
+workspace root, expand `members` minus `exclude`, and visit each member package
+in stable path order. Other
 workspace-wide batch commands are planned for later workspace graph slices.
 
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
+`nomo deps resolve --workspace [path]` writes a single workspace-root lockfile
+that records each member as a `[[root]]` entry and stores shared locked package
+entries once.
 `nomo deps tree [path]` prints dependency aliases and canonical package IDs. If
 `nomo.lock` exists, `tree` reads the locked dependency graph; otherwise it
 resolves the current manifest sources. `nomo.lock` is standard TOML: package
 entries are encoded as `[[package]]` tables with `id`, `alias`, `source`,
-optional source metadata, `checksum`, and dependency edge strings. Invalid TOML,
-unknown lockfile fields, and mismatched field types are rejected. When locked
-`path` sources or matching git cache checkouts are still available, `tree`
-verifies their `sha256:` checksums before printing; missing path sources and git
-cache entries are treated as offline locked entries. Git sources are cloned into a
+optional source metadata, `checksum`, and dependency edge strings. Workspace
+lockfiles additionally use `[[root]]` tables to map member package IDs to their
+direct dependency edges. Invalid TOML, unknown lockfile fields, and mismatched
+field types are rejected. When locked `path` sources or matching git cache
+checkouts are still available, `tree` verifies their `sha256:` checksums before
+printing; missing path sources and git cache entries are treated as offline
+locked entries. Git sources are cloned into a
 project-local `.nomo/deps/git/` cache, checked out to the requested `branch`,
 `tag`, or `rev` when provided, validated against the expected canonical package
 ID, and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a

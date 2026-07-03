@@ -705,6 +705,96 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
         "{workspace_tree}"
     );
 
+    let workspace_resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        workspace_resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&workspace_resolve_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&workspace_resolve_output.stdout),
+        format!("resolved {}\n", root.join("nomo.lock").display())
+    );
+    let workspace_lockfile = fs::read_to_string(root.join("nomo.lock")).unwrap();
+    assert!(
+        workspace_lockfile.contains("[[root]]\nid = \"fynn/cli\"\n"),
+        "{workspace_lockfile}"
+    );
+    assert!(
+        workspace_lockfile.contains("[[root]]\nid = \"fynn/core\"\n"),
+        "{workspace_lockfile}"
+    );
+    assert!(
+        workspace_lockfile
+            .contains("dependencies = [\"core -> fynn/core\", \"json -> nomo-lang/json\"]"),
+        "{workspace_lockfile}"
+    );
+    assert!(
+        workspace_lockfile.contains("source = \"path+packages/core\""),
+        "{workspace_lockfile}"
+    );
+
+    let locked_tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(
+        locked_tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_tree_output.stderr)
+    );
+    let locked_tree = String::from_utf8_lossy(&locked_tree_output.stdout);
+    assert!(locked_tree.contains("fynn/cli 0.1.0"), "{locked_tree}");
+    assert!(
+        locked_tree.contains("+-- core -> fynn/core"),
+        "{locked_tree}"
+    );
+    assert!(
+        locked_tree.contains("+-- json -> nomo-lang/json 0.1.0 (registry)"),
+        "{locked_tree}"
+    );
+
+    let locked_workspace_tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        locked_workspace_tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_workspace_tree_output.stderr)
+    );
+    let locked_workspace_tree = String::from_utf8_lossy(&locked_workspace_tree_output.stdout);
+    assert!(
+        locked_workspace_tree.contains("fynn/cli 0.1.0"),
+        "{locked_workspace_tree}"
+    );
+    assert!(
+        locked_workspace_tree.contains("fynn/core 0.1.0"),
+        "{locked_workspace_tree}"
+    );
+    assert!(
+        locked_workspace_tree.contains("+-- core -> fynn/core"),
+        "{locked_workspace_tree}"
+    );
+    assert!(
+        locked_workspace_tree.contains("+-- json -> nomo-lang/json 0.1.0 (registry)"),
+        "{locked_workspace_tree}"
+    );
+
     let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("deps")
         .arg("resolve")

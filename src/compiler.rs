@@ -234,6 +234,7 @@ pub enum ValueExpr {
         left: Box<ValueExpr>,
         op: BinaryOp,
         right: Box<ValueExpr>,
+        value_type: ValueType,
     },
     Unary {
         op: UnaryOp,
@@ -7473,6 +7474,7 @@ fn lower_value_expr_with_expected(
                     left: Box::new(left),
                     op: lowered_op,
                     right: Box::new(right),
+                    value_type: value_type.clone(),
                 }
             };
             Ok((value_type, value))

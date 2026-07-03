@@ -4149,6 +4149,88 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_reports_division_by_zero_panic_status() {
+    let root = temp_test_root("division-by-zero-panic");
+    reset_dir(&root);
+    let project = root.join("division_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"division_panic\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    let value: i64 = 1 / 0
+    io.println("wrong")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("panic: division by zero"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_reports_invalid_shift_panic_status() {
+    let root = temp_test_root("invalid-shift-panic");
+    reset_dir(&root);
+    let project = root.join("shift_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"shift_panic\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    let value: i64 = 1 << 64
+    io.println("wrong")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("panic: invalid shift amount"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_handles_fs_read_error_as_result_value() {
     let root = temp_test_root("fs-read-error-result");
     reset_dir(&root);

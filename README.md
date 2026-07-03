@@ -85,8 +85,8 @@ postfix `++`/`--` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`,
 `>>=`, `&=`, `^=`, `|=`, and `&^=` for mutable variables and mutable struct
 fields; they are not expressions and do not produce values. `%` and bitwise
 operators are restricted to integer operands; `/` works for integer and `f64`
-operands. Runtime divide-by-zero, overflow and invalid shift guards are still
-tracked as later full-scope safety work.
+operands. Runtime divide-by-zero and invalid shift amounts now panic; signed
+overflow guards are still tracked as later full-scope safety work.
 
 ```bash
 nomo new hello

@@ -25,7 +25,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#include <errno.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+        "#include <errno.h>\n#include <limits.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -33,6 +33,8 @@ pub fn emit_c(program: &Program) -> String {
     out.push_str("    fputc('\\n', stderr);\n");
     out.push_str("    exit(1);\n");
     out.push_str("}\n\n");
+    emit_operator_runtime(&mut out);
+    out.push('\n');
     emit_string_runtime(&mut out);
     out.push('\n');
 
@@ -151,6 +153,93 @@ pub fn emit_c(program: &Program) -> String {
     }
     out.push_str("}\n");
     out
+}
+
+fn emit_operator_runtime(out: &mut String) {
+    out.push_str("static long long nomo_div_i64(long long left, long long right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left / right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_rem_i64(long long left, long long right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left % right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_div_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left / right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_rem_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left % right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_div_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left / right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_rem_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left % right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_div_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left / right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_rem_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left % right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static double nomo_div_f64(double left, double right) {\n");
+    out.push_str("    if (right == 0.0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str("    return left / right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_shl_i64(long long left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left << right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_shr_i64(long long left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left >> right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_shl_i32(int32_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left << right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_shr_i32(int32_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left >> right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_shl_u32(uint32_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left << right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_shr_u32(uint32_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left >> right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_shl_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left << right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_shr_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str(
+        "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
+    );
+    out.push_str("    return left >> right;\n");
+    out.push_str("}\n");
 }
 
 fn emit_string_runtime(out: &mut String) {
@@ -2860,20 +2949,34 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push(')');
         }
         ValueExpr::Match { value, arms } => emit_match_expr(out, value, arms),
-        ValueExpr::Binary { left, op, right } => {
-            out.push('(');
-            emit_expr(out, left);
-            if matches!(op, BinaryOp::BitAndNot) {
-                out.push_str(" & ~(");
+        ValueExpr::Binary {
+            left,
+            op,
+            right,
+            value_type,
+        } => {
+            if let Some(helper) = checked_binary_helper(op, value_type) {
+                out.push_str(helper);
+                out.push('(');
+                emit_expr(out, left);
+                out.push_str(", ");
                 emit_expr(out, right);
                 out.push(')');
             } else {
-                out.push(' ');
-                out.push_str(c_binary_op(op));
-                out.push(' ');
-                emit_expr(out, right);
+                out.push('(');
+                emit_expr(out, left);
+                if matches!(op, BinaryOp::BitAndNot) {
+                    out.push_str(" & ~(");
+                    emit_expr(out, right);
+                    out.push(')');
+                } else {
+                    out.push(' ');
+                    out.push_str(c_binary_op(op));
+                    out.push(' ');
+                    emit_expr(out, right);
+                }
+                out.push(')');
             }
-            out.push(')');
         }
         ValueExpr::Unary { op, expr } => {
             out.push('(');
@@ -5202,6 +5305,29 @@ fn c_binary_op(op: &BinaryOp) -> &'static str {
     }
 }
 
+fn checked_binary_helper(op: &BinaryOp, value_type: &ValueType) -> Option<&'static str> {
+    match (op, value_type) {
+        (BinaryOp::Divide, ValueType::Int) => Some("nomo_div_i64"),
+        (BinaryOp::Remainder, ValueType::Int) => Some("nomo_rem_i64"),
+        (BinaryOp::Divide, ValueType::I32) => Some("nomo_div_i32"),
+        (BinaryOp::Remainder, ValueType::I32) => Some("nomo_rem_i32"),
+        (BinaryOp::Divide, ValueType::U32) => Some("nomo_div_u32"),
+        (BinaryOp::Remainder, ValueType::U32) => Some("nomo_rem_u32"),
+        (BinaryOp::Divide, ValueType::U64) => Some("nomo_div_u64"),
+        (BinaryOp::Remainder, ValueType::U64) => Some("nomo_rem_u64"),
+        (BinaryOp::Divide, ValueType::Float) => Some("nomo_div_f64"),
+        (BinaryOp::ShiftLeft, ValueType::Int) => Some("nomo_shl_i64"),
+        (BinaryOp::ShiftRight, ValueType::Int) => Some("nomo_shr_i64"),
+        (BinaryOp::ShiftLeft, ValueType::I32) => Some("nomo_shl_i32"),
+        (BinaryOp::ShiftRight, ValueType::I32) => Some("nomo_shr_i32"),
+        (BinaryOp::ShiftLeft, ValueType::U32) => Some("nomo_shl_u32"),
+        (BinaryOp::ShiftRight, ValueType::U32) => Some("nomo_shr_u32"),
+        (BinaryOp::ShiftLeft, ValueType::U64) => Some("nomo_shl_u64"),
+        (BinaryOp::ShiftRight, ValueType::U64) => Some("nomo_shr_u64"),
+        _ => None,
+    }
+}
+
 fn c_unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "!",
@@ -5473,6 +5599,7 @@ mod tests {
                         op: BinaryOp::Add,
                         left: Box::new(ValueExpr::Variable("a".to_string())),
                         right: Box::new(ValueExpr::Variable("b".to_string())),
+                        value_type: ValueType::I32,
                     }))],
                 },
                 Function {
@@ -5617,6 +5744,7 @@ mod tests {
                         left: Box::new(ValueExpr::Variable("a".to_string())),
                         op: BinaryOp::Add,
                         right: Box::new(ValueExpr::Variable("b".to_string())),
+                        value_type: ValueType::Int,
                     }))],
                 },
                 Function {
@@ -5670,6 +5798,7 @@ mod tests {
                             left: Box::new(ValueExpr::Variable("value".to_string())),
                             op: BinaryOp::Add,
                             right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
                         },
                     }],
                 },
@@ -5886,6 +6015,7 @@ mod tests {
                         left: Box::new(ValueExpr::Variable("a".to_string())),
                         op: BinaryOp::Add,
                         right: Box::new(ValueExpr::Variable("b".to_string())),
+                        value_type: ValueType::I32,
                     }))],
                 },
                 Function {
@@ -7802,6 +7932,7 @@ mod tests {
                             left: Box::new(ValueExpr::Variable("score".to_string())),
                             op: BinaryOp::GreaterEqual,
                             right: Box::new(ValueExpr::IntLiteral(60)),
+                            value_type: ValueType::Bool,
                         }),
                         then_branch: Box::new(ValueExpr::StringLiteral("pass".to_string())),
                         else_branch: Box::new(ValueExpr::StringLiteral("fail".to_string())),
@@ -7939,6 +8070,7 @@ mod tests {
                             left: Box::new(ValueExpr::Variable("a".to_string())),
                             op: BinaryOp::Subtract,
                             right: Box::new(ValueExpr::Variable("b".to_string())),
+                            value_type: ValueType::Int,
                         }),
                         op: BinaryOp::Remainder,
                         right: Box::new(ValueExpr::Binary {
@@ -7946,10 +8078,13 @@ mod tests {
                                 left: Box::new(ValueExpr::Variable("c".to_string())),
                                 op: BinaryOp::Multiply,
                                 right: Box::new(ValueExpr::IntLiteral(4)),
+                                value_type: ValueType::Int,
                             }),
                             op: BinaryOp::Divide,
                             right: Box::new(ValueExpr::IntLiteral(2)),
+                            value_type: ValueType::Int,
                         }),
+                        value_type: ValueType::Int,
                     }))],
                 },
                 Function {
@@ -7966,8 +8101,8 @@ mod tests {
 
         assert!(c.contains(" - "));
         assert!(c.contains(" * "));
-        assert!(c.contains(" / "));
-        assert!(c.contains(" % "));
+        assert!(c.contains("nomo_div_i64("));
+        assert!(c.contains("nomo_rem_i64("));
     }
 
     #[test]
@@ -8005,7 +8140,9 @@ mod tests {
                             left: Box::new(ValueExpr::Variable("a".to_string())),
                             op: BinaryOp::LogicalAnd,
                             right: Box::new(ValueExpr::Variable("b".to_string())),
+                            value_type: ValueType::Bool,
                         }),
+                        value_type: ValueType::Bool,
                     }))],
                 },
                 Function {
@@ -8056,13 +8193,16 @@ mod tests {
                                 left: Box::new(ValueExpr::Variable("a".to_string())),
                                 op: BinaryOp::BitAnd,
                                 right: Box::new(ValueExpr::Variable("b".to_string())),
+                                value_type: ValueType::Int,
                             }),
                             op: BinaryOp::BitOr,
                             right: Box::new(ValueExpr::Binary {
                                 left: Box::new(ValueExpr::Variable("a".to_string())),
                                 op: BinaryOp::BitXor,
                                 right: Box::new(ValueExpr::Variable("b".to_string())),
+                                value_type: ValueType::Int,
                             }),
+                            value_type: ValueType::Int,
                         }),
                         op: BinaryOp::BitAndNot,
                         right: Box::new(ValueExpr::Binary {
@@ -8070,10 +8210,13 @@ mod tests {
                                 left: Box::new(ValueExpr::Variable("a".to_string())),
                                 op: BinaryOp::ShiftLeft,
                                 right: Box::new(ValueExpr::IntLiteral(1)),
+                                value_type: ValueType::Int,
                             }),
                             op: BinaryOp::ShiftRight,
                             right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
                         }),
+                        value_type: ValueType::Int,
                     }))],
                 },
                 Function {
@@ -8091,8 +8234,8 @@ mod tests {
         assert!(c.contains(" & "));
         assert!(c.contains(" | "));
         assert!(c.contains(" ^ "));
-        assert!(c.contains(" << "));
-        assert!(c.contains(" >> "));
+        assert!(c.contains("nomo_shl_i64("));
+        assert!(c.contains("nomo_shr_i64("));
         assert!(c.contains(" & ~("));
     }
 
@@ -8587,6 +8730,7 @@ mod tests {
                             left: Box::new(ValueExpr::Variable("count".to_string())),
                             op: BinaryOp::Add,
                             right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
                         },
                     },
                 ],
@@ -8640,6 +8784,7 @@ mod tests {
                             }),
                             op: BinaryOp::Add,
                             right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
                         },
                     },
                 ],
@@ -9023,6 +9168,7 @@ mod tests {
                                 left: Box::new(ValueExpr::Variable("value".to_string())),
                                 op: BinaryOp::Add,
                                 right: Box::new(ValueExpr::IntLiteral(1)),
+                                value_type: ValueType::Int,
                             })),
                         })),
                     ],

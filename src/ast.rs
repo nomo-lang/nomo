@@ -219,6 +219,10 @@ pub struct MatchStmtArm {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
     Equal,
     NotEqual,
     Less,

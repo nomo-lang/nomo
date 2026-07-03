@@ -5157,6 +5157,10 @@ fn emit_string_data_expr(out: &mut String, expr: &ValueExpr) {
 fn c_binary_op(op: &BinaryOp) -> &'static str {
     match op {
         BinaryOp::Add => "+",
+        BinaryOp::Subtract => "-",
+        BinaryOp::Multiply => "*",
+        BinaryOp::Divide => "/",
+        BinaryOp::Remainder => "%",
         BinaryOp::Equal => "==",
         BinaryOp::NotEqual => "!=",
         BinaryOp::Less => "<",
@@ -7860,6 +7864,72 @@ mod tests {
         assert!(c.contains(
             "(nomo_panic((nomo_string_literal(\"no\")).data), nomo_string_literal(\"\"))"
         ));
+    }
+
+    #[test]
+    fn emits_binary_arithmetic_operators() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "calc".to_string(),
+                    params: vec![
+                        Parameter {
+                            name: "a".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Int,
+                        },
+                        Parameter {
+                            name: "b".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Int,
+                        },
+                        Parameter {
+                            name: "c".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Int,
+                        },
+                    ],
+                    return_type: ValueType::Int,
+                    body: vec![Statement::Return(Some(ValueExpr::Binary {
+                        left: Box::new(ValueExpr::Binary {
+                            left: Box::new(ValueExpr::Variable("a".to_string())),
+                            op: BinaryOp::Subtract,
+                            right: Box::new(ValueExpr::Variable("b".to_string())),
+                        }),
+                        op: BinaryOp::Remainder,
+                        right: Box::new(ValueExpr::Binary {
+                            left: Box::new(ValueExpr::Binary {
+                                left: Box::new(ValueExpr::Variable("c".to_string())),
+                                op: BinaryOp::Multiply,
+                                right: Box::new(ValueExpr::IntLiteral(4)),
+                            }),
+                            op: BinaryOp::Divide,
+                            right: Box::new(ValueExpr::IntLiteral(2)),
+                        }),
+                    }))],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+
+        assert!(c.contains(" - "));
+        assert!(c.contains(" * "));
+        assert!(c.contains(" / "));
+        assert!(c.contains(" % "));
     }
 
     #[test]

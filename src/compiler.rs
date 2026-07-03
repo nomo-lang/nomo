@@ -353,6 +353,10 @@ pub struct MatchValueArm {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
     Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
     Equal,
     NotEqual,
     Less,
@@ -7181,6 +7185,10 @@ fn lower_value_expr_with_expected(
             )?;
             let lowered_op = match op {
                 AstBinaryOp::Add => BinaryOp::Add,
+                AstBinaryOp::Subtract => BinaryOp::Subtract,
+                AstBinaryOp::Multiply => BinaryOp::Multiply,
+                AstBinaryOp::Divide => BinaryOp::Divide,
+                AstBinaryOp::Remainder => BinaryOp::Remainder,
                 AstBinaryOp::Equal => BinaryOp::Equal,
                 AstBinaryOp::NotEqual => BinaryOp::NotEqual,
                 AstBinaryOp::Less => BinaryOp::Less,
@@ -7189,11 +7197,16 @@ fn lower_value_expr_with_expected(
                 AstBinaryOp::GreaterEqual => BinaryOp::GreaterEqual,
             };
             let value_type = match (lowered_op, &left_type, &right_type) {
-                (BinaryOp::Add, ValueType::Int, ValueType::Int) => ValueType::Int,
-                (BinaryOp::Add, ValueType::I32, ValueType::I32) => ValueType::I32,
-                (BinaryOp::Add, ValueType::U32, ValueType::U32) => ValueType::U32,
-                (BinaryOp::Add, ValueType::U64, ValueType::U64) => ValueType::U64,
-                (BinaryOp::Add, ValueType::Float, ValueType::Float) => ValueType::Float,
+                (
+                    BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide,
+                    left_type,
+                    right_type,
+                ) if numeric_pair_matches(left_type, right_type) => left_type.clone(),
+                (BinaryOp::Remainder, left_type, right_type)
+                    if left_type == right_type && left_type.is_integer() =>
+                {
+                    left_type.clone()
+                }
                 (BinaryOp::Equal | BinaryOp::NotEqual, ValueType::String, ValueType::String)
                 | (BinaryOp::Equal | BinaryOp::NotEqual, ValueType::Char, ValueType::Char)
                 | (BinaryOp::Equal | BinaryOp::NotEqual, ValueType::Bool, ValueType::Bool) => {
@@ -7250,12 +7263,24 @@ fn lower_value_expr_with_expected(
                     ValueType::Float,
                 ) => ValueType::Bool,
                 _ => {
+                    let operand_kind = if matches!(
+                        lowered_op,
+                        BinaryOp::Add
+                            | BinaryOp::Subtract
+                            | BinaryOp::Multiply
+                            | BinaryOp::Divide
+                            | BinaryOp::Remainder
+                    ) {
+                        "numeric"
+                    } else {
+                        "comparable"
+                    };
                     return Err(type_mismatch(
                         path,
                         span,
                         format!(
-                            "`{}` expects two matching comparable operands",
-                            ast_binary_symbol(op)
+                            "`{}` expects two matching {operand_kind} operands",
+                            ast_binary_symbol(op),
                         ),
                     ));
                 }
@@ -9313,6 +9338,10 @@ fn resolve_match_arm_variant(
 fn ast_binary_symbol(op: &AstBinaryOp) -> &'static str {
     match op {
         AstBinaryOp::Add => "+",
+        AstBinaryOp::Subtract => "-",
+        AstBinaryOp::Multiply => "*",
+        AstBinaryOp::Divide => "/",
+        AstBinaryOp::Remainder => "%",
         AstBinaryOp::Equal => "==",
         AstBinaryOp::NotEqual => "!=",
         AstBinaryOp::Less => "<",
@@ -11111,6 +11140,66 @@ fn main() -> void {
                 ..
             }))
         ));
+    }
+
+    #[test]
+    fn accepts_binary_arithmetic_operators() {
+        let source = r#"package app.main
+
+fn calc(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {
+    return a - b * c / d % e
+}
+
+fn ratio(total: f64, count: f64) -> f64 {
+    return total / count
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let calc = program.functions.iter().find(|f| f.name == "calc").unwrap();
+        let ratio = program
+            .functions
+            .iter()
+            .find(|f| f.name == "ratio")
+            .unwrap();
+
+        assert!(matches!(
+            calc.body[0],
+            Statement::Return(Some(ValueExpr::Binary {
+                op: BinaryOp::Subtract,
+                ..
+            }))
+        ));
+        assert!(matches!(
+            ratio.body[0],
+            Statement::Return(Some(ValueExpr::Binary {
+                op: BinaryOp::Divide,
+                ..
+            }))
+        ));
+        assert_eq!(calc.return_type, ValueType::Int);
+        assert_eq!(ratio.return_type, ValueType::Float);
+    }
+
+    #[test]
+    fn rejects_float_remainder() {
+        let source = r#"package app.main
+
+fn bad(left: f64, right: f64) -> f64 {
+    return left % right
+}
+
+fn main() -> void {
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0404");
+        assert!(err.message.contains("numeric operands"));
     }
 
     #[test]

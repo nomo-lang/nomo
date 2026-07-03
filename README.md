@@ -77,6 +77,12 @@ Rust-style line comments (`//`, `///`, `//!`) and nested block comments (`/* */`
 `/** */`, `/*! */`) as trivia, but `nomo fmt` rejects commented input for now
 instead of silently dropping comments.
 
+Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
+`/`, `%`) with standard precedence, plus equality and ordering comparisons.
+`%` is restricted to integer operands; `/` works for integer and `f64`
+operands. Runtime divide-by-zero and overflow guards are still tracked as later
+full-scope safety work.
+
 ```bash
 nomo new hello
 cd hello

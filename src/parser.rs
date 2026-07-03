@@ -849,14 +849,40 @@ impl Parser<'_> {
     }
 
     fn parse_additive_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_multiplicative_expr()?;
+        loop {
+            let op = match self.peek().kind {
+                TokenKind::Plus => BinaryOp::Add,
+                TokenKind::Minus => BinaryOp::Subtract,
+                _ => break,
+            };
+            self.advance();
+            self.skip_newlines();
+            let right = self.parse_multiplicative_expr()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_multiplicative_expr(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_cast_expr()?;
-        while matches!(self.peek().kind, TokenKind::Plus) {
+        loop {
+            let op = match self.peek().kind {
+                TokenKind::Star => BinaryOp::Multiply,
+                TokenKind::Slash => BinaryOp::Divide,
+                TokenKind::Percent => BinaryOp::Remainder,
+                _ => break,
+            };
             self.advance();
             self.skip_newlines();
             let right = self.parse_cast_expr()?;
             expr = Expr::Binary {
                 left: Box::new(expr),
-                op: BinaryOp::Add,
+                op,
                 right: Box::new(right),
             };
         }
@@ -1467,6 +1493,28 @@ mod tests {
                 }),
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn parses_binary_arithmetic_precedence() {
+        let source = "package app.main\n\nfn calc(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {\n    return a - b * c / d % e\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Binary {
+                    op: BinaryOp::Subtract,
+                    ref right,
+                    ..
+                }),
+                ..
+            } if matches!(right.as_ref(), Expr::Binary {
+                op: BinaryOp::Remainder,
+                ..
+            })
         ));
     }
 

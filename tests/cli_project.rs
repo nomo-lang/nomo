@@ -310,6 +310,46 @@ fn nomo_run_standalone_file_with_explicit_main() {
 }
 
 #[test]
+fn nomo_run_executes_binary_arithmetic() {
+    let root = temp_test_root("run-arithmetic");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    let value: i64 = 20 - 3 * 4 / 2 % 5
+    if value == 19 {
+        io.println("arithmetic ok")
+    } else {
+        io.println("wrong")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "arithmetic ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomoc_still_rejects_top_level_script_statements() {
     let root = temp_test_root("nomoc-script-reject");
     reset_dir(&root);

@@ -47,7 +47,10 @@ pub enum TokenKind {
     EqualEqual,
     BangEqual,
     Plus,
+    Minus,
     Star,
+    Slash,
+    Percent,
     Question,
     Less,
     LessEqual,
@@ -100,15 +103,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         block_comment_depth = 1;
                         block_comment_start = Some((line, column, line_text.to_string()));
                     } else {
-                        return Err(Diagnostic::new(
-                            "N0102",
-                            "unexpected `/`; division is not supported in v0.1",
-                            path,
-                            line,
-                            column,
-                            1,
-                            line_text,
-                        ));
+                        tokens.push(token(TokenKind::Slash, line, column, line_text));
                     }
                 }
                 '.' => tokens.push(token(TokenKind::Dot, line, column, line_text)),
@@ -142,7 +137,16 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                 }
                 '+' => tokens.push(token(TokenKind::Plus, line, column, line_text)),
+                '-' => {
+                    if matches!(chars.peek(), Some((_, '>'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::Arrow, line, column, line_text));
+                    } else {
+                        tokens.push(token(TokenKind::Minus, line, column, line_text));
+                    }
+                }
                 '*' => tokens.push(token(TokenKind::Star, line, column, line_text)),
+                '%' => tokens.push(token(TokenKind::Percent, line, column, line_text)),
                 '?' => tokens.push(token(TokenKind::Question, line, column, line_text)),
                 '<' => {
                     if matches!(chars.peek(), Some((_, '='))) {
@@ -174,22 +178,6 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         1,
                         line_text,
                     ));
-                }
-                '-' => {
-                    if matches!(chars.peek(), Some((_, '>'))) {
-                        chars.next();
-                        tokens.push(token(TokenKind::Arrow, line, column, line_text));
-                    } else {
-                        return Err(Diagnostic::new(
-                            "N0100",
-                            "unexpected `-`; did you mean `->`?",
-                            path,
-                            line,
-                            column,
-                            1,
-                            line_text,
-                        ));
-                    }
                 }
                 '"' => {
                     let mut literal = String::new();
@@ -498,6 +486,16 @@ mod tests {
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Return));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Plus));
+    }
+
+    #[test]
+    fn lexes_binary_arithmetic_operators() {
+        let tokens = lex(Path::new("main.nomo"), "return a - b * c / d % e\n").unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Minus));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Star));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Slash));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Percent));
     }
 
     #[test]

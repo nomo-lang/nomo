@@ -772,13 +772,18 @@ fn binary_precedence(op: &BinaryOp) -> u8 {
     match op {
         BinaryOp::Equal | BinaryOp::NotEqual => 1,
         BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => 2,
-        BinaryOp::Add => 3,
+        BinaryOp::Add | BinaryOp::Subtract => 3,
+        BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => 4,
     }
 }
 
 fn binary_op(op: &BinaryOp) -> &'static str {
     match op {
         BinaryOp::Add => "+",
+        BinaryOp::Subtract => "-",
+        BinaryOp::Multiply => "*",
+        BinaryOp::Divide => "/",
+        BinaryOp::Remainder => "%",
         BinaryOp::Equal => "==",
         BinaryOp::NotEqual => "!=",
         BinaryOp::Less => "<",
@@ -850,11 +855,12 @@ mod tests {
 
     #[test]
     fn formats_expr_variants_and_escaping() {
-        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = left < right == false\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
+        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = left < right == false\n    let value: i64 = a-b*c/d%e\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("Point { x: 1, y: 2 }"));
         assert!(formatted.contains("left < right == false"));
+        assert!(formatted.contains("a - b * c / d % e"));
         assert!(formatted.contains("total as f64"));
         assert!(formatted.contains("\"a\\n\\\"b\""));
         assert!(formatted.contains("'\\n'"));

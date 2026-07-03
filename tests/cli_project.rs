@@ -4999,6 +4999,66 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_path_helpers() {
+    let root = temp_test_root("std-path-helpers");
+    reset_dir(&root);
+    let project = root.join("path_demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"path_demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.path
+
+fn main() -> void {
+    io.println(path.join("/tmp", "nomo.txt"))
+    io.println(path.basename("/tmp/nomo.txt"))
+    io.println(path.dirname("/tmp/nomo.txt"))
+    io.println(path.extension("archive.tar.gz"))
+    io.println(path.normalize("/tmp//a/../b/./"))
+    io.println(path.normalize("a/../../b"))
+    if path.is_absolute("/tmp") {
+        io.println("absolute")
+    } else {
+        io.println("relative")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "/tmp/nomo.txt\nnomo.txt\n/tmp\ngz\n/tmp/b\n../b\nabsolute\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_allows_print_calls_in_void_if_branches() {
     let root = temp_test_root("if-print-branches");
     reset_dir(&root);

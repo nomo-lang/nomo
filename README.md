@@ -283,6 +283,11 @@ early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 There is no `try` keyword or statement syntax in v0.1; postfix `?` is the
 only error/absence propagation syntax.
 
+`std.path` provides pure string path helpers:
+`path.join`, `path.basename`, `path.dirname`, `path.extension`,
+`path.normalize`, and `path.is_absolute`. The v0.1 behavior uses POSIX-style
+`/` separators and does not query the host filesystem or resolve symlinks.
+
 Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
 pages live under [`docs/diagnostics/`](docs/diagnostics/index.md).

@@ -268,6 +268,25 @@ pub enum ValueExpr {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
     },
+    PathJoin {
+        left: Box<ValueExpr>,
+        right: Box<ValueExpr>,
+    },
+    PathBasename {
+        path: Box<ValueExpr>,
+    },
+    PathDirname {
+        path: Box<ValueExpr>,
+    },
+    PathExtension {
+        path: Box<ValueExpr>,
+    },
+    PathNormalize {
+        path: Box<ValueExpr>,
+    },
+    PathIsAbsolute {
+        path: Box<ValueExpr>,
+    },
     FsReadToString {
         path: Box<ValueExpr>,
     },
@@ -1507,6 +1526,13 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.string"
             | "std.string.len"
             | "std.string.concat"
+            | "std.path"
+            | "std.path.join"
+            | "std.path.basename"
+            | "std.path.dirname"
+            | "std.path.extension"
+            | "std.path.normalize"
+            | "std.path.is_absolute"
     ) || is_supported_external_import(import, external_import_roots)
 }
 
@@ -7489,6 +7515,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "path" {
+                    return lower_path_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
             }
             let Some(template_signature) = signatures.get(name) else {
                 if scope.contains_key(name) {
@@ -7731,6 +7762,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_env_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_path_builtin_call(callee) {
+                require_import(path, imports, span, "std.path", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "path builtins do not accept type arguments",
+                    ));
+                }
+                return lower_path_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -8374,6 +8418,113 @@ fn lower_env_builtin(
             ))
         }
         _ => unreachable!("env builtin dispatcher only passes known calls"),
+    }
+}
+
+fn is_path_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "path"
+                && matches!(
+                    name.as_str(),
+                    "join" | "basename" | "dirname" | "extension" | "normalize" | "is_absolute"
+                )
+    )
+}
+
+fn lower_path_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("path builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "path");
+    match name.as_str() {
+        "join" => {
+            let [left, right] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`path.join` expects exactly two string arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (left_type, lowered_left) =
+                lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
+            let (right_type, lowered_right) = lower_value_expr(
+                path, right, scope, imports, signatures, structs, enums, span,
+            )?;
+            if left_type != ValueType::String || right_type != ValueType::String {
+                return Err(type_mismatch(path, span, "`path.join` expects two strings"));
+            }
+            Ok((
+                ValueType::String,
+                ValueExpr::PathJoin {
+                    left: Box::new(lowered_left),
+                    right: Box::new(lowered_right),
+                },
+            ))
+        }
+        "basename" | "dirname" | "extension" | "normalize" | "is_absolute" => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`path.{name}` expects exactly one string argument"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`path.{name}` expects a string"),
+                ));
+            }
+            let return_type = if name == "is_absolute" {
+                ValueType::Bool
+            } else {
+                ValueType::String
+            };
+            let lowered = match name.as_str() {
+                "basename" => ValueExpr::PathBasename {
+                    path: Box::new(lowered_path),
+                },
+                "dirname" => ValueExpr::PathDirname {
+                    path: Box::new(lowered_path),
+                },
+                "extension" => ValueExpr::PathExtension {
+                    path: Box::new(lowered_path),
+                },
+                "normalize" => ValueExpr::PathNormalize {
+                    path: Box::new(lowered_path),
+                },
+                "is_absolute" => ValueExpr::PathIsAbsolute {
+                    path: Box::new(lowered_path),
+                },
+                _ => unreachable!("path builtin dispatcher only passes known calls"),
+            };
+            Ok((return_type, lowered))
+        }
+        _ => unreachable!("path builtin dispatcher only passes known calls"),
     }
 }
 
@@ -9737,6 +9888,24 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "args" if imports.iter().any(|item| item == "std.env.args") => {
             vec!["env".to_string(), "args".to_string()]
         }
+        "join" if imports.iter().any(|item| item == "std.path.join") => {
+            vec!["path".to_string(), "join".to_string()]
+        }
+        "basename" if imports.iter().any(|item| item == "std.path.basename") => {
+            vec!["path".to_string(), "basename".to_string()]
+        }
+        "dirname" if imports.iter().any(|item| item == "std.path.dirname") => {
+            vec!["path".to_string(), "dirname".to_string()]
+        }
+        "extension" if imports.iter().any(|item| item == "std.path.extension") => {
+            vec!["path".to_string(), "extension".to_string()]
+        }
+        "normalize" if imports.iter().any(|item| item == "std.path.normalize") => {
+            vec!["path".to_string(), "normalize".to_string()]
+        }
+        "is_absolute" if imports.iter().any(|item| item == "std.path.is_absolute") => {
+            vec!["path".to_string(), "is_absolute".to_string()]
+        }
         "new" if imports.iter().any(|item| item == "std.array.new") => {
             vec!["Array".to_string(), "new".to_string()]
         }
@@ -10073,6 +10242,11 @@ fn main() -> void {
                 "std.env",
             ),
             (
+                "package app.main\nfn main() -> void {\n    let name: string = path.basename(\"/tmp/nomo.txt\")\n}\n",
+                "path.basename",
+                "std.path",
+            ),
+            (
                 "package app.main\nfn main() -> void {\n    let items = Array.new<i32>()\n}\n",
                 "Array.new",
                 "std.array",
@@ -10283,6 +10457,123 @@ fn main() -> void {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn accepts_path_builtins() {
+        let source = r#"package app.main
+
+import std.path
+
+fn main() -> void {
+    let joined: string = path.join("/tmp", "nomo.txt")
+    let base: string = path.basename(joined)
+    let dir: string = path.dirname(joined)
+    let ext: string = path.extension("archive.tar.gz")
+    let clean: string = path.normalize("/tmp//a/../b/./")
+    let absolute: bool = path.is_absolute(clean)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::PathJoin { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::PathBasename { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::PathDirname { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::PathExtension { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::PathNormalize { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::PathIsAbsolute { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_path_builtin_imports() {
+        let source = r#"package app.main
+
+import std.path.basename
+import std.path.is_absolute
+
+fn main() -> void {
+    let name: string = basename("/tmp/nomo.txt")
+    let absolute: bool = is_absolute("/tmp")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::PathBasename { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::PathIsAbsolute { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_path_builtin_non_string_argument() {
+        let source = r#"package app.main
+
+import std.path
+
+fn main() -> void {
+    let name: string = path.basename(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("path.basename"));
+        assert!(err.message.contains("string"));
     }
 
     #[test]

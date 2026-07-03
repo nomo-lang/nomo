@@ -32,6 +32,12 @@ pub struct DependencyResolutionOptions {
     pub offline: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct DependencyUpdateOptions {
+    pub resolution: DependencyResolutionOptions,
+    pub precise: Option<String>,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub package: PackageMetadata,
@@ -295,23 +301,86 @@ pub fn resolve_workspace_dependencies_with_options(
 pub fn update_project_dependencies(
     project: &Project,
     target: Option<&str>,
-    options: DependencyResolutionOptions,
+    options: DependencyUpdateOptions,
 ) -> Result<PathBuf, String> {
-    if let Some(target) = target {
-        validate_project_update_target(project, target)?;
+    let lock_path = project.lock_root().join("nomo.lock");
+    let Some(precise) = options.precise.as_deref() else {
+        if let Some(target) = target {
+            validate_project_update_target(project, target)?;
+        }
+        return resolve_project_dependencies_with_options(project, options.resolution);
+    };
+    let target = target.ok_or_else(|| {
+        "nomo deps update --precise requires an alias-or-package target".to_string()
+    })?;
+    let mut manifest = parse_manifest_at_root(&project.root)?;
+    if !apply_precise_update(&mut manifest.dependencies, target, precise)? {
+        return Err(format!(
+            "dependency update target `{target}` is not a direct dependency of {}/{}",
+            manifest.package.namespace, manifest.package.name
+        ));
     }
-    resolve_project_dependencies_with_options(project, options)
+    let graph = resolve_dependency_graph_for_manifest(
+        &project.root,
+        manifest,
+        None,
+        None,
+        options.resolution.offline,
+    )?;
+    let lock = render_lockfile(&graph);
+    fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
+    Ok(lock_path)
 }
 
 pub fn update_workspace_dependencies(
     workspace: &WorkspaceGraph,
     target: Option<&str>,
-    options: DependencyResolutionOptions,
+    options: DependencyUpdateOptions,
 ) -> Result<PathBuf, String> {
-    if let Some(target) = target {
-        validate_workspace_update_target(workspace, target)?;
+    let lock_path = workspace.root.join("nomo.lock");
+    let Some(precise) = options.precise.as_deref() else {
+        if let Some(target) = target {
+            validate_workspace_update_target(workspace, target)?;
+        }
+        return resolve_workspace_dependencies_with_options(workspace, options.resolution);
+    };
+    let target = target.ok_or_else(|| {
+        "nomo deps update --precise requires an alias-or-package target".to_string()
+    })?;
+
+    let mut found = false;
+    let mut package_ids = Vec::new();
+    let mut manifests = Vec::new();
+    for project in &workspace.members {
+        let mut manifest = parse_manifest_at_root(&project.root)?;
+        package_ids.push(format!(
+            "{}/{}",
+            manifest.package.namespace, manifest.package.name
+        ));
+        found |= apply_precise_update(&mut manifest.dependencies, target, precise)?;
+        manifests.push((project, manifest));
     }
-    resolve_workspace_dependencies_with_options(workspace, options)
+    if !found {
+        return Err(format!(
+            "dependency update target `{target}` is not a direct dependency of workspace members: {}",
+            package_ids.join(", ")
+        ));
+    }
+
+    let mut graphs = Vec::new();
+    for (project, manifest) in manifests {
+        graphs.push(resolve_dependency_graph_for_manifest(
+            &project.root,
+            manifest,
+            Some(&workspace.root),
+            Some(&workspace.root),
+            options.resolution.offline,
+        )?);
+    }
+
+    let lock = render_workspace_lockfile(&graphs)?;
+    fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
+    Ok(lock_path)
 }
 
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
@@ -1369,12 +1438,74 @@ fn validate_workspace_update_target(
     ))
 }
 
+fn apply_precise_update(
+    dependencies: &mut [Dependency],
+    target: &str,
+    precise: &str,
+) -> Result<bool, String> {
+    let mut updated = false;
+    for dependency in dependencies {
+        if dependency.alias != target && dependency.package != target {
+            continue;
+        }
+
+        dependency.source = precise_dependency_source(dependency, precise)?;
+        updated = true;
+    }
+    Ok(updated)
+}
+
+fn precise_dependency_source(
+    dependency: &Dependency,
+    precise: &str,
+) -> Result<DependencySource, String> {
+    match &dependency.source {
+        DependencySource::Registry { registry, .. } => {
+            validate_version_like(
+                &format!("dependency `{}` precise version", dependency.alias),
+                precise,
+            )?;
+            Ok(DependencySource::Registry {
+                version: precise.to_string(),
+                registry: registry.clone(),
+            })
+        }
+        DependencySource::Git { git, .. } => Ok(DependencySource::Git {
+            git: git.clone(),
+            branch: None,
+            tag: None,
+            rev: Some(precise.to_string()),
+        }),
+        DependencySource::Path { .. } => Err(format!(
+            "dependency `{}` uses a path source and cannot be updated with --precise",
+            dependency.alias
+        )),
+    }
+}
+
 fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
     resolve_dependency_graph_for_lock(root, None, None, false)
 }
 
 fn resolve_dependency_graph_for_lock(
     root: &Path,
+    lock_source_base: Option<&Path>,
+    git_cache_base: Option<&Path>,
+    offline: bool,
+) -> Result<DependencyGraph, String> {
+    let manifest = parse_manifest_at_root(&root)?;
+    resolve_dependency_graph_for_manifest(
+        &root,
+        manifest,
+        lock_source_base.as_deref(),
+        git_cache_base.as_deref(),
+        offline,
+    )
+}
+
+fn resolve_dependency_graph_for_manifest(
+    root: &Path,
+    manifest: Manifest,
     lock_source_base: Option<&Path>,
     git_cache_base: Option<&Path>,
     offline: bool,
@@ -1388,7 +1519,6 @@ fn resolve_dependency_graph_for_lock(
         .map(fs::canonicalize)
         .transpose()
         .map_err(|err| err.to_string())?;
-    let manifest = parse_manifest_at_root(&root)?;
     let mut package_sources = BTreeMap::new();
     let mut path_stack = vec![root.clone()];
     let dependencies = resolve_dependencies(

@@ -1,10 +1,10 @@
 use nomo::project::{
-    BuildError, DependencyResolutionOptions, build_project_with_options, check_project,
-    clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
-    discover_project, discover_workspace, resolve_project_dependencies_with_options,
-    resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
-    run_standalone_script_with_args_and_diagnostics, update_project_dependencies,
-    update_workspace_dependencies,
+    BuildError, DependencyResolutionOptions, DependencyUpdateOptions, build_project_with_options,
+    check_project, clean_dependency_cache, clean_project, create_project,
+    dependency_tree_with_options, discover_project, discover_workspace,
+    resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
+    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
+    update_project_dependencies, update_workspace_dependencies,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -179,7 +179,7 @@ fn run() -> Result<(), String> {
                 "update" => {
                     let (path, target, workspace, deps) = parse_deps_update_args(
                         rest.to_vec(),
-                        "usage: nomo deps update [path] [alias-or-package] [--workspace] [--offline]",
+                        "usage: nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]",
                     )?;
                     if workspace {
                         let workspace = discover_workspace(&path)?;
@@ -315,22 +315,33 @@ fn parse_deps_args(
 fn parse_deps_update_args(
     args: Vec<String>,
     usage: &str,
-) -> Result<(PathBuf, Option<String>, bool, DependencyResolutionOptions), String> {
+) -> Result<(PathBuf, Option<String>, bool, DependencyUpdateOptions), String> {
     let mut workspace = false;
-    let mut deps = DependencyResolutionOptions::default();
+    let mut deps = DependencyUpdateOptions::default();
     let mut values = Vec::new();
-    for arg in args {
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
         if arg == "--workspace" {
             workspace = true;
         } else if arg == "--offline" {
-            deps.offline = true;
-        } else if arg == "--precise" || arg.starts_with("--precise=") {
-            return Err("nomo deps update --precise is not supported yet".to_string());
+            deps.resolution.offline = true;
+        } else if let Some(value) = arg.strip_prefix("--precise=") {
+            if value.is_empty() {
+                return Err("--precise requires a version or git revision".to_string());
+            }
+            deps.precise = Some(value.to_string());
+        } else if arg == "--precise" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--precise requires a version or git revision".to_string());
+            };
+            deps.precise = Some(value.clone());
         } else if arg == "--locked" || arg == "--frozen" {
             return Err(format!("{arg} is not valid for nomo deps update"));
         } else {
-            values.push(arg);
+            values.push(arg.clone());
         }
+        index += 1;
     }
 
     let current_dir = || env::current_dir().map_err(|err| err.to_string());
@@ -484,6 +495,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps clean-cache [path]\n"
     );
 }

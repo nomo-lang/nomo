@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -1110,6 +1110,189 @@ fn nomo_deps_update_rewrites_git_branch_lockfile() {
         !updated_lockfile.contains(&format!("rev = \"{first_rev}\"")),
         "{updated_lockfile}"
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_precise_rewrites_registry_lockfile() {
+    let root = temp_test_root("deps-update-precise-registry");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    let manifest = "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\", registry = \"https://packages.nomo.test\" }\n";
+    fs::write(project.join("nomo.toml"), manifest).unwrap();
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("json")
+        .arg("--precise")
+        .arg("0.2.0")
+        .output()
+        .unwrap();
+
+    assert!(
+        update_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&update_output.stdout),
+        format!("updated {}\n", project.join("nomo.lock").display())
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("nomo.toml")).unwrap(),
+        manifest
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(lockfile.contains("version = \"0.2.0\""), "{lockfile}");
+    assert!(
+        lockfile.contains("source = \"registry+https://packages.nomo.test\""),
+        "{lockfile}"
+    );
+    assert!(!lockfile.contains("version = \"0.1.0\""), "{lockfile}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_precise_rewrites_git_lockfile_to_rev() {
+    let root = temp_test_root("deps-update-precise-git");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let json = root.join("json");
+    init_git_package(&json, "nomo-lang", "json");
+    run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
+    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
+    let first_rev = git_head_rev(&json);
+    fs::write(
+        json.join("src/main.nomo"),
+        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+    )
+    .unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable update"]);
+    let second_rev = git_head_rev(&json);
+    assert_ne!(first_rev, second_rev);
+    run_git(&json, &["checkout", "--quiet", &first_rev]);
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", branch = \"stable\" }}\n",
+            json.display()
+        ),
+    )
+    .unwrap();
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("nomo-lang/json")
+        .arg(format!("--precise={second_rev}"))
+        .output()
+        .unwrap();
+
+    assert!(
+        update_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update_output.stderr)
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(
+        lockfile.contains(&format!("rev = \"{second_rev}\"")),
+        "{lockfile}"
+    );
+    assert!(
+        !lockfile.contains(&format!("rev = \"{first_rev}\"")),
+        "{lockfile}"
+    );
+    assert!(!lockfile.contains("branch = \"stable\""), "{lockfile}");
+    assert!(
+        fs::read_to_string(project.join("nomo.toml"))
+            .unwrap()
+            .contains("branch = \"stable\"")
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_precise_requires_target() {
+    let root = temp_test_root("deps-update-precise-requires-target");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
+    )
+    .unwrap();
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("--precise")
+        .arg("0.2.0")
+        .output()
+        .unwrap();
+
+    assert!(!update_output.status.success());
+    let stderr = String::from_utf8_lossy(&update_output.stderr);
+    assert!(stderr.contains("--precise requires"), "{stderr}");
+    assert!(!project.join("nomo.lock").exists());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_precise_rejects_path_dependency() {
+    let root = temp_test_root("deps-update-precise-path");
+    reset_dir(&root);
+    let app = root.join("app");
+    let utils = root.join("utils");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(utils.join("src")).unwrap();
+    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        utils.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&app)
+        .arg("local_utils")
+        .arg("--precise")
+        .arg("0.2.0")
+        .output()
+        .unwrap();
+
+    assert!(!update_output.status.success());
+    let stderr = String::from_utf8_lossy(&update_output.stderr);
+    assert!(
+        stderr.contains("cannot be updated with --precise"),
+        "{stderr}"
+    );
+    assert!(!app.join("nomo.lock").exists());
 
     fs::remove_dir_all(&root).unwrap();
 }

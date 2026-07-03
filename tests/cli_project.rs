@@ -256,6 +256,143 @@ fn nomo_fmt_directory_without_manifest_reports_project_error() {
 }
 
 #[test]
+fn nomo_run_standalone_script_without_main() {
+    let root = temp_test_root("run-script");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        "package app.main\n\nimport std.io\n\nlet message: string = \"script ok\"\nio.println(message)\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "script ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_standalone_file_with_explicit_main() {
+    let root = temp_test_root("run-standalone-main");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        "package app.main\n\nimport std.io\n\nfn main() -> void {\n    io.println(\"main ok\")\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "main ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomoc_still_rejects_top_level_script_statements() {
+    let root = temp_test_root("nomoc-script-reject");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(&source, "package app.main\n\nlet value: i32 = 1\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("check")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("top-level script statements"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn project_check_rejects_top_level_script_statements() {
+    let root = temp_test_root("project-script-reject");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nlet value: i32 = 1\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("top-level script statements"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_source_file_with_bad_manifest_does_not_fallback_to_script_mode() {
+    let root = temp_test_root("run-bad-manifest-no-script-fallback");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"std\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport std.io\n\nlet message: string = \"should not run\"\nio.println(message)\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(project.join("src/main.nomo"))
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("reserved"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_new_run_and_clean_project() {
     let root = temp_test_root("new-run-clean");
     reset_dir(&root);

@@ -58,6 +58,10 @@ impl<'a> Formatter<'a> {
             }
             self.item(*item);
         }
+        if !items.is_empty() && !self.ast.script_body.is_empty() {
+            self.blank();
+        }
+        self.stmt_block(&self.ast.script_body, 0);
 
         if !self.out.ends_with('\n') {
             self.out.push('\n');
@@ -70,7 +74,8 @@ impl<'a> Formatter<'a> {
             && self.ast.enums.is_empty()
             && self.ast.impls.is_empty()
             && self.ast.consts.is_empty()
-            && self.ast.functions.is_empty())
+            && self.ast.functions.is_empty()
+            && self.ast.script_body.is_empty())
     }
 
     fn item(&mut self, item: TopLevelItem) {
@@ -444,6 +449,7 @@ fn validate_format_ast(path: &Path, ast: &SourceFile) -> Result<(), Diagnostic> 
     for function in &ast.functions {
         validate_stmts(path, &function.body)?;
     }
+    validate_stmts(path, &ast.script_body)?;
     for block in &ast.impls {
         for method in &block.methods {
             validate_stmts(path, &method.body)?;
@@ -790,5 +796,17 @@ mod tests {
         assert!(err.message.contains("non-expression `defer`"));
         assert_eq!(err.line, 4);
         assert_eq!(err.column, 11);
+    }
+
+    #[test]
+    fn formats_top_level_script_statements() {
+        let source =
+            "package app.main\nimport std.io\nlet message:string=\"hi\"\nio.println(message)\n";
+        let formatted = format_source(Path::new("script.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nimport std.io\n\nlet message: string = \"hi\"\nio.println(message)\n"
+        );
     }
 }

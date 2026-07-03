@@ -7,6 +7,7 @@ pub struct SourceFile {
     pub impls: Vec<ImplBlock>,
     pub consts: Vec<ConstDef>,
     pub functions: Vec<Function>,
+    pub script_body: Vec<Stmt>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

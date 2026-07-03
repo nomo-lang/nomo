@@ -48,22 +48,42 @@ impl Parser<'_> {
         let mut impls = Vec::new();
         let mut consts = Vec::new();
         let mut functions = Vec::new();
+        let mut script_body = Vec::new();
+        let mut parsing_script_body = false;
         loop {
             self.skip_newlines();
             let public = self.consume_pub();
+            if parsing_script_body && is_declaration_start(&self.peek().kind, public) {
+                return Err(self.error(
+                    "N0201",
+                    "declarations must appear before top-level script statements",
+                    self.peek().length(),
+                ));
+            }
             match self.peek().kind {
-                TokenKind::Struct => structs.push(self.parse_struct(public)?),
-                TokenKind::Enum => enums.push(self.parse_enum(public)?),
-                TokenKind::Impl if !public => impls.push(self.parse_impl()?),
-                TokenKind::Const => consts.push(self.parse_const(public)?),
-                TokenKind::Fn => functions.push(self.parse_function(public)?),
+                TokenKind::Struct if !parsing_script_body => {
+                    structs.push(self.parse_struct(public)?)
+                }
+                TokenKind::Enum if !parsing_script_body => enums.push(self.parse_enum(public)?),
+                TokenKind::Impl if !public && !parsing_script_body => {
+                    impls.push(self.parse_impl()?)
+                }
+                TokenKind::Const if !parsing_script_body => consts.push(self.parse_const(public)?),
+                TokenKind::Fn if !parsing_script_body => {
+                    functions.push(self.parse_function(public)?)
+                }
                 TokenKind::Eof if !public => break,
-                _ => {
+                _ if public => {
                     return Err(self.error(
                         "N0201",
                         "expected struct, enum, impl, const, function declaration, or end of file",
                         self.peek().length(),
                     ));
+                }
+                _ => {
+                    parsing_script_body = true;
+                    script_body.push(self.parse_stmt()?);
+                    self.expect_newline("expected newline after top-level script statement")?;
                 }
             }
         }
@@ -92,6 +112,7 @@ impl Parser<'_> {
             impls,
             consts,
             functions,
+            script_body,
         })
     }
 
@@ -1367,6 +1388,13 @@ fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
     std::mem::discriminant(left) == std::mem::discriminant(right)
 }
 
+fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
+    matches!(
+        kind,
+        TokenKind::Struct | TokenKind::Enum | TokenKind::Const | TokenKind::Fn
+    ) || (!public && matches!(kind, TokenKind::Impl))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2079,6 +2107,28 @@ mod tests {
     }
 
     #[test]
+    fn parses_top_level_script_statements_after_declarations() {
+        let source = "package app.main\n\nfn greeting() -> string {\n    return \"hi\"\n}\n\nlet message: string = greeting()\nio.println(message)\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.functions.len(), 1);
+        assert_eq!(ast.script_body.len(), 2);
+        assert!(matches!(ast.script_body[0], Stmt::Let { .. }));
+        assert!(matches!(ast.script_body[1], Stmt::Expr { .. }));
+    }
+
+    #[test]
+    fn rejects_declarations_after_top_level_script_statements() {
+        let source = "package app.main\n\nio.println(\"hi\")\n\nfn helper() -> void {\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+        assert_eq!(err.code, "N0201");
+        assert!(err.message.contains("declarations must appear before"));
+    }
+
+    #[test]
     fn parser_ast_golden_snapshot() {
         let source = "package app.main\n\nimport std.option.Option\n\nstruct Box<T> {\n    value: T\n}\n\nenum State {\n    Ready\n    Done(i32)\n}\n\nfn label(value: State) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -2231,6 +2281,7 @@ mod tests {
             },
         },
     ],
+    script_body: [],
 }"#
         );
     }

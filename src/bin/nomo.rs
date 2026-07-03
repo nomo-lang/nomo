@@ -1,7 +1,7 @@
 use nomo::project::{
     BuildError, build_project_with_diagnostics, check_project, clean_project, create_project,
     dependency_tree, discover_project, resolve_project_dependencies,
-    run_project_with_args_and_diagnostics,
+    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -59,11 +59,22 @@ fn run() -> Result<(), String> {
         }
         "run" => {
             let (path, program_args, json) = parse_run_args(args)?;
-            let project = discover_project(&path)?;
-            let code = match run_project_with_args_and_diagnostics(&project, &program_args) {
-                Ok(code) => code,
-                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                Err(err) => return Err(err.human()),
+            let code = match discover_project(&path) {
+                Ok(project) => {
+                    match run_project_with_args_and_diagnostics(&project, &program_args) {
+                        Ok(code) => code,
+                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                        Err(err) => return Err(err.human()),
+                    }
+                }
+                Err(err) if is_nomo_source_file(&path) && is_missing_manifest_error(&err) => {
+                    match run_standalone_script_with_args_and_diagnostics(&path, &program_args) {
+                        Ok(code) => code,
+                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                        Err(err) => return Err(err.human()),
+                    }
+                }
+                Err(err) => return Err(err),
             };
             if code == 0 {
                 Ok(())
@@ -293,6 +304,14 @@ fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), Format
         }
     }
     Ok(())
+}
+
+fn is_nomo_source_file(path: &Path) -> bool {
+    path.extension().and_then(|ext| ext.to_str()) == Some("nomo")
+}
+
+fn is_missing_manifest_error(message: &str) -> bool {
+    message.starts_with("could not find nomo.toml")
 }
 
 fn print_help() {

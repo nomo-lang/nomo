@@ -56,6 +56,12 @@ A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
 entry point. `nomo build` writes generated C to `build/c/main.c` and the linked
 executable to `build/bin/<name>`.
 
+`nomo run <source.nomo>` also supports a standalone script file when the file is
+not inside a project manifest. The file still starts with `package`, may define
+imports and declarations, and may omit `fn main`; in that case, top-level
+statements after all declarations are compiled as a synthesized `main() -> void`.
+Explicit `main` functions and top-level script statements cannot be mixed.
+
 `nomo fmt` is an AST-based v0.1 formatter. With no path or a directory path, it
 discovers the project manifest and formats `src/**/*.nomo` in stable path order.
 With a direct `.nomo` file path, it formats only that file and does not require a
@@ -155,6 +161,8 @@ nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors] # emit C99
 
 The `--json-errors` flag produces machine-readable diagnostics (with positions
 and fix suggestions) suitable for tooling on `check` and `build`.
+`nomoc` remains a compiler driver rather than a script runner; top-level script
+statements are accepted only by `nomo run <source.nomo>`.
 
 ## Library crate
 

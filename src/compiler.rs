@@ -1,7 +1,7 @@
 use crate::ast::{
     BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
     Function as AstFunction, MatchArm as AstMatchArm, SourceFile, Span, Stmt,
-    StructDef as AstStructDef,
+    StructDef as AstStructDef, TypeRef as AstTypeRef,
 };
 use crate::codegen;
 use crate::diagnostic::{Diagnostic, Suggestion};
@@ -28,6 +28,12 @@ pub struct Program {
 pub struct ExternalModule {
     pub import_root: String,
     pub source_root: PathBuf,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum EntryMode {
+    MainFunctionRequired,
+    ScriptFile,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -512,11 +518,34 @@ pub fn check_source_text_with_project_modules_and_overrides(
         ast,
         external_import_roots,
         local_import_root.as_deref(),
+        EntryMode::MainFunctionRequired,
     )
+}
+
+pub fn check_script_source_text(path: &Path, source: &str) -> Result<Program, Diagnostic> {
+    let tokens = lexer::lex(path, source)?;
+    let ast = parser::parse(path, &tokens)?;
+    lower_program(path, ast, &[], None, EntryMode::ScriptFile)
 }
 
 pub fn compile_source_to_c(path: &Path) -> Result<String, Diagnostic> {
     compile_source_to_c_with_external_imports(path, &[])
+}
+
+pub fn compile_script_source_to_c(path: &Path) -> Result<String, Diagnostic> {
+    let source = fs::read_to_string(path).map_err(|err| {
+        Diagnostic::new(
+            "N0001",
+            format!("failed to read source file: {err}"),
+            path,
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let program = check_script_source_text(path, &source)?;
+    Ok(codegen::emit_c(&program))
 }
 
 pub fn compile_source_to_c_with_external_imports(
@@ -619,6 +648,11 @@ fn merge_imported_public_api(
         };
         let tokens = lexer::lex(&source_path, &source)?;
         let mut module_ast = parser::parse(&source_path, &tokens)?;
+        reject_script_body(
+            &source_path,
+            &module_ast,
+            "imported modules cannot contain top-level script statements",
+        )?;
         if module_ast.package != import {
             return Err(Diagnostic::new(
                 "N0904",
@@ -742,9 +776,10 @@ fn merge_public_items(ast: &mut SourceFile, module_ast: SourceFile) {
 
 fn lower_program(
     path: &Path,
-    ast: SourceFile,
+    mut ast: SourceFile,
     external_import_roots: &[String],
     local_import_root: Option<&str>,
+    entry_mode: EntryMode,
 ) -> Result<Program, Diagnostic> {
     let imports = ast
         .imports
@@ -752,6 +787,7 @@ fn lower_program(
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
     validate_imports(path, &imports, external_import_roots, local_import_root)?;
+    prepare_entry_point(path, &mut ast, entry_mode)?;
     validate_standard_type_imports(path, &imports, &ast)?;
     let standard_type_needs = standard_type_needs(&imports, &ast);
     validate_standard_type_conflicts(path, standard_type_needs, &ast.structs, &ast.enums)?;
@@ -1066,6 +1102,89 @@ fn lower_program(
         consts,
         functions,
     })
+}
+
+fn prepare_entry_point(
+    path: &Path,
+    ast: &mut SourceFile,
+    entry_mode: EntryMode,
+) -> Result<(), Diagnostic> {
+    let has_main = ast.functions.iter().any(|function| function.name == "main");
+    match entry_mode {
+        EntryMode::MainFunctionRequired => {
+            reject_script_body(
+                path,
+                ast,
+                "top-level script statements are only supported by `nomo run <source.nomo>`",
+            )?;
+        }
+        EntryMode::ScriptFile if has_main && !ast.script_body.is_empty() => {
+            return Err(script_body_diagnostic(
+                path,
+                &ast.script_body,
+                "top-level script statements cannot be combined with an explicit `main` function",
+            ));
+        }
+        EntryMode::ScriptFile if !has_main && !ast.script_body.is_empty() => {
+            let span = stmt_span(&ast.script_body[0]).clone();
+            ast.functions.push(AstFunction {
+                public: false,
+                package: ast.package.clone(),
+                name: "main".to_string(),
+                type_params: Vec::new(),
+                params: Vec::new(),
+                return_type: AstTypeRef {
+                    path: vec!["void".to_string()],
+                    args: Vec::new(),
+                },
+                body: std::mem::take(&mut ast.script_body),
+                span,
+            });
+        }
+        EntryMode::ScriptFile => {}
+    }
+    Ok(())
+}
+
+fn reject_script_body(
+    path: &Path,
+    ast: &SourceFile,
+    message: &'static str,
+) -> Result<(), Diagnostic> {
+    if ast.script_body.is_empty() {
+        Ok(())
+    } else {
+        Err(script_body_diagnostic(path, &ast.script_body, message))
+    }
+}
+
+fn script_body_diagnostic(path: &Path, script_body: &[Stmt], message: &'static str) -> Diagnostic {
+    let span = stmt_span(&script_body[0]);
+    Diagnostic::new(
+        "N0201",
+        message,
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
+}
+
+fn stmt_span(stmt: &Stmt) -> &Span {
+    match stmt {
+        Stmt::Let { span, .. }
+        | Stmt::LetElse { span, .. }
+        | Stmt::IfLet { span, .. }
+        | Stmt::Assign { span, .. }
+        | Stmt::Return { span, .. }
+        | Stmt::Match { span, .. }
+        | Stmt::Expr { span, .. }
+        | Stmt::For { span, .. }
+        | Stmt::Break { span, .. }
+        | Stmt::Continue { span, .. }
+        | Stmt::Defer { span, .. } => span,
+    }
 }
 
 fn validate_imports(
@@ -9605,7 +9724,7 @@ mod tests {
         let path = Path::new("main.nomo");
         let tokens = lexer::lex(path, source)?;
         let ast = parser::parse(path, &tokens)?;
-        lower_program(path, ast, &[], None)
+        lower_program(path, ast, &[], None, EntryMode::MainFunctionRequired)
     }
 
     #[test]
@@ -14594,6 +14713,42 @@ fn main() -> void {
         let source = "package app.main\nimport std.io\n";
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "N0201");
+    }
+
+    #[test]
+    fn accepts_script_body_as_synthesized_main_in_script_mode() {
+        let source = "package app.main\n\nlet value: i32 = 1\n";
+        let program = check_script_source_text(Path::new("script.nomo"), source).unwrap();
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .unwrap();
+
+        assert!(main.params.is_empty());
+        assert_eq!(main.return_type, ValueType::Void);
+        assert!(matches!(
+            main.body.as_slice(),
+            [Statement::Let { name, value_type: ValueType::I32, .. }] if name == "value"
+        ));
+    }
+
+    #[test]
+    fn rejects_top_level_script_body_outside_script_mode() {
+        let source = "package app.main\n\nlet value: i32 = 1\n";
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0201");
+        assert!(err.message.contains("top-level script statements"));
+    }
+
+    #[test]
+    fn rejects_script_body_with_explicit_main_in_script_mode() {
+        let source = "package app.main\n\nfn main() -> void {\n}\n\nlet value: i32 = 1\n";
+        let err = check_script_source_text(Path::new("script.nomo"), source).unwrap_err();
+
+        assert_eq!(err.code, "N0201");
+        assert!(err.message.contains("explicit `main`"));
     }
 
     #[test]

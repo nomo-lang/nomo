@@ -160,6 +160,7 @@ impl Parser<'_> {
     }
 
     fn parse_enum(&mut self, public: bool) -> Result<EnumDef, Diagnostic> {
+        let enum_token = self.peek().clone();
         self.expect_kind(TokenKind::Enum, "E0226", "expected `enum`")?;
         let name = self.expect_ident("expected enum name")?;
         let type_params = self.parse_type_params()?;
@@ -211,6 +212,12 @@ impl Parser<'_> {
             name,
             type_params,
             variants,
+            span: Span {
+                line: enum_token.line,
+                column: enum_token.column,
+                length: enum_token.length(),
+                text: enum_token.text,
+            },
         })
     }
 
@@ -251,6 +258,7 @@ impl Parser<'_> {
     }
 
     fn parse_struct(&mut self, public: bool) -> Result<StructDef, Diagnostic> {
+        let struct_token = self.peek().clone();
         self.expect_kind(TokenKind::Struct, "E0218", "expected `struct`")?;
         let name = self.expect_ident("expected struct name")?;
         let type_params = self.parse_type_params()?;
@@ -294,6 +302,12 @@ impl Parser<'_> {
             name,
             type_params,
             fields,
+            span: Span {
+                line: struct_token.line,
+                column: struct_token.column,
+                length: struct_token.length(),
+                text: struct_token.text,
+            },
         })
     }
 
@@ -2558,6 +2572,12 @@ mod tests {
                     },
                 },
             ],
+            span: Span {
+                line: 5,
+                column: 1,
+                length: 1,
+                text: "struct Box<T> {",
+            },
         },
     ],
     enums: [
@@ -2586,6 +2606,12 @@ mod tests {
                     ),
                 },
             ],
+            span: Span {
+                line: 9,
+                column: 1,
+                length: 1,
+                text: "enum State {",
+            },
         },
     ],
     impls: [],

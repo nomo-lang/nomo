@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -232,6 +232,138 @@ fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
     assert!(stderr.contains("semicolons are not supported"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_doc_generates_html_and_search_index() {
+    let root = temp_test_root("doc-html");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let output_dir = root.join("docs-out");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"//! Hello module docs.
+
+package app.main
+
+/// Greets a caller.
+pub fn greet(name: string) -> string {
+    return "hello"
+}
+
+/** User-facing record. */
+pub struct User {
+    pub name: string
+}
+
+/// Result status.
+enum Status {
+    Ready
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg(&project)
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("documented {}\n", output_dir.display())
+    );
+    let module_html = fs::read_to_string(output_dir.join("local/hello/app_main.html")).unwrap();
+    assert!(module_html.contains("Hello module docs."), "{module_html}");
+    assert!(module_html.contains("Greets a caller."), "{module_html}");
+    assert!(
+        module_html.contains("pub fn greet(name: string) -&gt; string"),
+        "{module_html}"
+    );
+    assert!(module_html.contains("User-facing record."), "{module_html}");
+    assert!(module_html.contains("private"), "{module_html}");
+    let search = fs::read_to_string(output_dir.join("search-index.json")).unwrap();
+    assert!(search.contains("\"name\":\"greet\""), "{search}");
+    assert!(search.contains("\"kind\":\"struct\""), "{search}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_doc_json_reports_project_docs() {
+    let root = temp_test_root("doc-json");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--json")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"package\":\"local/hello\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"app.main\""), "{stdout}");
+    assert!(stdout.contains("\"docs\":\"Adds numbers.\""), "{stdout}");
+    assert!(
+        stdout.contains("\"signature\":\"pub fn add(a: i64, b: i64) -> i64\""),
+        "{stdout}"
+    );
+    assert!(!project.join("build/doc").exists());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_doc_std_json_reports_builtin_modules() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--std")
+        .arg("--json")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"package\":\"nomo-lang/std\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"std.io\""), "{stdout}");
+    assert!(stdout.contains("printing and terminal I/O"), "{stdout}");
 }
 
 #[test]

@@ -17,6 +17,7 @@ pub struct StructDef {
     pub name: String,
     pub type_params: Vec<String>,
     pub fields: Vec<Field>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -33,6 +34,7 @@ pub struct EnumDef {
     pub name: String,
     pub type_params: Vec<String>,
     pub variants: Vec<EnumVariant>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

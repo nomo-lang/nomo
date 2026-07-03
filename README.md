@@ -50,6 +50,7 @@ nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
+nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
 nomo clean [path]                 # remove generated build artifacts
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
@@ -85,6 +86,14 @@ dependency resolver path as `nomo build`, with a temporary runner `main()` that
 calls the test. `--filter` keeps tests whose full name contains the filter text,
 `--workspace` runs every workspace member, `--package` selects a package id or
 member name, and `--json` prints a machine-readable test report.
+
+`nomo doc` extracts Rust-style doc comments (`//!`, `///`, `/*! */`, `/** */`)
+from project source files and combines them with parsed signatures,
+visibility, source locations, and module names. By default it writes
+`build/doc/index.html`, package/module HTML pages, and `search-index.json`.
+`--json` prints the same documentation model to stdout without writing files.
+`--workspace` documents workspace members, `--package` selects one member, and
+`--std` adds the current built-in standard-library module index.
 
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with

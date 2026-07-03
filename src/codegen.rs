@@ -1,6 +1,7 @@
 use crate::compiler::{
-    BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, Program,
-    QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, MathBinaryFunction,
+    MathUnaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr,
+    ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -25,7 +26,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#include <errno.h>\n#include <limits.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+        "#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -34,6 +35,8 @@ pub fn emit_c(program: &Program) -> String {
     out.push_str("    exit(1);\n");
     out.push_str("}\n\n");
     emit_operator_runtime(&mut out);
+    out.push('\n');
+    emit_math_runtime(&mut out);
     out.push('\n');
     emit_string_runtime(&mut out);
     out.push('\n');
@@ -291,6 +294,56 @@ fn emit_operator_runtime(out: &mut String) {
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
     out.push_str("    return left >> right;\n");
+    out.push_str("}\n");
+}
+
+fn emit_math_runtime(out: &mut String) {
+    out.push_str("static int64_t nomo_math_abs_i64(int64_t value) {\n");
+    out.push_str("    if (value == INT64_MIN) { nomo_panic(\"integer overflow\"); }\n");
+    out.push_str("    return value < 0 ? -value : value;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_math_abs_i32(int32_t value) {\n");
+    out.push_str("    if (value == INT32_MIN) { nomo_panic(\"integer overflow\"); }\n");
+    out.push_str("    return value < 0 ? -value : value;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_math_abs_u32(uint32_t value) {\n");
+    out.push_str("    return value;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_math_abs_u64(uint64_t value) {\n");
+    out.push_str("    return value;\n");
+    out.push_str("}\n\n");
+    out.push_str("static double nomo_math_abs_f64(double value) {\n");
+    out.push_str("    return fabs(value);\n");
+    out.push_str("}\n\n");
+    out.push_str("static int64_t nomo_math_min_i64(int64_t left, int64_t right) {\n");
+    out.push_str("    return left < right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_math_min_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    return left < right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_math_min_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    return left < right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_math_min_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    return left < right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static double nomo_math_min_f64(double left, double right) {\n");
+    out.push_str("    return left < right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int64_t nomo_math_max_i64(int64_t left, int64_t right) {\n");
+    out.push_str("    return left > right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_math_max_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    return left > right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_math_max_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    return left > right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_math_max_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    return left > right ? left : right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static double nomo_math_max_f64(double left, double right) {\n");
+    out.push_str("    return left > right ? left : right;\n");
     out.push_str("}\n");
 }
 
@@ -2810,7 +2863,9 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::PathDirname { .. }
         | ValueExpr::PathExtension { .. }
         | ValueExpr::PathNormalize { .. }
-        | ValueExpr::PathIsAbsolute { .. } => false,
+        | ValueExpr::PathIsAbsolute { .. }
+        | ValueExpr::MathUnary { .. }
+        | ValueExpr::MathBinary { .. } => false,
         ValueExpr::ArrayPush { value, .. } | ValueExpr::ArraySet { value, .. } => {
             expr_may_share_array_storage(value)
         }
@@ -3265,6 +3320,29 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, path);
             out.push(')');
         }
+        ValueExpr::MathUnary {
+            function,
+            value,
+            value_type,
+        } => {
+            out.push_str(math_unary_function_name(*function, value_type));
+            out.push('(');
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::MathBinary {
+            function,
+            left,
+            right,
+            value_type,
+        } => {
+            out.push_str(math_binary_function_name(*function, value_type));
+            out.push('(');
+            emit_expr(out, left);
+            out.push_str(", ");
+            emit_expr(out, right);
+            out.push(')');
+        }
         ValueExpr::FsReadToString { path } => {
             out.push_str("nomo_fs_read_to_string(");
             emit_expr(out, path);
@@ -3556,7 +3634,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_result_map_err(left, out);
             collect_expr_result_map_err(right, out);
         }
@@ -3570,6 +3649,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
@@ -3859,7 +3939,8 @@ fn collect_expr_struct(
     match expr {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_struct(left, seen, out);
             collect_expr_struct(right, seen, out);
         }
@@ -3874,6 +3955,7 @@ fn collect_expr_struct(
         | ValueExpr::PathExtension { path: value }
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
+        | ValueExpr::MathUnary { value, .. }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::StringConcat { left, right } => {
             collect_expr_struct(left, seen, out);
@@ -4240,7 +4322,8 @@ fn collect_expr_enum(
     match expr {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_enum(left, seen, out);
             collect_expr_enum(right, seen, out);
         }
@@ -4255,6 +4338,7 @@ fn collect_expr_enum(
         | ValueExpr::PathExtension { path: value }
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
+        | ValueExpr::MathUnary { value, .. }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::StringConcat { left, right } => {
             collect_expr_enum(left, seen, out);
@@ -5084,7 +5168,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right)
         }
         ValueExpr::FsWriteString { path, content } => {
@@ -5099,7 +5184,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathDirname { path: name }
         | ValueExpr::PathExtension { path: name }
         | ValueExpr::PathNormalize { path: name }
-        | ValueExpr::PathIsAbsolute { path: name } => expr_uses_fs_read_to_string(name),
+        | ValueExpr::PathIsAbsolute { path: name }
+        | ValueExpr::MathUnary { value: name, .. } => expr_uses_fs_read_to_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
@@ -5156,7 +5242,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
         }
         ValueExpr::FsReadToString { path } => expr_uses_fs_write_string(path),
@@ -5169,7 +5256,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathDirname { path: name }
         | ValueExpr::PathExtension { path: name }
         | ValueExpr::PathNormalize { path: name }
-        | ValueExpr::PathIsAbsolute { path: name } => expr_uses_fs_write_string(name),
+        | ValueExpr::PathIsAbsolute { path: name }
+        | ValueExpr::MathUnary { value: name, .. } => expr_uses_fs_write_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
@@ -5224,7 +5312,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_open(left) || expr_uses_fs_open(right)
         }
         ValueExpr::FsReadToString { path }
@@ -5234,6 +5323,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. } => expr_uses_fs_open(result),
         ValueExpr::FsWriteString { path, content } => {
@@ -5289,7 +5379,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_get(left) || expr_uses_env_get(right)
         }
         ValueExpr::FsReadToString { path }
@@ -5297,7 +5388,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
-        | ValueExpr::PathIsAbsolute { path } => expr_uses_env_get(path),
+        | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
         }
@@ -5354,7 +5446,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_args(left) || expr_uses_env_args(right)
         }
         ValueExpr::FsReadToString { path }
@@ -5366,6 +5459,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. } => expr_uses_env_args(result),
         ValueExpr::FsWriteString { path, content } => {
@@ -5433,7 +5527,8 @@ fn collect_expr_array_elements(
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
-        | ValueExpr::PathJoin { left, right } => {
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
         }
@@ -5443,7 +5538,8 @@ fn collect_expr_array_elements(
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
-        | ValueExpr::PathIsAbsolute { path } => {
+        | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. } => {
             collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
@@ -5594,6 +5690,40 @@ fn c_binary_op(op: &BinaryOp) -> &'static str {
         BinaryOp::LessEqual => "<=",
         BinaryOp::Greater => ">",
         BinaryOp::GreaterEqual => ">=",
+    }
+}
+
+fn math_unary_function_name(function: MathUnaryFunction, value_type: &ValueType) -> &'static str {
+    match (function, value_type) {
+        (MathUnaryFunction::Abs, ValueType::Int) => "nomo_math_abs_i64",
+        (MathUnaryFunction::Abs, ValueType::I32) => "nomo_math_abs_i32",
+        (MathUnaryFunction::Abs, ValueType::U32) => "nomo_math_abs_u32",
+        (MathUnaryFunction::Abs, ValueType::U64) => "nomo_math_abs_u64",
+        (MathUnaryFunction::Abs, ValueType::Float) => "nomo_math_abs_f64",
+        (MathUnaryFunction::Floor, ValueType::Float) => "floor",
+        (MathUnaryFunction::Ceil, ValueType::Float) => "ceil",
+        (MathUnaryFunction::Round, ValueType::Float) => "round",
+        (MathUnaryFunction::Sqrt, ValueType::Float) => "sqrt",
+        (MathUnaryFunction::Sin, ValueType::Float) => "sin",
+        (MathUnaryFunction::Cos, ValueType::Float) => "cos",
+        _ => unreachable!("compiler only emits well-typed math unary calls"),
+    }
+}
+
+fn math_binary_function_name(function: MathBinaryFunction, value_type: &ValueType) -> &'static str {
+    match (function, value_type) {
+        (MathBinaryFunction::Min, ValueType::Int) => "nomo_math_min_i64",
+        (MathBinaryFunction::Min, ValueType::I32) => "nomo_math_min_i32",
+        (MathBinaryFunction::Min, ValueType::U32) => "nomo_math_min_u32",
+        (MathBinaryFunction::Min, ValueType::U64) => "nomo_math_min_u64",
+        (MathBinaryFunction::Min, ValueType::Float) => "nomo_math_min_f64",
+        (MathBinaryFunction::Max, ValueType::Int) => "nomo_math_max_i64",
+        (MathBinaryFunction::Max, ValueType::I32) => "nomo_math_max_i32",
+        (MathBinaryFunction::Max, ValueType::U32) => "nomo_math_max_u32",
+        (MathBinaryFunction::Max, ValueType::U64) => "nomo_math_max_u64",
+        (MathBinaryFunction::Max, ValueType::Float) => "nomo_math_max_f64",
+        (MathBinaryFunction::Pow, ValueType::Float) => "pow",
+        _ => unreachable!("compiler only emits well-typed math binary calls"),
     }
 }
 

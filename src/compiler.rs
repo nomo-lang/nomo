@@ -210,6 +210,24 @@ pub enum DeferredCall {
     Eprintln(ValueExpr),
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathUnaryFunction {
+    Abs,
+    Floor,
+    Ceil,
+    Round,
+    Sqrt,
+    Sin,
+    Cos,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MathBinaryFunction {
+    Min,
+    Max,
+    Pow,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -286,6 +304,17 @@ pub enum ValueExpr {
     },
     PathIsAbsolute {
         path: Box<ValueExpr>,
+    },
+    MathUnary {
+        function: MathUnaryFunction,
+        value: Box<ValueExpr>,
+        value_type: ValueType,
+    },
+    MathBinary {
+        function: MathBinaryFunction,
+        left: Box<ValueExpr>,
+        right: Box<ValueExpr>,
+        value_type: ValueType,
     },
     FsReadToString {
         path: Box<ValueExpr>,
@@ -1533,6 +1562,17 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.path.extension"
             | "std.path.normalize"
             | "std.path.is_absolute"
+            | "std.math"
+            | "std.math.abs"
+            | "std.math.min"
+            | "std.math.max"
+            | "std.math.floor"
+            | "std.math.ceil"
+            | "std.math.round"
+            | "std.math.sqrt"
+            | "std.math.pow"
+            | "std.math.sin"
+            | "std.math.cos"
     ) || is_supported_external_import(import, external_import_roots)
 }
 
@@ -7520,6 +7560,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "math" {
+                    return lower_math_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
             }
             let Some(template_signature) = signatures.get(name) else {
                 if scope.contains_key(name) {
@@ -7775,6 +7820,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_path_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_math_builtin_call(callee) {
+                require_import(path, imports, span, "std.math", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "math builtins do not accept type arguments",
+                    ));
+                }
+                return lower_math_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -8525,6 +8583,193 @@ fn lower_path_builtin(
             Ok((return_type, lowered))
         }
         _ => unreachable!("path builtin dispatcher only passes known calls"),
+    }
+}
+
+fn is_math_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "math"
+                && matches!(
+                    name.as_str(),
+                    "abs"
+                        | "min"
+                        | "max"
+                        | "floor"
+                        | "ceil"
+                        | "round"
+                        | "sqrt"
+                        | "pow"
+                        | "sin"
+                        | "cos"
+                )
+    )
+}
+
+fn lower_math_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("math builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "math");
+    match name.as_str() {
+        "abs" => {
+            let [value] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`math.abs` expects exactly one numeric argument",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, lowered) = lower_value_expr(
+                path, value, scope, imports, signatures, structs, enums, span,
+            )?;
+            if !value_type.is_numeric() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`math.abs` expects a numeric value",
+                ));
+            }
+            Ok((
+                value_type.clone(),
+                ValueExpr::MathUnary {
+                    function: MathUnaryFunction::Abs,
+                    value: Box::new(lowered),
+                    value_type,
+                },
+            ))
+        }
+        "floor" | "ceil" | "round" | "sqrt" | "sin" | "cos" => {
+            let [value] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`math.{name}` expects exactly one f64 argument"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, lowered) = lower_value_expr(
+                path, value, scope, imports, signatures, structs, enums, span,
+            )?;
+            if value_type != ValueType::Float {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`math.{name}` expects an f64 value"),
+                    &ValueType::Float,
+                    &value_type,
+                ));
+            }
+            let function = match name.as_str() {
+                "floor" => MathUnaryFunction::Floor,
+                "ceil" => MathUnaryFunction::Ceil,
+                "round" => MathUnaryFunction::Round,
+                "sqrt" => MathUnaryFunction::Sqrt,
+                "sin" => MathUnaryFunction::Sin,
+                "cos" => MathUnaryFunction::Cos,
+                _ => unreachable!("math builtin dispatcher only passes known calls"),
+            };
+            Ok((
+                ValueType::Float,
+                ValueExpr::MathUnary {
+                    function,
+                    value: Box::new(lowered),
+                    value_type: ValueType::Float,
+                },
+            ))
+        }
+        "min" | "max" => {
+            let [left, right] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`math.{name}` expects exactly two matching numeric arguments"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (left_type, lowered_left) =
+                lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
+            let (right_type, lowered_right) = lower_value_expr(
+                path, right, scope, imports, signatures, structs, enums, span,
+            )?;
+            if left_type != right_type || !left_type.is_numeric() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`math.{name}` expects two matching numeric values"),
+                ));
+            }
+            let function = if name == "min" {
+                MathBinaryFunction::Min
+            } else {
+                MathBinaryFunction::Max
+            };
+            Ok((
+                left_type.clone(),
+                ValueExpr::MathBinary {
+                    function,
+                    left: Box::new(lowered_left),
+                    right: Box::new(lowered_right),
+                    value_type: left_type,
+                },
+            ))
+        }
+        "pow" => {
+            let [left, right] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`math.pow` expects exactly two f64 arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (left_type, lowered_left) =
+                lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
+            let (right_type, lowered_right) = lower_value_expr(
+                path, right, scope, imports, signatures, structs, enums, span,
+            )?;
+            if left_type != ValueType::Float || right_type != ValueType::Float {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`math.pow` expects two f64 values",
+                ));
+            }
+            Ok((
+                ValueType::Float,
+                ValueExpr::MathBinary {
+                    function: MathBinaryFunction::Pow,
+                    left: Box::new(lowered_left),
+                    right: Box::new(lowered_right),
+                    value_type: ValueType::Float,
+                },
+            ))
+        }
+        _ => unreachable!("math builtin dispatcher only passes known calls"),
     }
 }
 
@@ -9906,6 +10151,36 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "is_absolute" if imports.iter().any(|item| item == "std.path.is_absolute") => {
             vec!["path".to_string(), "is_absolute".to_string()]
         }
+        "abs" if imports.iter().any(|item| item == "std.math.abs") => {
+            vec!["math".to_string(), "abs".to_string()]
+        }
+        "min" if imports.iter().any(|item| item == "std.math.min") => {
+            vec!["math".to_string(), "min".to_string()]
+        }
+        "max" if imports.iter().any(|item| item == "std.math.max") => {
+            vec!["math".to_string(), "max".to_string()]
+        }
+        "floor" if imports.iter().any(|item| item == "std.math.floor") => {
+            vec!["math".to_string(), "floor".to_string()]
+        }
+        "ceil" if imports.iter().any(|item| item == "std.math.ceil") => {
+            vec!["math".to_string(), "ceil".to_string()]
+        }
+        "round" if imports.iter().any(|item| item == "std.math.round") => {
+            vec!["math".to_string(), "round".to_string()]
+        }
+        "sqrt" if imports.iter().any(|item| item == "std.math.sqrt") => {
+            vec!["math".to_string(), "sqrt".to_string()]
+        }
+        "pow" if imports.iter().any(|item| item == "std.math.pow") => {
+            vec!["math".to_string(), "pow".to_string()]
+        }
+        "sin" if imports.iter().any(|item| item == "std.math.sin") => {
+            vec!["math".to_string(), "sin".to_string()]
+        }
+        "cos" if imports.iter().any(|item| item == "std.math.cos") => {
+            vec!["math".to_string(), "cos".to_string()]
+        }
         "new" if imports.iter().any(|item| item == "std.array.new") => {
             vec!["Array".to_string(), "new".to_string()]
         }
@@ -10142,6 +10417,10 @@ impl ValueType {
             ValueType::Int | ValueType::I32 | ValueType::U32 | ValueType::U64
         )
     }
+
+    fn is_numeric(&self) -> bool {
+        self.is_integer() || matches!(self, ValueType::Float)
+    }
 }
 
 #[cfg(test)]
@@ -10245,6 +10524,11 @@ fn main() -> void {
                 "package app.main\nfn main() -> void {\n    let name: string = path.basename(\"/tmp/nomo.txt\")\n}\n",
                 "path.basename",
                 "std.path",
+            ),
+            (
+                "package app.main\nfn main() -> void {\n    let value: i64 = math.abs(0 - 1)\n}\n",
+                "math.abs",
+                "std.math",
             ),
             (
                 "package app.main\nfn main() -> void {\n    let items = Array.new<i32>()\n}\n",
@@ -10574,6 +10858,133 @@ fn main() -> void {
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("path.basename"));
         assert!(err.message.contains("string"));
+    }
+
+    #[test]
+    fn accepts_math_builtins() {
+        let source = r#"package app.main
+
+import std.math
+
+fn main() -> void {
+    let absolute: i64 = math.abs(0 - 7)
+    let lower: i32 = math.min(3 as i32, 9 as i32)
+    let upper: u64 = math.max(5 as u64, 2 as u64)
+    let floored: f64 = math.floor(3.8)
+    let ceiled: f64 = math.ceil(3.1)
+    let rounded: f64 = math.round(3.5)
+    let root: f64 = math.sqrt(9.0)
+    let powered: f64 = math.pow(2.0, 3.0)
+    let sine: f64 = math.sin(0.0)
+    let cosine: f64 = math.cos(0.0)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Int,
+                initializer: ValueExpr::MathUnary {
+                    function: MathUnaryFunction::Abs,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::I32,
+                initializer: ValueExpr::MathBinary {
+                    function: MathBinaryFunction::Min,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[7],
+            Statement::Let {
+                value_type: ValueType::Float,
+                initializer: ValueExpr::MathBinary {
+                    function: MathBinaryFunction::Pow,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_math_builtin_imports() {
+        let source = r#"package app.main
+
+import std.math.abs
+import std.math.sqrt
+
+fn main() -> void {
+    let value: i64 = abs(0 - 2)
+    let root: f64 = sqrt(16.0)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::MathUnary {
+                    function: MathUnaryFunction::Abs,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::MathUnary {
+                    function: MathUnaryFunction::Sqrt,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_math_builtin_type_mismatch() {
+        let source = r#"package app.main
+
+import std.math
+
+fn main() -> void {
+    let value: f64 = math.sqrt(9)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert_eq!(err.expected.as_deref(), Some("f64"));
+        assert_eq!(err.found.as_deref(), Some("i64"));
+    }
+
+    #[test]
+    fn rejects_math_min_mixed_numeric_types() {
+        let source = r#"package app.main
+
+import std.math
+
+fn main() -> void {
+    let value: i64 = math.min(1, 2 as i32)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("math.min"));
     }
 
     #[test]

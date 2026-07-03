@@ -288,6 +288,11 @@ only error/absence propagation syntax.
 `path.normalize`, and `path.is_absolute`. The v0.1 behavior uses POSIX-style
 `/` separators and does not query the host filesystem or resolve symlinks.
 
+`std.math` provides numeric helpers: `math.abs`, `math.min`, and `math.max`
+operate on matching numeric types, while `math.floor`, `math.ceil`,
+`math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on
+`f64` values.
+
 Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
 pages live under [`docs/diagnostics/`](docs/diagnostics/index.md).

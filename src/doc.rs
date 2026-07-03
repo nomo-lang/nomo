@@ -94,6 +94,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.fs", "filesystem helpers"),
         ("std.env", "process environment helpers"),
         ("std.path", "path manipulation helpers"),
+        ("std.math", "numeric helpers"),
         ("std.option", "Option carrier helpers"),
         ("std.result", "Result carrier helpers"),
         ("std.array", "Array helpers"),

@@ -5059,6 +5059,80 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_math_helpers() {
+    let root = temp_test_root("std-math-helpers");
+    reset_dir(&root);
+    let project = root.join("math_demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"math_demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.math
+
+fn main() -> void {
+    if math.abs(0 - 7) == 7 {
+        io.println("abs")
+    } else {
+        io.println("bad abs")
+    }
+    if math.min(3, 9) == 3 && math.max(3, 9) == 9 {
+        io.println("minmax")
+    } else {
+        io.println("bad minmax")
+    }
+    if math.floor(3.8) == 3.0 && math.ceil(3.1) == 4.0 && math.round(3.5) == 4.0 {
+        io.println("rounding")
+    } else {
+        io.println("bad rounding")
+    }
+    if math.sqrt(9.0) == 3.0 && math.pow(2.0, 3.0) == 8.0 {
+        io.println("power")
+    } else {
+        io.println("bad power")
+    }
+    if math.sin(0.0) == 0.0 && math.cos(0.0) == 1.0 {
+        io.println("trig")
+    } else {
+        io.println("bad trig")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "abs\nminmax\nrounding\npower\ntrig\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_allows_print_calls_in_void_if_branches() {
     let root = temp_test_root("if-print-branches");
     reset_dir(&root);

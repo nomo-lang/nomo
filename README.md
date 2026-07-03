@@ -172,10 +172,13 @@ workspace graph slices.
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps tree [path]` prints dependency aliases and canonical package IDs. If
 `nomo.lock` exists, `tree` reads the locked dependency graph; otherwise it
-resolves the current manifest sources. When locked `path` sources or matching
-git cache checkouts are still available, `tree` verifies their `sha256:`
-checksums before printing; missing path sources and git cache entries are
-treated as offline locked entries. Git sources are cloned into a
+resolves the current manifest sources. `nomo.lock` is standard TOML: package
+entries are encoded as `[[package]]` tables with `id`, `alias`, `source`,
+optional source metadata, `checksum`, and dependency edge strings. Invalid TOML,
+unknown lockfile fields, and mismatched field types are rejected. When locked
+`path` sources or matching git cache checkouts are still available, `tree`
+verifies their `sha256:` checksums before printing; missing path sources and git
+cache entries are treated as offline locked entries. Git sources are cloned into a
 project-local `.nomo/deps/git/` cache, checked out to the requested `branch`,
 `tag`, or `rev` when provided, validated against the expected canonical package
 ID, and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a

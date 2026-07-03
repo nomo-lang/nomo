@@ -350,6 +350,51 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_short_circuits_logical_operators() {
+    let root = temp_test_root("run-logical-short-circuit");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+
+fn explode() -> bool {
+    panic("should not run")
+}
+
+fn main() -> void {
+    let ok: bool = true || explode()
+    let also_ok: bool = false && explode()
+    if ok && !also_ok {
+        io.println("logical ok")
+    } else {
+        io.println("wrong")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "logical ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomoc_still_rejects_top_level_script_statements() {
     let root = temp_test_root("nomoc-script-reject");
     reset_dir(&root);

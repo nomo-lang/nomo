@@ -1,6 +1,6 @@
 use crate::ast::{
     BinaryOp, ConstDef, EnumDef, Expr, Field, ForVariant, Function, ImplBlock, MatchArm,
-    MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeRef,
+    MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
@@ -691,6 +691,9 @@ fn expr(value: &Expr, indent: usize, parent_precedence: u8) -> String {
             expr(inner, indent, precedence),
             type_ref(target)
         ),
+        Expr::Unary { op, expr: inner } => {
+            format!("{}{}", unary_op(op), expr(inner, indent, precedence))
+        }
         Expr::Binary { left, op, right } => {
             let op_precedence = binary_precedence(op);
             let left = expr(left, indent, op_precedence);
@@ -752,8 +755,9 @@ fn expr_precedence(value: &Expr) -> u8 {
     match value {
         Expr::If { .. } | Expr::Match { .. } => 0,
         Expr::Binary { op, .. } => binary_precedence(op),
-        Expr::Cast { .. } => 4,
-        Expr::Try { .. } => 5,
+        Expr::Cast { .. } => 7,
+        Expr::Unary { .. } => 8,
+        Expr::Try { .. } => 9,
         Expr::Call { .. }
         | Expr::StructLiteral { .. }
         | Expr::Panic { .. }
@@ -764,21 +768,25 @@ fn expr_precedence(value: &Expr) -> u8 {
         | Expr::Float(_)
         | Expr::Char(_)
         | Expr::Bool(_)
-        | Expr::Void => 6,
+        | Expr::Void => 10,
     }
 }
 
 fn binary_precedence(op: &BinaryOp) -> u8 {
     match op {
-        BinaryOp::Equal | BinaryOp::NotEqual => 1,
-        BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => 2,
-        BinaryOp::Add | BinaryOp::Subtract => 3,
-        BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => 4,
+        BinaryOp::LogicalOr => 1,
+        BinaryOp::LogicalAnd => 2,
+        BinaryOp::Equal | BinaryOp::NotEqual => 3,
+        BinaryOp::Less | BinaryOp::LessEqual | BinaryOp::Greater | BinaryOp::GreaterEqual => 4,
+        BinaryOp::Add | BinaryOp::Subtract => 5,
+        BinaryOp::Multiply | BinaryOp::Divide | BinaryOp::Remainder => 6,
     }
 }
 
 fn binary_op(op: &BinaryOp) -> &'static str {
     match op {
+        BinaryOp::LogicalOr => "||",
+        BinaryOp::LogicalAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Subtract => "-",
         BinaryOp::Multiply => "*",
@@ -790,6 +798,12 @@ fn binary_op(op: &BinaryOp) -> &'static str {
         BinaryOp::LessEqual => "<=",
         BinaryOp::Greater => ">",
         BinaryOp::GreaterEqual => ">=",
+    }
+}
+
+fn unary_op(op: &UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Not => "!",
     }
 }
 
@@ -855,11 +869,11 @@ mod tests {
 
     #[test]
     fn formats_expr_variants_and_escaping() {
-        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = left < right == false\n    let value: i64 = a-b*c/d%e\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
+        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("Point { x: 1, y: 2 }"));
-        assert!(formatted.contains("left < right == false"));
+        assert!(formatted.contains("!left && right || fallback"));
         assert!(formatted.contains("a - b * c / d % e"));
         assert!(formatted.contains("total as f64"));
         assert!(formatted.contains("\"a\\n\\\"b\""));

@@ -1,6 +1,6 @@
 use crate::compiler::{
     BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, Program, Statement,
-    StructType, ValueExpr, ValueType,
+    StructType, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -2517,6 +2517,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnumPayload { .. }
         | ValueExpr::EnumPayloadFieldAccess { .. } => true,
         ValueExpr::Cast { expr, .. }
+        | ValueExpr::Unary { expr, .. }
         | ValueExpr::StringLen { value: expr }
         | ValueExpr::FsReadToString { path: expr }
         | ValueExpr::FsOpen { path: expr }
@@ -2868,6 +2869,12 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, right);
             out.push(')');
         }
+        ValueExpr::Unary { op, expr } => {
+            out.push('(');
+            out.push_str(c_unary_op(op));
+            emit_expr(out, expr);
+            out.push(')');
+        }
         ValueExpr::StringCompare { left, op, right } => {
             out.push('(');
             if matches!(op, BinaryOp::NotEqual) {
@@ -3211,6 +3218,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
+        | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
@@ -3506,7 +3514,9 @@ fn collect_expr_struct(
                 collect_expr_struct(arg, seen, out);
             }
         }
-        ValueExpr::StringLen { value } => collect_expr_struct(value, seen, out),
+        ValueExpr::StringLen { value } | ValueExpr::Unary { expr: value, .. } => {
+            collect_expr_struct(value, seen, out)
+        }
         ValueExpr::StringConcat { left, right } => {
             collect_expr_struct(left, seen, out);
             collect_expr_struct(right, seen, out);
@@ -3879,7 +3889,9 @@ fn collect_expr_enum(
                 collect_expr_enum(arg, seen, out);
             }
         }
-        ValueExpr::StringLen { value } => collect_expr_enum(value, seen, out),
+        ValueExpr::StringLen { value } | ValueExpr::Unary { expr: value, .. } => {
+            collect_expr_enum(value, seen, out)
+        }
         ValueExpr::StringConcat { left, right } => {
             collect_expr_enum(left, seen, out);
             collect_expr_enum(right, seen, out);
@@ -4730,6 +4742,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_read_to_string),
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_read_to_string(value),
         ValueExpr::StructLiteral { fields, .. } => fields
@@ -4793,6 +4806,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_write_string),
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_write_string(value),
         ValueExpr::StructLiteral { fields, .. } => fields
@@ -4854,6 +4868,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_open),
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
         | ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_open(value),
@@ -4912,6 +4927,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_get),
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
         | ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_env_get(value),
@@ -4970,6 +4986,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_args),
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
         | ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_env_args(value),
@@ -5053,6 +5070,7 @@ fn collect_expr_array_elements(
             }
         }
         ValueExpr::StringLen { value }
+        | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
         | ValueExpr::EnumPayloadFieldAccess { value, .. } => {
@@ -5156,6 +5174,8 @@ fn emit_string_data_expr(out: &mut String, expr: &ValueExpr) {
 
 fn c_binary_op(op: &BinaryOp) -> &'static str {
     match op {
+        BinaryOp::LogicalOr => "||",
+        BinaryOp::LogicalAnd => "&&",
         BinaryOp::Add => "+",
         BinaryOp::Subtract => "-",
         BinaryOp::Multiply => "*",
@@ -5167,6 +5187,12 @@ fn c_binary_op(op: &BinaryOp) -> &'static str {
         BinaryOp::LessEqual => "<=",
         BinaryOp::Greater => ">",
         BinaryOp::GreaterEqual => ">=",
+    }
+}
+
+fn c_unary_op(op: &UnaryOp) -> &'static str {
+    match op {
+        UnaryOp::Not => "!",
     }
 }
 
@@ -7930,6 +7956,61 @@ mod tests {
         assert!(c.contains(" * "));
         assert!(c.contains(" / "));
         assert!(c.contains(" % "));
+    }
+
+    #[test]
+    fn emits_logical_operators() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: Vec::new(),
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "check".to_string(),
+                    params: vec![
+                        Parameter {
+                            name: "a".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Bool,
+                        },
+                        Parameter {
+                            name: "b".to_string(),
+                            mutable: false,
+                            value_type: ValueType::Bool,
+                        },
+                    ],
+                    return_type: ValueType::Bool,
+                    body: vec![Statement::Return(Some(ValueExpr::Binary {
+                        left: Box::new(ValueExpr::Unary {
+                            op: UnaryOp::Not,
+                            expr: Box::new(ValueExpr::Variable("a".to_string())),
+                        }),
+                        op: BinaryOp::LogicalOr,
+                        right: Box::new(ValueExpr::Binary {
+                            left: Box::new(ValueExpr::Variable("a".to_string())),
+                            op: BinaryOp::LogicalAnd,
+                            right: Box::new(ValueExpr::Variable("b".to_string())),
+                        }),
+                    }))],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+
+        assert!(c.contains("!"));
+        assert!(c.contains(" || "));
+        assert!(c.contains(" && "));
     }
 
     #[test]

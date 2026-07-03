@@ -188,6 +188,10 @@ pub enum Expr {
         expr: Box<Expr>,
         target: TypeRef,
     },
+    Unary {
+        op: UnaryOp,
+        expr: Box<Expr>,
+    },
     Binary {
         left: Box<Expr>,
         op: BinaryOp,
@@ -200,6 +204,11 @@ pub enum Expr {
     Char(char),
     Bool(bool),
     Void,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +227,8 @@ pub struct MatchStmtArm {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BinaryOp {
+    LogicalOr,
+    LogicalAnd,
     Add,
     Subtract,
     Multiply,

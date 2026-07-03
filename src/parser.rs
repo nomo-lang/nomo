@@ -804,7 +804,37 @@ impl Parser<'_> {
     }
 
     fn parse_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.parse_equality_expr()
+        self.parse_logical_or_expr()
+    }
+
+    fn parse_logical_or_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_logical_and_expr()?;
+        while matches!(self.peek().kind, TokenKind::PipePipe) {
+            self.advance();
+            self.skip_newlines();
+            let right = self.parse_logical_and_expr()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::LogicalOr,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
+    }
+
+    fn parse_logical_and_expr(&mut self) -> Result<Expr, Diagnostic> {
+        let mut expr = self.parse_equality_expr()?;
+        while matches!(self.peek().kind, TokenKind::AmpAmp) {
+            self.advance();
+            self.skip_newlines();
+            let right = self.parse_equality_expr()?;
+            expr = Expr::Binary {
+                left: Box::new(expr),
+                op: BinaryOp::LogicalAnd,
+                right: Box::new(right),
+            };
+        }
+        Ok(expr)
     }
 
     fn parse_equality_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -890,7 +920,7 @@ impl Parser<'_> {
     }
 
     fn parse_cast_expr(&mut self) -> Result<Expr, Diagnostic> {
-        let mut expr = self.parse_postfix_expr()?;
+        let mut expr = self.parse_unary_expr()?;
         while matches!(self.peek().kind, TokenKind::As) {
             self.advance();
             self.skip_newlines();
@@ -901,6 +931,19 @@ impl Parser<'_> {
             };
         }
         Ok(expr)
+    }
+
+    fn parse_unary_expr(&mut self) -> Result<Expr, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::Bang) {
+            self.advance();
+            let expr = self.parse_unary_expr()?;
+            Ok(Expr::Unary {
+                op: crate::ast::UnaryOp::Not,
+                expr: Box::new(expr),
+            })
+        } else {
+            self.parse_postfix_expr()
+        }
     }
 
     fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {
@@ -1515,6 +1558,29 @@ mod tests {
                 op: BinaryOp::Remainder,
                 ..
             })
+        ));
+    }
+
+    #[test]
+    fn parses_logical_operator_precedence() {
+        let source = "package app.main\n\nfn check(a: bool, b: bool, c: bool) -> bool {\n    return !a && b || c\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Binary {
+                    op: BinaryOp::LogicalOr,
+                    ref left,
+                    ..
+                }),
+                ..
+            } if matches!(left.as_ref(), Expr::Binary {
+                op: BinaryOp::LogicalAnd,
+                left,
+                ..
+            } if matches!(left.as_ref(), Expr::Unary { .. }))
         ));
     }
 

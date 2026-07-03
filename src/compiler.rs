@@ -1,7 +1,7 @@
 use crate::ast::{
     BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
     Function as AstFunction, MatchArm as AstMatchArm, SourceFile, Span, Stmt,
-    StructDef as AstStructDef, TypeRef as AstTypeRef,
+    StructDef as AstStructDef, TypeRef as AstTypeRef, UnaryOp as AstUnaryOp,
 };
 use crate::codegen;
 use crate::diagnostic::{Diagnostic, Suggestion};
@@ -235,6 +235,10 @@ pub enum ValueExpr {
         op: BinaryOp,
         right: Box<ValueExpr>,
     },
+    Unary {
+        op: UnaryOp,
+        expr: Box<ValueExpr>,
+    },
     StringCompare {
         left: Box<ValueExpr>,
         op: BinaryOp,
@@ -352,6 +356,8 @@ pub struct MatchValueArm {
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BinaryOp {
+    LogicalOr,
+    LogicalAnd,
     Add,
     Subtract,
     Multiply,
@@ -363,6 +369,11 @@ pub enum BinaryOp {
     LessEqual,
     Greater,
     GreaterEqual,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UnaryOp {
+    Not,
 }
 
 #[derive(Debug, Clone)]
@@ -1379,7 +1390,9 @@ fn validate_expr_type_imports(
             validate_expr_type_imports(path, imports, then_branch, span)?;
             validate_expr_type_imports(path, imports, else_branch, span)
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => {
             validate_expr_type_imports(path, imports, message, span)
         }
         AstExpr::Cast { expr, target } => {
@@ -2380,11 +2393,11 @@ fn collect_expr_generic_function_instances(
                 out,
             )
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
-            collect_expr_generic_function_instances(
-                path, message, imports, signatures, structs, enums, out,
-            )
-        }
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => collect_expr_generic_function_instances(
+            path, message, imports, signatures, structs, enums, out,
+        ),
         AstExpr::Cast { expr, .. } => collect_expr_generic_function_instances(
             path, expr, imports, signatures, structs, enums, out,
         ),
@@ -2550,9 +2563,9 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_fs_builtin(then_branch)
                 || expr_uses_fs_builtin(else_branch)
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
-            expr_uses_fs_builtin(message)
-        }
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_fs_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_fs_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
@@ -2590,9 +2603,9 @@ fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_env_builtin(then_branch)
                 || expr_uses_env_builtin(else_branch)
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
-            expr_uses_env_builtin(message)
-        }
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_env_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_env_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
@@ -2632,9 +2645,9 @@ fn expr_uses_array_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_array_builtin(then_branch)
                 || expr_uses_array_builtin(else_branch)
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
-            expr_uses_array_builtin(message)
-        }
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_array_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_array_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
@@ -2765,7 +2778,9 @@ fn expr_uses_core_prelude_variant(expr: &AstExpr, enum_name: &str) -> bool {
                 || expr_uses_core_prelude_variant(then_branch, enum_name)
                 || expr_uses_core_prelude_variant(else_branch, enum_name)
         }
-        AstExpr::Panic { message } | AstExpr::Try { expr: message } => {
+        AstExpr::Panic { message }
+        | AstExpr::Try { expr: message }
+        | AstExpr::Unary { expr: message, .. } => {
             expr_uses_core_prelude_variant(message, enum_name)
         }
         AstExpr::Cast { expr, .. } => expr_uses_core_prelude_variant(expr, enum_name),
@@ -5180,7 +5195,9 @@ fn ast_expr_contains_try(expr: &AstExpr) -> bool {
                 || ast_expr_contains_try(then_branch)
                 || ast_expr_contains_try(else_branch)
         }
-        AstExpr::Panic { message } => ast_expr_contains_try(message),
+        AstExpr::Panic { message } | AstExpr::Unary { expr: message, .. } => {
+            ast_expr_contains_try(message)
+        }
         AstExpr::Cast { expr, .. } => ast_expr_contains_try(expr),
         AstExpr::Binary { left, right, .. } => {
             ast_expr_contains_try(left) || ast_expr_contains_try(right)
@@ -5390,6 +5407,27 @@ fn extract_try_exprs(
                 AstExpr::Cast {
                     expr: Box::new(expr),
                     target: target.clone(),
+                },
+                changed,
+            ))
+        }
+        AstExpr::Unary { op, expr } => {
+            let (expr, changed) = extract_try_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Unary {
+                    op: op.clone(),
+                    expr: Box::new(expr),
                 },
                 changed,
             ))
@@ -7179,11 +7217,34 @@ fn lower_value_expr_with_expected(
                 )),
             }
         }
+        AstExpr::Unary { op, expr } => {
+            let (expr_type, expr) =
+                lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
+            let lowered_op = match op {
+                AstUnaryOp::Not => UnaryOp::Not,
+            };
+            match (lowered_op, &expr_type) {
+                (UnaryOp::Not, ValueType::Bool) => Ok((
+                    ValueType::Bool,
+                    ValueExpr::Unary {
+                        op: lowered_op,
+                        expr: Box::new(expr),
+                    },
+                )),
+                (UnaryOp::Not, _) => Err(type_mismatch(
+                    path,
+                    span,
+                    "`!` expects a bool operand".to_string(),
+                )),
+            }
+        }
         AstExpr::Binary { left, op, right } => {
             let ((left_type, left), (right_type, right)) = lower_binary_operands(
                 path, left, right, scope, imports, signatures, structs, enums, span,
             )?;
             let lowered_op = match op {
+                AstBinaryOp::LogicalOr => BinaryOp::LogicalOr,
+                AstBinaryOp::LogicalAnd => BinaryOp::LogicalAnd,
                 AstBinaryOp::Add => BinaryOp::Add,
                 AstBinaryOp::Subtract => BinaryOp::Subtract,
                 AstBinaryOp::Multiply => BinaryOp::Multiply,
@@ -7197,6 +7258,9 @@ fn lower_value_expr_with_expected(
                 AstBinaryOp::GreaterEqual => BinaryOp::GreaterEqual,
             };
             let value_type = match (lowered_op, &left_type, &right_type) {
+                (BinaryOp::LogicalOr | BinaryOp::LogicalAnd, ValueType::Bool, ValueType::Bool) => {
+                    ValueType::Bool
+                }
                 (
                     BinaryOp::Add | BinaryOp::Subtract | BinaryOp::Multiply | BinaryOp::Divide,
                     left_type,
@@ -7272,6 +7336,8 @@ fn lower_value_expr_with_expected(
                             | BinaryOp::Remainder
                     ) {
                         "numeric"
+                    } else if matches!(lowered_op, BinaryOp::LogicalOr | BinaryOp::LogicalAnd) {
+                        "bool"
                     } else {
                         "comparable"
                     };
@@ -9337,6 +9403,8 @@ fn resolve_match_arm_variant(
 
 fn ast_binary_symbol(op: &AstBinaryOp) -> &'static str {
     match op {
+        AstBinaryOp::LogicalOr => "||",
+        AstBinaryOp::LogicalAnd => "&&",
         AstBinaryOp::Add => "+",
         AstBinaryOp::Subtract => "-",
         AstBinaryOp::Multiply => "*",
@@ -11200,6 +11268,71 @@ fn main() -> void {
 
         assert_eq!(err.code, "N0404");
         assert!(err.message.contains("numeric operands"));
+    }
+
+    #[test]
+    fn accepts_logical_operators() {
+        let source = r#"package app.main
+
+fn check(a: bool, b: bool, c: bool) -> bool {
+    return !a && b || c
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let check = program
+            .functions
+            .iter()
+            .find(|f| f.name == "check")
+            .unwrap();
+
+        assert_eq!(check.return_type, ValueType::Bool);
+        assert!(matches!(
+            check.body[0],
+            Statement::Return(Some(ValueExpr::Binary {
+                op: BinaryOp::LogicalOr,
+                ..
+            }))
+        ));
+    }
+
+    #[test]
+    fn rejects_non_bool_logical_operands() {
+        let source = r#"package app.main
+
+fn bad(value: i64) -> bool {
+    return value && true
+}
+
+fn main() -> void {
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0404");
+        assert!(err.message.contains("bool operands"));
+    }
+
+    #[test]
+    fn rejects_non_bool_not_operand() {
+        let source = r#"package app.main
+
+fn bad(value: i64) -> bool {
+    return !value
+}
+
+fn main() -> void {
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+
+        assert_eq!(err.code, "N0404");
+        assert!(err.message.contains("bool operand"));
     }
 
     #[test]

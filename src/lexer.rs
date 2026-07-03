@@ -45,7 +45,10 @@ pub enum TokenKind {
     Colon,
     Equal,
     EqualEqual,
+    Bang,
     BangEqual,
+    AmpAmp,
+    PipePipe,
     Plus,
     Minus,
     Star,
@@ -125,9 +128,33 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         chars.next();
                         tokens.push(token(TokenKind::BangEqual, line, column, line_text));
                     } else {
+                        tokens.push(token(TokenKind::Bang, line, column, line_text));
+                    }
+                }
+                '&' => {
+                    if matches!(chars.peek(), Some((_, '&'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::AmpAmp, line, column, line_text));
+                    } else {
                         return Err(Diagnostic::new(
                             "N0100",
-                            "unexpected `!`; did you mean `!=`?",
+                            "unexpected `&`; did you mean `&&`?",
+                            path,
+                            line,
+                            column,
+                            1,
+                            line_text,
+                        ));
+                    }
+                }
+                '|' => {
+                    if matches!(chars.peek(), Some((_, '|'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::PipePipe, line, column, line_text));
+                    } else {
+                        return Err(Diagnostic::new(
+                            "N0100",
+                            "unexpected `|`; did you mean `||`?",
                             path,
                             line,
                             column,
@@ -496,6 +523,15 @@ mod tests {
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Star));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Slash));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Percent));
+    }
+
+    #[test]
+    fn lexes_logical_operators() {
+        let tokens = lex(Path::new("main.nomo"), "return !ready && ok || fallback\n").unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Bang));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::AmpAmp));
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::PipePipe));
     }
 
     #[test]

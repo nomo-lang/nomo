@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOp, ConstDef, EnumDef, Expr, Field, ForVariant, Function, ImplBlock, MatchArm,
+    AssignOp, BinaryOp, ConstDef, EnumDef, Expr, Field, ForVariant, Function, ImplBlock, MatchArm,
     MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
 };
 use crate::diagnostic::Diagnostic;
@@ -316,10 +316,17 @@ impl<'a> Formatter<'a> {
                     self.line(indent, "}");
                 }
             }
-            Stmt::Assign { target, value, .. } => {
+            Stmt::Assign {
+                target, op, value, ..
+            } => {
                 self.line(
                     indent,
-                    &format!("{} = {}", path(target), expr(value, indent, 0)),
+                    &format!(
+                        "{} {} {}",
+                        path(target),
+                        assign_op(op),
+                        expr(value, indent, 0)
+                    ),
                 );
             }
             Stmt::Return { value, .. } => match value {
@@ -819,6 +826,23 @@ fn unary_op(op: &UnaryOp) -> &'static str {
     }
 }
 
+fn assign_op(op: &AssignOp) -> &'static str {
+    match op {
+        AssignOp::Assign => "=",
+        AssignOp::Add => "+=",
+        AssignOp::Subtract => "-=",
+        AssignOp::Multiply => "*=",
+        AssignOp::Divide => "/=",
+        AssignOp::Remainder => "%=",
+        AssignOp::ShiftLeft => "<<=",
+        AssignOp::ShiftRight => ">>=",
+        AssignOp::BitAnd => "&=",
+        AssignOp::BitXor => "^=",
+        AssignOp::BitOr => "|=",
+        AssignOp::BitAndNot => "&^=",
+    }
+}
+
 fn pattern_with_binding(pattern: &[String], binding: Option<&str>) -> String {
     match binding {
         Some(binding) => format!("{}({binding})", path(pattern)),
@@ -891,6 +915,28 @@ mod tests {
         assert!(formatted.contains("total as f64"));
         assert!(formatted.contains("\"a\\n\\\"b\""));
         assert!(formatted.contains("'\\n'"));
+    }
+
+    #[test]
+    fn formats_compound_assignment_operators() {
+        let source = "package app.main\n\nfn main() -> void {\nlet mut value:i64=1\nvalue+=2\nvalue-=1\nvalue*=3\nvalue/=2\nvalue%=2\nvalue<<=1\nvalue>>=1\nvalue&=6\nvalue^=3\nvalue|=8\nvalue&^=1\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        for line in [
+            "value += 2",
+            "value -= 1",
+            "value *= 3",
+            "value /= 2",
+            "value %= 2",
+            "value <<= 1",
+            "value >>= 1",
+            "value &= 6",
+            "value ^= 3",
+            "value |= 8",
+            "value &^= 1",
+        ] {
+            assert!(formatted.contains(line), "{formatted}");
+        }
     }
 
     #[test]

@@ -1,5 +1,5 @@
 use crate::ast::{
-    BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
+    AssignOp, BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
     Function as AstFunction, MatchArm as AstMatchArm, SourceFile, Span, Stmt,
     StructDef as AstStructDef, TypeRef as AstTypeRef, UnaryOp as AstUnaryOp,
 };
@@ -3292,10 +3292,11 @@ fn lower_stmt(
         ),
         Stmt::Assign {
             target,
+            op,
             value,
             span,
         } => lower_assign_stmt(
-            path, target, value, scope, imports, signatures, structs, enums, span,
+            path, target, *op, value, scope, imports, signatures, structs, enums, span,
         ),
         Stmt::Return { value, span } => lower_return_stmt(
             path,
@@ -4133,6 +4134,7 @@ fn lower_try_exprs_in_stmt_into(
         }
         Stmt::Assign {
             target,
+            op,
             value,
             span,
         } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_try(value) => {
@@ -4165,6 +4167,7 @@ fn lower_try_exprs_in_stmt_into(
             let body = lower_expr_as_target_assignment_block(
                 path,
                 target,
+                *op,
                 then_branch,
                 &mut scope.clone(),
                 imports,
@@ -4177,6 +4180,7 @@ fn lower_try_exprs_in_stmt_into(
             let else_body = lower_expr_as_target_assignment_block(
                 path,
                 target,
+                *op,
                 else_branch,
                 &mut scope.clone(),
                 imports,
@@ -4195,6 +4199,7 @@ fn lower_try_exprs_in_stmt_into(
         }
         Stmt::Assign {
             target,
+            op,
             value: AstExpr::Match { value, arms },
             span,
         } if ast_expr_contains_try(value)
@@ -4318,6 +4323,7 @@ fn lower_try_exprs_in_stmt_into(
                 let body = lower_expr_as_target_assignment_block(
                     path,
                     target,
+                    *op,
                     &arm.value,
                     &mut arm_scope,
                     imports,
@@ -4356,6 +4362,7 @@ fn lower_try_exprs_in_stmt_into(
         }
         Stmt::Assign {
             target,
+            op,
             value,
             span,
         } if ast_expr_contains_try(value) => {
@@ -4376,6 +4383,7 @@ fn lower_try_exprs_in_stmt_into(
             }
             Stmt::Assign {
                 target: target.clone(),
+                op: *op,
                 value,
                 span: span.clone(),
             }
@@ -4970,6 +4978,7 @@ fn lower_expr_as_assignment_block(
 fn lower_expr_as_target_assignment_block(
     path: &Path,
     target: &[String],
+    op: AssignOp,
     expr: &AstExpr,
     scope: &mut HashMap<String, Binding>,
     imports: &[String],
@@ -4993,7 +5002,7 @@ fn lower_expr_as_target_assignment_block(
         &mut out,
     )?;
     out.push(lower_assign_stmt(
-        path, target, &expr, scope, imports, signatures, structs, enums, span,
+        path, target, op, &expr, scope, imports, signatures, structs, enums, span,
     )?);
     Ok(out)
 }
@@ -6239,6 +6248,7 @@ fn lower_block(
 fn lower_assign_stmt(
     path: &Path,
     target: &[String],
+    op: AssignOp,
     value: &AstExpr,
     scope: &HashMap<String, Binding>,
     imports: &[String],
@@ -6247,6 +6257,8 @@ fn lower_assign_stmt(
     enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<Statement, Diagnostic> {
+    let compound_value = compound_assign_value(target, op, value);
+    let value = compound_value.as_ref().unwrap_or(value);
     match target {
         [name] => {
             let Some(binding) = scope.get(name) else {
@@ -6400,6 +6412,32 @@ fn lower_assign_stmt(
             span.length,
             &span.text,
         )),
+    }
+}
+
+fn compound_assign_value(target: &[String], op: AssignOp, value: &AstExpr) -> Option<AstExpr> {
+    let op = assign_op_to_binary_op(op)?;
+    Some(AstExpr::Binary {
+        left: Box::new(AstExpr::Name(target.to_vec())),
+        op,
+        right: Box::new(value.clone()),
+    })
+}
+
+fn assign_op_to_binary_op(op: AssignOp) -> Option<AstBinaryOp> {
+    match op {
+        AssignOp::Assign => None,
+        AssignOp::Add => Some(AstBinaryOp::Add),
+        AssignOp::Subtract => Some(AstBinaryOp::Subtract),
+        AssignOp::Multiply => Some(AstBinaryOp::Multiply),
+        AssignOp::Divide => Some(AstBinaryOp::Divide),
+        AssignOp::Remainder => Some(AstBinaryOp::Remainder),
+        AssignOp::ShiftLeft => Some(AstBinaryOp::ShiftLeft),
+        AssignOp::ShiftRight => Some(AstBinaryOp::ShiftRight),
+        AssignOp::BitAnd => Some(AstBinaryOp::BitAnd),
+        AssignOp::BitXor => Some(AstBinaryOp::BitXor),
+        AssignOp::BitOr => Some(AstBinaryOp::BitOr),
+        AssignOp::BitAndNot => Some(AstBinaryOp::BitAndNot),
     }
 }
 
@@ -12255,6 +12293,33 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_compound_assignment_to_mut_variable() {
+        let source = r#"package app.main
+
+fn main() -> void {
+    let mut count: i64 = 1
+    count += 2
+    count -= 1
+    count *= 3
+    count /= 2
+    count %= 2
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        for stmt in &main.body[1..] {
+            assert!(matches!(
+                stmt,
+                Statement::Assign {
+                    name,
+                    value: ValueExpr::Binary { .. },
+                } if name == "count"
+            ));
+        }
+    }
+
+    #[test]
     fn rejects_assignment_to_immutable_variable() {
         let source = r#"package app.main
 
@@ -12420,6 +12485,40 @@ fn main() -> void {
                 ..
             } if base == "counter" && field == "value"
         ));
+    }
+
+    #[test]
+    fn accepts_compound_assignment_to_mut_struct_field() {
+        let source = r#"package app.main
+
+struct Counter {
+    value: i64
+}
+
+fn main() -> void {
+    let mut counter: Counter = Counter { value: 7 }
+    counter.value <<= 1
+    counter.value >>= 1
+    counter.value &= 6
+    counter.value |= 8
+    counter.value ^= 3
+    counter.value &^= 1
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        for stmt in &main.body[1..] {
+            assert!(matches!(
+                stmt,
+                Statement::AssignField {
+                    base,
+                    field,
+                    value_type: ValueType::Int,
+                    value: ValueExpr::Binary { .. },
+                } if base == "counter" && field == "value"
+            ));
+        }
     }
 
     #[test]

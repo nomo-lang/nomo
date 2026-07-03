@@ -1,6 +1,6 @@
 use crate::ast::{
-    BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, Field, ForVariant, Function, ImplBlock,
-    MatchArm, MatchStmtArm, Param, SourceFile, Span, Stmt, StructDef, TypeRef,
+    AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, Field, ForVariant, Function,
+    ImplBlock, MatchArm, MatchStmtArm, Param, SourceFile, Span, Stmt, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -470,9 +470,9 @@ impl Parser<'_> {
             return self.parse_defer_stmt(token);
         }
         if matches!(token.kind, TokenKind::Ident(_))
-            && (matches!(self.peek_n(1).kind, TokenKind::Equal)
+            && (assign_op_from_token(&self.peek_n(1).kind).is_some()
                 || (matches!(self.peek_n(1).kind, TokenKind::Dot)
-                    && matches!(self.peek_n(3).kind, TokenKind::Equal)))
+                    && assign_op_from_token(&self.peek_n(3).kind).is_some()))
         {
             return self.parse_assign_stmt(token);
         }
@@ -496,10 +496,18 @@ impl Parser<'_> {
                 token.length(),
             ));
         }
-        self.expect_kind(TokenKind::Equal, "N0217", "expected `=` in assignment")?;
+        let op = assign_op_from_token(&self.peek().kind).ok_or_else(|| {
+            self.error(
+                "N0217",
+                "expected assignment operator in assignment",
+                token.length(),
+            )
+        })?;
+        self.advance();
         let value = self.parse_expr()?;
         Ok(Stmt::Assign {
             target,
+            op,
             value,
             span: Span {
                 line: token.line,
@@ -1474,7 +1482,28 @@ impl Token {
             TokenKind::Int(value) => value.to_string().len(),
             TokenKind::Float(value) => value.len(),
             TokenKind::Char(value) => value.len_utf8() + 2,
-            TokenKind::Arrow | TokenKind::FatArrow => 2,
+            TokenKind::Arrow
+            | TokenKind::FatArrow
+            | TokenKind::EqualEqual
+            | TokenKind::BangEqual
+            | TokenKind::AmpAmp
+            | TokenKind::PipePipe
+            | TokenKind::AmpCaret
+            | TokenKind::PlusEqual
+            | TokenKind::MinusEqual
+            | TokenKind::StarEqual
+            | TokenKind::SlashEqual
+            | TokenKind::PercentEqual
+            | TokenKind::AmpEqual
+            | TokenKind::PipeEqual
+            | TokenKind::CaretEqual
+            | TokenKind::LessEqual
+            | TokenKind::LessLess
+            | TokenKind::GreaterEqual
+            | TokenKind::GreaterGreater => 2,
+            TokenKind::AmpCaretEqual
+            | TokenKind::LessLessEqual
+            | TokenKind::GreaterGreaterEqual => 3,
             TokenKind::Eof | TokenKind::Newline => 1,
             _ => 1,
         }
@@ -1492,6 +1521,24 @@ fn token_span(token: &Token) -> Span {
 
 fn same_variant(left: &TokenKind, right: &TokenKind) -> bool {
     std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
+fn assign_op_from_token(kind: &TokenKind) -> Option<AssignOp> {
+    match kind {
+        TokenKind::Equal => Some(AssignOp::Assign),
+        TokenKind::PlusEqual => Some(AssignOp::Add),
+        TokenKind::MinusEqual => Some(AssignOp::Subtract),
+        TokenKind::StarEqual => Some(AssignOp::Multiply),
+        TokenKind::SlashEqual => Some(AssignOp::Divide),
+        TokenKind::PercentEqual => Some(AssignOp::Remainder),
+        TokenKind::LessLessEqual => Some(AssignOp::ShiftLeft),
+        TokenKind::GreaterGreaterEqual => Some(AssignOp::ShiftRight),
+        TokenKind::AmpEqual => Some(AssignOp::BitAnd),
+        TokenKind::CaretEqual => Some(AssignOp::BitXor),
+        TokenKind::PipeEqual => Some(AssignOp::BitOr),
+        TokenKind::AmpCaretEqual => Some(AssignOp::BitAndNot),
+        _ => None,
+    }
 }
 
 fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
@@ -1753,6 +1800,40 @@ mod tests {
                 value: Expr::Binary { .. },
                 ..
             } if target == &["count".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_compound_assignment_statement() {
+        let source = "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    count += 2\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Assign {
+                ref target,
+                op: AssignOp::Add,
+                value: Expr::Int(2),
+                ..
+            } if target == &["count".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_compound_field_assignment_statement() {
+        let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value &^= 1\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Assign {
+                ref target,
+                op: AssignOp::BitAndNot,
+                value: Expr::Int(1),
+                ..
+            } if target == &["counter".to_string(), "value".to_string()]
         ));
     }
 

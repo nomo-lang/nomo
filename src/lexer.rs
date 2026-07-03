@@ -45,14 +45,23 @@ pub enum TokenKind {
     Colon,
     Equal,
     EqualEqual,
+    PlusEqual,
+    MinusEqual,
+    StarEqual,
+    SlashEqual,
+    PercentEqual,
     Bang,
     BangEqual,
     Amp,
+    AmpEqual,
     AmpAmp,
     AmpCaret,
+    AmpCaretEqual,
     Pipe,
+    PipeEqual,
     PipePipe,
     Caret,
+    CaretEqual,
     Plus,
     Minus,
     Star,
@@ -62,9 +71,11 @@ pub enum TokenKind {
     Less,
     LessEqual,
     LessLess,
+    LessLessEqual,
     Greater,
     GreaterEqual,
     GreaterGreater,
+    GreaterGreaterEqual,
     LParen,
     RParen,
     LBrace,
@@ -111,6 +122,9 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         chars.next();
                         block_comment_depth = 1;
                         block_comment_start = Some((line, column, line_text.to_string()));
+                    } else if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::SlashEqual, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Slash, line, column, line_text));
                     }
@@ -143,7 +157,15 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         tokens.push(token(TokenKind::AmpAmp, line, column, line_text));
                     } else if matches!(chars.peek(), Some((_, '^'))) {
                         chars.next();
-                        tokens.push(token(TokenKind::AmpCaret, line, column, line_text));
+                        if matches!(chars.peek(), Some((_, '='))) {
+                            chars.next();
+                            tokens.push(token(TokenKind::AmpCaretEqual, line, column, line_text));
+                        } else {
+                            tokens.push(token(TokenKind::AmpCaret, line, column, line_text));
+                        }
+                    } else if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::AmpEqual, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Amp, line, column, line_text));
                     }
@@ -152,41 +174,90 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.peek(), Some((_, '|'))) {
                         chars.next();
                         tokens.push(token(TokenKind::PipePipe, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::PipeEqual, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Pipe, line, column, line_text));
                     }
                 }
-                '^' => tokens.push(token(TokenKind::Caret, line, column, line_text)),
-                '+' => tokens.push(token(TokenKind::Plus, line, column, line_text)),
+                '^' => {
+                    if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::CaretEqual, line, column, line_text));
+                    } else {
+                        tokens.push(token(TokenKind::Caret, line, column, line_text));
+                    }
+                }
+                '+' => {
+                    if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::PlusEqual, line, column, line_text));
+                    } else {
+                        tokens.push(token(TokenKind::Plus, line, column, line_text));
+                    }
+                }
                 '-' => {
                     if matches!(chars.peek(), Some((_, '>'))) {
                         chars.next();
                         tokens.push(token(TokenKind::Arrow, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::MinusEqual, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Minus, line, column, line_text));
                     }
                 }
-                '*' => tokens.push(token(TokenKind::Star, line, column, line_text)),
-                '%' => tokens.push(token(TokenKind::Percent, line, column, line_text)),
-                '?' => tokens.push(token(TokenKind::Question, line, column, line_text)),
-                '<' => {
+                '*' => {
                     if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
-                        tokens.push(token(TokenKind::LessEqual, line, column, line_text));
-                    } else if matches!(chars.peek(), Some((_, '<'))) {
+                        tokens.push(token(TokenKind::StarEqual, line, column, line_text));
+                    } else {
+                        tokens.push(token(TokenKind::Star, line, column, line_text));
+                    }
+                }
+                '%' => {
+                    if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
-                        tokens.push(token(TokenKind::LessLess, line, column, line_text));
+                        tokens.push(token(TokenKind::PercentEqual, line, column, line_text));
+                    } else {
+                        tokens.push(token(TokenKind::Percent, line, column, line_text));
+                    }
+                }
+                '?' => tokens.push(token(TokenKind::Question, line, column, line_text)),
+                '<' => {
+                    if matches!(chars.peek(), Some((_, '<'))) {
+                        chars.next();
+                        if matches!(chars.peek(), Some((_, '='))) {
+                            chars.next();
+                            tokens.push(token(TokenKind::LessLessEqual, line, column, line_text));
+                        } else {
+                            tokens.push(token(TokenKind::LessLess, line, column, line_text));
+                        }
+                    } else if matches!(chars.peek(), Some((_, '='))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::LessEqual, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Less, line, column, line_text));
                     }
                 }
                 '>' => {
-                    if matches!(chars.peek(), Some((_, '='))) {
+                    if matches!(chars.peek(), Some((_, '>'))) {
+                        chars.next();
+                        if matches!(chars.peek(), Some((_, '='))) {
+                            chars.next();
+                            tokens.push(token(
+                                TokenKind::GreaterGreaterEqual,
+                                line,
+                                column,
+                                line_text,
+                            ));
+                        } else {
+                            tokens.push(token(TokenKind::GreaterGreater, line, column, line_text));
+                        }
+                    } else if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
                         tokens.push(token(TokenKind::GreaterEqual, line, column, line_text));
-                    } else if matches!(chars.peek(), Some((_, '>'))) {
-                        chars.next();
-                        tokens.push(token(TokenKind::GreaterGreater, line, column, line_text));
                     } else {
                         tokens.push(token(TokenKind::Greater, line, column, line_text));
                     }
@@ -552,6 +623,36 @@ mod tests {
         );
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Pipe));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Caret));
+    }
+
+    #[test]
+    fn lexes_compound_assignment_operators() {
+        let tokens = lex(
+            Path::new("main.nomo"),
+            "a += b\na -= b\na *= b\na /= b\na %= b\na <<= b\na >>= b\na &= b\na ^= b\na |= b\na &^= b\n",
+        )
+        .unwrap();
+
+        for kind in [
+            TokenKind::PlusEqual,
+            TokenKind::MinusEqual,
+            TokenKind::StarEqual,
+            TokenKind::SlashEqual,
+            TokenKind::PercentEqual,
+            TokenKind::LessLessEqual,
+            TokenKind::GreaterGreaterEqual,
+            TokenKind::AmpEqual,
+            TokenKind::CaretEqual,
+            TokenKind::PipeEqual,
+            TokenKind::AmpCaretEqual,
+        ] {
+            assert!(
+                tokens
+                    .iter()
+                    .any(|token| std::mem::discriminant(&token.kind)
+                        == std::mem::discriminant(&kind))
+            );
+        }
     }
 
     #[test]

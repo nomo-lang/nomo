@@ -107,6 +107,7 @@ pub enum Stmt {
     },
     Assign {
         target: Vec<String>,
+        op: AssignOp,
         value: Expr,
         span: Span,
     },
@@ -137,6 +138,22 @@ pub enum Stmt {
         stmt: Box<Stmt>,
         span: Span,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AssignOp {
+    Assign,
+    Add,
+    Subtract,
+    Multiply,
+    Divide,
+    Remainder,
+    ShiftLeft,
+    ShiftRight,
+    BitAnd,
+    BitXor,
+    BitOr,
+    BitAndNot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

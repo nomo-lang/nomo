@@ -4498,6 +4498,94 @@ fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
+#[test]
+fn nomoc_build_runs_compound_assignment_operators() {
+    let root = temp_test_root("compound-assignment");
+    reset_dir(&root);
+    let source = root.join("compound.nomo");
+    let c_path = root.join("compound.c");
+    let bin_path = root.join("compound");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+
+struct Counter {
+    value: i64
+}
+
+fn main() -> void {
+    let mut value: i64 = 10
+    value += 5
+    value -= 3
+    value *= 4
+    value /= 6
+    value %= 5
+    value <<= 2
+    value >>= 1
+    value &= 6
+    value |= 8
+    value ^= 3
+    value &^= 1
+
+    let mut counter: Counter = Counter { value: 1 }
+    counter.value += 2
+
+    if value == 12 && counter.value == 3 {
+        io.println("compound ok")
+    } else {
+        io.println("wrong")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&c_path)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let cc_output = Command::new("cc")
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let run_output = Command::new(&bin_path).output().unwrap();
+    assert!(
+        run_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run_output.stdout), "compound ok\n");
+    assert!(
+        String::from_utf8_lossy(&run_output.stderr).is_empty(),
+        "{}",
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
 fn reset_dir(path: &Path) {
     if path.exists() {
         fs::remove_dir_all(path).unwrap();

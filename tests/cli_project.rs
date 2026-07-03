@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -1392,6 +1392,168 @@ fn nomo_deps_clean_cache_removes_git_cache() {
         String::from_utf8_lossy(&second_clean.stdout),
         format!("cleaned {}\n", cache_root.display())
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_vendor_copies_locked_path_and_git_sources() {
+    let root = temp_test_root("deps-vendor");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let utils = root.join("utils");
+    let json = root.join("json");
+    let json_rev = init_git_package_with_source(
+        &json,
+        "nomo-lang",
+        "json",
+        "package json.main\n\npub fn version() -> i64 {\n    return 1\n}\n",
+    );
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(utils.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(
+        utils.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", rev = \"{}\" }}\nlocal_utils = {{ package = \"fynn/utils\", path = \"../utils\" }}\n",
+            json.display(),
+            json_rev
+        ),
+    )
+    .unwrap();
+    fs::create_dir_all(project.join("vendor")).unwrap();
+    fs::write(project.join("vendor/stale.txt"), "stale\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("vendor")
+        .arg(&project)
+        .arg("--sync")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("vendored {}\n", project.join("vendor").display())
+    );
+    assert!(project.join("nomo.lock").exists());
+    assert!(!project.join("vendor/stale.txt").exists());
+    assert!(
+        project
+            .join(format!(
+                "vendor/nomo-lang/json/git-{}/nomo.toml",
+                &json_rev[..12]
+            ))
+            .exists()
+    );
+    assert!(project.join("vendor/fynn/utils/path/nomo.toml").exists());
+    assert!(
+        !project
+            .join(format!(
+                "vendor/nomo-lang/json/git-{}/.git",
+                &json_rev[..12]
+            ))
+            .exists()
+    );
+    let vendor_manifest = fs::read_to_string(project.join("vendor/nomo-vendor.toml")).unwrap();
+    assert!(
+        vendor_manifest.contains(&format!("source = \"git+{}\"", json.display())),
+        "{vendor_manifest}"
+    );
+    assert!(
+        vendor_manifest.contains("path = \"nomo-lang/json/git-"),
+        "{vendor_manifest}"
+    );
+    assert!(
+        vendor_manifest.contains("source = \"path+../utils\""),
+        "{vendor_manifest}"
+    );
+    assert_checksum_lines(&vendor_manifest, 2);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_build_offline_uses_vendored_git_source_when_cache_is_missing() {
+    let root = temp_test_root("deps-vendor-offline-build");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let json = root.join("json");
+    let _initial_json_rev =
+        init_git_package_with_source(&json, "nomo-lang", "json", "package json.main\n\n");
+    fs::write(
+        json.join("src/path.nomo"),
+        "package json.path\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+    )
+    .unwrap();
+    run_git(&json, &["add", "src/path.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "add path module"]);
+    let json_rev = git_head_rev(&json);
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport json.path\n\nfn main() -> void {\n    let total: i64 = add(40, 2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", rev = \"{}\" }}\n",
+            json.display(),
+            json_rev
+        ),
+    )
+    .unwrap();
+
+    let vendor_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("vendor")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        vendor_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vendor_output.stderr)
+    );
+
+    let clean_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("clean-cache")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        clean_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean_output.stderr)
+    );
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--offline")
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    assert!(project.join("build/c/main.c").exists());
 
     fs::remove_dir_all(&root).unwrap();
 }

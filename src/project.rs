@@ -39,6 +39,21 @@ pub struct DependencyUpdateOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyVendorOptions {
+    pub dir: PathBuf,
+    pub sync: bool,
+}
+
+impl Default for DependencyVendorOptions {
+    fn default() -> Self {
+        Self {
+            dir: PathBuf::from("vendor"),
+            sync: false,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub package: PackageMetadata,
     pub dependencies: Vec<Dependency>,
@@ -383,6 +398,38 @@ pub fn update_workspace_dependencies(
     Ok(lock_path)
 }
 
+pub fn vendor_project_dependencies(
+    project: &Project,
+    options: DependencyVendorOptions,
+) -> Result<PathBuf, String> {
+    let lock_root = project.lock_root();
+    if !lock_root.join("nomo.lock").is_file() {
+        resolve_project_dependencies_with_options(project, DependencyResolutionOptions::default())?;
+    }
+    let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
+    write_vendor_directory(&lock_root, &source_base, &[graph], &options)
+}
+
+pub fn vendor_workspace_dependencies(
+    workspace: &WorkspaceGraph,
+    options: DependencyVendorOptions,
+) -> Result<PathBuf, String> {
+    if !workspace.root.join("nomo.lock").is_file() {
+        resolve_workspace_dependencies_with_options(
+            workspace,
+            DependencyResolutionOptions::default(),
+        )?;
+    }
+    let mut graphs = Vec::new();
+    let mut source_base = workspace.root.clone();
+    for project in &workspace.members {
+        let (graph, graph_source_base) = locked_dependency_graph_and_source_base(project)?;
+        source_base = graph_source_base;
+        graphs.push(graph);
+    }
+    write_vendor_directory(&workspace.root, &source_base, &graphs, &options)
+}
+
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
     dependency_tree_with_options(project, DependencyResolutionOptions::default())
 }
@@ -540,7 +587,10 @@ fn resolved_dependency_module_root(
         DependencySource::Path { path } => {
             let dep_root = source_base.join(path);
             if !dep_root.exists() {
-                return Ok(None);
+                let Some(vendored) = vendored_source_root(source_base, dependency)? else {
+                    return Ok(None);
+                };
+                return Ok(Some(vendored));
             }
             fs::canonicalize(&dep_root).map_err(|err| {
                 format!(
@@ -552,7 +602,10 @@ fn resolved_dependency_module_root(
         }
         DependencySource::Git { git, .. } => {
             let Some(dep_root) = locked_git_root(source_base, dependency, git)? else {
-                return Ok(None);
+                let Some(vendored) = vendored_source_root(source_base, dependency)? else {
+                    return Ok(None);
+                };
+                return Ok(Some(vendored));
             };
             dep_root
         }
@@ -2170,7 +2223,7 @@ fn verify_locked_source_checksums(
     dependencies: &[ResolvedDependency],
 ) -> Result<(), String> {
     for dependency in dependencies {
-        let Some(dep_root) = locked_source_root(base_root, dependency)? else {
+        let Some(dep_root) = locked_or_vendor_source_root(base_root, dependency)? else {
             continue;
         };
         if let Some(expected) = &dependency.checksum {
@@ -2185,6 +2238,16 @@ fn verify_locked_source_checksums(
         verify_locked_source_checksums(&dep_root, &dependency.dependencies)?;
     }
     Ok(())
+}
+
+fn locked_or_vendor_source_root(
+    base_root: &Path,
+    dependency: &ResolvedDependency,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(dep_root) = locked_source_root(base_root, dependency)? {
+        return Ok(Some(dep_root));
+    }
+    vendored_source_root(base_root, dependency)
 }
 
 fn locked_source_root(
@@ -2227,6 +2290,56 @@ fn locked_source_root(
     Ok(Some(dep_root))
 }
 
+fn vendored_source_root(
+    base_root: &Path,
+    dependency: &ResolvedDependency,
+) -> Result<Option<PathBuf>, String> {
+    let vendor_root = base_root.join("vendor");
+    let manifest = vendor_root.join("nomo-vendor.toml");
+    if !manifest.is_file() {
+        return Ok(None);
+    }
+    let document = parse_vendor_document(&fs::read_to_string(&manifest).map_err(|err| {
+        format!(
+            "failed to read vendor manifest at {}: {err}",
+            manifest.display()
+        )
+    })?)?;
+    let source = lock_source_string(dependency);
+    let Some(package) = document.package.into_iter().find(|package| {
+        package.id == dependency.package
+            && package.alias == dependency.alias
+            && package.source == source
+            && package.path.is_some()
+    }) else {
+        return Ok(None);
+    };
+    let path = package.path.expect("checked above");
+    let dep_root = vendor_root.join(&path);
+    if !dep_root.exists() {
+        return Ok(None);
+    }
+    let dep_root = fs::canonicalize(&dep_root).map_err(|err| {
+        format!(
+            "failed to resolve vendored dependency `{}` at {}: {err}",
+            dependency.alias,
+            dep_root.display()
+        )
+    })?;
+    let dep_manifest = parse_manifest_at_root(&dep_root)?;
+    let actual_id = format!(
+        "{}/{}",
+        dep_manifest.package.namespace, dep_manifest.package.name
+    );
+    if actual_id != dependency.package {
+        return Err(format!(
+            "vendored dependency `{}` expected package `{}`, found `{}`",
+            dependency.alias, dependency.package, actual_id
+        ));
+    }
+    Ok(Some(dep_root))
+}
+
 fn locked_git_root(
     base_root: &Path,
     dependency: &ResolvedDependency,
@@ -2253,6 +2366,163 @@ fn locked_git_root(
     fs::canonicalize(&path)
         .map(Some)
         .map_err(|err| err.to_string())
+}
+
+fn write_vendor_directory(
+    lock_root: &Path,
+    source_base: &Path,
+    graphs: &[DependencyGraph],
+    options: &DependencyVendorOptions,
+) -> Result<PathBuf, String> {
+    let vendor_root = if options.dir.is_absolute() {
+        options.dir.clone()
+    } else {
+        lock_root.join(&options.dir)
+    };
+    if options.sync && vendor_root.exists() {
+        fs::remove_dir_all(&vendor_root).map_err(|err| err.to_string())?;
+    }
+    fs::create_dir_all(&vendor_root).map_err(|err| err.to_string())?;
+
+    let mut entries = BTreeMap::new();
+    for graph in graphs {
+        for dependency in flatten_dependencies(&graph.dependencies) {
+            let entry = vendor_dependency(source_base, &vendor_root, dependency)?;
+            entries.insert(
+                (entry.id.clone(), entry.alias.clone(), entry.source.clone()),
+                entry,
+            );
+        }
+    }
+
+    let document = VendorDocument {
+        package: entries.into_values().collect(),
+    };
+    let manifest_path = vendor_root.join("nomo-vendor.toml");
+    fs::write(&manifest_path, render_vendor_document(&document)).map_err(|err| err.to_string())?;
+    Ok(vendor_root)
+}
+
+fn vendor_dependency(
+    source_base: &Path,
+    vendor_root: &Path,
+    dependency: &ResolvedDependency,
+) -> Result<VendorPackage, String> {
+    let source = lock_source_string(dependency);
+    match &dependency.source {
+        DependencySource::Registry { .. } => Ok(VendorPackage {
+            id: dependency.package.clone(),
+            alias: dependency.alias.clone(),
+            source,
+            path: None,
+            checksum: dependency.checksum.clone(),
+            skipped: Some("registry source archives are not fetched in v0.1".to_string()),
+        }),
+        DependencySource::Path { .. } | DependencySource::Git { .. } => {
+            let Some(source_root) = locked_source_root(source_base, dependency)? else {
+                return Err(format!(
+                    "cannot vendor dependency `{}` because its locked source is missing",
+                    dependency.alias
+                ));
+            };
+            let relative = vendor_relative_path(dependency);
+            let target = vendor_root.join(&relative);
+            copy_package_source(&source_root, &target)?;
+            Ok(VendorPackage {
+                id: dependency.package.clone(),
+                alias: dependency.alias.clone(),
+                source,
+                path: Some(relative),
+                checksum: dependency.checksum.clone(),
+                skipped: None,
+            })
+        }
+    }
+}
+
+fn vendor_relative_path(dependency: &ResolvedDependency) -> String {
+    let mut path = PathBuf::new();
+    for part in dependency.package.split('/') {
+        path.push(part);
+    }
+    path.push(vendor_source_dir_name(dependency));
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn vendor_source_dir_name(dependency: &ResolvedDependency) -> String {
+    match &dependency.source {
+        DependencySource::Registry { version, .. } => version.clone(),
+        DependencySource::Path { .. } => "path".to_string(),
+        DependencySource::Git { git, rev, .. } => rev
+            .as_deref()
+            .map(short_revision)
+            .map(|rev| format!("git-{rev}"))
+            .unwrap_or_else(|| format!("git-{}", short_hash(git))),
+    }
+}
+
+fn short_revision(rev: &str) -> String {
+    rev.chars().take(12).collect()
+}
+
+fn short_hash(value: &str) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(value.as_bytes());
+    hex_lower(&hasher.finalize()).chars().take(12).collect()
+}
+
+fn copy_package_source(source_root: &Path, target: &Path) -> Result<(), String> {
+    if target.exists() {
+        fs::remove_dir_all(target).map_err(|err| err.to_string())?;
+    }
+    fs::create_dir_all(target).map_err(|err| err.to_string())?;
+    fs::copy(source_root.join("nomo.toml"), target.join("nomo.toml")).map_err(|err| {
+        format!(
+            "failed to copy {} to {}: {err}",
+            source_root.join("nomo.toml").display(),
+            target.join("nomo.toml").display()
+        )
+    })?;
+    let source_src = source_root.join("src");
+    if source_src.is_dir() {
+        copy_dir_recursive(&source_src, &target.join("src"))?;
+    }
+    Ok(())
+}
+
+fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
+    fs::create_dir_all(target).map_err(|err| err.to_string())?;
+    for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let source_path = entry.path();
+        let target_path = target.join(entry.file_name());
+        if source_path.is_dir() {
+            copy_dir_recursive(&source_path, &target_path)?;
+        } else if source_path.is_file() {
+            fs::copy(&source_path, &target_path).map_err(|err| {
+                format!(
+                    "failed to copy {} to {}: {err}",
+                    source_path.display(),
+                    target_path.display()
+                )
+            })?;
+        }
+    }
+    Ok(())
+}
+
+fn lock_source_string(dependency: &ResolvedDependency) -> String {
+    LockPackage::from_resolved(dependency).source
+}
+
+fn render_vendor_document(document: &VendorDocument) -> String {
+    let mut out = String::from("# This file is generated by `nomo deps vendor`.\n\n");
+    out.push_str(&toml::to_string(document).expect("vendor document should serialize"));
+    out
+}
+
+fn parse_vendor_document(text: &str) -> Result<VendorDocument, String> {
+    toml::from_str(text).map_err(|err| format!("failed to parse nomo-vendor.toml as TOML: {err}"))
 }
 
 fn git_remote_url(root: &Path) -> Option<String> {
@@ -2358,6 +2628,27 @@ struct LockfileDocument {
     root: Vec<LockRoot>,
     #[serde(default)]
     package: Vec<LockPackage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VendorDocument {
+    #[serde(default)]
+    package: Vec<VendorPackage>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+struct VendorPackage {
+    id: String,
+    alias: String,
+    source: String,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    checksum: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    skipped: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]

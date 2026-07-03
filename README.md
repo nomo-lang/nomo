@@ -53,6 +53,7 @@ nomo clean [path]                 # remove generated build artifacts
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
+nomo deps vendor [path] [--workspace] [--dir vendor] [--sync] # copy locked path/git dependency sources into vendor/
 nomo deps clean-cache [path]      # remove the project or workspace git dependency cache
 ```
 
@@ -216,6 +217,13 @@ updates only the in-memory source used for lockfile generation, and never edits
 `nomo.toml`: registry dependencies use the precise value as `version`, git
 dependencies use it as `rev` with any branch/tag selector cleared, and path
 dependencies are rejected.
+`nomo deps vendor [path]` ensures a lockfile exists, copies locked `path` and
+`git` dependency sources into `vendor/`, and writes `vendor/nomo-vendor.toml`.
+`--dir <path>` selects a different output directory, and `--sync` removes the
+vendor directory before copying. Registry dependencies are recorded as skipped
+until registry archive fetching exists. Locked/offline project builds and checks
+fall back to the default `vendor/` directory when a locked path source or git
+cache checkout is missing.
 `nomo deps clean-cache [path]` removes the project or workspace
 `.nomo/deps/git` cache. The command is idempotent and does not remove
 `nomo.lock`, source files, or build artifacts.

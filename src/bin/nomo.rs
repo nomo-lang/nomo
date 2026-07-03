@@ -1,10 +1,11 @@
 use nomo::project::{
-    BuildError, DependencyResolutionOptions, DependencyUpdateOptions, build_project_with_options,
-    check_project, clean_dependency_cache, clean_project, create_project,
-    dependency_tree_with_options, discover_project, discover_workspace,
+    BuildError, DependencyResolutionOptions, DependencyUpdateOptions, DependencyVendorOptions,
+    build_project_with_options, check_project, clean_dependency_cache, clean_project,
+    create_project, dependency_tree_with_options, discover_project, discover_workspace,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
-    update_project_dependencies, update_workspace_dependencies,
+    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
+    vendor_workspace_dependencies,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -137,7 +138,7 @@ fn run() -> Result<(), String> {
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
                 return Err(
-                    "usage: nomo deps <resolve|tree|update|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+                    "usage: nomo deps <resolve|tree|update|vendor|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
                 );
             };
             match subcommand.as_str() {
@@ -191,6 +192,22 @@ fn run() -> Result<(), String> {
                     let project = discover_project(&path)?;
                     let lock = update_project_dependencies(&project, target.as_deref(), deps)?;
                     println!("updated {}", lock.display());
+                    Ok(())
+                }
+                "vendor" => {
+                    let (path, workspace, options) = parse_deps_vendor_args(
+                        rest.to_vec(),
+                        "usage: nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]",
+                    )?;
+                    if workspace {
+                        let workspace = discover_workspace(&path)?;
+                        let vendor = vendor_workspace_dependencies(&workspace, options)?;
+                        println!("vendored {}", vendor.display());
+                        return Ok(());
+                    }
+                    let project = discover_project(&path)?;
+                    let vendor = vendor_project_dependencies(&project, options)?;
+                    println!("vendored {}", vendor.display());
                     Ok(())
                 }
                 "clean-cache" => {
@@ -360,6 +377,44 @@ fn parse_deps_update_args(
     }
 }
 
+fn parse_deps_vendor_args(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, bool, DependencyVendorOptions), String> {
+    let mut workspace = false;
+    let mut options = DependencyVendorOptions::default();
+    let mut path = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if arg == "--workspace" {
+            workspace = true;
+        } else if arg == "--sync" {
+            options.sync = true;
+        } else if let Some(value) = arg.strip_prefix("--dir=") {
+            if value.is_empty() {
+                return Err("--dir requires a vendor directory".to_string());
+            }
+            options.dir = PathBuf::from(value);
+        } else if arg == "--dir" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--dir requires a vendor directory".to_string());
+            };
+            options.dir = PathBuf::from(value);
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err(usage.to_string());
+        }
+        index += 1;
+    }
+    Ok((
+        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+        workspace,
+        options,
+    ))
+}
+
 fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), String> {
     let current_dir = || env::current_dir().map_err(|err| err.to_string());
     let mut path = None;
@@ -495,6 +550,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

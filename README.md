@@ -280,6 +280,8 @@ The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
 early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 `None` early from the current `Option`-returning function.
+There is no `try` keyword or statement syntax in v0.1; postfix `?` is the
+only error/absence propagation syntax.
 
 ## Library crate
 

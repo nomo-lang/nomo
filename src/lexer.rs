@@ -593,6 +593,17 @@ mod tests {
     }
 
     #[test]
+    fn lexes_try_as_identifier_not_keyword() {
+        let tokens = lex(Path::new("main.nomo"), "fn try() -> void {}\n").unwrap();
+
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::Ident("try".to_string()))
+        );
+    }
+
+    #[test]
     fn lexes_return_and_plus() {
         let tokens = lex(Path::new("main.nomo"), "return a + b\n").unwrap();
 

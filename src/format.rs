@@ -1,6 +1,6 @@
 use crate::ast::{
     AssignOp, BinaryOp, ConstDef, EnumDef, Expr, Field, ForVariant, Function, ImplBlock, MatchArm,
-    MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
+    MatchStmtArm, Param, PostfixOp, SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
@@ -329,6 +329,9 @@ impl<'a> Formatter<'a> {
                     ),
                 );
             }
+            Stmt::Postfix { target, op, .. } => {
+                self.line(indent, &format!("{}{}", path(target), postfix_op(op)));
+            }
             Stmt::Return { value, .. } => match value {
                 Some(value) => self.line(indent, &format!("return {}", expr(value, indent, 0))),
                 None => self.line(indent, "return"),
@@ -576,6 +579,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
             }
             Stmt::Let { .. }
             | Stmt::Assign { .. }
+            | Stmt::Postfix { .. }
             | Stmt::Return { .. }
             | Stmt::Expr { .. }
             | Stmt::Break { .. }
@@ -591,6 +595,7 @@ fn stmt_span(stmt: &Stmt) -> &crate::ast::Span {
         | Stmt::LetElse { span, .. }
         | Stmt::IfLet { span, .. }
         | Stmt::Assign { span, .. }
+        | Stmt::Postfix { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Match { span, .. }
         | Stmt::Expr { span, .. }
@@ -843,6 +848,13 @@ fn assign_op(op: &AssignOp) -> &'static str {
     }
 }
 
+fn postfix_op(op: &PostfixOp) -> &'static str {
+    match op {
+        PostfixOp::Increment => "++",
+        PostfixOp::Decrement => "--",
+    }
+}
+
 fn pattern_with_binding(pattern: &[String], binding: Option<&str>) -> String {
     match binding {
         Some(binding) => format!("{}({binding})", path(pattern)),
@@ -937,6 +949,16 @@ mod tests {
         ] {
             assert!(formatted.contains(line), "{formatted}");
         }
+    }
+
+    #[test]
+    fn formats_postfix_update_operators() {
+        let source =
+            "package app.main\n\nfn main() -> void {\nlet mut value:i64=1\nvalue++\nvalue--\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert!(formatted.contains("value++"));
+        assert!(formatted.contains("value--"));
     }
 
     #[test]

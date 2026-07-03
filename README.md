@@ -80,9 +80,10 @@ instead of silently dropping comments.
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with
 short-circuit evaluation, bitwise operators (`&`, `|`, `^`, `&^`, `<<`, `>>`),
-plus equality and ordering comparisons. Statement-level compound assignment
-supports `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`, `|=`, and
-`&^=` for mutable variables and mutable struct fields. `%` and bitwise
+plus equality and ordering comparisons. Statement-level update operators include
+postfix `++`/`--` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`,
+`>>=`, `&=`, `^=`, `|=`, and `&^=` for mutable variables and mutable struct
+fields; they are not expressions and do not produce values. `%` and bitwise
 operators are restricted to integer operands; `/` works for integer and `f64`
 operands. Runtime divide-by-zero, overflow and invalid shift guards are still
 tracked as later full-scope safety work.

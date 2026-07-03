@@ -111,6 +111,11 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    Postfix {
+        target: Vec<String>,
+        op: PostfixOp,
+        span: Span,
+    },
     Return {
         value: Option<Expr>,
         span: Span,
@@ -154,6 +159,12 @@ pub enum AssignOp {
     BitXor,
     BitOr,
     BitAndNot,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum PostfixOp {
+    Increment,
+    Decrement,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

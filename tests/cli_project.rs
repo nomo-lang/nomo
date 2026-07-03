@@ -4499,12 +4499,12 @@ fn main() -> void {
 }
 
 #[test]
-fn nomoc_build_runs_compound_assignment_operators() {
-    let root = temp_test_root("compound-assignment");
+fn nomoc_build_runs_statement_update_operators() {
+    let root = temp_test_root("statement-update-operators");
     reset_dir(&root);
-    let source = root.join("compound.nomo");
-    let c_path = root.join("compound.c");
-    let bin_path = root.join("compound");
+    let source = root.join("statement-updates.nomo");
+    let c_path = root.join("statement-updates.c");
+    let bin_path = root.join("statement-updates");
     fs::write(
         &source,
         r#"package app.main
@@ -4528,12 +4528,16 @@ fn main() -> void {
     value |= 8
     value ^= 3
     value &^= 1
+    value++
+    value--
 
     let mut counter: Counter = Counter { value: 1 }
     counter.value += 2
+    counter.value++
+    counter.value--
 
     if value == 12 && counter.value == 3 {
-        io.println("compound ok")
+        io.println("statement updates ok")
     } else {
         io.println("wrong")
     }
@@ -4576,7 +4580,10 @@ fn main() -> void {
         String::from_utf8_lossy(&run_output.stdout),
         String::from_utf8_lossy(&run_output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&run_output.stdout), "compound ok\n");
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout),
+        "statement updates ok\n"
+    );
     assert!(
         String::from_utf8_lossy(&run_output.stderr).is_empty(),
         "{}",

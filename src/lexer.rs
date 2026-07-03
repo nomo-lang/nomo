@@ -63,7 +63,9 @@ pub enum TokenKind {
     Caret,
     CaretEqual,
     Plus,
+    PlusPlus,
     Minus,
+    MinusMinus,
     Star,
     Slash,
     Percent,
@@ -190,7 +192,10 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                 }
                 '+' => {
-                    if matches!(chars.peek(), Some((_, '='))) {
+                    if matches!(chars.peek(), Some((_, '+'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::PlusPlus, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
                         tokens.push(token(TokenKind::PlusEqual, line, column, line_text));
                     } else {
@@ -201,6 +206,9 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     if matches!(chars.peek(), Some((_, '>'))) {
                         chars.next();
                         tokens.push(token(TokenKind::Arrow, line, column, line_text));
+                    } else if matches!(chars.peek(), Some((_, '-'))) {
+                        chars.next();
+                        tokens.push(token(TokenKind::MinusMinus, line, column, line_text));
                     } else if matches!(chars.peek(), Some((_, '='))) {
                         chars.next();
                         tokens.push(token(TokenKind::MinusEqual, line, column, line_text));
@@ -653,6 +661,18 @@ mod tests {
                         == std::mem::discriminant(&kind))
             );
         }
+    }
+
+    #[test]
+    fn lexes_postfix_update_operators() {
+        let tokens = lex(Path::new("main.nomo"), "a++\na--\n").unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::PlusPlus));
+        assert!(
+            tokens
+                .iter()
+                .any(|token| token.kind == TokenKind::MinusMinus)
+        );
     }
 
     #[test]

@@ -1,6 +1,7 @@
 use crate::ast::{
     AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, Field, ForVariant, Function,
-    ImplBlock, MatchArm, MatchStmtArm, Param, SourceFile, Span, Stmt, StructDef, TypeRef,
+    ImplBlock, MatchArm, MatchStmtArm, Param, PostfixOp, SourceFile, Span, Stmt, StructDef,
+    TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -476,6 +477,13 @@ impl Parser<'_> {
         {
             return self.parse_assign_stmt(token);
         }
+        if matches!(token.kind, TokenKind::Ident(_))
+            && (postfix_op_from_token(&self.peek_n(1).kind).is_some()
+                || (matches!(self.peek_n(1).kind, TokenKind::Dot)
+                    && postfix_op_from_token(&self.peek_n(3).kind).is_some()))
+        {
+            return self.parse_postfix_stmt(token);
+        }
         Ok(Stmt::Expr {
             expr: self.parse_expr()?,
             span: Span {
@@ -509,6 +517,31 @@ impl Parser<'_> {
             target,
             op,
             value,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn parse_postfix_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        let target = self.parse_path()?;
+        if target.len() > 2 {
+            return Err(self.error(
+                "N0217",
+                "postfix update target must be a variable or field",
+                token.length(),
+            ));
+        }
+        let op = postfix_op_from_token(&self.peek().kind).ok_or_else(|| {
+            self.error("N0217", "expected postfix update operator", token.length())
+        })?;
+        self.advance();
+        Ok(Stmt::Postfix {
+            target,
+            op,
             span: Span {
                 line: token.line,
                 column: token.column,
@@ -1494,6 +1527,8 @@ impl Token {
             | TokenKind::StarEqual
             | TokenKind::SlashEqual
             | TokenKind::PercentEqual
+            | TokenKind::PlusPlus
+            | TokenKind::MinusMinus
             | TokenKind::AmpEqual
             | TokenKind::PipeEqual
             | TokenKind::CaretEqual
@@ -1537,6 +1572,14 @@ fn assign_op_from_token(kind: &TokenKind) -> Option<AssignOp> {
         TokenKind::CaretEqual => Some(AssignOp::BitXor),
         TokenKind::PipeEqual => Some(AssignOp::BitOr),
         TokenKind::AmpCaretEqual => Some(AssignOp::BitAndNot),
+        _ => None,
+    }
+}
+
+fn postfix_op_from_token(kind: &TokenKind) -> Option<PostfixOp> {
+    match kind {
+        TokenKind::PlusPlus => Some(PostfixOp::Increment),
+        TokenKind::MinusMinus => Some(PostfixOp::Decrement),
         _ => None,
     }
 }
@@ -1835,6 +1878,47 @@ mod tests {
                 ..
             } if target == &["counter".to_string(), "value".to_string()]
         ));
+    }
+
+    #[test]
+    fn parses_postfix_update_statement() {
+        let source =
+            "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    count++\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Postfix {
+                ref target,
+                op: PostfixOp::Increment,
+                ..
+            } if target == &["count".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_postfix_field_update_statement() {
+        let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value--\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[1],
+            Stmt::Postfix {
+                ref target,
+                op: PostfixOp::Decrement,
+                ..
+            } if target == &["counter".to_string(), "value".to_string()]
+        ));
+    }
+
+    #[test]
+    fn rejects_postfix_update_as_expression_value() {
+        let source = "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    let next: i64 = count++\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+
+        assert!(parse(Path::new("main.nomo"), &tokens).is_err());
     }
 
     #[test]

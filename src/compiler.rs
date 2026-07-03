@@ -1,6 +1,6 @@
 use crate::ast::{
     AssignOp, BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
-    Function as AstFunction, MatchArm as AstMatchArm, SourceFile, Span, Stmt,
+    Function as AstFunction, MatchArm as AstMatchArm, PostfixOp, SourceFile, Span, Stmt,
     StructDef as AstStructDef, TypeRef as AstTypeRef, UnaryOp as AstUnaryOp,
 };
 use crate::codegen;
@@ -1198,6 +1198,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::LetElse { span, .. }
         | Stmt::IfLet { span, .. }
         | Stmt::Assign { span, .. }
+        | Stmt::Postfix { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Match { span, .. }
         | Stmt::Expr { span, .. }
@@ -1320,7 +1321,10 @@ fn validate_stmt_type_imports(
         | Stmt::Expr { expr: value, span } => {
             validate_expr_type_imports(path, imports, value, span)
         }
-        Stmt::Return { value: None, .. } | Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
+        Stmt::Postfix { .. }
+        | Stmt::Return { value: None, .. }
+        | Stmt::Break { .. }
+        | Stmt::Continue { .. } => Ok(()),
         Stmt::Match { value, arms, span } => {
             validate_expr_type_imports(path, imports, value, span)?;
             for arm in arms {
@@ -2246,6 +2250,7 @@ fn collect_stmt_generic_function_instances(
         Stmt::Defer { stmt, .. } => collect_stmt_generic_function_instances(
             path, stmt, imports, signatures, structs, enums, out,
         ),
+        Stmt::Postfix { .. } => Ok(()),
         Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
     }
 }
@@ -2462,7 +2467,7 @@ fn stmt_uses_fs_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_fs_builtin(stmt),
-        Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
 
@@ -2502,7 +2507,7 @@ fn stmt_uses_env_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_env_builtin(stmt),
-        Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
 
@@ -2542,7 +2547,7 @@ fn stmt_uses_array_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_array_builtin(stmt),
-        Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
 
@@ -2744,7 +2749,7 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_core_prelude_variant(stmt, enum_name),
-        Stmt::Break { .. } | Stmt::Continue { .. } => false,
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
 
@@ -3297,6 +3302,9 @@ fn lower_stmt(
             span,
         } => lower_assign_stmt(
             path, target, *op, value, scope, imports, signatures, structs, enums, span,
+        ),
+        Stmt::Postfix { target, op, span } => lower_postfix_stmt(
+            path, target, *op, scope, imports, signatures, structs, enums, span,
         ),
         Stmt::Return { value, span } => lower_return_stmt(
             path,
@@ -6413,6 +6421,36 @@ fn lower_assign_stmt(
             &span.text,
         )),
     }
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_postfix_stmt(
+    path: &Path,
+    target: &[String],
+    op: PostfixOp,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<Statement, Diagnostic> {
+    let assign_op = match op {
+        PostfixOp::Increment => AssignOp::Add,
+        PostfixOp::Decrement => AssignOp::Subtract,
+    };
+    lower_assign_stmt(
+        path,
+        target,
+        assign_op,
+        &AstExpr::Int(1),
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        span,
+    )
 }
 
 fn compound_assign_value(target: &[String], op: AssignOp, value: &AstExpr) -> Option<AstExpr> {
@@ -12320,6 +12358,30 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_postfix_update_to_mut_variable() {
+        let source = r#"package app.main
+
+fn main() -> void {
+    let mut count: i64 = 1
+    count++
+    count--
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        for stmt in &main.body[1..] {
+            assert!(matches!(
+                stmt,
+                Statement::Assign {
+                    name,
+                    value: ValueExpr::Binary { .. },
+                } if name == "count"
+            ));
+        }
+    }
+
+    #[test]
     fn rejects_assignment_to_immutable_variable() {
         let source = r#"package app.main
 
@@ -12334,6 +12396,34 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "N0501");
+    }
+
+    #[test]
+    fn rejects_postfix_update_to_immutable_variable() {
+        let source = r#"package app.main
+
+fn main() -> void {
+    let count: i64 = 1
+    count++
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0501");
+    }
+
+    #[test]
+    fn rejects_postfix_update_to_non_numeric_variable() {
+        let source = r#"package app.main
+
+fn main() -> void {
+    let mut message: string = "hi"
+    message++
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "N0404");
     }
 
     #[test]
@@ -12503,6 +12593,36 @@ fn main() -> void {
     counter.value |= 8
     counter.value ^= 3
     counter.value &^= 1
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        for stmt in &main.body[1..] {
+            assert!(matches!(
+                stmt,
+                Statement::AssignField {
+                    base,
+                    field,
+                    value_type: ValueType::Int,
+                    value: ValueExpr::Binary { .. },
+                } if base == "counter" && field == "value"
+            ));
+        }
+    }
+
+    #[test]
+    fn accepts_postfix_update_to_mut_struct_field() {
+        let source = r#"package app.main
+
+struct Counter {
+    value: i64
+}
+
+fn main() -> void {
+    let mut counter: Counter = Counter { value: 7 }
+    counter.value++
+    counter.value--
 }
 "#;
 

@@ -46,12 +46,12 @@ cargo install --path .
 ```bash
 nomo new <name>                  # scaffold a new project (nomo.toml + src/main.nomo)
 nomo check [path] [--json-errors] [--workspace] # type-check one project or every workspace member
-nomo build [path] [--emit-c] [--json-errors] [--workspace] # compile one project or every workspace member
+nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo clean [path]                 # remove generated build artifacts
-nomo deps resolve [path] [--workspace] # resolve one package or the full workspace lockfile
-nomo deps tree [path] [--workspace] # print one package dependency tree or all workspace member trees
+nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
+nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
@@ -197,6 +197,12 @@ left for later versions. A dependency must specify exactly one source among
 `path`, `git`, and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
+`--locked` is accepted by `nomo build`, `nomo deps resolve`, and
+`nomo deps tree`; it requires an existing lockfile and rejects missing or
+out-of-date direct dependencies without rewriting `nomo.lock`. `--offline`
+prevents git fetch/clone and uses existing lockfiles or git cache checkouts;
+without a lockfile, uncached git dependencies fail instead of going to the
+network. `--frozen` is equivalent to `--locked --offline`.
 
 ## Using `nomoc` (compiler driver)
 

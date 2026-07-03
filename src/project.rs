@@ -26,6 +26,12 @@ pub struct ProjectModuleContext {
     pub external_modules: Vec<ExternalModule>,
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct DependencyResolutionOptions {
+    pub locked: bool,
+    pub offline: bool,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
     pub package: PackageMetadata,
@@ -239,34 +245,71 @@ pub fn parse_manifest_at_root(root: &Path) -> Result<Manifest, String> {
 }
 
 pub fn resolve_project_dependencies(project: &Project) -> Result<PathBuf, String> {
-    let graph = resolve_dependency_graph(&project.root)?;
-    let lock = render_lockfile(&graph);
+    resolve_project_dependencies_with_options(project, DependencyResolutionOptions::default())
+}
+
+pub fn resolve_project_dependencies_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+) -> Result<PathBuf, String> {
     let lock_path = project.lock_root().join("nomo.lock");
+    if options.locked {
+        validate_project_lock(project)?;
+        return Ok(lock_path);
+    }
+    let graph = resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?;
+    let lock = render_lockfile(&graph);
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)
 }
 
 pub fn resolve_workspace_dependencies(workspace: &WorkspaceGraph) -> Result<PathBuf, String> {
+    resolve_workspace_dependencies_with_options(workspace, DependencyResolutionOptions::default())
+}
+
+pub fn resolve_workspace_dependencies_with_options(
+    workspace: &WorkspaceGraph,
+    options: DependencyResolutionOptions,
+) -> Result<PathBuf, String> {
+    let lock_path = workspace.root.join("nomo.lock");
+    if options.locked {
+        for project in &workspace.members {
+            validate_project_lock(project)?;
+        }
+        return Ok(lock_path);
+    }
     let mut graphs = Vec::new();
     for project in &workspace.members {
         graphs.push(resolve_dependency_graph_for_lock(
             &project.root,
             Some(&workspace.root),
             Some(&workspace.root),
+            options.offline,
         )?);
     }
     let lock = render_workspace_lockfile(&graphs)?;
-    let lock_path = workspace.root.join("nomo.lock");
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)
 }
 
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
+    dependency_tree_with_options(project, DependencyResolutionOptions::default())
+}
+
+pub fn dependency_tree_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+) -> Result<String, String> {
     let lock_root = project.lock_root();
     let graph = if lock_root.join("nomo.lock").is_file() {
         dependency_graph_from_lockfile(&project.root, &lock_root)?
+    } else if options.locked {
+        return Err(format!(
+            "nomo.lock is required for locked mode at {}",
+            lock_root.join("nomo.lock").display()
+        ));
     } else {
-        resolve_dependency_graph(&project.root)?
+        resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?
     };
     Ok(render_dependency_tree(&graph))
 }
@@ -286,6 +329,23 @@ impl Project {
 }
 
 pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext, String> {
+    project_module_context_with_options(project, DependencyResolutionOptions::default())
+}
+
+pub fn project_module_context_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+) -> Result<ProjectModuleContext, String> {
+    if options.locked || (options.offline && project.lock_root().join("nomo.lock").is_file()) {
+        let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
+        validate_project_lock_direct_dependencies(project, &graph)?;
+        return project_module_context_from_resolved_dependencies(
+            project,
+            &graph.dependencies,
+            &source_base,
+        );
+    }
+
     let manifest = parse_manifest_at_root(&project.root)?;
     let mut aliases = Vec::new();
     let mut modules = Vec::new();
@@ -293,7 +353,8 @@ pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext,
         if dependency.alias == "std" {
             continue;
         }
-        if let Some(dep_root) = dependency_module_root(&project.root, &dependency)? {
+        if let Some(dep_root) = dependency_module_root(&project.root, &dependency, options.offline)?
+        {
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
                 source_root: dep_root.join("src"),
@@ -308,9 +369,33 @@ pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext,
     })
 }
 
+fn project_module_context_from_resolved_dependencies(
+    project: &Project,
+    dependencies: &[ResolvedDependency],
+    source_base: &Path,
+) -> Result<ProjectModuleContext, String> {
+    let mut aliases = Vec::new();
+    let mut modules = Vec::new();
+    for dependency in dependencies {
+        if let Some(dep_root) = resolved_dependency_module_root(source_base, dependency)? {
+            modules.push(ExternalModule {
+                import_root: dependency.alias.clone(),
+                source_root: dep_root.join("src"),
+            });
+        }
+        aliases.push(dependency.alias.clone());
+    }
+    Ok(ProjectModuleContext {
+        local_source_root: project.root.join("src"),
+        external_import_roots: aliases,
+        external_modules: modules,
+    })
+}
+
 fn dependency_module_root(
     base_root: &Path,
     dependency: &Dependency,
+    offline: bool,
 ) -> Result<Option<PathBuf>, String> {
     let dep_root = match &dependency.source {
         DependencySource::Path { path } => {
@@ -327,17 +412,70 @@ fn dependency_module_root(
             branch,
             tag,
             rev,
-        } => resolve_git_source(
-            base_root,
-            &dependency.alias,
-            git,
-            branch.as_deref(),
-            tag.as_deref(),
-            rev.as_deref(),
-        )?,
+        } => {
+            if offline {
+                resolve_git_source_offline(
+                    base_root,
+                    &dependency.alias,
+                    git,
+                    branch.as_deref(),
+                    tag.as_deref(),
+                    rev.as_deref(),
+                )?
+            } else {
+                resolve_git_source(
+                    base_root,
+                    &dependency.alias,
+                    git,
+                    branch.as_deref(),
+                    tag.as_deref(),
+                    rev.as_deref(),
+                )?
+            }
+        }
         DependencySource::Registry { .. } => return Ok(None),
     };
     validate_dependency_package(&dep_root, dependency)?;
+    Ok(Some(dep_root))
+}
+
+fn resolved_dependency_module_root(
+    source_base: &Path,
+    dependency: &ResolvedDependency,
+) -> Result<Option<PathBuf>, String> {
+    let dep_root = match &dependency.source {
+        DependencySource::Path { path } => {
+            let dep_root = source_base.join(path);
+            if !dep_root.exists() {
+                return Ok(None);
+            }
+            fs::canonicalize(&dep_root).map_err(|err| {
+                format!(
+                    "failed to resolve locked path dependency `{}` at {}: {err}",
+                    dependency.alias,
+                    source_base.join(path).display()
+                )
+            })?
+        }
+        DependencySource::Git { git, .. } => {
+            let Some(dep_root) = locked_git_root(source_base, dependency, git)? else {
+                return Ok(None);
+            };
+            dep_root
+        }
+        DependencySource::Registry { .. } => return Ok(None),
+    };
+    let dep_manifest = parse_manifest_at_root(&dep_root)?;
+    let actual_id = format!(
+        "{}/{}",
+        dep_manifest.package.namespace, dep_manifest.package.name
+    );
+    if actual_id != dependency.package {
+        return Err(format!(
+            "locked dependency `{}` expected package `{}`, found `{}`",
+            dependency.alias, dependency.package, actual_id
+        ));
+    }
     Ok(Some(dep_root))
 }
 
@@ -397,7 +535,16 @@ pub fn build_project_with_diagnostics(
     project: &Project,
     emit_c_only: bool,
 ) -> Result<PathBuf, BuildError> {
-    let context = project_module_context(project).map_err(BuildError::Message)?;
+    build_project_with_options(project, emit_c_only, DependencyResolutionOptions::default())
+}
+
+pub fn build_project_with_options(
+    project: &Project,
+    emit_c_only: bool,
+    options: DependencyResolutionOptions,
+) -> Result<PathBuf, BuildError> {
+    let context =
+        project_module_context_with_options(project, options).map_err(BuildError::Message)?;
     let c = compile_source_to_c_with_project_modules(
         &project.main,
         Some(&context.local_source_root),
@@ -1143,13 +1290,14 @@ fn optional_dependency_string(
 }
 
 fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
-    resolve_dependency_graph_for_lock(root, None, None)
+    resolve_dependency_graph_for_lock(root, None, None, false)
 }
 
 fn resolve_dependency_graph_for_lock(
     root: &Path,
     lock_source_base: Option<&Path>,
     git_cache_base: Option<&Path>,
+    offline: bool,
 ) -> Result<DependencyGraph, String> {
     let root = fs::canonicalize(root).map_err(|err| err.to_string())?;
     let lock_source_base = lock_source_base
@@ -1170,6 +1318,7 @@ fn resolve_dependency_graph_for_lock(
         &mut package_sources,
         lock_source_base.as_deref(),
         git_cache_base.as_deref(),
+        offline,
     )?;
     Ok(DependencyGraph {
         root: manifest.package,
@@ -1184,6 +1333,7 @@ fn resolve_dependencies(
     package_sources: &mut BTreeMap<String, DependencySource>,
     lock_source_base: Option<&Path>,
     git_cache_base: Option<&Path>,
+    offline: bool,
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
     for dependency in dependencies {
@@ -1223,6 +1373,7 @@ fn resolve_dependencies(
                     package_sources,
                     lock_source_base,
                     git_cache_base,
+                    offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 path_stack.pop();
@@ -1243,14 +1394,25 @@ fn resolve_dependencies(
                 tag,
                 rev,
             } => {
-                let dep_root = resolve_git_source(
-                    git_cache_base.unwrap_or(base_root),
-                    &dependency.alias,
-                    git,
-                    branch.as_deref(),
-                    tag.as_deref(),
-                    rev.as_deref(),
-                )?;
+                let dep_root = if offline {
+                    resolve_git_source_offline(
+                        git_cache_base.unwrap_or(base_root),
+                        &dependency.alias,
+                        git,
+                        branch.as_deref(),
+                        tag.as_deref(),
+                        rev.as_deref(),
+                    )?
+                } else {
+                    resolve_git_source(
+                        git_cache_base.unwrap_or(base_root),
+                        &dependency.alias,
+                        git,
+                        branch.as_deref(),
+                        tag.as_deref(),
+                        rev.as_deref(),
+                    )?
+                };
                 if path_stack.contains(&dep_root) {
                     return Err(format!(
                         "cyclic git dependency involving `{}` at {}",
@@ -1279,6 +1441,7 @@ fn resolve_dependencies(
                     package_sources,
                     lock_source_base,
                     git_cache_base,
+                    offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 path_stack.pop();
@@ -1476,6 +1639,27 @@ fn resolve_git_source(
     fs::canonicalize(&checkout).map_err(|err| err.to_string())
 }
 
+fn resolve_git_source_offline(
+    base_root: &Path,
+    alias: &str,
+    git: &str,
+    branch: Option<&str>,
+    tag: Option<&str>,
+    rev: Option<&str>,
+) -> Result<PathBuf, String> {
+    let checkout = base_root
+        .join(".nomo/deps/git")
+        .join(git_cache_key(alias, git, branch, tag, rev));
+    if checkout.exists() {
+        fs::canonicalize(&checkout).map_err(|err| err.to_string())
+    } else {
+        Err(format!(
+            "offline mode cannot fetch git dependency `{alias}` from {git}; missing cached checkout at {}",
+            checkout.display()
+        ))
+    }
+}
+
 fn git_head_rev(root: &Path) -> Result<String, String> {
     let output = Command::new("git")
         .arg("-C")
@@ -1576,8 +1760,28 @@ fn dependency_graph_from_lockfile(
     root: &Path,
     lock_root: &Path,
 ) -> Result<DependencyGraph, String> {
+    let (graph, _) = dependency_graph_and_source_base_from_lockfile(root, lock_root)?;
+    Ok(graph)
+}
+
+fn locked_dependency_graph_and_source_base(
+    project: &Project,
+) -> Result<(DependencyGraph, PathBuf), String> {
+    dependency_graph_and_source_base_from_lockfile(&project.root, &project.lock_root())
+}
+
+fn dependency_graph_and_source_base_from_lockfile(
+    root: &Path,
+    lock_root: &Path,
+) -> Result<(DependencyGraph, PathBuf), String> {
     let manifest = parse_manifest_at_root(root)?;
     let lock_path = lock_root.join("nomo.lock");
+    if !lock_path.is_file() {
+        return Err(format!(
+            "nomo.lock is required for locked mode at {}",
+            lock_path.display()
+        ));
+    }
     let text = fs::read_to_string(&lock_path).map_err(|err| err.to_string())?;
     let document = parse_lockfile_document(&text)?;
     let root_id = format!("{}/{}", manifest.package.namespace, manifest.package.name);
@@ -1619,10 +1823,94 @@ fn dependency_graph_from_lockfile(
     };
     let checksum_base = if has_workspace_roots { lock_root } else { root };
     verify_locked_source_checksums(checksum_base, &dependencies)?;
-    Ok(DependencyGraph {
-        root: manifest.package,
-        dependencies,
-    })
+    Ok((
+        DependencyGraph {
+            root: manifest.package,
+            dependencies,
+        },
+        checksum_base.to_path_buf(),
+    ))
+}
+
+fn validate_project_lock(project: &Project) -> Result<(), String> {
+    let (graph, _) = locked_dependency_graph_and_source_base(project)?;
+    validate_project_lock_direct_dependencies(project, &graph)
+}
+
+fn validate_project_lock_direct_dependencies(
+    project: &Project,
+    graph: &DependencyGraph,
+) -> Result<(), String> {
+    let manifest = parse_manifest_at_root(&project.root)?;
+    let locked_by_alias = graph
+        .dependencies
+        .iter()
+        .map(|dependency| (dependency.alias.as_str(), dependency))
+        .collect::<BTreeMap<_, _>>();
+    for dependency in manifest
+        .dependencies
+        .iter()
+        .filter(|dep| dep.alias != "std")
+    {
+        let locked = locked_by_alias
+            .get(dependency.alias.as_str())
+            .ok_or_else(|| {
+                format!(
+                    "nomo.lock is out of date: missing dependency `{}`",
+                    dependency.alias
+                )
+            })?;
+        if locked.package != dependency.package {
+            return Err(format!(
+                "nomo.lock is out of date: dependency `{}` expected package `{}`, found `{}`",
+                dependency.alias, dependency.package, locked.package
+            ));
+        }
+        validate_locked_source_matches_manifest(dependency, locked)?;
+    }
+    Ok(())
+}
+
+fn validate_locked_source_matches_manifest(
+    manifest: &Dependency,
+    locked: &ResolvedDependency,
+) -> Result<(), String> {
+    match (&manifest.source, &locked.source) {
+        (
+            DependencySource::Registry { version, registry },
+            DependencySource::Registry {
+                version: locked_version,
+                registry: locked_registry,
+            },
+        ) if version == locked_version && registry == locked_registry => Ok(()),
+        (DependencySource::Path { .. }, DependencySource::Path { .. }) => Ok(()),
+        (
+            DependencySource::Git {
+                git,
+                branch,
+                tag,
+                rev,
+            },
+            DependencySource::Git {
+                git: locked_git,
+                branch: locked_branch,
+                tag: locked_tag,
+                rev: locked_rev,
+            },
+        ) if git == locked_git
+            && branch == locked_branch
+            && tag == locked_tag
+            && rev
+                .as_ref()
+                .is_none_or(|rev| Some(rev) == locked_rev.as_ref()) =>
+        {
+            Ok(())
+        }
+        _ => Err(format!(
+            "nomo.lock is out of date: dependency `{}` source no longer matches manifest",
+            manifest.alias
+        )),
+    }
 }
 
 fn verify_locked_source_checksums(

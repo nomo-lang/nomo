@@ -1,7 +1,8 @@
 use nomo::project::{
-    BuildError, build_project_with_diagnostics, check_project, clean_project, create_project,
-    dependency_tree, discover_project, discover_workspace, resolve_project_dependencies,
-    resolve_workspace_dependencies, run_project_with_args_and_diagnostics,
+    BuildError, DependencyResolutionOptions, build_project_with_options, check_project,
+    clean_project, create_project, dependency_tree_with_options, discover_project,
+    discover_workspace, resolve_project_dependencies_with_options,
+    resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::{Diagnostic, format_source};
@@ -62,13 +63,13 @@ fn run() -> Result<(), String> {
             }
         }
         "build" => {
-            let (path, emit_c, json, workspace) = parse_path_emit_c_json_workspace(
+            let (path, emit_c, json, workspace, deps) = parse_build_args(
                 args,
-                "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace]",
+                "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
             )?;
             if workspace {
                 for project in discover_workspace(&path)?.members {
-                    let artifact = match build_project_with_diagnostics(&project, emit_c) {
+                    let artifact = match build_project_with_options(&project, emit_c, deps) {
                         Ok(artifact) => artifact,
                         Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
                         Err(err) => return Err(err.human()),
@@ -77,7 +78,7 @@ fn run() -> Result<(), String> {
                 }
             } else {
                 let project = discover_project(&path)?;
-                let artifact = match build_project_with_diagnostics(&project, emit_c) {
+                let artifact = match build_project_with_options(&project, emit_c, deps) {
                     Ok(artifact) => artifact,
                     Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
                     Err(err) => return Err(err.human()),
@@ -134,33 +135,37 @@ fn run() -> Result<(), String> {
         }
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
-                return Err("usage: nomo deps <resolve|tree> [path] [--workspace]".to_string());
+                return Err(
+                    "usage: nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+                );
             };
-            let (path, workspace) = parse_optional_path_and_workspace(
+            let (path, workspace, deps) = parse_deps_args(
                 rest.to_vec(),
-                &format!("usage: nomo deps {subcommand} [path] [--workspace]"),
+                &format!(
+                    "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                ),
             )?;
             match subcommand.as_str() {
                 "resolve" => {
                     if workspace {
                         let workspace = discover_workspace(&path)?;
-                        let lock = resolve_workspace_dependencies(&workspace)?;
+                        let lock = resolve_workspace_dependencies_with_options(&workspace, deps)?;
                         println!("resolved {}", lock.display());
                         return Ok(());
                     }
                     let project = discover_project(&path)?;
-                    let lock = resolve_project_dependencies(&project)?;
+                    let lock = resolve_project_dependencies_with_options(&project, deps)?;
                     println!("resolved {}", lock.display());
                     Ok(())
                 }
                 "tree" => {
                     if workspace {
                         for project in discover_workspace(&path)?.members {
-                            print!("{}", dependency_tree(&project)?);
+                            print!("{}", dependency_tree_with_options(&project, deps)?);
                         }
                     } else {
                         let project = discover_project(&path)?;
-                        print!("{}", dependency_tree(&project)?);
+                        print!("{}", dependency_tree_with_options(&project, deps)?);
                     }
                     Ok(())
                 }
@@ -200,13 +205,14 @@ fn parse_path_json_workspace(
     ))
 }
 
-fn parse_path_emit_c_json_workspace(
+fn parse_build_args(
     args: Vec<String>,
     usage: &str,
-) -> Result<(PathBuf, bool, bool, bool), String> {
+) -> Result<(PathBuf, bool, bool, bool, DependencyResolutionOptions), String> {
     let mut emit_c = false;
     let mut json = false;
     let mut workspace = false;
+    let mut deps = DependencyResolutionOptions::default();
     let mut path = None;
     for arg in args {
         if arg == "--emit-c" {
@@ -215,6 +221,13 @@ fn parse_path_emit_c_json_workspace(
             json = true;
         } else if arg == "--workspace" {
             workspace = true;
+        } else if arg == "--locked" {
+            deps.locked = true;
+        } else if arg == "--offline" {
+            deps.offline = true;
+        } else if arg == "--frozen" {
+            deps.locked = true;
+            deps.offline = true;
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
@@ -226,6 +239,7 @@ fn parse_path_emit_c_json_workspace(
         emit_c,
         json,
         workspace,
+        deps,
     ))
 }
 
@@ -237,15 +251,23 @@ fn parse_optional_path(args: Vec<String>, usage: &str) -> Result<PathBuf, String
     }
 }
 
-fn parse_optional_path_and_workspace(
+fn parse_deps_args(
     args: Vec<String>,
     usage: &str,
-) -> Result<(PathBuf, bool), String> {
+) -> Result<(PathBuf, bool, DependencyResolutionOptions), String> {
     let mut workspace = false;
+    let mut deps = DependencyResolutionOptions::default();
     let mut path = None;
     for arg in args {
         if arg == "--workspace" {
             workspace = true;
+        } else if arg == "--locked" {
+            deps.locked = true;
+        } else if arg == "--offline" {
+            deps.offline = true;
+        } else if arg == "--frozen" {
+            deps.locked = true;
+            deps.offline = true;
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
@@ -255,6 +277,7 @@ fn parse_optional_path_and_workspace(
     Ok((
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         workspace,
+        deps,
     ))
 }
 
@@ -393,6 +416,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n"
     );
 }

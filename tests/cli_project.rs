@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -1192,6 +1192,132 @@ fn nomo_deps_tree_reads_existing_lockfile() {
         String::from_utf8_lossy(&tree_output.stdout),
         "fynn/app 0.1.0\n+-- local_utils -> fynn/utils (path ../utils)\n    +-- cli -> nomo-lang/cli 0.2.1 (registry)\n"
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_locked_flags_require_and_validate_lockfile() {
+    let root = temp_test_root("locked-flags");
+    reset_dir(&root);
+    let app = root.join("app");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(
+        app.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
+    )
+    .unwrap();
+
+    let missing_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--locked")
+        .arg("--emit-c")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(!missing_build.status.success());
+    let stderr = String::from_utf8_lossy(&missing_build.stderr);
+    assert!(stderr.contains("nomo.lock is required"), "{stderr}");
+
+    let missing_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--locked")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(!missing_tree.status.success());
+    let stderr = String::from_utf8_lossy(&missing_tree.stderr);
+    assert!(stderr.contains("nomo.lock is required"), "{stderr}");
+
+    let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve_output.stderr)
+    );
+
+    let locked_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--locked")
+        .arg("--emit-c")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        locked_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_build.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&locked_build.stdout),
+        format!("built {}\n", app.join("build/c/main.c").display())
+    );
+
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.2.0\" }\n",
+    )
+    .unwrap();
+
+    let stale_resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--locked")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(!stale_resolve.status.success());
+    let stderr = String::from_utf8_lossy(&stale_resolve.stderr);
+    assert!(stderr.contains("nomo.lock is out of date"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_offline_resolve_rejects_uncached_git_dependency() {
+    let root = temp_test_root("offline-git-missing-cache");
+    reset_dir(&root);
+    let app = root.join("app");
+    let json = root.join("json");
+    let json_rev = init_git_package(&json, "nomo-lang", "json");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", rev = \"{}\" }}\n",
+            json.display(),
+            json_rev
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--offline")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("offline mode cannot fetch git dependency"),
+        "{stderr}"
+    );
+    assert!(!app.join("nomo.lock").exists());
 
     fs::remove_dir_all(&root).unwrap();
 }

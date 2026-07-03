@@ -3,7 +3,8 @@ use nomo::project::{
     clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
     discover_project, discover_workspace, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
-    run_standalone_script_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_diagnostics, update_project_dependencies,
+    update_workspace_dependencies,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -136,7 +137,7 @@ fn run() -> Result<(), String> {
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
                 return Err(
-                    "usage: nomo deps <resolve|tree|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+                    "usage: nomo deps <resolve|tree|update|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
                 );
             };
             match subcommand.as_str() {
@@ -173,6 +174,23 @@ fn run() -> Result<(), String> {
                         let project = discover_project(&path)?;
                         print!("{}", dependency_tree_with_options(&project, deps)?);
                     }
+                    Ok(())
+                }
+                "update" => {
+                    let (path, target, workspace, deps) = parse_deps_update_args(
+                        rest.to_vec(),
+                        "usage: nomo deps update [path] [alias-or-package] [--workspace] [--offline]",
+                    )?;
+                    if workspace {
+                        let workspace = discover_workspace(&path)?;
+                        let lock =
+                            update_workspace_dependencies(&workspace, target.as_deref(), deps)?;
+                        println!("updated {}", lock.display());
+                        return Ok(());
+                    }
+                    let project = discover_project(&path)?;
+                    let lock = update_project_dependencies(&project, target.as_deref(), deps)?;
+                    println!("updated {}", lock.display());
                     Ok(())
                 }
                 "clean-cache" => {
@@ -292,6 +310,43 @@ fn parse_deps_args(
         workspace,
         deps,
     ))
+}
+
+fn parse_deps_update_args(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, Option<String>, bool, DependencyResolutionOptions), String> {
+    let mut workspace = false;
+    let mut deps = DependencyResolutionOptions::default();
+    let mut values = Vec::new();
+    for arg in args {
+        if arg == "--workspace" {
+            workspace = true;
+        } else if arg == "--offline" {
+            deps.offline = true;
+        } else if arg == "--precise" || arg.starts_with("--precise=") {
+            return Err("nomo deps update --precise is not supported yet".to_string());
+        } else if arg == "--locked" || arg == "--frozen" {
+            return Err(format!("{arg} is not valid for nomo deps update"));
+        } else {
+            values.push(arg);
+        }
+    }
+
+    let current_dir = || env::current_dir().map_err(|err| err.to_string());
+    match values.as_slice() {
+        [] => Ok((current_dir()?, None, workspace, deps)),
+        [one] => {
+            let candidate = PathBuf::from(one);
+            if candidate.exists() {
+                Ok((candidate, None, workspace, deps))
+            } else {
+                Ok((current_dir()?, Some(one.clone()), workspace, deps))
+            }
+        }
+        [path, target] => Ok((PathBuf::from(path), Some(target.clone()), workspace, deps)),
+        _ => Err(usage.to_string()),
+    }
 }
 
 fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), String> {
@@ -429,6 +484,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline]\n  nomo deps clean-cache [path]\n"
     );
 }

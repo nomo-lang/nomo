@@ -292,6 +292,28 @@ pub fn resolve_workspace_dependencies_with_options(
     Ok(lock_path)
 }
 
+pub fn update_project_dependencies(
+    project: &Project,
+    target: Option<&str>,
+    options: DependencyResolutionOptions,
+) -> Result<PathBuf, String> {
+    if let Some(target) = target {
+        validate_project_update_target(project, target)?;
+    }
+    resolve_project_dependencies_with_options(project, options)
+}
+
+pub fn update_workspace_dependencies(
+    workspace: &WorkspaceGraph,
+    target: Option<&str>,
+    options: DependencyResolutionOptions,
+) -> Result<PathBuf, String> {
+    if let Some(target) = target {
+        validate_workspace_update_target(workspace, target)?;
+    }
+    resolve_workspace_dependencies_with_options(workspace, options)
+}
+
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
     dependency_tree_with_options(project, DependencyResolutionOptions::default())
 }
@@ -1304,6 +1326,47 @@ fn optional_dependency_string(
             .ok_or_else(|| format!("dependency `{alias}` field `{key}` must be a string")),
         None => Ok(None),
     }
+}
+
+fn validate_project_update_target(project: &Project, target: &str) -> Result<(), String> {
+    let manifest = parse_manifest_at_root(&project.root)?;
+    if manifest
+        .dependencies
+        .iter()
+        .any(|dependency| dependency.alias == target || dependency.package == target)
+    {
+        Ok(())
+    } else {
+        Err(format!(
+            "dependency update target `{target}` is not a direct dependency of {}/{}",
+            manifest.package.namespace, manifest.package.name
+        ))
+    }
+}
+
+fn validate_workspace_update_target(
+    workspace: &WorkspaceGraph,
+    target: &str,
+) -> Result<(), String> {
+    let mut package_ids = Vec::new();
+    for project in &workspace.members {
+        let manifest = parse_manifest_at_root(&project.root)?;
+        if manifest
+            .dependencies
+            .iter()
+            .any(|dependency| dependency.alias == target || dependency.package == target)
+        {
+            return Ok(());
+        }
+        package_ids.push(format!(
+            "{}/{}",
+            manifest.package.namespace, manifest.package.name
+        ));
+    }
+    Err(format!(
+        "dependency update target `{target}` is not a direct dependency of workspace members: {}",
+        package_ids.join(", ")
+    ))
 }
 
 fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {

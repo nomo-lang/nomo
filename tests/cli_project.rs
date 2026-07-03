@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -1030,6 +1030,115 @@ fn nomo_deps_resolve_reuses_git_cache_and_fetches_branch_updates() {
         !lockfile.contains(&format!("rev = \"{first_rev}\"")),
         "{lockfile}"
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_rewrites_git_branch_lockfile() {
+    let root = temp_test_root("deps-update-git-branch");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let json = root.join("json");
+    init_git_package(&json, "nomo-lang", "json");
+    run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
+    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
+    let first_rev = git_head_rev(&json);
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", branch = \"stable\" }}\n",
+            json.display()
+        ),
+    )
+    .unwrap();
+
+    let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve_output.stderr)
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(
+        lockfile.contains(&format!("rev = \"{first_rev}\"")),
+        "{lockfile}"
+    );
+
+    fs::write(
+        json.join("src/main.nomo"),
+        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+    )
+    .unwrap();
+    run_git(&json, &["add", "src/main.nomo"]);
+    run_git(&json, &["commit", "--quiet", "-m", "stable update"]);
+    let second_rev = git_head_rev(&json);
+    assert_ne!(first_rev, second_rev);
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("json")
+        .output()
+        .unwrap();
+    assert!(
+        update_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&update_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&update_output.stdout),
+        format!("updated {}\n", project.join("nomo.lock").display())
+    );
+    let updated_lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(
+        updated_lockfile.contains(&format!("rev = \"{second_rev}\"")),
+        "{updated_lockfile}"
+    );
+    assert!(
+        !updated_lockfile.contains(&format!("rev = \"{first_rev}\"")),
+        "{updated_lockfile}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_rejects_unknown_target() {
+    let root = temp_test_root("deps-update-unknown-target");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
+    )
+    .unwrap();
+
+    let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("missing")
+        .output()
+        .unwrap();
+
+    assert!(!update_output.status.success());
+    let stderr = String::from_utf8_lossy(&update_output.stderr);
+    assert!(stderr.contains("is not a direct dependency"), "{stderr}");
+    assert!(!project.join("nomo.lock").exists());
 
     fs::remove_dir_all(&root).unwrap();
 }

@@ -1,5 +1,6 @@
 use crate::compiler::{
-    ExternalModule, check_source_with_external_modules, compile_source_to_c_with_external_modules,
+    ExternalModule, check_source_text_with_project_modules,
+    compile_source_to_c_with_project_modules,
 };
 use crate::diagnostic::Diagnostic;
 use sha2::{Digest, Sha256};
@@ -14,6 +15,13 @@ pub struct Project {
     pub root: PathBuf,
     pub name: String,
     pub main: PathBuf,
+}
+
+#[derive(Debug, Clone)]
+pub struct ProjectModuleContext {
+    pub local_source_root: PathBuf,
+    pub external_import_roots: Vec<String>,
+    pub external_modules: Vec<ExternalModule>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -174,9 +182,7 @@ pub fn dependency_tree(project: &Project) -> Result<String, String> {
     Ok(render_dependency_tree(&graph))
 }
 
-fn dependency_aliases_and_modules(
-    project: &Project,
-) -> Result<(Vec<String>, Vec<ExternalModule>), String> {
+pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext, String> {
     let manifest = parse_manifest_at_root(&project.root)?;
     let mut aliases = Vec::new();
     let mut modules = Vec::new();
@@ -187,12 +193,16 @@ fn dependency_aliases_and_modules(
         if let Some(dep_root) = dependency_module_root(&project.root, &dependency)? {
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
-                source_path: dep_root.join("src/main.nomo"),
+                source_root: dep_root.join("src"),
             });
         }
         aliases.push(dependency.alias);
     }
-    Ok((aliases, modules))
+    Ok(ProjectModuleContext {
+        local_source_root: project.root.join("src"),
+        external_import_roots: aliases,
+        external_modules: modules,
+    })
 }
 
 fn dependency_module_root(
@@ -244,20 +254,36 @@ fn validate_dependency_package(dep_root: &Path, dependency: &Dependency) -> Resu
 }
 
 pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
-    let (external_import_roots, external_modules) = dependency_aliases_and_modules(project)
-        .map_err(|message| {
-            Diagnostic::new(
-                "N0901",
-                message,
-                &project.root.join("nomo.toml"),
-                1,
-                1,
-                1,
-                "",
-            )
-        })?;
-    check_source_with_external_modules(&project.main, &external_import_roots, &external_modules)
-        .map(|_| ())
+    let context = project_module_context(project).map_err(|message| {
+        Diagnostic::new(
+            "N0901",
+            message,
+            &project.root.join("nomo.toml"),
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let source = fs::read_to_string(&project.main).map_err(|err| {
+        Diagnostic::new(
+            "N0001",
+            format!("failed to read source file: {err}"),
+            &project.main,
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    check_source_text_with_project_modules(
+        &project.main,
+        &source,
+        Some(&context.local_source_root),
+        &context.external_import_roots,
+        &context.external_modules,
+    )
+    .map(|_| ())
 }
 
 pub fn build_project(project: &Project, emit_c_only: bool) -> Result<PathBuf, String> {
@@ -268,12 +294,12 @@ pub fn build_project_with_diagnostics(
     project: &Project,
     emit_c_only: bool,
 ) -> Result<PathBuf, BuildError> {
-    let (external_import_roots, external_modules) =
-        dependency_aliases_and_modules(project).map_err(BuildError::Message)?;
-    let c = compile_source_to_c_with_external_modules(
+    let context = project_module_context(project).map_err(BuildError::Message)?;
+    let c = compile_source_to_c_with_project_modules(
         &project.main,
-        &external_import_roots,
-        &external_modules,
+        Some(&context.local_source_root),
+        &context.external_import_roots,
+        &context.external_modules,
     )
     .map_err(BuildError::Diagnostic)?;
     let c_dir = project.root.join("build/c");

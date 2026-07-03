@@ -886,6 +886,272 @@ fn nomo_project_commands_accept_imports_from_dependency_aliases() {
 }
 
 #[test]
+fn nomo_project_commands_load_local_flat_module() {
+    let root = temp_test_root("local-flat-module");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.math
+
+fn main() -> void {
+    let total: i64 = add(40, 2)
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/math.nomo"),
+        r#"package app.math
+
+pub fn add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_load_local_directory_module() {
+    let root = temp_test_root("local-directory-module");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src/math")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.math
+
+fn main() -> void {
+    let total: i64 = add(1, 2)
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/math/main.nomo"),
+        r#"package app.math
+
+pub fn add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_reject_private_local_module_api() {
+    let root = temp_test_root("local-module-private-api");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.math
+
+fn main() -> void {
+    let total: i64 = hidden()
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/math.nomo"),
+        r#"package app.math
+
+fn hidden() -> i64 {
+    return 99
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("unknown function `hidden`"), "{stderr}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_reject_missing_local_module() {
+    let root = temp_test_root("local-module-missing");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.missing\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("N0903"), "{stderr}");
+    assert!(stderr.contains("app.missing"), "{stderr}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_reject_module_package_mismatch() {
+    let root = temp_test_root("local-module-package-mismatch");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.math\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(project.join("src/math.nomo"), "package app.other\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("N0904"), "{stderr}");
+    assert!(stderr.contains("app.math"), "{stderr}");
+    assert!(stderr.contains("app.other"), "{stderr}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_handle_local_module_import_cycles() {
+    let root = temp_test_root("local-module-cycle");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.a
+
+fn main() -> void {
+    let value: i64 = a()
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/a.nomo"),
+        r#"package app.a
+
+import app.b
+
+pub fn a() -> i64 {
+    return b()
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/b.nomo"),
+        r#"package app.b
+
+import app.a
+
+pub fn b() -> i64 {
+    return 42
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_project_commands_use_path_dependency_public_api() {
     let root = temp_test_root("path-dependency-public-api");
     reset_dir(&root);
@@ -980,6 +1246,79 @@ fn main() -> void {
     assert!(generated_c.contains("nomo_pkg_calc_main_struct_Pair"));
     assert!(!generated_c.contains("nomo_pkg_app_main_struct_Pair"));
 
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_use_path_dependency_module_public_api() {
+    let root = temp_test_root("path-dependency-module-public-api");
+    reset_dir(&root);
+    let dependency = root.join("utils");
+    let project = root.join("hello");
+    let source = project.join("src/main.nomo");
+    let c_path = project.join("build/c/main.c");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        dependency.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(
+        dependency.join("src/path.nomo"),
+        r#"package local_utils.path
+
+pub struct Segment {
+    value: i64
+}
+
+pub fn join(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+pub fn make_segment(value: i64) -> Segment {
+    return Segment { value: value }
+}
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        r#"package app.main
+
+import local_utils.path
+
+fn main() -> void {
+    let total: i64 = join(40, 2)
+    let segment: Segment = make_segment(total)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated_c = fs::read_to_string(c_path).unwrap();
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_struct_Segment"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_struct_Segment"));
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -1178,6 +1517,82 @@ fn main() -> void {
     assert!(generated_c.contains("nomo_pkg_calc_main_struct_Pair"));
     assert!(!generated_c.contains("nomo_pkg_app_main_struct_Pair"));
 
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_use_git_dependency_module_public_api() {
+    let root = temp_test_root("git-dependency-module-public-api");
+    reset_dir(&root);
+    let dependency = root.join("utils");
+    let project = root.join("hello");
+    let source = project.join("src/main.nomo");
+    let c_path = project.join("build/c/main.c");
+    fs::create_dir_all(dependency.join("src")).unwrap();
+    fs::write(
+        dependency.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(
+        dependency.join("src/path.nomo"),
+        r#"package local_utils.path
+
+pub fn join(a: i64, b: i64) -> i64 {
+    return a + b
+}
+"#,
+    )
+    .unwrap();
+    run_git(&dependency, &["init", "--quiet"]);
+    run_git(
+        &dependency,
+        &["config", "user.email", "nomo@example.invalid"],
+    );
+    run_git(&dependency, &["config", "user.name", "Nomo Test"]);
+    run_git(&dependency, &["add", "nomo.toml", "src"]);
+    run_git(&dependency, &["commit", "--quiet", "-m", "initial"]);
+    let utils_rev = git_head_rev(&dependency);
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = {{ package = \"fynn/utils\", git = \"{}\", rev = \"{}\" }}\n",
+            dependency.display(),
+            utils_rev
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        r#"package app.main
+
+import local_utils.path
+
+fn main() -> void {
+    let total: i64 = join(40, 2)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let generated_c = fs::read_to_string(c_path).unwrap();
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
     fs::remove_dir_all(&root).unwrap();
 }
 

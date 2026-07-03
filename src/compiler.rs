@@ -27,7 +27,7 @@ pub struct Program {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalModule {
     pub import_root: String,
-    pub source_path: PathBuf,
+    pub source_root: PathBuf,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -432,7 +432,13 @@ pub fn check_source_with_external_modules(
             "",
         )
     })?;
-    check_source_text_with_external_modules(path, &source, external_import_roots, external_modules)
+    check_source_text_with_project_modules(
+        path,
+        &source,
+        None,
+        external_import_roots,
+        external_modules,
+    )
 }
 
 pub fn check_source_text(path: &Path, source: &str) -> Result<Program, Diagnostic> {
@@ -453,10 +459,41 @@ pub fn check_source_text_with_external_modules(
     external_import_roots: &[String],
     external_modules: &[ExternalModule],
 ) -> Result<Program, Diagnostic> {
+    check_source_text_with_project_modules(
+        path,
+        source,
+        None,
+        external_import_roots,
+        external_modules,
+    )
+}
+
+pub fn check_source_text_with_project_modules(
+    path: &Path,
+    source: &str,
+    local_source_root: Option<&Path>,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<Program, Diagnostic> {
     let tokens = lexer::lex(path, source)?;
     let mut ast = parser::parse(path, &tokens)?;
-    merge_external_public_api(path, &mut ast, external_modules)?;
-    lower_program(path, ast, external_import_roots)
+    let local_import_root = local_source_root.and_then(|_| ast.package.first().cloned());
+    let mut visited = HashSet::new();
+    visited.insert(ast.package.clone());
+    merge_imported_public_api(
+        path,
+        &mut ast,
+        local_source_root,
+        local_import_root.as_deref(),
+        external_modules,
+        &mut visited,
+    )?;
+    lower_program(
+        path,
+        ast,
+        external_import_roots,
+        local_import_root.as_deref(),
+    )
 }
 
 pub fn compile_source_to_c(path: &Path) -> Result<String, Diagnostic> {
@@ -481,27 +518,71 @@ pub fn compile_source_to_c_with_external_modules(
     Ok(codegen::emit_c(&program))
 }
 
-fn merge_external_public_api(
+pub fn compile_source_to_c_with_project_modules(
+    path: &Path,
+    local_source_root: Option<&Path>,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+) -> Result<String, Diagnostic> {
+    let source = fs::read_to_string(path).map_err(|err| {
+        Diagnostic::new(
+            "N0001",
+            format!("failed to read source file: {err}"),
+            path,
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let program = check_source_text_with_project_modules(
+        path,
+        &source,
+        local_source_root,
+        external_import_roots,
+        external_modules,
+    )?;
+    Ok(codegen::emit_c(&program))
+}
+
+fn merge_imported_public_api(
     importer_path: &Path,
     ast: &mut SourceFile,
+    local_source_root: Option<&Path>,
+    local_import_root: Option<&str>,
     external_modules: &[ExternalModule],
+    visited: &mut HashSet<Vec<String>>,
 ) -> Result<(), Diagnostic> {
-    let active_roots = ast
-        .imports
-        .iter()
-        .filter_map(|import| import.first().cloned())
-        .collect::<HashSet<_>>();
-    for module in external_modules {
-        if !active_roots.contains(&module.import_root) {
+    let imports = ast.imports.clone();
+    for import in imports {
+        if import.first().is_some_and(|root| root == "std") {
             continue;
         }
-        let source = fs::read_to_string(&module.source_path).map_err(|err| {
+        let Some((source_root, module_path)) = resolve_imported_module(
+            importer_path,
+            &import,
+            local_source_root,
+            local_import_root,
+            external_modules,
+        )?
+        else {
+            continue;
+        };
+        let Some(source_path) = module_source_path(source_root, &module_path) else {
+            return Err(Diagnostic::new(
+                "N0903",
+                format!("could not find module `{}`", import.join(".")),
+                importer_path,
+                1,
+                1,
+                import.join(".").len().max(1),
+                import.join("."),
+            ));
+        };
+        let source = fs::read_to_string(&source_path).map_err(|err| {
             Diagnostic::new(
                 "N0902",
-                format!(
-                    "failed to read dependency source `{}`: {err}",
-                    module.source_path.display()
-                ),
+                format!("failed to read module `{}`: {err}", source_path.display()),
                 importer_path,
                 1,
                 1,
@@ -509,56 +590,140 @@ fn merge_external_public_api(
                 "",
             )
         })?;
-        let tokens = lexer::lex(&module.source_path, &source)?;
-        let module_ast = parser::parse(&module.source_path, &tokens)?;
-        let public_structs = module_ast
-            .structs
-            .iter()
-            .filter(|item| item.public)
-            .map(|item| item.name.clone())
-            .collect::<HashSet<_>>();
-
-        ast.imports.extend(module_ast.imports);
-        ast.structs
-            .extend(module_ast.structs.into_iter().filter(|item| item.public));
-        ast.enums
-            .extend(module_ast.enums.into_iter().filter(|item| item.public));
-        ast.consts
-            .extend(module_ast.consts.into_iter().filter(|item| item.public));
-        ast.functions.extend(
-            module_ast
-                .functions
-                .into_iter()
-                .filter(|item| item.public && item.name != "main"),
-        );
-        ast.impls
-            .extend(module_ast.impls.into_iter().filter_map(|mut item| {
-                let target = item.type_name.path.first()?;
-                if !public_structs.contains(target) {
-                    return None;
-                }
-                item.methods.retain(|method| method.public);
-                if item.methods.is_empty() {
-                    None
-                } else {
-                    Some(item)
-                }
-            }));
+        let tokens = lexer::lex(&source_path, &source)?;
+        let mut module_ast = parser::parse(&source_path, &tokens)?;
+        if module_ast.package != import {
+            return Err(Diagnostic::new(
+                "N0904",
+                format!(
+                    "module `{}` declares package `{}`",
+                    import.join("."),
+                    module_ast.package.join(".")
+                ),
+                &source_path,
+                1,
+                1,
+                module_ast.package.join(".").len().max(1),
+                module_ast.package.join("."),
+            ));
+        }
+        if !visited.insert(module_ast.package.clone()) {
+            continue;
+        }
+        merge_imported_public_api(
+            &source_path,
+            &mut module_ast,
+            local_source_root,
+            local_import_root,
+            external_modules,
+            visited,
+        )?;
+        merge_public_items(ast, module_ast);
     }
     Ok(())
+}
+
+fn resolve_imported_module<'a>(
+    importer_path: &Path,
+    import: &[String],
+    local_source_root: Option<&'a Path>,
+    local_import_root: Option<&str>,
+    external_modules: &'a [ExternalModule],
+) -> Result<Option<(&'a Path, Vec<String>)>, Diagnostic> {
+    let Some(import_root) = import.first() else {
+        return Ok(None);
+    };
+    if local_import_root.is_some_and(|root| root == import_root) {
+        let Some(source_root) = local_source_root else {
+            return Ok(None);
+        };
+        return Ok(Some((source_root, import[1..].to_vec())));
+    }
+    if let Some(module) = external_modules
+        .iter()
+        .find(|module| module.import_root == *import_root)
+    {
+        return Ok(Some((module.source_root.as_path(), import[1..].to_vec())));
+    }
+    if external_modules
+        .iter()
+        .any(|module| module.import_root == *import_root)
+    {
+        return Ok(None);
+    }
+    let _ = importer_path;
+    Ok(None)
+}
+
+fn module_source_path(source_root: &Path, module_path: &[String]) -> Option<PathBuf> {
+    if module_path.is_empty() || (module_path.len() == 1 && module_path[0] == "main") {
+        let main = source_root.join("main.nomo");
+        return main.is_file().then_some(main);
+    }
+    let mut flat = source_root.to_path_buf();
+    for segment in module_path {
+        flat.push(segment);
+    }
+    flat.set_extension("nomo");
+    if flat.is_file() {
+        return Some(flat);
+    }
+    let mut dir_main = source_root.to_path_buf();
+    for segment in module_path {
+        dir_main.push(segment);
+    }
+    dir_main.push("main.nomo");
+    dir_main.is_file().then_some(dir_main)
+}
+
+fn merge_public_items(ast: &mut SourceFile, module_ast: SourceFile) {
+    let public_structs = module_ast
+        .structs
+        .iter()
+        .filter(|item| item.public)
+        .map(|item| item.name.clone())
+        .collect::<HashSet<_>>();
+
+    ast.imports.extend(module_ast.imports);
+    ast.structs
+        .extend(module_ast.structs.into_iter().filter(|item| item.public));
+    ast.enums
+        .extend(module_ast.enums.into_iter().filter(|item| item.public));
+    ast.consts
+        .extend(module_ast.consts.into_iter().filter(|item| item.public));
+    ast.functions.extend(
+        module_ast
+            .functions
+            .into_iter()
+            .filter(|item| item.public && item.name != "main"),
+    );
+    ast.impls
+        .extend(module_ast.impls.into_iter().filter_map(|mut item| {
+            let target = item.type_name.path.first()?;
+            if !public_structs.contains(target) {
+                return None;
+            }
+            item.methods.retain(|method| method.public);
+            if item.methods.is_empty() {
+                None
+            } else {
+                Some(item)
+            }
+        }));
 }
 
 fn lower_program(
     path: &Path,
     ast: SourceFile,
     external_import_roots: &[String],
+    local_import_root: Option<&str>,
 ) -> Result<Program, Diagnostic> {
     let imports = ast
         .imports
         .iter()
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
-    validate_imports(path, &imports, external_import_roots)?;
+    validate_imports(path, &imports, external_import_roots, local_import_root)?;
     validate_standard_type_imports(path, &imports, &ast)?;
     let standard_type_needs = standard_type_needs(&imports, &ast);
     validate_standard_type_conflicts(path, standard_type_needs, &ast.structs, &ast.enums)?;
@@ -879,9 +1044,12 @@ fn validate_imports(
     path: &Path,
     imports: &[String],
     external_import_roots: &[String],
+    local_import_root: Option<&str>,
 ) -> Result<(), Diagnostic> {
     for import in imports {
-        if !is_supported_import(import, external_import_roots) {
+        let is_local_import = local_import_root
+            .is_some_and(|root| import.split('.').next().is_some_and(|item| item == root));
+        if !is_local_import && !is_supported_import(import, external_import_roots) {
             return Err(Diagnostic::new(
                 "N0301",
                 format!("unsupported import `{import}` in v0.1"),
@@ -9409,7 +9577,7 @@ mod tests {
         let path = Path::new("main.nomo");
         let tokens = lexer::lex(path, source)?;
         let ast = parser::parse(path, &tokens)?;
-        lower_program(path, ast, &[])
+        lower_program(path, ast, &[], None)
     }
 
     #[test]

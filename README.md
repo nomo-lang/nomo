@@ -101,13 +101,19 @@ import http.client
 
 Project commands (`nomo check`, `nomo build`, and `nomo run`) validate those
 aliases from `nomo.toml`, so `import json.parser` is accepted only when `json`
-is declared as a dependency alias. Imported `path` and `git` dependencies
-contribute the public API from their `src/main.nomo` to the current v0.1 compile
+is declared as a dependency alias. Project files can import sibling modules:
+`import app.util` resolves to `src/util.nomo`, falling back to
+`src/util/main.nomo`; `import app.main` resolves to `src/main.nomo`.
+Dependency modules use the same Flat+Dir lookup under the dependency `src/`
+directory, so `import local_utils.path` resolves to `src/path.nomo` or
+`src/path/main.nomo` in that dependency. Imported local modules and imported
+`path`/`git` dependencies contribute public API to the current v0.1 compile
 unit, so public functions, constants, structs, enums, and public methods can
-participate in type checking and generated C. Private dependency items are not
-exported. Generated C function and nominal type symbols use each item's source
-package path for mangling, so dependency APIs keep their dependency package
-identity instead of being emitted as part of the root application package.
+participate in type checking and generated C. Private dependency and module
+items are not exported. Generated C function and nominal type symbols use each
+item's source package path for mangling, so dependency APIs keep their
+dependency package identity instead of being emitted as part of the root
+application package.
 `nomoc` remains a standalone source-file driver and only accepts built-in
 `std.*` imports.
 

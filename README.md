@@ -288,6 +288,12 @@ only error/absence propagation syntax.
 `path.normalize`, and `path.is_absolute`. The v0.1 behavior uses POSIX-style
 `/` separators and does not query the host filesystem or resolve symlinks.
 
+`std.env` provides process environment helpers: `env.args`, `env.get`,
+`env.set`, `env.cwd`, `env.home_dir`, and `env.temp_dir`. `env.get` and
+`env.home_dir` return `Option<string>`; `env.cwd` and `env.temp_dir` return
+`string`; `env.set` mutates the current process environment and panics if the
+platform call fails.
+
 `std.math` provides numeric helpers: `math.abs`, `math.min`, and `math.max`
 operate on matching numeric types, while `math.floor`, `math.ceil`,
 `math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on

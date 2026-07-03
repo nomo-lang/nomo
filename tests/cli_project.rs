@@ -4949,6 +4949,94 @@ fn main() -> void {{
 }
 
 #[test]
+fn nomo_run_executes_extended_std_env_helpers() {
+    let root = temp_test_root("env-extended");
+    reset_dir(&root);
+    let project = root.join("env_extended");
+    let var_name = format!("NOMO_SET_ENV_{}", std::process::id());
+    let home_dir = root.join("home");
+    let temp_dir = root.join("tmp");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(&home_dir).unwrap();
+    fs::create_dir_all(&temp_dir).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"env_extended\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        format!(
+            r#"package app.main
+
+import std.env
+import std.io
+import std.option
+import std.string
+
+fn main() -> void {{
+    env.set("{}", "set ok")
+    let value: Option<string> = env.get("{}")
+    let label: string = match value {{
+        Some(text) => text
+        None => "missing"
+    }}
+    io.println(label)
+
+    let cwd_path: string = env.cwd()
+    if cwd_path.contains("env_extended") {{
+        io.println("cwd ok")
+    }} else {{
+        io.println("wrong cwd")
+    }}
+
+    let home: Option<string> = env.home_dir()
+    let home_label: string = match home {{
+        Some(path) => path
+        None => "missing home"
+    }}
+    io.println(home_label)
+    io.println(env.temp_dir())
+}}
+"#,
+            var_name, var_name
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("HOME", &home_dir)
+        .env("TMPDIR", &temp_dir)
+        .env_remove(&var_name)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!(
+            "set ok\ncwd ok\n{}\n{}\n",
+            home_dir.display(),
+            temp_dir.display()
+        )
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_forwards_program_arguments_after_separator() {
     let root = temp_test_root("run-args");
     reset_dir(&root);

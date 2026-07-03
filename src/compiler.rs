@@ -367,6 +367,13 @@ pub enum ValueExpr {
     EnvGet {
         name: Box<ValueExpr>,
     },
+    EnvSet {
+        name: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    EnvCwd,
+    EnvHomeDir,
+    EnvTempDir,
     EnvArgs,
     ArrayNew {
         element_type: ValueType,
@@ -1567,7 +1574,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs.open"
             | "std.env"
             | "std.env.args"
+            | "std.env.cwd"
             | "std.env.get"
+            | "std.env.home_dir"
+            | "std.env.set"
+            | "std.env.temp_dir"
             | "std.result"
             | "std.result.Result"
             | "std.result.map_err"
@@ -2723,9 +2734,7 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
 fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
     match expr {
         AstExpr::Call { callee, args, .. } => {
-            callee == &["env", "get"]
-                || callee == &["env", "args"]
-                || args.iter().any(expr_uses_env_builtin)
+            is_env_builtin_call(callee) || args.iter().any(expr_uses_env_builtin)
         }
         AstExpr::StructLiteral { fields, .. } => {
             fields.iter().any(|(_, value)| expr_uses_env_builtin(value))
@@ -2765,6 +2774,7 @@ fn expr_uses_array_builtin(expr: &AstExpr) -> bool {
         AstExpr::Call { callee, args, .. } => {
             callee == &["Array", "new"]
                 || (callee.len() == 2
+                    && !is_known_std_value_module(&callee[0])
                     && matches!(callee[1].as_str(), "len" | "get" | "push" | "set"))
                 || args.iter().any(expr_uses_array_builtin)
         }
@@ -2879,6 +2889,13 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
         Stmt::Defer { stmt, .. } => stmt_uses_core_prelude_variant(stmt, enum_name),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
+}
+
+fn is_known_std_value_module(name: &str) -> bool {
+    matches!(
+        name,
+        "io" | "fs" | "env" | "string" | "path" | "math" | "Array"
+    )
 }
 
 fn expr_uses_result_prelude_variant(expr: &AstExpr) -> bool {
@@ -3477,6 +3494,7 @@ fn lower_stmt(
             span,
         } if callee.len() == 2
             && (callee[1] == "push" || callee[1] == "set")
+            && !is_env_builtin_call(callee)
             && type_args.is_empty() =>
         {
             let lowered = lower_array_mutation(
@@ -7833,7 +7851,7 @@ fn lower_value_expr_with_expected(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
-            if callee == &["env", "get"] || callee == &["env", "args"] {
+            if is_env_builtin_call(callee) {
                 require_import(path, imports, span, "std.env", &callee.join("."))?;
                 if !type_args.is_empty() {
                     return Err(type_mismatch(
@@ -8764,6 +8782,84 @@ fn lower_env_builtin(
                 },
             ))
         }
+        [module, name] if module == "env" && name == "set" => {
+            let [name_arg, value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`env.set` expects exactly a name and value string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (name_type, lowered_name) = lower_value_expr(
+                path, name_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let (value_type, lowered_value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if name_type != ValueType::String || value_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`env.set` expects two string arguments",
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::EnvSet {
+                    name: Box::new(lowered_name),
+                    value: Box::new(lowered_value),
+                },
+            ))
+        }
+        [module, name] if module == "env" && name == "cwd" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`env.cwd` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((ValueType::String, ValueExpr::EnvCwd))
+        }
+        [module, name] if module == "env" && name == "home_dir" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`env.home_dir` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![ValueType::String]),
+                ValueExpr::EnvHomeDir,
+            ))
+        }
+        [module, name] if module == "env" && name == "temp_dir" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`env.temp_dir` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((ValueType::String, ValueExpr::EnvTempDir))
+        }
         [module, name] if module == "env" && name == "args" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
@@ -8783,6 +8879,18 @@ fn lower_env_builtin(
         }
         _ => unreachable!("env builtin dispatcher only passes known calls"),
     }
+}
+
+fn is_env_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "env"
+                && matches!(
+                    name.as_str(),
+                    "args" | "get" | "set" | "cwd" | "home_dir" | "temp_dir"
+                )
+    )
 }
 
 fn is_path_builtin_call(callee: &[String]) -> bool {
@@ -10460,6 +10568,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
+        "set" if imports.iter().any(|item| item == "std.env.set") => {
+            vec!["env".to_string(), "set".to_string()]
+        }
+        "cwd" if imports.iter().any(|item| item == "std.env.cwd") => {
+            vec!["env".to_string(), "cwd".to_string()]
+        }
+        "home_dir" if imports.iter().any(|item| item == "std.env.home_dir") => {
+            vec!["env".to_string(), "home_dir".to_string()]
+        }
+        "temp_dir" if imports.iter().any(|item| item == "std.env.temp_dir") => {
+            vec!["env".to_string(), "temp_dir".to_string()]
+        }
         "args" if imports.iter().any(|item| item == "std.env.args") => {
             vec!["env".to_string(), "args".to_string()]
         }
@@ -11793,17 +11913,74 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_extended_env_builtins() {
+        let source = r#"package app.main
+
+import std.env
+import std.io
+
+fn main() -> void {
+    env.set("NOMO_TEST_ENV", "value")
+    let cwd: string = env.cwd()
+    let home: Option<string> = env.home_dir()
+    let temp: string = env.temp_dir()
+    io.println(cwd)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Expr(ValueExpr::EnvSet { .. })
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::EnvCwd,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::EnvHomeDir,
+                ..
+            } if name == "Option" && args == &vec![ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::EnvTempDir,
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn accepts_specific_env_builtin_imports() {
         let source = r#"package app.main
 
 import std.env.args
+import std.env.cwd
 import std.env.get
+import std.env.home_dir
+import std.env.set
+import std.env.temp_dir
 import std.io
 import std.array
 
 fn main() -> void {
+    set("NOMO_TEST_ENV", "value")
     let values: Array<string> = args()
     let home: Option<string> = get("HOME")
+    let cwd_path: string = cwd()
+    let maybe_home: Option<string> = home_dir()
+    let temp_path: string = temp_dir()
     let message: string = match home {
         Option.Some(text) => text
         Option.None => "missing"
@@ -11817,6 +11994,10 @@ fn main() -> void {
         let main = program.functions.iter().find(|f| f.name == "main").unwrap();
         assert!(matches!(
             main.body[0],
+            Statement::Expr(ValueExpr::EnvSet { .. })
+        ));
+        assert!(matches!(
+            main.body[1],
             Statement::Let {
                 value_type: ValueType::Array(ref element),
                 initializer: ValueExpr::EnvArgs,
@@ -11824,12 +12005,36 @@ fn main() -> void {
             } if element.as_ref() == &ValueType::String
         ));
         assert!(matches!(
-            main.body[1],
+            main.body[2],
             Statement::Let {
                 value_type: ValueType::Enum(ref name, ref args),
                 initializer: ValueExpr::EnvGet { .. },
                 ..
             } if name == "Option" && args == &vec![ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::EnvCwd,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::EnvHomeDir,
+                ..
+            } if name == "Option" && args == &vec![ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::EnvTempDir,
+                ..
+            }
         ));
     }
 

@@ -205,6 +205,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         }
         "defer_question" => "defer before ? error\nfail\n",
         "enum_struct_payload" => "a@nomo.dev\n",
+        "env_extended" => "set ok\ncwd ok\nhome ok\ntemp ok\n",
         "env_get" => "env get ok\n",
         "file_handle" => "file handle ok\n",
         "generic_function" => "generic function ok\n",

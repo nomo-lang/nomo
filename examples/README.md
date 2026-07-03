@@ -14,6 +14,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `primitives`: fixed-width primitives, Unicode `char`, and explicit casts
 - `args`: `std.env.args()` and `Option<string>`
 - `env_get`: `std.env.get()` and `Option<string>`
+- `env_extended`: `std.env.set()`, `cwd()`, `home_dir()`, and `temp_dir()`
 - `read_file`: `std.fs` and `Result`
 - `file_handle`: `std.fs.open`, `File.close`, and `defer`
 - `result_chain`: `Result` with `?`

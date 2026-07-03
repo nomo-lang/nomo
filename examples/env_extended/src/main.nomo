@@ -1,0 +1,42 @@
+package app.main
+
+import std.env
+import std.io
+import std.option
+import std.string
+
+fn main() -> void {
+    env.set("NOMO_ENV_EXAMPLE", "set ok")
+    let value: Option<string> = env.get("NOMO_ENV_EXAMPLE")
+    let label: string = match value {
+        Some(text) => text
+        None => "wrong missing env"
+    }
+    io.println(label)
+
+    let cwd_path: string = env.cwd()
+    if cwd_path.contains("env_extended") {
+        io.println("cwd ok")
+    } else {
+        io.println("wrong cwd")
+    }
+
+    env.set("HOME", "/nomo/example/home")
+    let home: Option<string> = env.home_dir()
+    let home_label: string = match home {
+        Some(path) => path
+        None => "wrong missing home"
+    }
+    if home_label == "/nomo/example/home" {
+        io.println("home ok")
+    } else {
+        io.println("wrong home")
+    }
+
+    env.set("TMPDIR", "/nomo/example/tmp")
+    if env.temp_dir() == "/nomo/example/tmp" {
+        io.println("temp ok")
+    } else {
+        io.println("wrong temp")
+    }
+}

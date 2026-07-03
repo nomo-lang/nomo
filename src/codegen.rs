@@ -26,7 +26,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+        "#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#ifdef _WIN32\n#include <direct.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -98,6 +98,22 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_env_get(program) {
         emit_env_get_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_env_set(program) {
+        emit_env_set_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_env_cwd(program) {
+        emit_env_cwd_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_env_home_dir(program) {
+        emit_env_home_dir_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_env_temp_dir(program) {
+        emit_env_temp_dir_helper(&mut out);
         out.push('\n');
     }
 
@@ -1374,6 +1390,68 @@ fn emit_env_get_helper(out: &mut String) {
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Some"));
     out.push_str(" = nomo_string_from_cstr(value)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_env_set_helper(out: &mut String) {
+    out.push_str("static void nomo_env_set(nomo_string name, nomo_string value) {\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str(
+        "    if (_putenv_s(name.data, value.data) != 0) { nomo_panic(\"env.set failed\"); }\n",
+    );
+    out.push_str("#else\n");
+    out.push_str(
+        "    if (setenv(name.data, value.data, 1) != 0) { nomo_panic(\"env.set failed\"); }\n",
+    );
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+}
+
+fn emit_env_cwd_helper(out: &mut String) {
+    out.push_str("static nomo_string nomo_env_cwd(void) {\n");
+    out.push_str("    char buffer[PATH_MAX];\n");
+    out.push_str("    if (NOMO_GETCWD(buffer, sizeof(buffer)) == NULL) { nomo_panic(\"env.cwd failed\"); }\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
+}
+
+fn emit_env_home_dir_helper(out: &mut String) {
+    let result = c_enum_ident("Option", &[ValueType::String]);
+    let some = c_enum_variant_ident("Option", &[ValueType::String], "Some");
+    let none = c_enum_variant_ident("Option", &[ValueType::String], "None");
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_env_home_dir(void) {\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    const char *value = getenv(\"USERPROFILE\");\n");
+    out.push_str("    if (value == NULL) { value = getenv(\"HOME\"); }\n");
+    out.push_str("#else\n");
+    out.push_str("    const char *value = getenv(\"HOME\");\n");
+    out.push_str("#endif\n");
+    out.push_str("    if (value == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&none);
+    out.push_str("};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&some);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = nomo_string_from_cstr(value)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_env_temp_dir_helper(out: &mut String) {
+    out.push_str("static nomo_string nomo_env_temp_dir(void) {\n");
+    out.push_str("    const char *value = getenv(\"TMPDIR\");\n");
+    out.push_str("    if (value == NULL) { value = getenv(\"TEMP\"); }\n");
+    out.push_str("    if (value == NULL) { value = getenv(\"TMP\"); }\n");
+    out.push_str("    if (value == NULL) { value = \"/tmp\"; }\n");
+    out.push_str("    return nomo_string_from_cstr(value);\n");
     out.push_str("}\n");
 }
 
@@ -2966,6 +3044,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         ValueExpr::ArrayPush { value, .. } | ValueExpr::ArraySet { value, .. } => {
             expr_may_share_array_storage(value)
         }
+        ValueExpr::EnvSet { .. } => false,
         ValueExpr::ResultMapErr { result, .. } => expr_may_share_array_storage(result),
         ValueExpr::StructLiteral { fields, .. } => fields
             .iter()
@@ -2994,6 +3073,9 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::Panic { .. }
         | ValueExpr::MutBorrow(_)
         | ValueExpr::Call { .. }
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::EnvArgs
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::ArrayGet { .. }
@@ -3532,6 +3614,16 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, name);
             out.push(')');
         }
+        ValueExpr::EnvSet { name, value } => {
+            out.push_str("nomo_env_set(");
+            emit_expr(out, name);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::EnvCwd => out.push_str("nomo_env_cwd()"),
+        ValueExpr::EnvHomeDir => out.push_str("nomo_env_home_dir()"),
+        ValueExpr::EnvTempDir => out.push_str("nomo_env_temp_dir()"),
         ValueExpr::EnvArgs => out.push_str("nomo_env_args(nomo_argc, nomo_argv)"),
         ValueExpr::ArrayNew { element_type } if is_supported_array_element(element_type) => {
             out.push_str(&c_array_ident(element_type));
@@ -3824,6 +3916,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(path, out);
             collect_expr_result_map_err(content, out);
         }
+        ValueExpr::EnvSet { name, value } => {
+            collect_expr_result_map_err(name, out);
+            collect_expr_result_map_err(value, out);
+        }
         ValueExpr::Call { args, .. } => {
             for arg in args {
                 collect_expr_result_map_err(arg, out);
@@ -3872,6 +3968,9 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::EnvArgs
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::FieldAccess { .. } => {}
@@ -4171,6 +4270,11 @@ fn collect_expr_struct(
             collect_expr_struct(result, seen, out);
         }
         ValueExpr::EnvGet { name } => collect_expr_struct(name, seen, out),
+        ValueExpr::EnvSet { name, value } => {
+            collect_expr_struct(name, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => {}
         ValueExpr::EnvArgs => {}
         ValueExpr::ArrayNew { element_type } => collect_type_struct(element_type, seen, out),
         ValueExpr::ArrayLen { array } => collect_expr_struct(array, seen, out),
@@ -4609,6 +4713,14 @@ fn collect_expr_enum(
             push_enum_instance(seen, out, "Option", &[ValueType::String]);
             collect_expr_enum(name, seen, out);
         }
+        ValueExpr::EnvSet { name, value } => {
+            collect_expr_enum(name, seen, out);
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::EnvHomeDir => {
+            push_enum_instance(seen, out, "Option", &[ValueType::String]);
+        }
+        ValueExpr::EnvCwd | ValueExpr::EnvTempDir => {}
         ValueExpr::EnvArgs => {}
         ValueExpr::ArrayNew { .. } => {}
         ValueExpr::ArrayLen { array } => collect_expr_enum(array, seen, out),
@@ -4717,6 +4829,34 @@ fn uses_env_args(program: &Program) -> bool {
             .iter()
             .any(|statement| statement_uses_env_args(statement))
     })
+}
+
+fn uses_env_set(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| function.body.iter().any(statement_uses_env_set))
+}
+
+fn uses_env_cwd(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| function.body.iter().any(statement_uses_env_cwd))
+}
+
+fn uses_env_home_dir(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| function.body.iter().any(statement_uses_env_home_dir))
+}
+
+fn uses_env_temp_dir(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| function.body.iter().any(statement_uses_env_temp_dir))
 }
 
 fn collect_array_element_types(program: &Program) -> Vec<ValueType> {
@@ -4992,6 +5132,247 @@ fn statement_uses_fs_open(statement: &Statement) -> bool {
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,
     }
+}
+
+fn statement_uses_env_set(statement: &Statement) -> bool {
+    statement_contains_expr(statement, expr_is_env_set)
+}
+
+fn statement_uses_env_cwd(statement: &Statement) -> bool {
+    statement_contains_expr(statement, expr_is_env_cwd)
+}
+
+fn statement_uses_env_home_dir(statement: &Statement) -> bool {
+    statement_contains_expr(statement, expr_is_env_home_dir)
+}
+
+fn statement_uses_env_temp_dir(statement: &Statement) -> bool {
+    statement_contains_expr(statement, expr_is_env_temp_dir)
+}
+
+fn statement_contains_expr(statement: &Statement, predicate: fn(&ValueExpr) -> bool) -> bool {
+    match statement {
+        Statement::Let { initializer, .. } => expr_contains(initializer, predicate),
+        Statement::LetIf {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_contains(condition, predicate)
+                || body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+                || else_body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+        }
+        Statement::LetMatch { value, arms, .. } => {
+            expr_contains(value, predicate)
+                || arms.iter().any(|arm| {
+                    arm.body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+                })
+        }
+        Statement::QuestionLet { result_expr, .. }
+        | Statement::QuestionReturnOk { result_expr, .. } => expr_contains(result_expr, predicate),
+        Statement::LetElse {
+            value, else_body, ..
+        } => {
+            expr_contains(value, predicate)
+                || else_body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+        }
+        Statement::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_contains(value, predicate)
+                || body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+                || else_body.as_ref().is_some_and(|else_body| {
+                    else_body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+                })
+        }
+        Statement::If {
+            condition,
+            body,
+            else_body,
+        } => {
+            expr_contains(condition, predicate)
+                || body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+                || else_body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+        }
+        Statement::Assign { value, .. }
+        | Statement::AssignField { value, .. }
+        | Statement::Println(value)
+        | Statement::Eprintln(value)
+        | Statement::Panic(value)
+        | Statement::Expr(value)
+        | Statement::Return(Some(value)) => expr_contains(value, predicate),
+        Statement::Loop { kind, body } => match kind {
+            LoopKind::Infinite => body
+                .iter()
+                .any(|statement| statement_contains_expr(statement, predicate)),
+            LoopKind::While(condition) => {
+                expr_contains(condition, predicate)
+                    || body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+            }
+            LoopKind::Iterate { iterable, .. } => {
+                expr_contains(iterable, predicate)
+                    || body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+            }
+        },
+        Statement::Match { value, arms, .. } => {
+            expr_contains(value, predicate)
+                || arms.iter().any(|arm| {
+                    arm.body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+                })
+        }
+        Statement::Defer { call } => deferred_contains_expr(call, predicate),
+        Statement::Break | Statement::Continue | Statement::Return(None) => false,
+    }
+}
+
+fn deferred_contains_expr(call: &DeferredCall, predicate: fn(&ValueExpr) -> bool) -> bool {
+    match call {
+        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+            expr_contains(expr, predicate)
+        }
+    }
+}
+
+fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
+    if predicate(expr) {
+        return true;
+    }
+    match expr {
+        ValueExpr::Binary { left, right, .. }
+        | ValueExpr::StringCompare { left, right, .. }
+        | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
+            expr_contains(left, predicate) || expr_contains(right, predicate)
+        }
+        ValueExpr::FsWriteString { path, content } => {
+            expr_contains(path, predicate) || expr_contains(content, predicate)
+        }
+        ValueExpr::EnvSet { name, value } => {
+            expr_contains(name, predicate) || expr_contains(value, predicate)
+        }
+        ValueExpr::Call { args, .. } => args.iter().any(|arg| expr_contains(arg, predicate)),
+        ValueExpr::ArrayGet { array, index, .. } => {
+            expr_contains(array, predicate) || expr_contains(index, predicate)
+        }
+        ValueExpr::ArraySet { index, value, .. } => {
+            expr_contains(index, predicate) || expr_contains(value, predicate)
+        }
+        ValueExpr::ArrayPush { value, .. } => expr_contains(value, predicate),
+        ValueExpr::FsReadToString { path }
+        | ValueExpr::FsOpen { path }
+        | ValueExpr::FileClose { file: path }
+        | ValueExpr::EnvGet { name: path }
+        | ValueExpr::StringLen { value: path }
+        | ValueExpr::StringIsEmpty { value: path }
+        | ValueExpr::StringTrim { value: path }
+        | ValueExpr::StringToLower { value: path }
+        | ValueExpr::StringToUpper { value: path }
+        | ValueExpr::PathBasename { path }
+        | ValueExpr::PathDirname { path }
+        | ValueExpr::PathExtension { path }
+        | ValueExpr::PathNormalize { path }
+        | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::Unary { expr: path, .. }
+        | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::EnumPayload { value: path, .. }
+        | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
+        | ValueExpr::ArrayLen { array: path } => expr_contains(path, predicate),
+        ValueExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_contains(value, predicate)),
+        ValueExpr::EnumVariant { payload, .. } => payload
+            .as_ref()
+            .is_some_and(|payload| expr_contains(payload, predicate)),
+        ValueExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_contains(condition, predicate)
+                || expr_contains(then_branch, predicate)
+                || expr_contains(else_branch, predicate)
+        }
+        ValueExpr::Panic { message, .. } => expr_contains(message, predicate),
+        ValueExpr::Match { value, arms } => {
+            expr_contains(value, predicate)
+                || arms.iter().any(|arm| expr_contains(&arm.value, predicate))
+        }
+        ValueExpr::ResultMapErr { result, .. } => expr_contains(result, predicate),
+        ValueExpr::StringLiteral(_)
+        | ValueExpr::IntLiteral(_)
+        | ValueExpr::FloatLiteral(_)
+        | ValueExpr::CharLiteral(_)
+        | ValueExpr::BoolLiteral(_)
+        | ValueExpr::VoidLiteral
+        | ValueExpr::Variable(_)
+        | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvArgs
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
+        | ValueExpr::ArrayNew { .. }
+        | ValueExpr::FieldAccess { .. } => false,
+    }
+}
+
+fn expr_is_env_set(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::EnvSet { .. })
+}
+
+fn expr_is_env_cwd(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::EnvCwd)
+}
+
+fn expr_is_env_home_dir(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::EnvHomeDir)
+}
+
+fn expr_is_env_temp_dir(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::EnvTempDir)
 }
 
 fn statement_uses_env_get(statement: &Statement) -> bool {
@@ -5390,6 +5771,9 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(content)
         }
+        ValueExpr::EnvSet { name, value } => {
+            expr_uses_fs_read_to_string(name) || expr_uses_fs_read_to_string(value)
+        }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
             expr_uses_fs_read_to_string(path)
         }
@@ -5450,6 +5834,9 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_read_to_string(value),
     }
@@ -5482,6 +5869,9 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
         }
         ValueExpr::FsReadToString { path } => expr_uses_fs_write_string(path),
+        ValueExpr::EnvSet { name, value } => {
+            expr_uses_fs_write_string(name) || expr_uses_fs_write_string(value)
+        }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
             expr_uses_fs_write_string(path)
         }
@@ -5540,6 +5930,9 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_write_string(value),
     }
@@ -5584,7 +5977,9 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_open(path) || expr_uses_fs_open(content)
         }
+        ValueExpr::EnvSet { name, value } => expr_uses_fs_open(name) || expr_uses_fs_open(value),
         ValueExpr::EnvArgs => false,
+        ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_open(array) || expr_uses_fs_open(index)
@@ -5668,6 +6063,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
         }
+        ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
         ValueExpr::ResultMapErr { result, .. } => expr_uses_env_get(result),
         ValueExpr::EnvArgs => false,
@@ -5715,6 +6111,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::FieldAccess { .. } => false,
     }
 }
@@ -5760,6 +6159,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_args(path) || expr_uses_env_args(content)
         }
+        ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_args(array) || expr_uses_env_args(index)
         }
@@ -5805,6 +6205,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::FieldAccess { .. } => false,
     }
 }
@@ -5877,6 +6280,10 @@ fn collect_expr_array_elements(
             collect_expr_array_elements(path, seen, out);
             collect_expr_array_elements(content, seen, out);
         }
+        ValueExpr::EnvSet { name, value } => {
+            collect_expr_array_elements(name, seen, out);
+            collect_expr_array_elements(value, seen, out);
+        }
         ValueExpr::Call { args, .. } => {
             for arg in args {
                 collect_expr_array_elements(arg, seen, out);
@@ -5927,6 +6334,9 @@ fn collect_expr_array_elements(
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
         | ValueExpr::FieldAccess { .. } => {}
     }
 }

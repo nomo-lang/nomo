@@ -591,6 +591,21 @@ pub fn clean_project(project: &Project) -> Result<PathBuf, String> {
     Ok(build_dir)
 }
 
+pub fn clean_dependency_cache(path: &Path) -> Result<PathBuf, String> {
+    let root = match discover_project(path) {
+        Ok(project) => project.lock_root(),
+        Err(project_err) => match discover_workspace(path) {
+            Ok(workspace) => workspace.root,
+            Err(_) => return Err(project_err),
+        },
+    };
+    let cache_dir = root.join(".nomo/deps/git");
+    if cache_dir.exists() {
+        fs::remove_dir_all(&cache_dir).map_err(|err| err.to_string())?;
+    }
+    Ok(cache_dir)
+}
+
 pub fn run_project(project: &Project) -> Result<i32, String> {
     run_project_with_args(project, &[])
 }

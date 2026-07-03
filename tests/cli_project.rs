@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -1029,6 +1029,76 @@ fn nomo_deps_resolve_reuses_git_cache_and_fetches_branch_updates() {
     assert!(
         !lockfile.contains(&format!("rev = \"{first_rev}\"")),
         "{lockfile}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_clean_cache_removes_git_cache() {
+    let root = temp_test_root("deps-clean-cache");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let json = root.join("json");
+    let json_rev = init_git_package(&json, "nomo-lang", "json");
+
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", git = \"{}\", rev = \"{}\" }}\n",
+            json.display(),
+            json_rev
+        ),
+    )
+    .unwrap();
+
+    let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve_output.stderr)
+    );
+    let cache_root = project.join(".nomo/deps/git");
+    assert!(cache_root.exists());
+
+    let clean_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("clean-cache")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        clean_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&clean_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&clean_output.stdout),
+        format!("cleaned {}\n", cache_root.display())
+    );
+    assert!(!cache_root.exists());
+
+    let second_clean = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("clean-cache")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        second_clean.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second_clean.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&second_clean.stdout),
+        format!("cleaned {}\n", cache_root.display())
     );
 
     fs::remove_dir_all(&root).unwrap();

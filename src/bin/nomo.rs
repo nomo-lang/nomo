@@ -1,7 +1,7 @@
 use nomo::project::{
     BuildError, DependencyResolutionOptions, build_project_with_options, check_project,
-    clean_project, create_project, dependency_tree_with_options, discover_project,
-    discover_workspace, resolve_project_dependencies_with_options,
+    clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
+    discover_project, discover_workspace, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
 };
@@ -136,17 +136,17 @@ fn run() -> Result<(), String> {
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
                 return Err(
-                    "usage: nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+                    "usage: nomo deps <resolve|tree|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
                 );
             };
-            let (path, workspace, deps) = parse_deps_args(
-                rest.to_vec(),
-                &format!(
-                    "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
-                ),
-            )?;
             match subcommand.as_str() {
                 "resolve" => {
+                    let (path, workspace, deps) = parse_deps_args(
+                        rest.to_vec(),
+                        &format!(
+                            "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                        ),
+                    )?;
                     if workspace {
                         let workspace = discover_workspace(&path)?;
                         let lock = resolve_workspace_dependencies_with_options(&workspace, deps)?;
@@ -159,6 +159,12 @@ fn run() -> Result<(), String> {
                     Ok(())
                 }
                 "tree" => {
+                    let (path, workspace, deps) = parse_deps_args(
+                        rest.to_vec(),
+                        &format!(
+                            "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                        ),
+                    )?;
                     if workspace {
                         for project in discover_workspace(&path)?.members {
                             print!("{}", dependency_tree_with_options(&project, deps)?);
@@ -167,6 +173,13 @@ fn run() -> Result<(), String> {
                         let project = discover_project(&path)?;
                         print!("{}", dependency_tree_with_options(&project, deps)?);
                     }
+                    Ok(())
+                }
+                "clean-cache" => {
+                    let path =
+                        parse_optional_path(rest.to_vec(), "usage: nomo deps clean-cache [path]")?;
+                    let cleaned = clean_dependency_cache(&path)?;
+                    println!("cleaned {}", cleaned.display());
                     Ok(())
                 }
                 other => Err(format!("unknown deps command `{other}`")),
@@ -416,6 +429,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps clean-cache [path]\n"
     );
 }

@@ -52,6 +52,7 @@ nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one 
 nomo clean [path]                 # remove generated build artifacts
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
+nomo deps clean-cache [path]      # remove the project or workspace git dependency cache
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
@@ -205,6 +206,9 @@ out-of-date direct dependencies without rewriting `nomo.lock`. `--offline`
 prevents git fetch/clone and uses existing lockfiles or git cache checkouts;
 without a lockfile, uncached git dependencies fail instead of going to the
 network. `--frozen` is equivalent to `--locked --offline`.
+`nomo deps clean-cache [path]` removes the project or workspace
+`.nomo/deps/git` cache. The command is idempotent and does not remove
+`nomo.lock`, source files, or build artifacts.
 
 ## Using `nomoc` (compiler driver)
 

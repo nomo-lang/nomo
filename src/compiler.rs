@@ -475,6 +475,24 @@ pub fn check_source_text_with_project_modules(
     external_import_roots: &[String],
     external_modules: &[ExternalModule],
 ) -> Result<Program, Diagnostic> {
+    check_source_text_with_project_modules_and_overrides(
+        path,
+        source,
+        local_source_root,
+        external_import_roots,
+        external_modules,
+        &[],
+    )
+}
+
+pub fn check_source_text_with_project_modules_and_overrides(
+    path: &Path,
+    source: &str,
+    local_source_root: Option<&Path>,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+    module_source_overrides: &[(PathBuf, String)],
+) -> Result<Program, Diagnostic> {
     let tokens = lexer::lex(path, source)?;
     let mut ast = parser::parse(path, &tokens)?;
     let local_import_root = local_source_root.and_then(|_| ast.package.first().cloned());
@@ -486,6 +504,7 @@ pub fn check_source_text_with_project_modules(
         local_source_root,
         local_import_root.as_deref(),
         external_modules,
+        module_source_overrides,
         &mut visited,
     )?;
     lower_program(
@@ -551,6 +570,7 @@ fn merge_imported_public_api(
     local_source_root: Option<&Path>,
     local_import_root: Option<&str>,
     external_modules: &[ExternalModule],
+    module_source_overrides: &[(PathBuf, String)],
     visited: &mut HashSet<Vec<String>>,
 ) -> Result<(), Diagnostic> {
     let imports = ast.imports.clone();
@@ -579,17 +599,24 @@ fn merge_imported_public_api(
                 import.join("."),
             ));
         };
-        let source = fs::read_to_string(&source_path).map_err(|err| {
-            Diagnostic::new(
-                "N0902",
-                format!("failed to read module `{}`: {err}", source_path.display()),
-                importer_path,
-                1,
-                1,
-                1,
-                "",
-            )
-        })?;
+        let source_override = module_source_overrides
+            .iter()
+            .find(|(path, _)| path == &source_path)
+            .map(|(_, source)| source.as_str());
+        let source = match source_override {
+            Some(source) => source.to_string(),
+            None => fs::read_to_string(&source_path).map_err(|err| {
+                Diagnostic::new(
+                    "N0902",
+                    format!("failed to read module `{}`: {err}", source_path.display()),
+                    importer_path,
+                    1,
+                    1,
+                    1,
+                    "",
+                )
+            })?,
+        };
         let tokens = lexer::lex(&source_path, &source)?;
         let mut module_ast = parser::parse(&source_path, &tokens)?;
         if module_ast.package != import {
@@ -616,6 +643,7 @@ fn merge_imported_public_api(
             local_source_root,
             local_import_root,
             external_modules,
+            module_source_overrides,
             visited,
         )?;
         merge_public_items(ast, module_ast);

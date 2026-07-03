@@ -693,7 +693,7 @@ fn expr(value: &Expr, indent: usize, parent_precedence: u8) -> String {
             else_branch,
         } => if_expr(condition, then_branch, else_branch, indent),
         Expr::Panic { message } => format!("panic({})", expr(message, indent, 0)),
-        Expr::Try { expr: inner } => format!("{}?", expr(inner, indent, precedence)),
+        Expr::Question { expr: inner } => format!("{}?", expr(inner, indent, precedence)),
         Expr::MutArg { name } => format!("mut {}", path(name)),
         Expr::Cast {
             expr: inner,
@@ -769,7 +769,7 @@ fn expr_precedence(value: &Expr) -> u8 {
         Expr::Binary { op, .. } => binary_precedence(op),
         Expr::Cast { .. } => 7,
         Expr::Unary { .. } => 8,
-        Expr::Try { .. } => 9,
+        Expr::Question { .. } => 9,
         Expr::Call { .. }
         | Expr::StructLiteral { .. }
         | Expr::Panic { .. }

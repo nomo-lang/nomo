@@ -1469,7 +1469,7 @@ fn emit_deferred_call(out: &mut String, indent: usize, call: &DeferredCall) {
 
 fn statement_exits_function(statement: &Statement) -> bool {
     match statement {
-        Statement::Return(_) | Statement::TryReturnOk { .. } | Statement::Panic(_) => true,
+        Statement::Return(_) | Statement::QuestionReturnOk { .. } | Statement::Panic(_) => true,
         Statement::Match { arms, .. } => arms.iter().all(|arm| statements_exit_function(&arm.body)),
         Statement::If {
             body, else_body, ..
@@ -1490,7 +1490,7 @@ fn statements_exit_function(statements: &[Statement]) -> bool {
 fn statement_exits_block(statement: &Statement) -> bool {
     match statement {
         Statement::Return(_)
-        | Statement::TryReturnOk { .. }
+        | Statement::QuestionReturnOk { .. }
         | Statement::Panic(_)
         | Statement::Break
         | Statement::Continue => true,
@@ -1647,14 +1647,14 @@ fn emit_stmt(
             break_cleanup_start,
             continue_cleanup_start,
         ),
-        Statement::TryLet {
+        Statement::QuestionLet {
             carrier,
             name,
             value_type,
             result_type,
             return_type,
             result_expr,
-        } => emit_try_let(
+        } => emit_question_let(
             out,
             *carrier,
             name,
@@ -1666,12 +1666,12 @@ fn emit_stmt(
             deferred,
             active_arrays,
         ),
-        Statement::TryReturnOk {
+        Statement::QuestionReturnOk {
             ok_type,
             result_type,
             return_type,
             result_expr,
-        } => emit_try_return_ok(
+        } => emit_question_return_ok(
             out,
             ok_type,
             result_type,
@@ -2494,7 +2494,7 @@ fn local_array_from_statement(statement: &Statement) -> Option<LocalArray> {
         | Statement::LetMatch {
             name, value_type, ..
         }
-        | Statement::TryLet {
+        | Statement::QuestionLet {
             name, value_type, ..
         } => local_array(name, value_type),
         Statement::LetElse {
@@ -2716,7 +2716,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
     }
 }
 
-fn emit_try_let(
+fn emit_question_let(
     out: &mut String,
     carrier: QuestionCarrier,
     name: &str,
@@ -2759,7 +2759,7 @@ fn emit_try_let(
         _ => (result_name, result_args),
     };
     out.push_str(&c_enum_ident(return_name, return_args));
-    out.push_str(" nomo__try_return = (");
+    out.push_str(" nomo__question_return = (");
     out.push_str(&c_enum_ident(return_name, return_args));
     out.push_str("){.tag = ");
     out.push_str(&c_enum_variant_ident(
@@ -2780,12 +2780,12 @@ fn emit_try_let(
         && expr_may_share_array_storage(result_expr)
         && value_type_needs_release(return_type)
     {
-        emit_value_retain_in_place(out, return_type, "nomo__try_return", indent + 1);
+        emit_value_retain_in_place(out, return_type, "nomo__question_return", indent + 1);
     }
     emit_deferred(out, indent + 1, deferred);
     emit_array_releases(out, indent + 1, active_arrays);
     write_indent(out, indent + 1);
-    out.push_str("return nomo__try_return;\n");
+    out.push_str("return nomo__question_return;\n");
     write_indent(out, indent);
     out.push_str("}\n");
     write_indent(out, indent);
@@ -2802,7 +2802,7 @@ fn emit_try_let(
     }
 }
 
-fn emit_try_return_ok(
+fn emit_question_return_ok(
     out: &mut String,
     ok_type: &ValueType,
     result_type: &ValueType,
@@ -2816,7 +2816,7 @@ fn emit_try_return_ok(
     out.push_str("{\n");
     write_indent(out, indent + 1);
     out.push_str(&c_type(result_type));
-    out.push_str(" nomo__try_result = ");
+    out.push_str(" nomo__question_result = ");
     emit_expr(out, result_expr);
     out.push_str(";\n");
     let ValueType::Enum(result_name, result_args) = result_type else {
@@ -2829,32 +2829,32 @@ fn emit_try_return_ok(
         _ => (result_name, result_args),
     };
     write_indent(out, indent + 1);
-    out.push_str("if (nomo__try_result.tag == ");
+    out.push_str("if (nomo__question_result.tag == ");
     out.push_str(&c_enum_variant_ident(result_name, result_args, "Err"));
     out.push_str(") {\n");
     write_indent(out, indent + 2);
     out.push_str(&c_enum_ident(return_name, return_args));
-    out.push_str(" nomo__try_return = (");
+    out.push_str(" nomo__question_return = (");
     out.push_str(&c_enum_ident(return_name, return_args));
     out.push_str("){.tag = ");
     out.push_str(&c_enum_variant_ident(return_name, return_args, "Err"));
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Err"));
-    out.push_str(" = nomo__try_result.payload.");
+    out.push_str(" = nomo__question_result.payload.");
     out.push_str(&c_payload_ident("Err"));
     out.push_str("};\n");
     if expr_may_share_array_storage(result_expr) && value_type_needs_release(return_type) {
-        emit_value_retain_in_place(out, return_type, "nomo__try_return", indent + 2);
+        emit_value_retain_in_place(out, return_type, "nomo__question_return", indent + 2);
     }
     emit_deferred(out, indent + 2, deferred);
     emit_array_releases(out, indent + 2, active_arrays);
     write_indent(out, indent + 2);
-    out.push_str("return nomo__try_return;\n");
+    out.push_str("return nomo__question_return;\n");
     write_indent(out, indent + 1);
     out.push_str("}\n");
     write_indent(out, indent + 1);
     out.push_str(&c_type(ok_type));
-    out.push_str(" nomo__try_ok = nomo__try_result.payload.");
+    out.push_str(" nomo__question_ok = nomo__question_result.payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(";\n");
     write_indent(out, indent + 1);
@@ -2865,7 +2865,7 @@ fn emit_try_return_ok(
     out.push_str(&c_enum_variant_ident(return_name, return_args, "Ok"));
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Ok"));
-    out.push_str(" = nomo__try_ok};\n");
+    out.push_str(" = nomo__question_ok};\n");
     if expr_may_share_array_storage(result_expr) && value_type_needs_release(return_type) {
         emit_value_retain_in_place(out, return_type, "nomo__return", indent + 1);
     }
@@ -3259,11 +3259,11 @@ fn collect_result_map_err_instances(program: &Program) -> Vec<ResultMapErrInstan
 fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErrInstance>) {
     match statement {
         Statement::Let { initializer, .. }
-        | Statement::TryLet {
+        | Statement::QuestionLet {
             result_expr: initializer,
             ..
         }
-        | Statement::TryReturnOk {
+        | Statement::QuestionReturnOk {
             result_expr: initializer,
             ..
         }
@@ -3530,7 +3530,7 @@ fn collect_stmt_struct(
                 }
             }
         }
-        Statement::TryLet {
+        Statement::QuestionLet {
             value_type,
             result_type,
             return_type,
@@ -3542,7 +3542,7 @@ fn collect_stmt_struct(
             collect_type_struct(return_type, seen, out);
             collect_expr_struct(result_expr, seen, out);
         }
-        Statement::TryReturnOk {
+        Statement::QuestionReturnOk {
             ok_type,
             result_type,
             return_type,
@@ -3899,7 +3899,7 @@ fn collect_stmt_enum(
                 }
             }
         }
-        Statement::TryLet {
+        Statement::QuestionLet {
             value_type,
             result_type,
             return_type,
@@ -3911,7 +3911,7 @@ fn collect_stmt_enum(
             collect_type_enum(return_type, seen, out);
             collect_expr_enum(result_expr, seen, out);
         }
-        Statement::TryReturnOk {
+        Statement::QuestionReturnOk {
             ok_type,
             result_type,
             return_type,
@@ -4319,8 +4319,8 @@ fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_read_to_string))
         }
-        Statement::TryLet { result_expr, .. } => expr_uses_fs_read_to_string(result_expr),
-        Statement::TryReturnOk { result_expr, .. } => expr_uses_fs_read_to_string(result_expr),
+        Statement::QuestionLet { result_expr, .. } => expr_uses_fs_read_to_string(result_expr),
+        Statement::QuestionReturnOk { result_expr, .. } => expr_uses_fs_read_to_string(result_expr),
         Statement::LetElse {
             value, else_body, ..
         } => {
@@ -4397,8 +4397,8 @@ fn statement_uses_fs_write_string(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_write_string))
         }
-        Statement::TryLet { result_expr, .. } => expr_uses_fs_write_string(result_expr),
-        Statement::TryReturnOk { result_expr, .. } => expr_uses_fs_write_string(result_expr),
+        Statement::QuestionLet { result_expr, .. } => expr_uses_fs_write_string(result_expr),
+        Statement::QuestionReturnOk { result_expr, .. } => expr_uses_fs_write_string(result_expr),
         Statement::LetElse {
             value, else_body, ..
         } => {
@@ -4474,8 +4474,8 @@ fn statement_uses_fs_open(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_open))
         }
-        Statement::TryLet { result_expr, .. } => expr_uses_fs_open(result_expr),
-        Statement::TryReturnOk { result_expr, .. } => expr_uses_fs_open(result_expr),
+        Statement::QuestionLet { result_expr, .. } => expr_uses_fs_open(result_expr),
+        Statement::QuestionReturnOk { result_expr, .. } => expr_uses_fs_open(result_expr),
         Statement::LetElse {
             value, else_body, ..
         } => expr_uses_fs_open(value) || else_body.iter().any(statement_uses_fs_open),
@@ -4547,8 +4547,8 @@ fn statement_uses_env_get(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_env_get))
         }
-        Statement::TryLet { result_expr, .. } => expr_uses_env_get(result_expr),
-        Statement::TryReturnOk { result_expr, .. } => expr_uses_env_get(result_expr),
+        Statement::QuestionLet { result_expr, .. } => expr_uses_env_get(result_expr),
+        Statement::QuestionReturnOk { result_expr, .. } => expr_uses_env_get(result_expr),
         Statement::LetElse {
             value, else_body, ..
         } => expr_uses_env_get(value) || else_body.iter().any(statement_uses_env_get),
@@ -4620,8 +4620,8 @@ fn statement_uses_env_args(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_env_args))
         }
-        Statement::TryLet { result_expr, .. } => expr_uses_env_args(result_expr),
-        Statement::TryReturnOk { result_expr, .. } => expr_uses_env_args(result_expr),
+        Statement::QuestionLet { result_expr, .. } => expr_uses_env_args(result_expr),
+        Statement::QuestionReturnOk { result_expr, .. } => expr_uses_env_args(result_expr),
         Statement::LetElse {
             value, else_body, ..
         } => expr_uses_env_args(value) || else_body.iter().any(statement_uses_env_args),
@@ -4722,7 +4722,7 @@ fn collect_statement_array_elements(
                 }
             }
         }
-        Statement::TryLet {
+        Statement::QuestionLet {
             value_type,
             result_type,
             return_type,
@@ -4734,7 +4734,7 @@ fn collect_statement_array_elements(
             collect_type_array_elements(return_type, seen, out);
             collect_expr_array_elements(result_expr, seen, out);
         }
-        Statement::TryReturnOk {
+        Statement::QuestionReturnOk {
             ok_type,
             result_type,
             return_type,
@@ -6707,7 +6707,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_array_releases_before_return_and_try_error_exit() {
+    fn emits_array_releases_before_return_and_question_error_exit() {
         let array_i32 = ValueType::Array(Box::new(ValueType::I32));
         let result_i32_string = ValueType::Enum(
             "Result".to_string(),
@@ -6776,7 +6776,7 @@ mod tests {
                                 element_type: ValueType::I32,
                             },
                         },
-                        Statement::TryLet {
+                        Statement::QuestionLet {
                             carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: ValueType::I32,
@@ -6812,16 +6812,18 @@ mod tests {
         };
 
         let c = emit_c(&program);
-        let try_error = c.find("if (nomo_value_result.tag").unwrap();
-        let try_temp = c[try_error..]
-            .find("nomo_enum_Result_i32_string nomo__try_return =")
+        let question_error = c.find("if (nomo_value_result.tag").unwrap();
+        let question_temp = c[question_error..]
+            .find("nomo_enum_Result_i32_string nomo__question_return =")
             .unwrap();
-        let release_in_error = c[try_error..]
+        let release_in_error = c[question_error..]
             .find("nomo_array_i32_release(nomo_items);")
             .unwrap();
-        let try_return = c[try_error..].find("return nomo__try_return;").unwrap();
-        assert!(try_temp < release_in_error);
-        assert!(release_in_error < try_return);
+        let question_return = c[question_error..]
+            .find("return nomo__question_return;")
+            .unwrap();
+        assert!(question_temp < release_in_error);
+        assert!(release_in_error < question_return);
         let ok_return = c.rfind("return nomo__return;").unwrap();
         let release_before_ok = c[..ok_return]
             .rfind("nomo_array_i32_release(nomo_items);")
@@ -6830,7 +6832,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_try_return_ok_with_cleanup_on_error_and_success() {
+    fn emits_question_return_ok_with_cleanup_on_error_and_success() {
         let array_i32 = ValueType::Array(Box::new(ValueType::I32));
         let result_i32_string = ValueType::Enum(
             "Result".to_string(),
@@ -6899,7 +6901,7 @@ mod tests {
                                 element_type: ValueType::I32,
                             },
                         },
-                        Statement::TryReturnOk {
+                        Statement::QuestionReturnOk {
                             ok_type: ValueType::I32,
                             result_type: result_i32_string.clone(),
                             return_type: result_i32_string,
@@ -6921,28 +6923,30 @@ mod tests {
         };
 
         let c = emit_c(&program);
-        let try_result = c.find("nomo__try_result = nomo_fn_parse();").unwrap();
-        let error_branch = c[try_result..]
-            .find("if (nomo__try_result.tag == nomo_enum_Result_i32_string_Err)")
+        let question_result = c.find("nomo__question_result = nomo_fn_parse();").unwrap();
+        let error_branch = c[question_result..]
+            .find("if (nomo__question_result.tag == nomo_enum_Result_i32_string_Err)")
             .unwrap();
-        let try_return = c[try_result..].find("return nomo__try_return;").unwrap();
-        let error_release = c[try_result..try_result + try_return]
+        let question_return = c[question_result..]
+            .find("return nomo__question_return;")
+            .unwrap();
+        let error_release = c[question_result..question_result + question_return]
             .find("nomo_array_i32_release(nomo_items);")
             .unwrap();
         assert!(error_branch < error_release);
 
-        let ok_temp = c[try_result..]
-            .find("int32_t nomo__try_ok = nomo__try_result.payload.nomo_payload_Ok;")
+        let ok_temp = c[question_result..]
+            .find("int32_t nomo__question_ok = nomo__question_result.payload.nomo_payload_Ok;")
             .unwrap();
-        let ok_return = c[try_result..].find("return nomo__return;").unwrap();
-        let success_release = c[try_result + ok_temp..try_result + ok_return]
+        let ok_return = c[question_result..].find("return nomo__return;").unwrap();
+        let success_release = c[question_result + ok_temp..question_result + ok_return]
             .find("nomo_array_i32_release(nomo_items);")
             .unwrap();
         assert!(success_release < ok_return - ok_temp);
     }
 
     #[test]
-    fn try_let_retains_managed_payloads_when_result_expr_is_shared() {
+    fn question_let_retains_managed_payloads_when_result_expr_is_shared() {
         let array_i32 = ValueType::Array(Box::new(ValueType::I32));
         let result_array_array = ValueType::Enum(
             "Result".to_string(),
@@ -7009,7 +7013,7 @@ mod tests {
                                 payload: Some(Box::new(ValueExpr::Variable("items".to_string()))),
                             },
                         },
-                        Statement::TryLet {
+                        Statement::QuestionLet {
                             carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: array_i32.clone(),
@@ -7037,18 +7041,20 @@ mod tests {
 
         let c = emit_c(&program);
         assert!(c.contains("nomo_enum_Result_array_i32_array_i32 nomo_value_result = nomo_raw;"));
-        let try_error = c.find("if (nomo_value_result.tag").unwrap();
-        let try_return_retain = c[try_error..]
+        let question_error = c.find("if (nomo_value_result.tag").unwrap();
+        let question_return_retain = c[question_error..]
             .find(
-                "nomo__try_return = nomo_enum_Result_array_i32_array_i32_retain(nomo__try_return);",
+                "nomo__question_return = nomo_enum_Result_array_i32_array_i32_retain(nomo__question_return);",
             )
             .unwrap();
-        let raw_release = c[try_error..]
+        let raw_release = c[question_error..]
             .find("nomo_enum_Result_array_i32_array_i32_release(nomo_raw);")
             .unwrap();
-        let try_return = c[try_error..].find("return nomo__try_return;").unwrap();
-        assert!(try_return_retain < raw_release);
-        assert!(raw_release < try_return);
+        let question_return = c[question_error..]
+            .find("return nomo__question_return;")
+            .unwrap();
+        assert!(question_return_retain < raw_release);
+        assert!(raw_release < question_return);
         assert!(c.contains("nomo_value = nomo_array_i32_retain(nomo_value);"));
     }
 
@@ -9186,7 +9192,7 @@ mod tests {
     }
 
     #[test]
-    fn emits_result_try_let_early_return() {
+    fn emits_result_question_let_early_return() {
         let result_i64_string = ValueType::Enum(
             "Result".to_string(),
             vec![ValueType::Int, ValueType::String],
@@ -9230,7 +9236,7 @@ mod tests {
                     params: Vec::new(),
                     return_type: result_i64_string.clone(),
                     body: vec![
-                        Statement::TryLet {
+                        Statement::QuestionLet {
                             carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: ValueType::Int,
@@ -9270,9 +9276,9 @@ mod tests {
         assert!(c.contains("nomo_enum_Result_i64_string nomo_value_result = nomo_fn_parse();"));
         assert!(c.contains("if (nomo_value_result.tag == nomo_enum_Result_i64_string_Err) {"));
         assert!(c.contains(
-            "nomo_enum_Result_i64_string nomo__try_return = (nomo_enum_Result_i64_string){.tag = nomo_enum_Result_i64_string_Err, .payload.nomo_payload_Err = nomo_value_result.payload.nomo_payload_Err};"
+            "nomo_enum_Result_i64_string nomo__question_return = (nomo_enum_Result_i64_string){.tag = nomo_enum_Result_i64_string_Err, .payload.nomo_payload_Err = nomo_value_result.payload.nomo_payload_Err};"
         ));
-        assert!(c.contains("return nomo__try_return;"));
+        assert!(c.contains("return nomo__question_return;"));
         assert!(c.contains("long long nomo_value = nomo_value_result.payload.nomo_payload_Ok;"));
     }
 }

@@ -109,7 +109,7 @@ pub enum Statement {
         enum_args: Vec<ValueType>,
         arms: Vec<MatchStatementArm>,
     },
-    TryLet {
+    QuestionLet {
         carrier: QuestionCarrier,
         name: String,
         value_type: ValueType,
@@ -117,7 +117,7 @@ pub enum Statement {
         return_type: ValueType,
         result_expr: ValueExpr,
     },
-    TryReturnOk {
+    QuestionReturnOk {
         ok_type: ValueType,
         result_type: ValueType,
         return_type: ValueType,
@@ -1427,7 +1427,7 @@ fn validate_expr_type_imports(
             validate_expr_type_imports(path, imports, else_branch, span)
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => {
             validate_expr_type_imports(path, imports, message, span)
         }
@@ -2431,7 +2431,7 @@ fn collect_expr_generic_function_instances(
             )
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => collect_expr_generic_function_instances(
             path, message, imports, signatures, structs, enums, out,
         ),
@@ -2601,7 +2601,7 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_fs_builtin(else_branch)
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => expr_uses_fs_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_fs_builtin(expr),
@@ -2641,7 +2641,7 @@ fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_env_builtin(else_branch)
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => expr_uses_env_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_env_builtin(expr),
@@ -2683,7 +2683,7 @@ fn expr_uses_array_builtin(expr: &AstExpr) -> bool {
                 || expr_uses_array_builtin(else_branch)
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => expr_uses_array_builtin(message),
         AstExpr::MutArg { .. } => false,
         AstExpr::Cast { expr, .. } => expr_uses_array_builtin(expr),
@@ -2816,7 +2816,7 @@ fn expr_uses_core_prelude_variant(expr: &AstExpr, enum_name: &str) -> bool {
                 || expr_uses_core_prelude_variant(else_branch, enum_name)
         }
         AstExpr::Panic { message }
-        | AstExpr::Try { expr: message }
+        | AstExpr::Question { expr: message }
         | AstExpr::Unary { expr: message, .. } => {
             expr_uses_core_prelude_variant(message, enum_name)
         }
@@ -3107,7 +3107,7 @@ fn lower_stmt(
                 ));
             }
 
-            if let AstExpr::Try { expr } = value {
+            if let AstExpr::Question { expr } = value {
                 let Some(annotation) = type_annotation.as_ref() else {
                     return Err(Diagnostic::new(
                         "E0403",
@@ -3170,7 +3170,7 @@ fn lower_stmt(
                         source: BindingSource::Local,
                     },
                 );
-                return Ok(Statement::TryLet {
+                return Ok(Statement::QuestionLet {
                     carrier,
                     name: name.clone(),
                     value_type: annotated_type,
@@ -3528,7 +3528,7 @@ fn lower_stmt_into(
     loop_depth: usize,
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
-    if lower_try_exprs_in_stmt_into(
+    if lower_question_exprs_in_stmt_into(
         path,
         stmt,
         scope,
@@ -3559,7 +3559,7 @@ fn lower_stmt_into(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn lower_try_exprs_in_stmt_into(
+fn lower_question_exprs_in_stmt_into(
     path: &Path,
     stmt: &Stmt,
     scope: &mut HashMap<String, Binding>,
@@ -3579,7 +3579,7 @@ fn lower_try_exprs_in_stmt_into(
             type_annotation,
             value,
             span,
-        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_try(value) => {
+        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_question(value) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
                     "E0302",
@@ -3619,7 +3619,7 @@ fn lower_try_exprs_in_stmt_into(
             } else {
                 None
             };
-            let (condition, _) = extract_try_exprs(
+            let (condition, _) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -3746,7 +3746,7 @@ fn lower_try_exprs_in_stmt_into(
             type_annotation,
             value,
             span,
-        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_try(value) => {
+        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_question(value) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
                     "E0302",
@@ -3781,7 +3781,7 @@ fn lower_try_exprs_in_stmt_into(
             } else {
                 None
             };
-            let (value, _) = extract_try_exprs(
+            let (value, _) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -3981,7 +3981,7 @@ fn lower_try_exprs_in_stmt_into(
             type_annotation,
             value,
             span,
-        } if !matches!(value, AstExpr::Try { .. }) => {
+        } if !matches!(value, AstExpr::Question { .. }) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
                     "E0302",
@@ -3993,7 +3993,7 @@ fn lower_try_exprs_in_stmt_into(
                     &span.text,
                 ));
             }
-            let (value, changed) = extract_try_exprs(
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4022,8 +4022,8 @@ fn lower_try_exprs_in_stmt_into(
             value,
             else_body,
             span,
-        } if ast_expr_contains_try(value) => {
-            let (value, changed) = extract_try_exprs(
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4053,8 +4053,8 @@ fn lower_try_exprs_in_stmt_into(
             body,
             else_body,
             span,
-        } if ast_expr_contains_try(value) => {
-            let (value, changed) = extract_try_exprs(
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4078,8 +4078,8 @@ fn lower_try_exprs_in_stmt_into(
                 span: span.clone(),
             }
         }
-        Stmt::Match { value, arms, span } if ast_expr_contains_try(value) => {
-            let (value, changed) = extract_try_exprs(
+        Stmt::Match { value, arms, span } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4108,8 +4108,8 @@ fn lower_try_exprs_in_stmt_into(
                     body,
                 },
             span,
-        } if ast_expr_contains_try(iterable) => {
-            let (iterable, changed) = extract_try_exprs(
+        } if ast_expr_contains_question(iterable) => {
+            let (iterable, changed) = extract_question_exprs(
                 path,
                 iterable,
                 scope,
@@ -4138,7 +4138,7 @@ fn lower_try_exprs_in_stmt_into(
             op,
             value,
             span,
-        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_try(value) => {
+        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_question(value) => {
             let AstExpr::If {
                 condition,
                 then_branch,
@@ -4147,7 +4147,7 @@ fn lower_try_exprs_in_stmt_into(
             else {
                 unreachable!("guard matched if expression");
             };
-            let (condition, _) = extract_try_exprs(
+            let (condition, _) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -4203,10 +4203,12 @@ fn lower_try_exprs_in_stmt_into(
             op,
             value: AstExpr::Match { value, arms },
             span,
-        } if ast_expr_contains_try(value)
-            || arms.iter().any(|arm| ast_expr_contains_try(&arm.value)) =>
+        } if ast_expr_contains_question(value)
+            || arms
+                .iter()
+                .any(|arm| ast_expr_contains_question(&arm.value)) =>
         {
-            let (value, _) = extract_try_exprs(
+            let (value, _) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4366,8 +4368,8 @@ fn lower_try_exprs_in_stmt_into(
             op,
             value,
             span,
-        } if ast_expr_contains_try(value) => {
-            let (value, changed) = extract_try_exprs(
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4397,10 +4399,10 @@ fn lower_try_exprs_in_stmt_into(
             else {
                 unreachable!("guard matched expression defer");
             };
-            if !ast_expr_contains_try(expr) {
+            if !ast_expr_contains_question(expr) {
                 return Ok(false);
             }
-            let (expr, changed) = extract_try_exprs(
+            let (expr, changed) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -4424,9 +4426,10 @@ fn lower_try_exprs_in_stmt_into(
             }
         }
         Stmt::Expr { expr, span }
-            if !(is_tail && return_type != &ValueType::Void) && ast_expr_contains_try(expr) =>
+            if !(is_tail && return_type != &ValueType::Void)
+                && ast_expr_contains_question(expr) =>
         {
-            let (expr, changed) = extract_try_exprs(
+            let (expr, changed) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -4454,11 +4457,11 @@ fn lower_try_exprs_in_stmt_into(
                     else_branch,
                 }),
             span,
-        } if ast_expr_contains_try(condition)
-            || ast_expr_contains_try(then_branch)
-            || ast_expr_contains_try(else_branch) =>
+        } if ast_expr_contains_question(condition)
+            || ast_expr_contains_question(then_branch)
+            || ast_expr_contains_question(else_branch) =>
         {
-            let (condition, _) = extract_try_exprs(
+            let (condition, _) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -4516,7 +4519,7 @@ fn lower_try_exprs_in_stmt_into(
         } if type_args.is_empty()
             && is_result_ok_callee(callee, signatures)
             && matches!(args.as_slice(), [AstExpr::If { .. }])
-            && args.iter().any(ast_expr_contains_try) =>
+            && args.iter().any(ast_expr_contains_question) =>
         {
             let [
                 AstExpr::If {
@@ -4528,7 +4531,7 @@ fn lower_try_exprs_in_stmt_into(
             else {
                 unreachable!("guard matched single if argument");
             };
-            let (condition, _) = extract_try_exprs(
+            let (condition, _) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -4596,12 +4599,12 @@ fn lower_try_exprs_in_stmt_into(
         } if type_args.is_empty()
             && is_result_ok_callee(callee, signatures)
             && matches!(args.as_slice(), [AstExpr::Match { .. }])
-            && args.iter().any(ast_expr_contains_try) =>
+            && args.iter().any(ast_expr_contains_question) =>
         {
             let [AstExpr::Match { value, arms }] = args.as_slice() else {
                 unreachable!("guard matched single match argument");
             };
-            let (value, _) = extract_try_exprs(
+            let (value, _) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4762,11 +4765,11 @@ fn lower_try_exprs_in_stmt_into(
         Stmt::Return {
             value: Some(value),
             span,
-        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_try(value) => {
+        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_question(value) => {
             let AstExpr::Match { value, arms } = value else {
                 unreachable!("guard matched match expression");
             };
-            let (value, _) = extract_try_exprs(
+            let (value, _) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4795,8 +4798,8 @@ fn lower_try_exprs_in_stmt_into(
         Stmt::Return {
             value: Some(value),
             span,
-        } if try_expr_from_result_ok_return(value, signatures).is_none() => {
-            let (value, changed) = extract_try_exprs(
+        } if question_expr_from_result_ok_return(value, signatures).is_none() => {
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -4826,11 +4829,11 @@ fn lower_try_exprs_in_stmt_into(
             span,
         } if is_tail
             && return_type != &ValueType::Void
-            && (ast_expr_contains_try(condition)
-                || ast_expr_contains_try(then_branch)
-                || ast_expr_contains_try(else_branch)) =>
+            && (ast_expr_contains_question(condition)
+                || ast_expr_contains_question(then_branch)
+                || ast_expr_contains_question(else_branch)) =>
         {
-            let (condition, _) = extract_try_exprs(
+            let (condition, _) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -4882,7 +4885,9 @@ fn lower_try_exprs_in_stmt_into(
             span,
         } if is_tail
             && return_type != &ValueType::Void
-            && arms.iter().any(|arm| ast_expr_contains_try(&arm.value)) =>
+            && arms
+                .iter()
+                .any(|arm| ast_expr_contains_question(&arm.value)) =>
         {
             out.push(lower_tail_match_expr_as_statement(
                 path,
@@ -4899,7 +4904,7 @@ fn lower_try_exprs_in_stmt_into(
             return Ok(true);
         }
         Stmt::Expr { expr, span } if is_tail && return_type != &ValueType::Void => {
-            let (expr, changed) = extract_try_exprs(
+            let (expr, changed) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -4951,7 +4956,7 @@ fn lower_expr_as_assignment_block(
     span: &Span,
 ) -> Result<(ValueType, Vec<Statement>), Diagnostic> {
     let mut out = Vec::new();
-    let (expr, _) = extract_try_exprs(
+    let (expr, _) = extract_question_exprs(
         path,
         expr,
         scope,
@@ -4990,7 +4995,7 @@ fn lower_expr_as_target_assignment_block(
     span: &Span,
 ) -> Result<Vec<Statement>, Diagnostic> {
     let mut out = Vec::new();
-    let (expr, _) = extract_try_exprs(
+    let (expr, _) = extract_question_exprs(
         path,
         expr,
         scope,
@@ -5192,31 +5197,34 @@ fn lower_tail_match_expr_as_statement(
     })
 }
 
-fn ast_expr_contains_try(expr: &AstExpr) -> bool {
+fn ast_expr_contains_question(expr: &AstExpr) -> bool {
     match expr {
-        AstExpr::Try { .. } => true,
-        AstExpr::Call { args, .. } => args.iter().any(ast_expr_contains_try),
-        AstExpr::StructLiteral { fields, .. } => {
-            fields.iter().any(|(_, value)| ast_expr_contains_try(value))
-        }
+        AstExpr::Question { .. } => true,
+        AstExpr::Call { args, .. } => args.iter().any(ast_expr_contains_question),
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| ast_expr_contains_question(value)),
         AstExpr::Match { value, arms } => {
-            ast_expr_contains_try(value) || arms.iter().any(|arm| ast_expr_contains_try(&arm.value))
+            ast_expr_contains_question(value)
+                || arms
+                    .iter()
+                    .any(|arm| ast_expr_contains_question(&arm.value))
         }
         AstExpr::If {
             condition,
             then_branch,
             else_branch,
         } => {
-            ast_expr_contains_try(condition)
-                || ast_expr_contains_try(then_branch)
-                || ast_expr_contains_try(else_branch)
+            ast_expr_contains_question(condition)
+                || ast_expr_contains_question(then_branch)
+                || ast_expr_contains_question(else_branch)
         }
         AstExpr::Panic { message } | AstExpr::Unary { expr: message, .. } => {
-            ast_expr_contains_try(message)
+            ast_expr_contains_question(message)
         }
-        AstExpr::Cast { expr, .. } => ast_expr_contains_try(expr),
+        AstExpr::Cast { expr, .. } => ast_expr_contains_question(expr),
         AstExpr::Binary { left, right, .. } => {
-            ast_expr_contains_try(left) || ast_expr_contains_try(right)
+            ast_expr_contains_question(left) || ast_expr_contains_question(right)
         }
         AstExpr::MutArg { .. }
         | AstExpr::Name(_)
@@ -5230,7 +5238,7 @@ fn ast_expr_contains_try(expr: &AstExpr) -> bool {
 }
 
 #[allow(clippy::too_many_arguments)]
-fn extract_try_exprs(
+fn extract_question_exprs(
     path: &Path,
     expr: &AstExpr,
     scope: &mut HashMap<String, Binding>,
@@ -5243,8 +5251,8 @@ fn extract_try_exprs(
     out: &mut Vec<Statement>,
 ) -> Result<(AstExpr, bool), Diagnostic> {
     match expr {
-        AstExpr::Try { expr } => {
-            let (rewritten_result, _) = extract_try_exprs(
+        AstExpr::Question { expr } => {
+            let (rewritten_result, _) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -5267,7 +5275,7 @@ fn extract_try_exprs(
                 span,
             )?;
             let (carrier, ok_type) = question_payload(path, span, &result_type, return_type)?;
-            let temp = fresh_internal_binding(scope, "try_value");
+            let temp = fresh_internal_binding(scope, "question_value");
             scope.insert(
                 temp.clone(),
                 Binding {
@@ -5276,7 +5284,7 @@ fn extract_try_exprs(
                     source: BindingSource::Local,
                 },
             );
-            out.push(Statement::TryLet {
+            out.push(Statement::QuestionLet {
                 carrier,
                 name: temp.clone(),
                 value_type: ok_type,
@@ -5291,7 +5299,7 @@ fn extract_try_exprs(
             type_args,
             args,
         } => {
-            let (args, changed) = extract_try_exprs_from_vec(
+            let (args, changed) = extract_question_exprs_from_vec(
                 path,
                 args,
                 scope,
@@ -5316,7 +5324,7 @@ fn extract_try_exprs(
             let mut changed = false;
             let mut rewritten = Vec::new();
             for (field, value) in fields {
-                let (value, value_changed) = extract_try_exprs(
+                let (value, value_changed) = extract_question_exprs(
                     path,
                     value,
                     scope,
@@ -5340,7 +5348,7 @@ fn extract_try_exprs(
             ))
         }
         AstExpr::Binary { left, op, right } => {
-            let (left, left_changed) = extract_try_exprs(
+            let (left, left_changed) = extract_question_exprs(
                 path,
                 left,
                 scope,
@@ -5352,7 +5360,7 @@ fn extract_try_exprs(
                 span,
                 out,
             )?;
-            let (right, right_changed) = extract_try_exprs(
+            let (right, right_changed) = extract_question_exprs(
                 path,
                 right,
                 scope,
@@ -5374,7 +5382,7 @@ fn extract_try_exprs(
             ))
         }
         AstExpr::Cast { expr, target } => {
-            let (expr, changed) = extract_try_exprs(
+            let (expr, changed) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -5395,7 +5403,7 @@ fn extract_try_exprs(
             ))
         }
         AstExpr::Unary { op, expr } => {
-            let (expr, changed) = extract_try_exprs(
+            let (expr, changed) = extract_question_exprs(
                 path,
                 expr,
                 scope,
@@ -5416,7 +5424,7 @@ fn extract_try_exprs(
             ))
         }
         AstExpr::Match { value, arms } => {
-            let (value, changed) = extract_try_exprs(
+            let (value, changed) = extract_question_exprs(
                 path,
                 value,
                 scope,
@@ -5441,7 +5449,7 @@ fn extract_try_exprs(
             then_branch,
             else_branch,
         } => {
-            let (condition, changed) = extract_try_exprs(
+            let (condition, changed) = extract_question_exprs(
                 path,
                 condition,
                 scope,
@@ -5463,7 +5471,7 @@ fn extract_try_exprs(
             ))
         }
         AstExpr::Panic { message } => {
-            let (message, changed) = extract_try_exprs(
+            let (message, changed) = extract_question_exprs(
                 path,
                 message,
                 scope,
@@ -5494,7 +5502,7 @@ fn extract_try_exprs(
 }
 
 #[allow(clippy::too_many_arguments)]
-fn extract_try_exprs_from_vec(
+fn extract_question_exprs_from_vec(
     path: &Path,
     exprs: &[AstExpr],
     scope: &mut HashMap<String, Binding>,
@@ -5509,7 +5517,7 @@ fn extract_try_exprs_from_vec(
     let mut changed = false;
     let mut rewritten = Vec::new();
     for expr in exprs {
-        let (expr, expr_changed) = extract_try_exprs(
+        let (expr, expr_changed) = extract_question_exprs(
             path,
             expr,
             scope,
@@ -5662,7 +5670,7 @@ fn statements_diverge(statements: &[Statement]) -> bool {
 fn statement_diverges(statement: &Statement) -> bool {
     match statement {
         Statement::Return(_)
-        | Statement::TryReturnOk { .. }
+        | Statement::QuestionReturnOk { .. }
         | Statement::Panic(_)
         | Statement::Break
         | Statement::Continue => true,
@@ -5688,7 +5696,9 @@ fn statements_satisfy_function_return(statements: &[Statement]) -> bool {
 
 fn statement_satisfies_function_return(statement: &Statement) -> bool {
     match statement {
-        Statement::Return(Some(_)) | Statement::TryReturnOk { .. } | Statement::Panic(_) => true,
+        Statement::Return(Some(_)) | Statement::QuestionReturnOk { .. } | Statement::Panic(_) => {
+            true
+        }
         Statement::Match { arms, .. } => arms
             .iter()
             .all(|arm| statements_satisfy_function_return(&arm.body)),
@@ -6036,10 +6046,10 @@ fn lower_for_stmt(
             (LoopKind::Infinite, lowered)
         }
         ForVariant::While { condition, body } => {
-            if ast_expr_contains_try(condition) {
+            if ast_expr_contains_question(condition) {
                 let mut condition_scope = scope.clone();
                 let mut lowered = Vec::new();
-                let (condition, _) = extract_try_exprs(
+                let (condition, _) = extract_question_exprs(
                     path,
                     condition,
                     &mut condition_scope,
@@ -6463,7 +6473,7 @@ fn lower_return_stmt(
             format!("function must return `{}`", return_type.name()),
         )),
         (expected, Some(value)) => {
-            if let Some(try_expr) = try_expr_from_result_ok_return(value, signatures) {
+            if let Some(question_expr) = question_expr_from_result_ok_return(value, signatures) {
                 let (return_ok_type, return_err_type) =
                     result_parts(expected).ok_or_else(|| {
                         Diagnostic::new(
@@ -6477,7 +6487,14 @@ fn lower_return_stmt(
                         )
                     })?;
                 let (result_type, result_expr) = lower_value_expr(
-                    path, try_expr, scope, imports, signatures, structs, enums, span,
+                    path,
+                    question_expr,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    span,
                 )?;
                 let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
                     Diagnostic::new(
@@ -6516,7 +6533,7 @@ fn lower_return_stmt(
                         &err_type,
                     ));
                 }
-                return Ok(Statement::TryReturnOk {
+                return Ok(Statement::QuestionReturnOk {
                     ok_type,
                     result_type,
                     return_type: expected.clone(),
@@ -6552,7 +6569,7 @@ fn lower_return_stmt(
     }
 }
 
-fn try_expr_from_result_ok_return<'a>(
+fn question_expr_from_result_ok_return<'a>(
     value: &'a AstExpr,
     signatures: &HashMap<String, FunctionSignature>,
 ) -> Option<&'a AstExpr> {
@@ -6562,7 +6579,7 @@ fn try_expr_from_result_ok_return<'a>(
     if !is_result_ok_callee(callee, signatures) {
         return None;
     }
-    let [AstExpr::Try { expr }] = args.as_slice() else {
+    let [AstExpr::Question { expr }] = args.as_slice() else {
         return None;
     };
     Some(expr)
@@ -7204,7 +7221,7 @@ fn lower_value_expr_with_expected(
                 },
             ))
         }
-        AstExpr::Try { .. } => Err(Diagnostic::new(
+        AstExpr::Question { .. } => Err(Diagnostic::new(
             "E0422",
             "`?` is currently supported only in statement-level expressions with unconditional evaluation",
             path,
@@ -10375,7 +10392,7 @@ fn main() -> void {
         );
         assert!(matches!(
             load.body[0],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 result_expr: ValueExpr::FsReadToString { .. },
                 ..
             }
@@ -10471,7 +10488,7 @@ fn main() -> void {
         let load = program.functions.iter().find(|f| f.name == "load").unwrap();
         assert!(matches!(
             load.body[0],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 result_expr: ValueExpr::FsReadToString { .. },
                 ..
             }
@@ -13831,7 +13848,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_pattern_scrutinees() {
+    fn accepts_question_in_pattern_scrutinees() {
         let source = r#"package app.main
 
 fn load() -> Result<Option<string>, string> {
@@ -13877,7 +13894,7 @@ fn main() -> void {
         assert!(matches!(
             unwrap_with_let_else.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -13888,7 +13905,7 @@ fn main() -> void {
                     ..
                 },
                 Statement::Return(Some(_)),
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "load"
                 && value == temp
                 && binding == "text"
@@ -13902,7 +13919,7 @@ fn main() -> void {
         assert!(matches!(
             unwrap_with_if_let.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -13912,7 +13929,7 @@ fn main() -> void {
                     binding: Some(binding),
                     ..
                 },
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "load"
                 && value == temp
                 && binding == "text"
@@ -13926,7 +13943,7 @@ fn main() -> void {
         assert!(matches!(
             unwrap_with_match.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -13937,7 +13954,7 @@ fn main() -> void {
                     arms,
                     ..
                 },
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "load"
                 && value == temp
                 && enum_name == "Option"
@@ -14059,7 +14076,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_result_map_err_with_try_propagation() {
+    fn accepts_result_map_err_with_question_propagation() {
         let source = r#"package app.main
 
 import std.result
@@ -14094,7 +14111,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             decorate.body[1],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 ref result_type,
                 result_expr: ValueExpr::ResultMapErr {
                     ref ok_type,
@@ -14155,7 +14172,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             decorate.body[1],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 result_expr: ValueExpr::ResultMapErr {
                     ref converter,
                     ..
@@ -14166,7 +14183,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_let_initializer_call_argument() {
+    fn accepts_question_in_let_initializer_call_argument() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14195,7 +14212,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name,
                     value_type,
                     result_type,
@@ -14208,7 +14225,7 @@ fn main() -> void {
                     initializer: ValueExpr::Call { args, .. },
                 },
                 Statement::Return(Some(_)),
-            ] if name.starts_with("__try_value_")
+            ] if name.starts_with("__question_value_")
                 && value_type == &ValueType::String
                 && result_type == &ValueType::Enum(
                     "Result".to_string(),
@@ -14222,7 +14239,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_struct_literal_field_and_enum_payload() {
+    fn accepts_question_in_struct_literal_field_and_enum_payload() {
         let source = r#"package app.main
 
 struct Label {
@@ -14252,7 +14269,7 @@ fn main() -> void {
             compute
                 .body
                 .iter()
-                .filter(|stmt| matches!(stmt, Statement::TryLet { .. }))
+                .filter(|stmt| matches!(stmt, Statement::QuestionLet { .. }))
                 .count(),
             2
         );
@@ -14274,7 +14291,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_binary_cast_and_return_ok_call_argument() {
+    fn accepts_question_in_binary_cast_and_return_ok_call_argument() {
         let source = r#"package app.main
 
 fn parse_number() -> Result<i32, string> {
@@ -14304,7 +14321,7 @@ fn main() -> void {
             compute
                 .body
                 .iter()
-                .filter(|stmt| matches!(stmt, Statement::TryLet { .. }))
+                .filter(|stmt| matches!(stmt, Statement::QuestionLet { .. }))
                 .count(),
             3
         );
@@ -14328,7 +14345,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_if_initializer_branch() {
+    fn accepts_question_in_if_initializer_branch() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14371,7 +14388,7 @@ fn main() -> void {
                 && matches!(
                     body.as_slice(),
                     [
-                        Statement::TryLet {
+                        Statement::QuestionLet {
                             name: temp,
                             result_expr: ValueExpr::Call { name: call_name, .. },
                             ..
@@ -14380,7 +14397,7 @@ fn main() -> void {
                             name: assign_name,
                             value: ValueExpr::Variable(assign_value),
                         },
-                    ] if temp.starts_with("__try_value_")
+                    ] if temp.starts_with("__question_value_")
                         && call_name == "parse_label"
                         && assign_name == "label"
                         && assign_value == temp
@@ -14396,7 +14413,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_if_initializer_condition() {
+    fn accepts_question_in_if_initializer_condition() {
         let source = r#"package app.main
 
 fn parse_flag() -> Result<bool, string> {
@@ -14425,7 +14442,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -14436,7 +14453,7 @@ fn main() -> void {
                     ..
                 },
                 Statement::Return(Some(_)),
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "parse_flag"
                 && name == "label"
                 && condition == temp
@@ -14444,7 +14461,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_tail_if_expression_branch() {
+    fn accepts_question_in_tail_if_expression_branch() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14478,7 +14495,7 @@ fn main() -> void {
             }] if condition == "flag"
                 && matches!(
                     body.as_slice(),
-                    [Statement::TryReturnOk {
+                    [Statement::QuestionReturnOk {
                         result_expr: ValueExpr::Call { name: call_name, .. },
                         ..
                     }] if call_name == "parse_label"
@@ -14494,7 +14511,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_tail_if_expression_condition() {
+    fn accepts_question_in_tail_if_expression_condition() {
         let source = r#"package app.main
 
 fn parse_flag() -> Result<bool, string> {
@@ -14522,7 +14539,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -14531,14 +14548,14 @@ fn main() -> void {
                     condition: ValueExpr::Variable(condition),
                     ..
                 },
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "parse_flag"
                 && condition == temp
         ));
     }
 
     #[test]
-    fn accepts_try_in_explicit_return_if_expression() {
+    fn accepts_question_in_explicit_return_if_expression() {
         let source = r#"package app.main
 
 fn parse_flag() -> Result<bool, string> {
@@ -14570,7 +14587,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: condition_temp,
                     result_expr: ValueExpr::Call { name: condition_call, .. },
                     ..
@@ -14580,12 +14597,12 @@ fn main() -> void {
                     body,
                     else_body,
                 },
-            ] if condition_temp.starts_with("__try_value_")
+            ] if condition_temp.starts_with("__question_value_")
                 && condition_call == "parse_flag"
                 && condition_name == condition_temp
                 && matches!(
                     body.as_slice(),
-                    [Statement::TryReturnOk {
+                    [Statement::QuestionReturnOk {
                         result_expr: ValueExpr::Call { name: branch_call, .. },
                         ..
                     }] if branch_call == "parse_label"
@@ -14601,7 +14618,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_return_ok_if_expression() {
+    fn accepts_question_in_return_ok_if_expression() {
         let source = r#"package app.main
 
 fn parse_flag() -> Result<bool, string> {
@@ -14633,7 +14650,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: condition_temp,
                     result_expr: ValueExpr::Call { name: condition_call, .. },
                     ..
@@ -14643,12 +14660,12 @@ fn main() -> void {
                     body,
                     else_body,
                 },
-            ] if condition_temp.starts_with("__try_value_")
+            ] if condition_temp.starts_with("__question_value_")
                 && condition_call == "parse_flag"
                 && condition_name == condition_temp
                 && matches!(
                     body.as_slice(),
-                    [Statement::TryReturnOk {
+                    [Statement::QuestionReturnOk {
                         result_expr: ValueExpr::Call { name: branch_call, .. },
                         ..
                     }] if branch_call == "parse_label"
@@ -14664,7 +14681,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_return_ok_match_expression() {
+    fn accepts_question_in_return_ok_match_expression() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14695,7 +14712,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: scrutinee_temp,
                     result_expr: ValueExpr::Call { name: scrutinee_call, .. },
                     ..
@@ -14706,7 +14723,7 @@ fn main() -> void {
                     arms,
                     ..
                 },
-            ] if scrutinee_temp.starts_with("__try_value_")
+            ] if scrutinee_temp.starts_with("__question_value_")
                 && scrutinee_call == "maybe_label"
                 && scrutinee_name == scrutinee_temp
                 && enum_name == "Option"
@@ -14737,7 +14754,7 @@ fn main() -> void {
                         && none_variant == "None"
                         && matches!(
                             none_body.as_slice(),
-                            [Statement::TryReturnOk {
+                            [Statement::QuestionReturnOk {
                                 result_expr: ValueExpr::Call { name: branch_call, .. },
                                 ..
                             }] if branch_call == "parse_label"
@@ -14747,7 +14764,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_tail_match_expression_arm() {
+    fn accepts_question_in_tail_match_expression_arm() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14811,7 +14828,7 @@ fn main() -> void {
                         && none_variant == "None"
                         && matches!(
                             none_body.as_slice(),
-                            [Statement::TryReturnOk {
+                            [Statement::QuestionReturnOk {
                                 result_expr: ValueExpr::Call { name: call_name, .. },
                                 ..
                             }] if call_name == "parse_label"
@@ -14821,7 +14838,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_tail_match_scrutinee() {
+    fn accepts_question_in_tail_match_scrutinee() {
         let source = r#"package app.main
 
 fn maybe_label() -> Result<Option<string>, string> {
@@ -14848,7 +14865,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -14858,7 +14875,7 @@ fn main() -> void {
                     enum_name,
                     ..
                 },
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "maybe_label"
                 && value == temp
                 && enum_name == "Option"
@@ -14866,7 +14883,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_match_initializer_arm() {
+    fn accepts_question_in_match_initializer_arm() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -14936,7 +14953,7 @@ fn main() -> void {
                         && matches!(
                             none_body.as_slice(),
                             [
-                                Statement::TryLet {
+                                Statement::QuestionLet {
                                     name: temp,
                                     result_expr: ValueExpr::Call { name: call_name, .. },
                                     ..
@@ -14945,7 +14962,7 @@ fn main() -> void {
                                     name: assign_name,
                                     value: ValueExpr::Variable(assign_value),
                                 },
-                            ] if temp.starts_with("__try_value_")
+                            ] if temp.starts_with("__question_value_")
                                 && call_name == "parse_label"
                                 && assign_name == "label"
                                 && assign_value == temp
@@ -14955,7 +14972,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_match_initializer_scrutinee() {
+    fn accepts_question_in_match_initializer_scrutinee() {
         let source = r#"package app.main
 
 fn maybe_label() -> Result<Option<string>, string> {
@@ -14983,7 +15000,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -14995,7 +15012,7 @@ fn main() -> void {
                     ..
                 },
                 Statement::Return(Some(_)),
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "maybe_label"
                 && name == "label"
                 && value == temp
@@ -15031,7 +15048,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_result_try_let_binding() {
+    fn accepts_result_question_let_binding() {
         let source = r#"package app.main
 
 import std.io
@@ -15063,7 +15080,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             compute.body[0],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 ref name,
                 value_type: ValueType::Int,
                 result_type: ValueType::Enum(ref enum_name, ref enum_args),
@@ -15102,7 +15119,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             compute.body[0],
-            Statement::TryLet {
+            Statement::QuestionLet {
                 carrier: QuestionCarrier::Option,
                 ref name,
                 value_type: ValueType::String,
@@ -15141,7 +15158,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             compute.body[0],
-            Statement::TryReturnOk {
+            Statement::QuestionReturnOk {
                 ok_type: ValueType::Int,
                 result_type: ValueType::Enum(ref result_name, ref result_args),
                 return_type: ValueType::Enum(ref return_name, ref return_args),
@@ -15183,13 +15200,13 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name,
                     result_expr: ValueExpr::Call { name: parse_name, .. },
                     ..
                 },
                 Statement::Return(Some(ValueExpr::Call { name: ok_name, args })),
-            ] if name.starts_with("__try_value_")
+            ] if name.starts_with("__question_value_")
                 && parse_name == "parse"
                 && ok_name == "Ok"
                 && matches!(args.as_slice(), [ValueExpr::Variable(arg)] if arg == name)
@@ -15239,7 +15256,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn rejects_try_in_non_result_function() {
+    fn rejects_question_in_non_result_function() {
         let source = r#"package app.main
 
 import std.io
@@ -15264,7 +15281,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn rejects_try_let_without_type_annotation() {
+    fn rejects_question_let_without_type_annotation() {
         let source = r#"package app.main
 
 import std.io
@@ -15438,7 +15455,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_for_in_iterable() {
+    fn accepts_question_in_for_in_iterable() {
         let source = r#"package app.main
 
 import std.array
@@ -15471,7 +15488,7 @@ fn main() -> void {
             sum_items.body.as_slice(),
             [
                 Statement::Let { name: total_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -15486,7 +15503,7 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if total_name == "total"
-                && temp.starts_with("__try_value_")
+                && temp.starts_with("__question_value_")
                 && call_name == "make_items"
                 && binding == "item"
                 && iterable == temp
@@ -15494,7 +15511,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_for_while_condition() {
+    fn accepts_question_in_for_while_condition() {
         let source = r#"package app.main
 
 fn should_continue() -> Result<bool, string> {
@@ -15529,7 +15546,7 @@ fn main() -> void {
             ] if matches!(
                 body.as_slice(),
                 [
-                    Statement::TryLet {
+                    Statement::QuestionLet {
                         name: temp,
                         result_expr: ValueExpr::Call { name: call_name, .. },
                         ..
@@ -15539,7 +15556,7 @@ fn main() -> void {
                         body: then_body,
                         else_body,
                     },
-                ] if temp.starts_with("__try_value_")
+                ] if temp.starts_with("__question_value_")
                     && call_name == "should_continue"
                     && condition == temp
                     && matches!(then_body.as_slice(), [Statement::Break])
@@ -15549,7 +15566,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_assignment_value() {
+    fn accepts_question_in_assignment_value() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -15576,7 +15593,7 @@ fn main() -> void {
             compute.body.as_slice(),
             [
                 Statement::Let { name: label_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -15587,7 +15604,7 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if label_name == "label"
-                && temp.starts_with("__try_value_")
+                && temp.starts_with("__question_value_")
                 && call_name == "parse_label"
                 && assign_name == "label"
                 && value_name == temp
@@ -15595,7 +15612,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_field_assignment_value() {
+    fn accepts_question_in_field_assignment_value() {
         let source = r#"package app.main
 
 struct Label {
@@ -15626,7 +15643,7 @@ fn main() -> void {
             compute.body.as_slice(),
             [
                 Statement::Let { name: label_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -15639,7 +15656,7 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if label_name == "label"
-                && temp.starts_with("__try_value_")
+                && temp.starts_with("__question_value_")
                 && call_name == "parse_label"
                 && base == "label"
                 && field == "value"
@@ -15648,7 +15665,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_if_assignment_branch() {
+    fn accepts_question_in_if_assignment_branch() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -15683,7 +15700,7 @@ fn main() -> void {
             compute.body.as_slice(),
             [
                 Statement::Let { name: label_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: condition_temp,
                     result_expr: ValueExpr::Call { name: condition_call, .. },
                     ..
@@ -15695,13 +15712,13 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if label_name == "label"
-                && condition_temp.starts_with("__try_value_")
+                && condition_temp.starts_with("__question_value_")
                 && condition_call == "should_use_label"
                 && condition_name == condition_temp
                 && matches!(
                     body.as_slice(),
                     [
-                        Statement::TryLet {
+                        Statement::QuestionLet {
                             name: branch_temp,
                             result_expr: ValueExpr::Call { name: branch_call, .. },
                             ..
@@ -15710,7 +15727,7 @@ fn main() -> void {
                             name: assign_name,
                             value: ValueExpr::Variable(assign_value),
                         },
-                    ] if branch_temp.starts_with("__try_value_")
+                    ] if branch_temp.starts_with("__question_value_")
                         && branch_call == "parse_label"
                         && assign_name == "label"
                         && assign_value == branch_temp
@@ -15726,7 +15743,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_match_assignment_arm() {
+    fn accepts_question_in_match_assignment_arm() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -15760,7 +15777,7 @@ fn main() -> void {
             compute.body.as_slice(),
             [
                 Statement::Let { name: label_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: scrutinee_temp,
                     result_expr: ValueExpr::Call { name: scrutinee_call, .. },
                     ..
@@ -15773,7 +15790,7 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if label_name == "label"
-                && scrutinee_temp.starts_with("__try_value_")
+                && scrutinee_temp.starts_with("__question_value_")
                 && scrutinee_call == "maybe_label"
                 && scrutinee_name == scrutinee_temp
                 && enum_name == "Option"
@@ -15803,7 +15820,7 @@ fn main() -> void {
                         && matches!(
                             none_body.as_slice(),
                             [
-                                Statement::TryLet {
+                                Statement::QuestionLet {
                                     name: branch_temp,
                                     result_expr: ValueExpr::Call { name: branch_call, .. },
                                     ..
@@ -15812,7 +15829,7 @@ fn main() -> void {
                                     name: assign_name,
                                     value: ValueExpr::Variable(assign_value),
                                 },
-                            ] if branch_temp.starts_with("__try_value_")
+                            ] if branch_temp.starts_with("__question_value_")
                                 && branch_call == "parse_label"
                                 && assign_name == "label"
                                 && assign_value == branch_temp
@@ -15822,7 +15839,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_void_expression_statement_argument() {
+    fn accepts_question_in_void_expression_statement_argument() {
         let source = r#"package app.main
 
 import std.array
@@ -15851,7 +15868,7 @@ fn main() -> void {
             collect.body.as_slice(),
             [
                 Statement::Let { name: values_name, .. },
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -15862,7 +15879,7 @@ fn main() -> void {
                 },
                 Statement::Return(Some(_)),
             ] if values_name == "values"
-                && temp.starts_with("__try_value_")
+                && temp.starts_with("__question_value_")
                 && call_name == "parse_label"
                 && assign_name == "values"
                 && matches!(value.as_ref(), ValueExpr::Variable(name) if name == temp)
@@ -15870,7 +15887,7 @@ fn main() -> void {
     }
 
     #[test]
-    fn accepts_try_in_defer_call_argument() {
+    fn accepts_question_in_defer_call_argument() {
         let source = r#"package app.main
 
 fn parse_label() -> Result<string, string> {
@@ -15898,7 +15915,7 @@ fn main() -> void {
         assert!(matches!(
             compute.body.as_slice(),
             [
-                Statement::TryLet {
+                Statement::QuestionLet {
                     name: temp,
                     result_expr: ValueExpr::Call { name: call_name, .. },
                     ..
@@ -15907,7 +15924,7 @@ fn main() -> void {
                     call: DeferredCall::Expr(ValueExpr::Call { name: consume_name, args }),
                 },
                 Statement::Return(Some(_)),
-            ] if temp.starts_with("__try_value_")
+            ] if temp.starts_with("__question_value_")
                 && call_name == "parse_label"
                 && consume_name == "consume"
                 && matches!(args.as_slice(), [ValueExpr::Variable(name)] if name == temp)

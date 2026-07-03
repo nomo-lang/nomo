@@ -209,7 +209,7 @@ pub enum Expr {
     Panic {
         message: Box<Expr>,
     },
-    Try {
+    Question {
         expr: Box<Expr>,
     },
     MutArg {

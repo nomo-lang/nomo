@@ -1054,7 +1054,7 @@ impl Parser<'_> {
         let mut expr = self.parse_primary_expr()?;
         while matches!(self.peek().kind, TokenKind::Question) {
             self.advance();
-            expr = Expr::Try {
+            expr = Expr::Question {
                 expr: Box::new(expr),
             };
         }
@@ -2116,7 +2116,7 @@ mod tests {
     }
 
     #[test]
-    fn parses_try_postfix() {
+    fn parses_question_postfix() {
         let source = "package app.main\n\nenum Result<T, E> {\n    Ok(T)\n    Err(E)\n}\n\nfn parse() -> Result<i64, string> {\n    return Result.Ok(1)\n}\n\nfn main() -> void {\n    let value: i64 = parse()?\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
@@ -2124,7 +2124,7 @@ mod tests {
         assert!(matches!(
             ast.functions[1].body[0],
             Stmt::Let {
-                value: Expr::Try { .. },
+                value: Expr::Question { .. },
                 ..
             }
         ));
@@ -2296,7 +2296,7 @@ mod tests {
         assert!(matches!(
             ast.functions[0].body[0],
             Stmt::Match {
-                value: Expr::Try { .. },
+                value: Expr::Question { .. },
                 ..
             }
         ));

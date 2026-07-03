@@ -7,6 +7,7 @@ pub mod format;
 pub mod lexer;
 pub mod parser;
 pub mod project;
+pub mod semantic;
 
 pub use compiler::{
     Program, check_script_source_text, check_source, check_source_text,

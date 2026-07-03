@@ -106,6 +106,35 @@ cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git",
 fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
 ```
 
+Workspace roots can share package defaults and dependency declarations with
+member packages:
+
+```toml
+[workspace]
+members = ["apps/*", "packages/*"]
+default-members = ["apps/cli"]
+
+[workspace.package]
+namespace = "fynn"
+edition = "2026"
+
+[workspace.dependencies]
+json = { package = "nomo-lang/json", version = "0.1.0" }
+core = { package = "fynn/core", path = "packages/core" }
+```
+
+```toml
+[package]
+name = "cli"
+version = "0.1.0"
+namespace.workspace = true
+edition.workspace = true
+
+[dependencies]
+json.workspace = true
+core.workspace = true
+```
+
 ```nomo
 import json.parser
 import local_utils.path
@@ -114,7 +143,8 @@ import http.client
 
 Project commands (`nomo check`, `nomo build`, and `nomo run`) validate those
 aliases from `nomo.toml`, so `import json.parser` is accepted only when `json`
-is declared as a dependency alias. Project files can import sibling modules:
+is declared as a dependency alias or inherited from `[workspace.dependencies]`.
+Project files can import sibling modules:
 `import app.util` resolves to `src/util.nomo`, falling back to
 `src/util/main.nomo`; `import app.main` resolves to `src/main.nomo`.
 Dependency modules use the same Flat+Dir lookup under the dependency `src/`
@@ -132,6 +162,10 @@ application package.
 `std = { package = "nomo-lang/std", version = "0.1.0" }` or `std = "0.1.0"`
 are accepted as compatibility input, but the declaration is ignored as a normal
 dependency.
+`nomo deps resolve` for a workspace member writes `nomo.lock` at the workspace
+root. Workspace-wide batch commands such as `nomo check --workspace` are planned
+for the workspace graph slice; current project commands still operate on the
+selected member package.
 
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps tree [path]` prints dependency aliases and canonical package IDs. If

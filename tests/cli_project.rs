@@ -568,6 +568,94 @@ fn nomo_deps_tree_prints_dependency_aliases() {
 }
 
 #[test]
+fn nomo_workspace_member_inherits_package_and_dependencies() {
+    let root = temp_test_root("workspace-member-inheritance");
+    reset_dir(&root);
+    let app = root.join("apps/cli");
+    let core = root.join("packages/core");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(core.join("src")).unwrap();
+    fs::write(
+        root.join("nomo.toml"),
+        "[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\ndefault-members = [\"apps/cli\"]\n\n[workspace.package]\nnamespace = \"fynn\"\nedition = \"2026\"\n\n[workspace.dependencies]\ncore = { package = \"fynn/core\", path = \"packages/core\" }\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nname = \"cli\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n\n[dependencies]\ncore.workspace = true\njson.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("nomo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("src/main.nomo"),
+        "package app.main\n\nimport json.parser\nimport core.math\n\nfn main() -> void {\n    let total: i64 = add(40, 2)\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("src/math.nomo"),
+        "package core.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+    )
+    .unwrap();
+
+    let check_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(
+        check_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&check_output.stderr)
+    );
+
+    let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(
+        resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&resolve_output.stdout),
+        format!("resolved {}\n", root.join("nomo.lock").display())
+    );
+
+    let tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(
+        tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tree_output.stderr)
+    );
+    let tree = String::from_utf8_lossy(&tree_output.stdout);
+    assert!(tree.contains("fynn/cli 0.1.0"), "{tree}");
+    assert!(tree.contains("+-- core -> fynn/core"), "{tree}");
+    assert!(
+        tree.contains("+-- json -> nomo-lang/json 0.1.0 (registry)"),
+        "{tree}"
+    );
+    assert!(root.join("nomo.lock").exists());
+    assert!(!app.join("nomo.lock").exists());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_deps_resolve_records_explicit_registry_source() {
     let root = temp_test_root("deps-registry-source");
     reset_dir(&root);

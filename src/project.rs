@@ -15,6 +15,7 @@ pub struct Project {
     pub root: PathBuf,
     pub name: String,
     pub main: PathBuf,
+    pub workspace_root: Option<PathBuf>,
 }
 
 #[derive(Debug, Clone)]
@@ -36,6 +37,21 @@ pub struct PackageMetadata {
     pub name: String,
     pub version: String,
     pub edition: String,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct WorkspacePackageDefaults {
+    pub namespace: Option<String>,
+    pub name: Option<String>,
+    pub version: Option<String>,
+    pub edition: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct WorkspaceContext {
+    pub root: PathBuf,
+    pub package: WorkspacePackageDefaults,
+    pub dependencies: BTreeMap<String, Dependency>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -133,21 +149,19 @@ pub fn discover_project(path: &Path) -> Result<Project, String> {
             path.display()
         )
     })?;
-    let manifest = root.join("nomo.toml");
     let main = if source_file {
         path.to_path_buf()
     } else {
         root.join("src/main.nomo")
     };
-    let name = if manifest.exists() {
-        parse_manifest_at_root(&root)?.package.name
-    } else {
-        root.file_name()
-            .unwrap_or_default()
-            .to_string_lossy()
-            .to_string()
-    };
-    Ok(Project { root, name, main })
+    let manifest = parse_manifest_at_root(&root)?;
+    let workspace_root = workspace_root_for_package(&root)?;
+    Ok(Project {
+        root,
+        name: manifest.package.name,
+        main,
+        workspace_root,
+    })
 }
 
 fn find_manifest_root(start: &Path) -> Option<PathBuf> {
@@ -162,24 +176,35 @@ fn find_manifest_root(start: &Path) -> Option<PathBuf> {
 pub fn parse_manifest_at_root(root: &Path) -> Result<Manifest, String> {
     let manifest_path = root.join("nomo.toml");
     let text = fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;
-    parse_manifest_text(&text, root)
+    let document = parse_manifest_document(&text)?;
+    let workspace = workspace_context_for_manifest(root, &document)?;
+    parse_manifest_document_at_root(&document, root, workspace.as_ref())
 }
 
 pub fn resolve_project_dependencies(project: &Project) -> Result<PathBuf, String> {
     let graph = resolve_dependency_graph(&project.root)?;
     let lock = render_lockfile(&graph);
-    let lock_path = project.root.join("nomo.lock");
+    let lock_path = project.lock_root().join("nomo.lock");
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)
 }
 
 pub fn dependency_tree(project: &Project) -> Result<String, String> {
-    let graph = if project.root.join("nomo.lock").is_file() {
-        dependency_graph_from_lockfile(&project.root)?
+    let lock_root = project.lock_root();
+    let graph = if lock_root.join("nomo.lock").is_file() {
+        dependency_graph_from_lockfile(&project.root, &lock_root)?
     } else {
         resolve_dependency_graph(&project.root)?
     };
     Ok(render_dependency_tree(&graph))
+}
+
+impl Project {
+    fn lock_root(&self) -> PathBuf {
+        self.workspace_root
+            .clone()
+            .unwrap_or_else(|| self.root.clone())
+    }
 }
 
 pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext, String> {
@@ -414,10 +439,23 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     Ok(status.code().unwrap_or(1))
 }
 
+#[cfg(test)]
 fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> {
-    let document = manifest
+    let document = parse_manifest_document(manifest)?;
+    parse_manifest_document_at_root(&document, root, None)
+}
+
+fn parse_manifest_document(manifest: &str) -> Result<toml::Value, String> {
+    manifest
         .parse::<toml::Value>()
-        .map_err(|err| format!("failed to parse nomo.toml as TOML: {err}"))?;
+        .map_err(|err| format!("failed to parse nomo.toml as TOML: {err}"))
+}
+
+fn parse_manifest_document_at_root(
+    document: &toml::Value,
+    root: &Path,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<Manifest, String> {
     let root_name = root
         .file_name()
         .unwrap_or_default()
@@ -432,25 +470,35 @@ fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> 
     let mut dependencies = Vec::new();
 
     let package_table = optional_table(&document, "package")?;
+    if package_table.is_none() && optional_table(document, "workspace")?.is_some() {
+        return Err(format!(
+            "{} is a workspace manifest and does not define a package",
+            root.join("nomo.toml").display()
+        ));
+    }
     let namespace_explicit = package_table.is_some_and(|table| table.contains_key("namespace"));
     if let Some(table) = package_table {
-        if let Some(value) = optional_string_field(table, "package", "namespace")? {
+        if let Some(value) = optional_package_string_field(table, "namespace", workspace)? {
             package.namespace = value;
         }
-        if let Some(value) = optional_string_field(table, "package", "name")? {
+        if let Some(value) = optional_package_string_field(table, "name", workspace)? {
             package.name = value;
         }
-        if let Some(value) = optional_string_field(table, "package", "version")? {
+        if let Some(value) = optional_package_string_field(table, "version", workspace)? {
             package.version = value;
         }
-        if let Some(value) = optional_string_field(table, "package", "edition")? {
+        if let Some(value) = optional_package_string_field(table, "edition", workspace)? {
             package.edition = value;
         }
     }
 
     if let Some(table) = optional_table(&document, "dependencies")? {
+        let inheritance = workspace.map(|workspace| WorkspaceDependencyInheritance {
+            workspace,
+            package_root: root,
+        });
         for (alias, value) in table {
-            if let Some(dependency) = parse_dependency_value(alias, value)? {
+            if let Some(dependency) = parse_dependency_value(alias, value, inheritance.as_ref())? {
                 dependencies.push(dependency);
             }
         }
@@ -471,6 +519,88 @@ fn parse_manifest_text(manifest: &str, root: &Path) -> Result<Manifest, String> 
         package,
         dependencies,
     })
+}
+
+fn workspace_context_for_manifest(
+    root: &Path,
+    document: &toml::Value,
+) -> Result<Option<WorkspaceContext>, String> {
+    if optional_table(document, "workspace")?.is_some() {
+        return parse_workspace_context(root, document).map(Some);
+    }
+
+    let Some(workspace_root) = workspace_root_for_package(root)? else {
+        return Ok(None);
+    };
+    let text =
+        fs::read_to_string(workspace_root.join("nomo.toml")).map_err(|err| err.to_string())?;
+    let document = parse_manifest_document(&text)?;
+    parse_workspace_context(&workspace_root, &document).map(Some)
+}
+
+fn workspace_root_for_package(root: &Path) -> Result<Option<PathBuf>, String> {
+    for candidate in root.ancestors().skip(1) {
+        let manifest = candidate.join("nomo.toml");
+        if !manifest.is_file() {
+            continue;
+        }
+        let text = fs::read_to_string(&manifest).map_err(|err| err.to_string())?;
+        let document = parse_manifest_document(&text)?;
+        if optional_table(&document, "workspace")?.is_some() {
+            return Ok(Some(candidate.to_path_buf()));
+        }
+    }
+    Ok(None)
+}
+
+fn parse_workspace_context(
+    root: &Path,
+    document: &toml::Value,
+) -> Result<WorkspaceContext, String> {
+    let workspace_table = optional_table(document, "workspace")?
+        .ok_or_else(|| "manifest does not define a [workspace] table".to_string())?;
+    let package = match workspace_table.get("package") {
+        Some(value) => parse_workspace_package_defaults(value)?,
+        None => WorkspacePackageDefaults::default(),
+    };
+    let dependencies = match workspace_table.get("dependencies") {
+        Some(value) => parse_workspace_dependencies(value)?,
+        None => BTreeMap::new(),
+    };
+    Ok(WorkspaceContext {
+        root: root.to_path_buf(),
+        package,
+        dependencies,
+    })
+}
+
+fn parse_workspace_package_defaults(
+    value: &toml::Value,
+) -> Result<WorkspacePackageDefaults, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| "manifest `workspace.package` must be a TOML table".to_string())?;
+    Ok(WorkspacePackageDefaults {
+        namespace: optional_string_field(table, "workspace.package", "namespace")?,
+        name: optional_string_field(table, "workspace.package", "name")?,
+        version: optional_string_field(table, "workspace.package", "version")?,
+        edition: optional_string_field(table, "workspace.package", "edition")?,
+    })
+}
+
+fn parse_workspace_dependencies(
+    value: &toml::Value,
+) -> Result<BTreeMap<String, Dependency>, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| "manifest `workspace.dependencies` must be a TOML table".to_string())?;
+    let mut dependencies = BTreeMap::new();
+    for (alias, value) in table {
+        if let Some(dependency) = parse_dependency_value(alias, value, None)? {
+            dependencies.insert(alias.clone(), dependency);
+        }
+    }
+    Ok(dependencies)
 }
 
 fn optional_table<'a>(
@@ -500,7 +630,59 @@ fn optional_string_field(
     }
 }
 
-fn parse_dependency_value(alias: &str, value: &toml::Value) -> Result<Option<Dependency>, String> {
+fn optional_package_string_field(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<Option<String>, String> {
+    match table.get(key) {
+        Some(value) => {
+            if let Some(value) = value.as_str() {
+                return Ok(Some(value.to_string()));
+            }
+            if is_workspace_inheritance(value) {
+                return workspace_package_default(workspace, key).map(Some);
+            }
+            Err(format!(
+                "manifest `package.{key}` must be a string or `{{ workspace = true }}`"
+            ))
+        }
+        None => Ok(None),
+    }
+}
+
+fn workspace_package_default(
+    workspace: Option<&WorkspaceContext>,
+    key: &str,
+) -> Result<String, String> {
+    let workspace = workspace.ok_or_else(|| {
+        format!("manifest `package.{key}` uses workspace inheritance outside a workspace")
+    })?;
+    let value = match key {
+        "namespace" => &workspace.package.namespace,
+        "name" => &workspace.package.name,
+        "version" => &workspace.package.version,
+        "edition" => &workspace.package.edition,
+        _ => unreachable!("package inheritance key is validated by caller"),
+    };
+    value.clone().ok_or_else(|| {
+        format!(
+            "manifest `package.{key}` inherits from workspace.package.{key}, but it is not defined"
+        )
+    })
+}
+
+#[derive(Clone, Copy)]
+struct WorkspaceDependencyInheritance<'a> {
+    workspace: &'a WorkspaceContext,
+    package_root: &'a Path,
+}
+
+fn parse_dependency_value(
+    alias: &str,
+    value: &toml::Value,
+    inheritance: Option<&WorkspaceDependencyInheritance<'_>>,
+) -> Result<Option<Dependency>, String> {
     validate_dependency_alias(alias)?;
 
     if let Some(version) = value.as_str() {
@@ -519,9 +701,26 @@ fn parse_dependency_value(alias: &str, value: &toml::Value) -> Result<Option<Dep
         ));
     };
 
-    if fields.get("workspace").and_then(|value| value.as_bool()) == Some(true) {
+    if is_workspace_inheritance(value) {
+        let inheritance = inheritance.ok_or_else(|| {
+            format!("dependency `{alias}` uses workspace inheritance outside a workspace")
+        })?;
+        let dependency = inheritance
+            .workspace
+            .dependencies
+            .get(alias)
+            .ok_or_else(|| {
+                format!("dependency `{alias}` inherits from workspace.dependencies.{alias}, but it is not defined")
+            })?;
+        return Ok(Some(rebase_workspace_dependency(
+            dependency,
+            inheritance.workspace,
+            inheritance.package_root,
+        )));
+    }
+    if fields.contains_key("workspace") {
         return Err(format!(
-            "dependency `{alias}` uses workspace inheritance, which is not supported yet"
+            "dependency `{alias}` field `workspace` must be `true` and cannot be combined with source fields"
         ));
     }
 
@@ -602,6 +801,89 @@ fn parse_dependency_value(alias: &str, value: &toml::Value) -> Result<Option<Dep
         package,
         source,
     }))
+}
+
+fn is_workspace_inheritance(value: &toml::Value) -> bool {
+    let Some(table) = value.as_table() else {
+        return false;
+    };
+    table.len() == 1 && table.get("workspace").and_then(|value| value.as_bool()) == Some(true)
+}
+
+fn rebase_workspace_dependency(
+    dependency: &Dependency,
+    workspace: &WorkspaceContext,
+    package_root: &Path,
+) -> Dependency {
+    let mut dependency = dependency.clone();
+    if let DependencySource::Path { path } = &dependency.source {
+        dependency.source = DependencySource::Path {
+            path: rebase_workspace_path(&workspace.root, package_root, path),
+        };
+    }
+    dependency
+}
+
+fn rebase_workspace_path(workspace_root: &Path, package_root: &Path, path: &str) -> String {
+    let path = Path::new(path);
+    if path.is_absolute() {
+        return path.to_string_lossy().replace('\\', "/");
+    }
+    let target = normalize_logical_path(&workspace_root.join(path));
+    let package_root = normalize_logical_path(package_root);
+    relative_path(&package_root, &target)
+        .unwrap_or(target)
+        .to_string_lossy()
+        .replace('\\', "/")
+}
+
+fn normalize_logical_path(path: &Path) -> PathBuf {
+    let mut normalized = PathBuf::new();
+    for component in path.components() {
+        match component {
+            std::path::Component::CurDir => {}
+            std::path::Component::ParentDir => {
+                if !normalized.pop() {
+                    normalized.push("..");
+                }
+            }
+            _ => normalized.push(component.as_os_str()),
+        }
+    }
+    normalized
+}
+
+fn relative_path(base: &Path, target: &Path) -> Option<PathBuf> {
+    let base_components = base.components().collect::<Vec<_>>();
+    let target_components = target.components().collect::<Vec<_>>();
+
+    let mut common = 0;
+    while common < base_components.len()
+        && common < target_components.len()
+        && base_components[common] == target_components[common]
+    {
+        common += 1;
+    }
+
+    if common == 0
+        && base_components
+            .first()
+            .is_some_and(|component| matches!(component, std::path::Component::Prefix(_)))
+    {
+        return None;
+    }
+
+    let mut relative = PathBuf::new();
+    for _ in common..base_components.len() {
+        relative.push("..");
+    }
+    for component in &target_components[common..] {
+        relative.push(component.as_os_str());
+    }
+    if relative.as_os_str().is_empty() {
+        relative.push(".");
+    }
+    Some(relative)
 }
 
 fn required_dependency_string(
@@ -987,9 +1269,12 @@ fn render_lockfile(graph: &DependencyGraph) -> String {
     out
 }
 
-fn dependency_graph_from_lockfile(root: &Path) -> Result<DependencyGraph, String> {
+fn dependency_graph_from_lockfile(
+    root: &Path,
+    lock_root: &Path,
+) -> Result<DependencyGraph, String> {
     let manifest = parse_manifest_at_root(root)?;
-    let lock_path = root.join("nomo.lock");
+    let lock_path = lock_root.join("nomo.lock");
     let text = fs::read_to_string(&lock_path).map_err(|err| err.to_string())?;
     let packages = parse_lockfile_text(&text)?;
     let referenced_packages = packages
@@ -1679,6 +1964,70 @@ path = "../utils"
         let err = parse_manifest_text(manifest, Path::new("demo")).unwrap_err();
 
         assert!(err.contains("alias `std` is reserved"), "{err}");
+    }
+
+    #[test]
+    fn parses_workspace_member_package_and_dependency_inheritance() {
+        let root = temp_test_root("workspace-inheritance");
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        let app = root.join("apps/cli");
+        let core = root.join("packages/core");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(core.join("src")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\n\n[workspace.package]\nnamespace = \"fynn\"\nedition = \"2026\"\n\n[workspace.dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\ncore = { package = \"fynn/core\", path = \"packages/core\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            app.join("nomo.toml"),
+            "[package]\nname = \"cli\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n\n[dependencies]\njson.workspace = true\ncore.workspace = true\n",
+        )
+        .unwrap();
+        fs::write(
+            core.join("nomo.toml"),
+            "[package]\nname = \"core\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+        )
+        .unwrap();
+
+        let manifest = parse_manifest_at_root(&app).unwrap();
+
+        assert_eq!(manifest.package.namespace, "fynn");
+        assert_eq!(manifest.package.name, "cli");
+        assert_eq!(manifest.package.edition, "2026");
+        assert_eq!(manifest.dependencies.len(), 2);
+        assert_eq!(manifest.dependencies[0].alias, "core");
+        assert_eq!(manifest.dependencies[0].package, "fynn/core");
+        assert_eq!(
+            manifest.dependencies[0].source,
+            DependencySource::Path {
+                path: "../../packages/core".to_string(),
+            }
+        );
+        assert_eq!(manifest.dependencies[1].alias, "json");
+        assert_eq!(manifest.dependencies[1].package, "nomo-lang/json");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn rejects_workspace_root_without_package_as_project() {
+        let root = temp_test_root("workspace-root-without-package");
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[workspace]\nmembers = [\"apps/*\"]\n",
+        )
+        .unwrap();
+
+        let err = discover_project(&root).unwrap_err();
+
+        assert!(err.contains("workspace manifest"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
     }
 
     #[test]

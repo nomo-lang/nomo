@@ -17,6 +17,25 @@ struct ResultMapErrInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct OptionUnwrapOrInstance {
+    payload_type: ValueType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OptionMapInstance {
+    source_type: ValueType,
+    target_type: ValueType,
+    converter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct OptionAndThenInstance {
+    source_type: ValueType,
+    target_type: ValueType,
+    converter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalArray {
     name: String,
     value_type: ValueType,
@@ -142,6 +161,21 @@ pub fn emit_c(program: &Program) -> String {
     let result_map_err_instances = collect_result_map_err_instances(program);
     for instance in &result_map_err_instances {
         emit_result_map_err_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let option_unwrap_or_instances = collect_option_unwrap_or_instances(program);
+    for instance in &option_unwrap_or_instances {
+        emit_option_unwrap_or_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let option_map_instances = collect_option_map_instances(program);
+    for instance in &option_map_instances {
+        emit_option_map_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let option_and_then_instances = collect_option_and_then_instances(program);
+    for instance in &option_and_then_instances {
+        emit_option_and_then_helper(&mut out, instance);
         out.push('\n');
     }
 
@@ -3045,7 +3079,14 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
             expr_may_share_array_storage(value)
         }
         ValueExpr::EnvSet { .. } => false,
-        ValueExpr::ResultMapErr { result, .. } => expr_may_share_array_storage(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. } => expr_may_share_array_storage(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_may_share_array_storage(option) || expr_may_share_array_storage(default),
         ValueExpr::StructLiteral { fields, .. } => fields
             .iter()
             .any(|(_, field)| expr_may_share_array_storage(field)),
@@ -3278,6 +3319,94 @@ fn emit_result_map_err_helper(out: &mut String, instance: &ResultMapErrInstance)
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = input.payload.");
     out.push_str(&c_payload_ident("Ok"));
+    out.push_str("};\n");
+    out.push_str("}\n");
+}
+
+fn emit_option_unwrap_or_helper(out: &mut String, instance: &OptionUnwrapOrInstance) {
+    let option_args = vec![instance.payload_type.clone()];
+    let helper_name = c_option_unwrap_or_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_type(&instance.payload_type));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Option", &option_args));
+    out.push_str(" input, ");
+    out.push_str(&c_type(&instance.payload_type));
+    out.push_str(" default_value) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Option", &option_args, "Some"));
+    out.push_str(") {\n");
+    if value_type_needs_release(&instance.payload_type) {
+        emit_value_release_in_place(out, &instance.payload_type, "default_value", 2);
+    }
+    out.push_str("        return input.payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(";\n");
+    out.push_str("    }\n");
+    out.push_str("    return default_value;\n");
+    out.push_str("}\n");
+}
+
+fn emit_option_map_helper(out: &mut String, instance: &OptionMapInstance) {
+    let source_args = vec![instance.source_type.clone()];
+    let target_args = vec![instance.target_type.clone()];
+    let helper_name = c_option_map_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_enum_ident("Option", &target_args));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Option", &source_args));
+    out.push_str(" input) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Option", &source_args, "Some"));
+    out.push_str(") {\n");
+    out.push_str("        return (");
+    out.push_str(&c_enum_ident("Option", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Option", &target_args, "Some"));
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = ");
+    out.push_str(&c_fn_ident(&instance.converter));
+    out.push_str("(input.payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(")};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&c_enum_ident("Option", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Option", &target_args, "None"));
+    out.push_str("};\n");
+    out.push_str("}\n");
+}
+
+fn emit_option_and_then_helper(out: &mut String, instance: &OptionAndThenInstance) {
+    let source_args = vec![instance.source_type.clone()];
+    let target_args = vec![instance.target_type.clone()];
+    let helper_name = c_option_and_then_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_enum_ident("Option", &target_args));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Option", &source_args));
+    out.push_str(" input) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Option", &source_args, "Some"));
+    out.push_str(") {\n");
+    out.push_str("        return ");
+    out.push_str(&c_fn_ident(&instance.converter));
+    out.push_str("(input.payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(");\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&c_enum_ident("Option", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Option", &target_args, "None"));
     out.push_str("};\n");
     out.push_str("}\n");
 }
@@ -3609,6 +3738,78 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, result);
             out.push(')');
         }
+        ValueExpr::OptionIsSome {
+            option,
+            payload_type,
+        } => {
+            out.push('(');
+            emit_expr(out, option);
+            out.push_str(".tag == ");
+            out.push_str(&c_enum_variant_ident(
+                "Option",
+                &[payload_type.clone()],
+                "Some",
+            ));
+            out.push(')');
+        }
+        ValueExpr::OptionIsNone {
+            option,
+            payload_type,
+        } => {
+            out.push('(');
+            emit_expr(out, option);
+            out.push_str(".tag == ");
+            out.push_str(&c_enum_variant_ident(
+                "Option",
+                &[payload_type.clone()],
+                "None",
+            ));
+            out.push(')');
+        }
+        ValueExpr::OptionUnwrapOr {
+            option,
+            default,
+            payload_type,
+        } => {
+            out.push_str(&c_option_unwrap_or_helper_ident(&OptionUnwrapOrInstance {
+                payload_type: payload_type.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, option);
+            out.push_str(", ");
+            emit_expr(out, default);
+            out.push(')');
+        }
+        ValueExpr::OptionMap {
+            option,
+            source_type,
+            target_type,
+            converter,
+        } => {
+            out.push_str(&c_option_map_helper_ident(&OptionMapInstance {
+                source_type: source_type.clone(),
+                target_type: target_type.clone(),
+                converter: converter.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, option);
+            out.push(')');
+        }
+        ValueExpr::OptionAndThen {
+            option,
+            source_type,
+            target_type,
+            converter,
+        } => {
+            out.push_str(&c_option_and_then_helper_ident(&OptionAndThenInstance {
+                source_type: source_type.clone(),
+                target_type: target_type.clone(),
+                converter: converter.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, option);
+            out.push(')');
+        }
         ValueExpr::EnvGet { name } => {
             out.push_str("nomo_env_get(");
             emit_expr(out, name);
@@ -3733,6 +3934,67 @@ fn collect_result_map_err_instances(program: &Program) -> Vec<ResultMapErrInstan
             collect_stmt_result_map_err(statement, &mut out);
         }
     }
+    out
+}
+
+fn collect_option_unwrap_or_instances(program: &Program) -> Vec<OptionUnwrapOrInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::OptionUnwrapOr { payload_type, .. } = expr {
+            let instance = OptionUnwrapOrInstance {
+                payload_type: payload_type.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
+    out
+}
+
+fn collect_option_map_instances(program: &Program) -> Vec<OptionMapInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::OptionMap {
+            source_type,
+            target_type,
+            converter,
+            ..
+        } = expr
+        {
+            let instance = OptionMapInstance {
+                source_type: source_type.clone(),
+                target_type: target_type.clone(),
+                converter: converter.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
+    out
+}
+
+fn collect_option_and_then_instances(program: &Program) -> Vec<OptionAndThenInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::OptionAndThen {
+            source_type,
+            target_type,
+            converter,
+            ..
+        } = expr
+        {
+            let instance = OptionAndThenInstance {
+                source_type: source_type.clone(),
+                target_type: target_type.clone(),
+                converter: converter.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
     out
 }
 
@@ -3909,9 +4171,19 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::OptionIsSome { option: path, .. }
+        | ValueExpr::OptionIsNone { option: path, .. }
+        | ValueExpr::OptionMap { option: path, .. }
+        | ValueExpr::OptionAndThen { option: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => collect_expr_result_map_err(path, out),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => {
+            collect_expr_result_map_err(option, out);
+            collect_expr_result_map_err(default, out);
+        }
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_result_map_err(path, out);
             collect_expr_result_map_err(content, out);
@@ -3958,6 +4230,253 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(value, out);
             for arm in arms {
                 collect_expr_result_map_err(&arm.value, out);
+            }
+        }
+        ValueExpr::StringLiteral(_)
+        | ValueExpr::IntLiteral(_)
+        | ValueExpr::FloatLiteral(_)
+        | ValueExpr::CharLiteral(_)
+        | ValueExpr::BoolLiteral(_)
+        | ValueExpr::VoidLiteral
+        | ValueExpr::Variable(_)
+        | ValueExpr::MutBorrow(_)
+        | ValueExpr::EnvCwd
+        | ValueExpr::EnvHomeDir
+        | ValueExpr::EnvTempDir
+        | ValueExpr::EnvArgs
+        | ValueExpr::ArrayNew { .. }
+        | ValueExpr::FieldAccess { .. } => {}
+    }
+}
+
+fn walk_program_exprs<F>(program: &Program, visit: &mut F)
+where
+    F: FnMut(&ValueExpr),
+{
+    for function in &program.functions {
+        for statement in &function.body {
+            walk_stmt_exprs(statement, visit);
+        }
+    }
+}
+
+fn walk_stmt_exprs<F>(statement: &Statement, visit: &mut F)
+where
+    F: FnMut(&ValueExpr),
+{
+    match statement {
+        Statement::Let { initializer, .. }
+        | Statement::QuestionLet {
+            result_expr: initializer,
+            ..
+        }
+        | Statement::QuestionReturnOk {
+            result_expr: initializer,
+            ..
+        }
+        | Statement::Assign {
+            value: initializer, ..
+        }
+        | Statement::AssignField {
+            value: initializer, ..
+        }
+        | Statement::Println(initializer)
+        | Statement::Eprintln(initializer)
+        | Statement::Panic(initializer)
+        | Statement::Return(Some(initializer))
+        | Statement::Expr(initializer) => walk_expr(initializer, visit),
+        Statement::LetElse {
+            value, else_body, ..
+        } => {
+            walk_expr(value, visit);
+            for statement in else_body {
+                walk_stmt_exprs(statement, visit);
+            }
+        }
+        Statement::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            walk_expr(value, visit);
+            for statement in body {
+                walk_stmt_exprs(statement, visit);
+            }
+            if let Some(else_body) = else_body {
+                for statement in else_body {
+                    walk_stmt_exprs(statement, visit);
+                }
+            }
+        }
+        Statement::If {
+            condition,
+            body,
+            else_body,
+        } => {
+            walk_expr(condition, visit);
+            for statement in body {
+                walk_stmt_exprs(statement, visit);
+            }
+            for statement in else_body {
+                walk_stmt_exprs(statement, visit);
+            }
+        }
+        Statement::LetIf {
+            condition,
+            body,
+            else_body,
+            ..
+        } => {
+            walk_expr(condition, visit);
+            for statement in body {
+                walk_stmt_exprs(statement, visit);
+            }
+            for statement in else_body {
+                walk_stmt_exprs(statement, visit);
+            }
+        }
+        Statement::LetMatch { value, arms, .. } | Statement::Match { value, arms, .. } => {
+            walk_expr(value, visit);
+            for arm in arms {
+                for statement in &arm.body {
+                    walk_stmt_exprs(statement, visit);
+                }
+            }
+        }
+        Statement::Loop { kind, body } => {
+            match kind {
+                LoopKind::Infinite => {}
+                LoopKind::While(condition) => walk_expr(condition, visit),
+                LoopKind::Iterate { iterable, .. } => walk_expr(iterable, visit),
+            }
+            for statement in body {
+                walk_stmt_exprs(statement, visit);
+            }
+        }
+        Statement::Defer { call } => walk_deferred_exprs(call, visit),
+        Statement::Return(None) | Statement::Break | Statement::Continue => {}
+    }
+}
+
+fn walk_deferred_exprs<F>(call: &DeferredCall, visit: &mut F)
+where
+    F: FnMut(&ValueExpr),
+{
+    match call {
+        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+            walk_expr(expr, visit);
+        }
+    }
+}
+
+fn walk_expr<F>(expr: &ValueExpr, visit: &mut F)
+where
+    F: FnMut(&ValueExpr),
+{
+    visit(expr);
+    match expr {
+        ValueExpr::Binary { left, right, .. }
+        | ValueExpr::StringCompare { left, right, .. }
+        | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
+        | ValueExpr::PathJoin { left, right }
+        | ValueExpr::MathBinary { left, right, .. } => {
+            walk_expr(left, visit);
+            walk_expr(right, visit);
+        }
+        ValueExpr::FsReadToString { path }
+        | ValueExpr::FsOpen { path }
+        | ValueExpr::FileClose { file: path }
+        | ValueExpr::EnvGet { name: path }
+        | ValueExpr::StringLen { value: path }
+        | ValueExpr::StringIsEmpty { value: path }
+        | ValueExpr::StringTrim { value: path }
+        | ValueExpr::StringToLower { value: path }
+        | ValueExpr::StringToUpper { value: path }
+        | ValueExpr::PathBasename { path }
+        | ValueExpr::PathDirname { path }
+        | ValueExpr::PathExtension { path }
+        | ValueExpr::PathNormalize { path }
+        | ValueExpr::PathIsAbsolute { path }
+        | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::Unary { expr: path, .. }
+        | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::OptionIsSome { option: path, .. }
+        | ValueExpr::OptionIsNone { option: path, .. }
+        | ValueExpr::OptionMap { option: path, .. }
+        | ValueExpr::OptionAndThen { option: path, .. }
+        | ValueExpr::EnumPayload { value: path, .. }
+        | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
+        | ValueExpr::ArrayLen { array: path } => walk_expr(path, visit),
+        ValueExpr::ResultMapErr { result, .. } => walk_expr(result, visit),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => {
+            walk_expr(option, visit);
+            walk_expr(default, visit);
+        }
+        ValueExpr::FsWriteString { path, content } => {
+            walk_expr(path, visit);
+            walk_expr(content, visit);
+        }
+        ValueExpr::EnvSet { name, value } => {
+            walk_expr(name, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::Call { args, .. } => {
+            for arg in args {
+                walk_expr(arg, visit);
+            }
+        }
+        ValueExpr::ArrayGet { array, index, .. } => {
+            walk_expr(array, visit);
+            walk_expr(index, visit);
+        }
+        ValueExpr::ArrayPush { value, .. } => walk_expr(value, visit),
+        ValueExpr::ArraySet { index, value, .. } => {
+            walk_expr(index, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                walk_expr(value, visit);
+            }
+        }
+        ValueExpr::EnumVariant { payload, .. } => {
+            if let Some(payload) = payload {
+                walk_expr(payload, visit);
+            }
+        }
+        ValueExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            walk_expr(condition, visit);
+            walk_expr(then_branch, visit);
+            walk_expr(else_branch, visit);
+        }
+        ValueExpr::Panic { message, .. } => walk_expr(message, visit),
+        ValueExpr::Match { value, arms } => {
+            walk_expr(value, visit);
+            for arm in arms {
+                walk_expr(&arm.value, visit);
             }
         }
         ValueExpr::StringLiteral(_)
@@ -4268,6 +4787,42 @@ fn collect_expr_struct(
             collect_type_struct(source_err_type, seen, out);
             collect_type_struct(target_err_type, seen, out);
             collect_expr_struct(result, seen, out);
+        }
+        ValueExpr::OptionIsSome {
+            option,
+            payload_type,
+        }
+        | ValueExpr::OptionIsNone {
+            option,
+            payload_type,
+        } => {
+            collect_type_struct(payload_type, seen, out);
+            collect_expr_struct(option, seen, out);
+        }
+        ValueExpr::OptionUnwrapOr {
+            option,
+            default,
+            payload_type,
+        } => {
+            collect_type_struct(payload_type, seen, out);
+            collect_expr_struct(option, seen, out);
+            collect_expr_struct(default, seen, out);
+        }
+        ValueExpr::OptionMap {
+            option,
+            source_type,
+            target_type,
+            ..
+        }
+        | ValueExpr::OptionAndThen {
+            option,
+            source_type,
+            target_type,
+            ..
+        } => {
+            collect_type_struct(source_type, seen, out);
+            collect_type_struct(target_type, seen, out);
+            collect_expr_struct(option, seen, out);
         }
         ValueExpr::EnvGet { name } => collect_expr_struct(name, seen, out),
         ValueExpr::EnvSet { name, value } => {
@@ -4708,6 +5263,46 @@ fn collect_expr_enum(
             collect_type_enum(source_err_type, seen, out);
             collect_type_enum(target_err_type, seen, out);
             collect_expr_enum(result, seen, out);
+        }
+        ValueExpr::OptionIsSome {
+            option,
+            payload_type,
+        }
+        | ValueExpr::OptionIsNone {
+            option,
+            payload_type,
+        } => {
+            push_enum_instance(seen, out, "Option", &[payload_type.clone()]);
+            collect_type_enum(payload_type, seen, out);
+            collect_expr_enum(option, seen, out);
+        }
+        ValueExpr::OptionUnwrapOr {
+            option,
+            default,
+            payload_type,
+        } => {
+            push_enum_instance(seen, out, "Option", &[payload_type.clone()]);
+            collect_type_enum(payload_type, seen, out);
+            collect_expr_enum(option, seen, out);
+            collect_expr_enum(default, seen, out);
+        }
+        ValueExpr::OptionMap {
+            option,
+            source_type,
+            target_type,
+            ..
+        }
+        | ValueExpr::OptionAndThen {
+            option,
+            source_type,
+            target_type,
+            ..
+        } => {
+            push_enum_instance(seen, out, "Option", &[source_type.clone()]);
+            push_enum_instance(seen, out, "Option", &[target_type.clone()]);
+            collect_type_enum(source_type, seen, out);
+            collect_type_enum(target_type, seen, out);
+            collect_expr_enum(option, seen, out);
         }
         ValueExpr::EnvGet { name } => {
             push_enum_instance(seen, out, "Option", &[ValueType::String]);
@@ -5318,9 +5913,16 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::OptionIsSome { option: path, .. }
+        | ValueExpr::OptionIsNone { option: path, .. }
+        | ValueExpr::OptionMap { option: path, .. }
+        | ValueExpr::OptionAndThen { option: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_contains(path, predicate),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_contains(option, predicate) || expr_contains(default, predicate),
         ValueExpr::StructLiteral { fields, .. } => fields
             .iter()
             .any(|(_, value)| expr_contains(value, predicate)),
@@ -5777,7 +6379,14 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
             expr_uses_fs_read_to_string(path)
         }
-        ValueExpr::ResultMapErr { result, .. } => expr_uses_fs_read_to_string(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_read_to_string(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_uses_fs_read_to_string(option) || expr_uses_fs_read_to_string(default),
         ValueExpr::EnvGet { name }
         | ValueExpr::PathBasename { path: name }
         | ValueExpr::PathDirname { path: name }
@@ -5875,7 +6484,14 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
             expr_uses_fs_write_string(path)
         }
-        ValueExpr::ResultMapErr { result, .. } => expr_uses_fs_write_string(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_write_string(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_uses_fs_write_string(option) || expr_uses_fs_write_string(default),
         ValueExpr::EnvGet { name }
         | ValueExpr::PathBasename { path: name }
         | ValueExpr::PathDirname { path: name }
@@ -5973,7 +6589,14 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
-        ValueExpr::ResultMapErr { result, .. } => expr_uses_fs_open(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_open(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_uses_fs_open(option) || expr_uses_fs_open(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_open(path) || expr_uses_fs_open(content)
         }
@@ -6065,7 +6688,14 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
-        ValueExpr::ResultMapErr { result, .. } => expr_uses_env_get(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_env_get(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_uses_env_get(option) || expr_uses_env_get(default),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_env_get(array),
@@ -6155,7 +6785,14 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
-        ValueExpr::ResultMapErr { result, .. } => expr_uses_env_args(result),
+        ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::OptionIsSome { option: result, .. }
+        | ValueExpr::OptionIsNone { option: result, .. }
+        | ValueExpr::OptionMap { option: result, .. }
+        | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_env_args(result),
+        ValueExpr::OptionUnwrapOr {
+            option, default, ..
+        } => expr_uses_env_args(option) || expr_uses_env_args(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_args(path) || expr_uses_env_args(content)
         }
@@ -6275,6 +6912,42 @@ fn collect_expr_array_elements(
             collect_type_array_elements(source_err_type, seen, out);
             collect_type_array_elements(target_err_type, seen, out);
             collect_expr_array_elements(result, seen, out);
+        }
+        ValueExpr::OptionIsSome {
+            option,
+            payload_type,
+        }
+        | ValueExpr::OptionIsNone {
+            option,
+            payload_type,
+        } => {
+            collect_type_array_elements(payload_type, seen, out);
+            collect_expr_array_elements(option, seen, out);
+        }
+        ValueExpr::OptionUnwrapOr {
+            option,
+            default,
+            payload_type,
+        } => {
+            collect_type_array_elements(payload_type, seen, out);
+            collect_expr_array_elements(option, seen, out);
+            collect_expr_array_elements(default, seen, out);
+        }
+        ValueExpr::OptionMap {
+            option,
+            source_type,
+            target_type,
+            ..
+        }
+        | ValueExpr::OptionAndThen {
+            option,
+            source_type,
+            target_type,
+            ..
+        } => {
+            collect_type_array_elements(source_type, seen, out);
+            collect_type_array_elements(target_type, seen, out);
+            collect_expr_array_elements(option, seen, out);
         }
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_array_elements(path, seen, out);
@@ -6631,6 +7304,31 @@ fn c_result_map_err_helper_ident(instance: &ResultMapErrInstance) -> String {
         c_type_name_part(&instance.ok_type),
         c_type_name_part(&instance.source_err_type),
         c_type_name_part(&instance.target_err_type),
+        instance.converter
+    )
+}
+
+fn c_option_unwrap_or_helper_ident(instance: &OptionUnwrapOrInstance) -> String {
+    format!(
+        "nomo_option_unwrap_or_{}",
+        c_type_name_part(&instance.payload_type)
+    )
+}
+
+fn c_option_map_helper_ident(instance: &OptionMapInstance) -> String {
+    format!(
+        "nomo_option_map_{}_{}_{}",
+        c_type_name_part(&instance.source_type),
+        c_type_name_part(&instance.target_type),
+        instance.converter
+    )
+}
+
+fn c_option_and_then_helper_ident(instance: &OptionAndThenInstance) -> String {
+    format!(
+        "nomo_option_and_then_{}_{}_{}",
+        c_type_name_part(&instance.source_type),
+        c_type_name_part(&instance.target_type),
         instance.converter
     )
 }

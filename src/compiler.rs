@@ -364,6 +364,31 @@ pub enum ValueExpr {
         target_err_type: ValueType,
         converter: String,
     },
+    OptionIsSome {
+        option: Box<ValueExpr>,
+        payload_type: ValueType,
+    },
+    OptionIsNone {
+        option: Box<ValueExpr>,
+        payload_type: ValueType,
+    },
+    OptionUnwrapOr {
+        option: Box<ValueExpr>,
+        default: Box<ValueExpr>,
+        payload_type: ValueType,
+    },
+    OptionMap {
+        option: Box<ValueExpr>,
+        source_type: ValueType,
+        target_type: ValueType,
+        converter: String,
+    },
+    OptionAndThen {
+        option: Box<ValueExpr>,
+        source_type: ValueType,
+        target_type: ValueType,
+        converter: String,
+    },
     EnvGet {
         name: Box<ValueExpr>,
     },
@@ -1584,6 +1609,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.result.map_err"
             | "std.option"
             | "std.option.Option"
+            | "std.option.is_some"
+            | "std.option.is_none"
+            | "std.option.unwrap_or"
+            | "std.option.map"
+            | "std.option.and_then"
             | "std.array"
             | "std.array.Array"
             | "std.array.new"
@@ -7619,6 +7649,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "option" {
+                    return lower_option_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
             }
             let Some(template_signature) = signatures.get(name) else {
                 if scope.contains_key(name) {
@@ -7890,6 +7925,19 @@ fn lower_value_expr_with_expected(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_option_builtin_call(callee) {
+                require_option_method_import(path, imports, span, &callee[1])?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "option builtins do not accept type arguments",
+                    ));
+                }
+                return lower_option_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if type_args.is_empty() && is_array_value_method(callee, scope) {
                 return lower_array_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
@@ -7904,6 +7952,11 @@ fn lower_value_expr_with_expected(
                 return lower_file_value_method(path, callee, args, scope, span);
             }
             if type_args.is_empty() {
+                if let Some(lowered) = lower_option_value_method(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                )? {
+                    return Ok(lowered);
+                }
                 if let Some(lowered) =
                     lower_result_value_method(path, callee, args, scope, imports, signatures, span)?
                 {
@@ -9382,6 +9435,432 @@ fn lower_file_value_method(
     }
 }
 
+fn is_option_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "option"
+                && matches!(
+                    name.as_str(),
+                    "is_some" | "is_none" | "unwrap_or" | "map" | "and_then"
+                )
+    )
+}
+
+fn lower_option_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, method] = callee else {
+        unreachable!("option builtin dispatcher only passes qualified calls");
+    };
+    debug_assert_eq!(module, "option");
+    match method.as_str() {
+        "is_some" | "is_none" => {
+            let [option] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`option.{method}` expects exactly one Option argument"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (option_type, lowered_option) = lower_value_expr(
+                path, option, scope, imports, signatures, structs, enums, span,
+            )?;
+            let payload_type = option_payload(&option_type).ok_or_else(|| {
+                type_mismatch(
+                    path,
+                    span,
+                    format!("`option.{method}` expects an Option value"),
+                )
+            })?;
+            let value = if method == "is_some" {
+                ValueExpr::OptionIsSome {
+                    option: Box::new(lowered_option),
+                    payload_type,
+                }
+            } else {
+                ValueExpr::OptionIsNone {
+                    option: Box::new(lowered_option),
+                    payload_type,
+                }
+            };
+            Ok((ValueType::Bool, value))
+        }
+        "unwrap_or" => {
+            let [option, default] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`option.unwrap_or` expects an Option value and a default value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (option_type, lowered_option) = lower_value_expr(
+                path, option, scope, imports, signatures, structs, enums, span,
+            )?;
+            let payload_type = option_payload(&option_type).ok_or_else(|| {
+                type_mismatch(path, span, "`option.unwrap_or` expects an Option value")
+            })?;
+            if payload_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`option.unwrap_or` does not support Option<void>",
+                ));
+            }
+            let (default_type, lowered_default) = lower_value_expr_with_expected(
+                path,
+                default,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&payload_type),
+                span,
+            )?;
+            if default_type != payload_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`option.unwrap_or` default is `{}` but payload is `{}`",
+                        default_type.name(),
+                        payload_type.name()
+                    ),
+                    &payload_type,
+                    &default_type,
+                ));
+            }
+            Ok((
+                payload_type.clone(),
+                ValueExpr::OptionUnwrapOr {
+                    option: Box::new(lowered_option),
+                    default: Box::new(lowered_default),
+                    payload_type,
+                },
+            ))
+        }
+        "map" | "and_then" => {
+            let [option, converter] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`option.{method}` expects an Option value and a converter function"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (option_type, lowered_option) = lower_value_expr(
+                path, option, scope, imports, signatures, structs, enums, span,
+            )?;
+            let source_type = option_payload(&option_type).ok_or_else(|| {
+                type_mismatch(
+                    path,
+                    span,
+                    format!("`option.{method}` expects an Option value"),
+                )
+            })?;
+            lower_option_converter_call(
+                path,
+                span,
+                method,
+                lowered_option,
+                source_type,
+                converter,
+                signatures,
+            )
+        }
+        _ => unreachable!("option builtin dispatcher only passes known calls"),
+    }
+}
+
+fn lower_option_value_method(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<Option<(ValueType, ValueExpr)>, Diagnostic> {
+    if callee.len() != 2 {
+        return Ok(None);
+    }
+    let receiver_name = &callee[0];
+    let method = &callee[1];
+    if !matches!(
+        method.as_str(),
+        "is_some" | "is_none" | "unwrap_or" | "map" | "and_then"
+    ) {
+        return Ok(None);
+    }
+    let Some(binding) = scope.get(receiver_name) else {
+        return Ok(None);
+    };
+    require_option_method_import(path, imports, span, method)?;
+    let Some(payload_type) = option_payload(&binding.value_type) else {
+        return Err(type_mismatch(
+            path,
+            span,
+            format!("`{receiver_name}.{method}` expects an Option value"),
+        ));
+    };
+    let option = binding_value_expr(receiver_name, binding);
+    match method.as_str() {
+        "is_some" => Ok(Some((
+            ValueType::Bool,
+            ValueExpr::OptionIsSome {
+                option: Box::new(option),
+                payload_type,
+            },
+        ))),
+        "is_none" => Ok(Some((
+            ValueType::Bool,
+            ValueExpr::OptionIsNone {
+                option: Box::new(option),
+                payload_type,
+            },
+        ))),
+        "unwrap_or" => {
+            let [default] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Option.unwrap_or` expects exactly one default value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            if payload_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`Option.unwrap_or` does not support Option<void>",
+                ));
+            }
+            let (default_type, lowered_default) = lower_value_expr_with_expected(
+                path,
+                default,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&payload_type),
+                span,
+            )?;
+            if default_type != payload_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`Option.unwrap_or` default is `{}` but payload is `{}`",
+                        default_type.name(),
+                        payload_type.name()
+                    ),
+                    &payload_type,
+                    &default_type,
+                ));
+            }
+            Ok(Some((
+                payload_type.clone(),
+                ValueExpr::OptionUnwrapOr {
+                    option: Box::new(option),
+                    default: Box::new(lowered_default),
+                    payload_type,
+                },
+            )))
+        }
+        "map" | "and_then" => {
+            let [converter] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`Option.{method}` expects exactly one converter function"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            lower_option_converter_call(
+                path,
+                span,
+                method,
+                option,
+                payload_type,
+                converter,
+                signatures,
+            )
+            .map(Some)
+        }
+        _ => unreachable!("option method dispatcher only passes known calls"),
+    }
+}
+
+fn lower_option_converter_call(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    option: ValueExpr,
+    source_type: ValueType,
+    converter: &AstExpr,
+    signatures: &HashMap<String, FunctionSignature>,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let converter_name = option_converter_name(path, span, method, converter)?;
+    let converter_signature =
+        option_converter_signature(path, span, method, &converter_name, signatures)?;
+    let [converter_param] = converter_signature.params.as_slice() else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("converter function `{converter_name}` must take exactly one argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    if converter_param.value_type != source_type {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!(
+                "`Option.{method}` converter `{converter_name}` takes `{}` but payload is `{}`",
+                converter_param.value_type.name(),
+                source_type.name()
+            ),
+            &source_type,
+            &converter_param.value_type,
+        ));
+    }
+    match method {
+        "map" => {
+            if converter_signature.return_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("converter function `{converter_name}` must return a mapped value"),
+                ));
+            }
+            let target_type = converter_signature.return_type.clone();
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![target_type.clone()]),
+                ValueExpr::OptionMap {
+                    option: Box::new(option),
+                    source_type,
+                    target_type,
+                    converter: converter_name,
+                },
+            ))
+        }
+        "and_then" => {
+            let Some(target_type) = option_payload(&converter_signature.return_type) else {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("converter function `{converter_name}` must return an Option value"),
+                ));
+            };
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![target_type.clone()]),
+                ValueExpr::OptionAndThen {
+                    option: Box::new(option),
+                    source_type,
+                    target_type,
+                    converter: converter_name,
+                },
+            ))
+        }
+        _ => unreachable!("option converter helper only supports map/and_then"),
+    }
+}
+
+fn option_converter_name(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    converter: &AstExpr,
+) -> Result<String, Diagnostic> {
+    let AstExpr::Name(converter_path) = converter else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`Option.{method}` expects a converter function name"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let [converter_name] = converter_path.as_slice() else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`Option.{method}` expects an unqualified converter function name"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    Ok(converter_name.clone())
+}
+
+fn option_converter_signature<'a>(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    converter_name: &str,
+    signatures: &'a HashMap<String, FunctionSignature>,
+) -> Result<&'a FunctionSignature, Diagnostic> {
+    let Some(converter_signature) = signatures.get(converter_name) else {
+        return Err(Diagnostic::new(
+            "E0305",
+            format!("unknown converter function `{converter_name}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    if !converter_signature.type_params.is_empty() {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`Option.{method}` converter `{converter_name}` must not be generic"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    Ok(converter_signature)
+}
+
 fn lower_result_value_method(
     path: &Path,
     callee: &[String],
@@ -10631,6 +11110,21 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "cos" if imports.iter().any(|item| item == "std.math.cos") => {
             vec!["math".to_string(), "cos".to_string()]
         }
+        "is_some" if imports.iter().any(|item| item == "std.option.is_some") => {
+            vec!["option".to_string(), "is_some".to_string()]
+        }
+        "is_none" if imports.iter().any(|item| item == "std.option.is_none") => {
+            vec!["option".to_string(), "is_none".to_string()]
+        }
+        "unwrap_or" if imports.iter().any(|item| item == "std.option.unwrap_or") => {
+            vec!["option".to_string(), "unwrap_or".to_string()]
+        }
+        "map" if imports.iter().any(|item| item == "std.option.map") => {
+            vec!["option".to_string(), "map".to_string()]
+        }
+        "and_then" if imports.iter().any(|item| item == "std.option.and_then") => {
+            vec!["option".to_string(), "and_then".to_string()]
+        }
         "new" if imports.iter().any(|item| item == "std.array.new") => {
             vec!["Array".to_string(), "new".to_string()]
         }
@@ -10730,6 +11224,29 @@ fn require_result_method_import(
     Err(Diagnostic::new(
         "E0301",
         format!("`Result.{method}` requires `import std.result`"),
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    ))
+}
+
+fn require_option_method_import(
+    path: &Path,
+    imports: &[String],
+    span: &Span,
+    method: &str,
+) -> Result<(), Diagnostic> {
+    if imports
+        .iter()
+        .any(|item| item == "std.option" || item == &format!("std.option.{method}"))
+    {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        "E0301",
+        format!("`Option.{method}` requires `import std.option`"),
         path,
         span.line,
         span.column,
@@ -15604,6 +16121,152 @@ fn main() -> void {
                 ..
             } if converter == "app_error_from_string"
         ));
+    }
+
+    #[test]
+    fn accepts_option_value_methods() {
+        let source = r#"package app.main
+
+import std.option
+import std.string
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Option<string> {
+    return Some(text.concat(" ok"))
+}
+
+fn main() -> void {
+    let some: Option<string> = Some("seed")
+    let none: Option<string> = None
+    let present: bool = some.is_some()
+    let absent: bool = none.is_none()
+    let fallback: string = none.unwrap_or("fallback")
+    let mapped: Option<string> = some.map(exclaim)
+    let chained: Option<string> = some.and_then(decorate)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .unwrap();
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::OptionIsSome { .. },
+                ..
+            } if value_type == &ValueType::Bool
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::OptionUnwrapOr { .. },
+                ..
+            } if value_type == &ValueType::String
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::OptionMap { .. },
+                ..
+            } if value_type == &ValueType::Enum("Option".to_string(), vec![ValueType::String])
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::OptionAndThen { .. },
+                ..
+            } if value_type == &ValueType::Enum("Option".to_string(), vec![ValueType::String])
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_option_helper_imports() {
+        let source = r#"package app.main
+
+import std.option.Option
+import std.option.is_some
+import std.option.is_none
+import std.option.unwrap_or
+import std.option.map
+import std.option.and_then
+import std.string
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Option<string> {
+    return Some(text.concat(" ok"))
+}
+
+fn main() -> void {
+    let some: Option<string> = Some("seed")
+    let none: Option<string> = None
+    let present: bool = is_some(some)
+    let absent: bool = is_none(none)
+    let fallback: string = unwrap_or(none, "fallback")
+    let mapped: Option<string> = map(some, exclaim)
+    let chained: Option<string> = and_then(some, decorate)
+}
+"#;
+
+        parse_inline(source).unwrap();
+    }
+
+    #[test]
+    fn accepts_option_module_helpers() {
+        let source = r#"package app.main
+
+import std.option
+import std.string
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Option<string> {
+    return Some(text.concat(" ok"))
+}
+
+fn main() -> void {
+    let some: Option<string> = Some("seed")
+    let none: Option<string> = None
+    let present: bool = option.is_some(some)
+    let absent: bool = option.is_none(none)
+    let fallback: string = option.unwrap_or(none, "fallback")
+    let mapped: Option<string> = option.map(some, exclaim)
+    let chained: Option<string> = option.and_then(some, decorate)
+}
+"#;
+
+        parse_inline(source).unwrap();
+    }
+
+    #[test]
+    fn rejects_option_method_without_option_import() {
+        let source = r#"package app.main
+
+import std.option.Option
+
+fn main() -> void {
+    let some: Option<string> = Some("seed")
+    let present: bool = some.is_some()
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0301");
+        assert!(err.message.contains("std.option"));
     }
 
     #[test]

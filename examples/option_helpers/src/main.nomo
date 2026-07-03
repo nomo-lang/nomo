@@ -1,0 +1,37 @@
+package app.main
+
+import std.io
+import std.option
+import std.string
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Option<string> {
+    return Some(text.concat(" ok"))
+}
+
+fn main() -> void {
+    let some: Option<string> = Some("seed")
+    let none: Option<string> = None
+    if some.is_some() && none.is_none() {
+        io.println("predicates")
+    } else {
+        io.println("wrong")
+    }
+    io.println(some.unwrap_or("fallback"))
+    io.println(none.unwrap_or("fallback"))
+    let mapped: Option<string> = some.map(exclaim)
+    let chained: Option<string> = some.and_then(decorate)
+    let mapped_text: string = match mapped {
+        Some(text) => text
+        None => "wrong"
+    }
+    let chained_text: string = match chained {
+        Some(text) => text
+        None => "wrong"
+    }
+    io.println(mapped_text)
+    io.println(chained_text)
+}

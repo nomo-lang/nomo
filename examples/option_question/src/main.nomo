@@ -1,0 +1,29 @@
+package app.main
+
+import std.io
+
+fn maybe_label(flag: bool) -> Option<string> {
+    return if flag {
+        Some("option ? ok")
+    } else {
+        None
+    }
+}
+
+fn label(flag: bool) -> Option<string> {
+    let text: string = maybe_label(flag)?
+    return Some(text)
+}
+
+fn main() -> void {
+    let some: Option<string> = label(true)
+    let none: Option<string> = label(false)
+    let message: string = match some {
+        Some(text) => match none {
+            Some(unexpected) => unexpected
+            None => text
+        }
+        None => "wrong"
+    }
+    io.println(message)
+}

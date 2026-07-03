@@ -219,6 +219,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "mut_field_borrow" => "mut field borrow ok\n",
         "mut_methods" => "mut method ok\n",
         "newline_dot" => "newline dot ok\n",
+        "option_question" => "option ? ok\n",
         "option_result_lang_items" => "lang items ok\n",
         "package_path" => "package path ok\n",
         "prelude_variants" => "prelude variants ok\n",

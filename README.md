@@ -281,7 +281,8 @@ The postfix `?` operator works on both standard carriers in v0.1:
 early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 `None` early from the current `Option`-returning function.
 There is no `try` keyword or statement syntax in v0.1; postfix `?` is the
-only error/absence propagation syntax.
+only error/absence propagation syntax. Cross-layer `Result` error conversion is
+written explicitly as `result.map_err(named_converter)?`.
 
 `std.path` provides pure string path helpers:
 `path.join`, `path.basename`, `path.dirname`, `path.extension`,

@@ -20,6 +20,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `result_chain`: `Result` with `?`
 - `result_map_err`: `Result.map_err(converter)?` across error types
 - `result_main`: `main() -> Result<void, E>` entrypoint handling with `map_err(...)?`
+- `option_question`: `Option<T>` early absence propagation with `?`
 - `prelude_variants`: unqualified `Ok`/`Err`/`Some`/`None` core variants
 - `prelude_shadow`: local names shadow prelude variants while qualified variants remain usable
 - `specific_array_new`: concrete `Array.new<T>` and array method imports

@@ -643,7 +643,7 @@ fn validate_dependency_package(dep_root: &Path, dependency: &Dependency) -> Resu
 pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
     let context = project_module_context(project).map_err(|message| {
         Diagnostic::new(
-            "N0901",
+            "E0901",
             message,
             &project.root.join("nomo.toml"),
             1,
@@ -654,7 +654,7 @@ pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
     })?;
     let source = fs::read_to_string(&project.main).map_err(|err| {
         Diagnostic::new(
-            "N0001",
+            "E0001",
             format!("failed to read source file: {err}"),
             &project.main,
             1,

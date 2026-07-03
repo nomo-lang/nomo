@@ -330,7 +330,7 @@ fn nomoc_check_emits_json_for_semicolon_lexical_error() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0102\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0102\""), "{text}");
     assert!(
         text.contains(
             "\"message\":\"semicolons are not supported in v0.1; use a newline to separate statements\""
@@ -372,7 +372,7 @@ fn nomoc_check_emits_json_for_reserved_future_keywords() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0104\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0104\""), "{text}");
     assert!(
         text.contains("\"message\":\"`go` is reserved for future Nomo versions\""),
         "{text}"
@@ -409,7 +409,7 @@ fn nomoc_check_emits_json_for_parser_errors() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0211\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0211\""), "{text}");
     assert!(
         text.contains("\"message\":\"expected newline after package declaration\""),
         "{text}"
@@ -452,7 +452,7 @@ fn nomo_check_emits_json_for_parser_errors() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0211\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0211\""), "{text}");
     assert!(
         text.contains("\"message\":\"expected newline after package declaration\""),
         "{text}"
@@ -492,7 +492,7 @@ fn nomoc_check_emits_json_suggestions() {
     let text = String::from_utf8_lossy(&output.stderr);
     let text = text.trim();
     assert_single_json_object(text);
-    assert!(text.contains("\"error_code\":\"N0301\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0301\""), "{text}");
     assert!(text.contains("\"suggestions\":[{"), "{text}");
     assert!(text.contains("\"action\":\"replace_text\""), "{text}");
     assert!(
@@ -529,7 +529,7 @@ fn nomoc_check_emits_json_for_missing_standard_type_import() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0301\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0301\""), "{text}");
     assert!(
         text.contains("\"message\":\"`Result` requires `import std.result`\""),
         "{text}"
@@ -563,7 +563,7 @@ fn nomoc_check_emits_json_for_missing_main() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0201\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0201\""), "{text}");
     assert!(
         text.contains("\"message\":\"expected `fn main() -> void { ... }`\""),
         "{text}"
@@ -597,7 +597,7 @@ fn nomoc_check_emits_json_for_invalid_main_return_type() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0401\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0401\""), "{text}");
     assert!(
         text.contains("\"message\":\"v0.1 `main` must return `void` or `Result<void, E>`\""),
         "{text}"
@@ -631,7 +631,7 @@ fn nomoc_check_emits_json_for_unsupported_wildcard_imports() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0274\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0274\""), "{text}");
     assert!(
         text.contains("\"message\":\"wildcard imports are not supported in v0.1\""),
         "{text}"
@@ -665,7 +665,7 @@ fn nomoc_check_emits_json_for_duplicate_local_binding() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0302\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0302\""), "{text}");
     assert!(
         text.contains("\"message\":\"variable `name` is already defined in this scope\""),
         "{text}"
@@ -699,7 +699,7 @@ fn nomoc_check_emits_json_for_unknown_variable_read() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0303\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0303\""), "{text}");
     assert!(
         text.contains("\"message\":\"unknown variable `missing`\""),
         "{text}"
@@ -733,7 +733,7 @@ fn nomoc_check_emits_json_for_unsupported_match_wildcard() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0238\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0238\""), "{text}");
     assert!(
         text.contains("\"message\":\"`_` match patterns are not supported in v0.1\""),
         "{text}"
@@ -767,7 +767,7 @@ fn nomoc_check_emits_json_for_non_exhaustive_match() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0318\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0318\""), "{text}");
     assert!(
         text.contains("\"message\":\"match is missing arm `Color.Blue`\""),
         "{text}"
@@ -801,7 +801,7 @@ fn nomoc_check_emits_json_for_stdlib_arity_error() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0407\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0407\""), "{text}");
     assert!(
         text.contains("\"message\":\"`fs.write_string` expects path and content strings\""),
         "{text}"
@@ -835,7 +835,7 @@ fn nomoc_check_emits_json_for_try_error_type_mismatch() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0404\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0404\""), "{text}");
     assert!(
         text.contains("\"message\":\"`?` error type is `string` but function returns `AppError`\""),
         "{text}"
@@ -871,7 +871,7 @@ fn nomoc_check_emits_json_for_try_on_non_result_value() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0420\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0420\""), "{text}");
     assert!(
         text.contains("\"message\":\"`?` can only be used with `Result<T, E>` or `Option<T>`\""),
         "{text}"
@@ -905,7 +905,7 @@ fn nomoc_check_emits_json_for_try_in_non_result_function() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0421\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0421\""), "{text}");
     assert!(
         text.contains(
             "\"message\":\"`?` on Result<T, E> requires the current function to return Result<U, E>\""
@@ -941,7 +941,7 @@ fn nomoc_check_emits_json_for_implicit_numeric_conversion() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0404\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0404\""), "{text}");
     assert!(
         text.contains("\"message\":\"cannot initialize `ratio` as `f64` from `i32`\""),
         "{text}"
@@ -977,7 +977,7 @@ fn nomoc_check_emits_json_for_implicit_numeric_conversion_in_call_argument() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0404\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0404\""), "{text}");
     assert!(
         text.contains("\"message\":\"argument 1 to `inspect` is `i32` but expected `i64`\""),
         "{text}"
@@ -1013,7 +1013,7 @@ fn nomoc_check_emits_json_for_int_not_builtin() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0403\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0403\""), "{text}");
     assert!(
         text.contains(
             "\"message\":\"`int` is not a v0.1 builtin type; use `i64` or an explicit-width integer type (`i32`, `u32`, `u64`)\""
@@ -1049,7 +1049,7 @@ fn nomoc_check_emits_json_for_assignment_to_immutable_variable() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0501\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0501\""), "{text}");
     assert!(
         text.contains("\"message\":\"cannot assign to immutable variable `count`\""),
         "{text}"
@@ -1083,7 +1083,7 @@ fn nomoc_check_emits_json_for_assignment_to_immutable_parameter() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0501\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0501\""), "{text}");
     assert!(
         text.contains("\"message\":\"cannot assign to immutable parameter `value`\""),
         "{text}"
@@ -1117,7 +1117,7 @@ fn nomoc_check_emits_json_for_field_assignment_to_immutable_parameter() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0501\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0501\""), "{text}");
     assert!(
         text.contains("\"message\":\"cannot assign to field of immutable parameter `counter`\""),
         "{text}"
@@ -1151,7 +1151,7 @@ fn nomoc_check_emits_json_for_mutating_array_method_on_immutable_parameter() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0501\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0501\""), "{text}");
     assert!(
         text.contains(
             "\"message\":\"cannot call mutating Array method on immutable parameter `items`\""
@@ -1187,7 +1187,7 @@ fn nomoc_check_emits_json_for_missing_mut_call_argument() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0500\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0500\""), "{text}");
     assert!(
         text.contains("\"message\":\"argument 1 to `inspect` must be passed as `mut`\""),
         "{text}"
@@ -1221,7 +1221,7 @@ fn nomoc_check_emits_json_for_extra_mut_call_argument() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0504\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0504\""), "{text}");
     assert!(
         text.contains("\"message\":\"argument 1 to `inspect` is not declared `mut`\""),
         "{text}"
@@ -1255,7 +1255,7 @@ fn nomoc_check_emits_json_for_immutable_variable_as_mut_call_argument() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0501\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0501\""), "{text}");
     assert!(
         text.contains("\"message\":\"cannot pass immutable variable `count` as `mut`\""),
         "{text}"
@@ -1289,7 +1289,7 @@ fn nomoc_check_emits_json_for_duplicate_mut_borrow_in_call() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"N0502\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0502\""), "{text}");
     assert!(
         text.contains(
             "\"message\":\"mutable borrow `count` conflicts with active mutable borrow `count` in this call\""
@@ -1325,7 +1325,7 @@ fn assert_json_diagnostic(stderr: &[u8], source: &Path) {
     assert_eq!(
         text,
         format!(
-            "{{\"status\":\"error\",\"error_code\":\"N0404\",\"severity\":\"error\",\"message\":\"cannot initialize `value` as `i32` from `string`\",\"source\":{{\"file\":\"{}\",\"line\":4,\"column\":5,\"length\":1,\"text\":\"    let value: i32 = \\\"bad\\\"\"}},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}}",
+            "{{\"status\":\"error\",\"error_code\":\"E0404\",\"severity\":\"error\",\"message\":\"cannot initialize `value` as `i32` from `string`\",\"source\":{{\"file\":\"{}\",\"line\":4,\"column\":5,\"length\":1,\"text\":\"    let value: i32 = \\\"bad\\\"\"}},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}}",
             source.display()
         )
     );
@@ -1338,7 +1338,7 @@ fn assert_lexical_json_diagnostic(stderr: &[u8], source: &Path) {
     assert_eq!(
         text,
         format!(
-            "{{\"status\":\"error\",\"error_code\":\"N0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{{\"file\":\"{}\",\"line\":4,\"column\":5,\"length\":1,\"text\":\"    @\"}},\"suggestions\":[]}}",
+            "{{\"status\":\"error\",\"error_code\":\"E0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{{\"file\":\"{}\",\"line\":4,\"column\":5,\"length\":1,\"text\":\"    @\"}},\"suggestions\":[]}}",
             source.display()
         )
     );

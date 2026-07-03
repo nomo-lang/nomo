@@ -10,7 +10,7 @@ use std::path::Path;
 pub fn format_source(path: &Path, source: &str) -> Result<String, Diagnostic> {
     if let Some(comment) = first_comment_span(source) {
         return Err(Diagnostic::new(
-            "N0109",
+            "E0109",
             "nomo fmt does not preserve comments yet",
             path,
             comment.line,
@@ -567,7 +567,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
                 if !matches!(stmt.as_ref(), Stmt::Expr { .. }) {
                     let span = stmt_span(stmt);
                     return Err(Diagnostic::new(
-                        "N0902",
+                        "E0902",
                         "`nomo fmt` cannot safely format non-expression `defer` statements",
                         path,
                         span.line,
@@ -966,7 +966,7 @@ mod tests {
         let source = "package app.main\n\nfn main() -> void {\n    defer let value: i32 = 1\n}\n";
         let err = format_source(Path::new("main.nomo"), source).unwrap_err();
 
-        assert_eq!(err.code, "N0902");
+        assert_eq!(err.code, "E0902");
         assert!(err.message.contains("non-expression `defer`"));
         assert_eq!(err.line, 4);
         assert_eq!(err.column, 11);
@@ -977,7 +977,7 @@ mod tests {
         let source = "package app.main\n// keep me\nfn main() -> void {\n    return\n}\n";
         let err = format_source(Path::new("main.nomo"), source).unwrap_err();
 
-        assert_eq!(err.code, "N0109");
+        assert_eq!(err.code, "E0109");
         assert_eq!(err.message, "nomo fmt does not preserve comments yet");
         assert_eq!(err.line, 2);
         assert_eq!(err.column, 1);

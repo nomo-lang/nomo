@@ -228,7 +228,7 @@ fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("\"error_code\":\"N0102\""), "{stderr}");
+    assert!(stderr.contains("\"error_code\":\"E0102\""), "{stderr}");
     assert!(stderr.contains("semicolons are not supported"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();
@@ -2475,7 +2475,7 @@ fn nomo_project_commands_reject_missing_local_module() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("N0903"), "{stderr}");
+    assert!(stderr.contains("E0903"), "{stderr}");
     assert!(stderr.contains("app.missing"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();
 }
@@ -2506,7 +2506,7 @@ fn nomo_project_commands_reject_module_package_mismatch() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("N0904"), "{stderr}");
+    assert!(stderr.contains("E0904"), "{stderr}");
     assert!(stderr.contains("app.math"), "{stderr}");
     assert!(stderr.contains("app.other"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();

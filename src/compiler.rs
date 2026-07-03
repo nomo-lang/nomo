@@ -458,7 +458,7 @@ pub fn check_source_with_external_modules(
 ) -> Result<Program, Diagnostic> {
     let source = fs::read_to_string(path).map_err(|err| {
         Diagnostic::new(
-            "N0001",
+            "E0001",
             format!("failed to read source file: {err}"),
             path,
             1,
@@ -564,7 +564,7 @@ pub fn compile_source_to_c(path: &Path) -> Result<String, Diagnostic> {
 pub fn compile_script_source_to_c(path: &Path) -> Result<String, Diagnostic> {
     let source = fs::read_to_string(path).map_err(|err| {
         Diagnostic::new(
-            "N0001",
+            "E0001",
             format!("failed to read source file: {err}"),
             path,
             1,
@@ -603,7 +603,7 @@ pub fn compile_source_to_c_with_project_modules(
 ) -> Result<String, Diagnostic> {
     let source = fs::read_to_string(path).map_err(|err| {
         Diagnostic::new(
-            "N0001",
+            "E0001",
             format!("failed to read source file: {err}"),
             path,
             1,
@@ -648,7 +648,7 @@ fn merge_imported_public_api(
         };
         let Some(source_path) = module_source_path(source_root, &module_path) else {
             return Err(Diagnostic::new(
-                "N0903",
+                "E0903",
                 format!("could not find module `{}`", import.join(".")),
                 importer_path,
                 1,
@@ -665,7 +665,7 @@ fn merge_imported_public_api(
             Some(source) => source.to_string(),
             None => fs::read_to_string(&source_path).map_err(|err| {
                 Diagnostic::new(
-                    "N0902",
+                    "E0902",
                     format!("failed to read module `{}`: {err}", source_path.display()),
                     importer_path,
                     1,
@@ -684,7 +684,7 @@ fn merge_imported_public_api(
         )?;
         if module_ast.package != import {
             return Err(Diagnostic::new(
-                "N0904",
+                "E0904",
                 format!(
                     "module `{}` declares package `{}`",
                     import.join("."),
@@ -837,7 +837,7 @@ fn lower_program(
     for function in &ast.functions {
         if signatures.contains_key(&function.name) {
             return Err(Diagnostic::new(
-                "N0304",
+                "E0304",
                 format!("function `{}` is already defined", function.name),
                 path,
                 function.span.line,
@@ -865,7 +865,7 @@ fn lower_program(
             .is_some_and(|name| local_struct_names.contains(name.as_str()))
         {
             return Err(Diagnostic::new(
-                "N0255",
+                "E0255",
                 format!("v0.1 impl blocks must target a local struct, got `{impl_target}`"),
                 path,
                 1,
@@ -877,7 +877,7 @@ fn lower_program(
         let owner =
             parse_value_type(&impl_block.type_name, &struct_map, &enum_map).ok_or_else(|| {
                 Diagnostic::new(
-                    "N0309",
+                    "E0309",
                     format!("unknown impl target `{impl_target}`"),
                     path,
                     1,
@@ -888,7 +888,7 @@ fn lower_program(
             })?;
         let ValueType::Struct(owner_name, owner_args) = owner else {
             return Err(Diagnostic::new(
-                "N0255",
+                "E0255",
                 "v0.1 impl blocks can only target structs",
                 path,
                 1,
@@ -899,7 +899,7 @@ fn lower_program(
         };
         if !owner_args.is_empty() {
             return Err(Diagnostic::new(
-                "N0255",
+                "E0255",
                 "v0.1 impl blocks can only target non-generic structs",
                 path,
                 1,
@@ -913,7 +913,7 @@ fn lower_program(
             let lowered_name = method_internal_name(&owner_name, &method.name);
             if signatures.contains_key(&lowered_name) {
                 return Err(Diagnostic::new(
-                    "N0304",
+                    "E0304",
                     format!("method `{owner_name}.{}` is already defined", method.name),
                     path,
                     method.span.line,
@@ -931,7 +931,7 @@ fn lower_program(
 
     let Some(main_signature) = signatures.get("main") else {
         return Err(Diagnostic::new(
-            "N0201",
+            "E0201",
             "expected `fn main() -> void { ... }`",
             path,
             1,
@@ -947,7 +947,7 @@ fn lower_program(
         );
     if !main_signature.params.is_empty() || !valid_main_return {
         return Err(Diagnostic::new(
-            "N0401",
+            "E0401",
             "v0.1 `main` must return `void` or `Result<void, E>`",
             path,
             1,
@@ -958,7 +958,7 @@ fn lower_program(
     }
     if !main_signature.type_params.is_empty() {
         return Err(Diagnostic::new(
-            "N0401",
+            "E0401",
             "v0.1 `main` cannot be generic",
             path,
             1,
@@ -1046,7 +1046,7 @@ fn lower_program(
         }
         if !is_constant_expr(&initializer) {
             return Err(Diagnostic::new(
-                "N0430",
+                "E0430",
                 "`const` initializer must be a constant expression (a literal)",
                 path,
                 const_def.span.line,
@@ -1057,7 +1057,7 @@ fn lower_program(
         }
         if const_types.iter().any(|(name, _)| name == &const_def.name) {
             return Err(Diagnostic::new(
-                "N0304",
+                "E0304",
                 format!("constant `{}` is already defined", const_def.name),
                 path,
                 const_def.span.line,
@@ -1190,7 +1190,7 @@ fn reject_script_body(
 fn script_body_diagnostic(path: &Path, script_body: &[Stmt], message: &'static str) -> Diagnostic {
     let span = stmt_span(&script_body[0]);
     Diagnostic::new(
-        "N0201",
+        "E0201",
         message,
         path,
         span.line,
@@ -1228,7 +1228,7 @@ fn validate_imports(
             .is_some_and(|root| import.split('.').next().is_some_and(|item| item == root));
         if !is_local_import && !is_supported_import(import, external_import_roots) {
             return Err(Diagnostic::new(
-                "N0301",
+                "E0301",
                 format!("unsupported import `{import}` in v0.1"),
                 path,
                 1,
@@ -1444,7 +1444,7 @@ fn validate_type_ref_imports(
             .any(|item| item == "std.array" || item == "std.array.Array")
     {
         return Err(Diagnostic::new(
-            "N0301",
+            "E0301",
             "`Array` requires `import std.array.Array`",
             path,
             span.line,
@@ -1520,7 +1520,7 @@ fn unsupported_type_diagnostic(
 ) -> Diagnostic {
     if type_ref.path == ["int"] {
         return Diagnostic::new(
-            "N0403",
+            "E0403",
             "`int` is not a v0.1 builtin type; use `i64` or an explicit-width integer type (`i32`, `u32`, `u64`)",
             path,
             span.line,
@@ -1533,7 +1533,7 @@ fn unsupported_type_diagnostic(
     if let Some(import) = missing_standard_type_import(type_ref, struct_names, enum_names) {
         let type_name = type_ref.path.first().expect("type ref must have a root");
         return Diagnostic::new(
-            "N0301",
+            "E0301",
             format!("`{type_name}` requires `import {import}`"),
             path,
             span.line,
@@ -1543,7 +1543,7 @@ fn unsupported_type_diagnostic(
         );
     }
     Diagnostic::new(
-        "N0403",
+        "E0403",
         message,
         path,
         span.line,
@@ -1604,7 +1604,7 @@ fn validate_type_namespace(
     for enum_type in enums {
         if struct_names.contains(enum_type.name.as_str()) {
             return Err(Diagnostic::new(
-                "N0312",
+                "E0312",
                 format!("type `{}` is already defined", enum_type.name),
                 path,
                 1,
@@ -1651,7 +1651,7 @@ fn validate_no_recursive_value_types(
         let mut visited = HashSet::new();
         if type_dependency_reaches(name, name, &graph, &mut visiting, &mut visited) {
             return Err(Diagnostic::new(
-                "N0410",
+                "E0410",
                 format!("type `{name}` is recursively embedded by value"),
                 path,
                 1,
@@ -1744,7 +1744,7 @@ fn reject_user_std_struct(
 ) -> Result<(), Diagnostic> {
     if structs.iter().any(|item| item.name == name) {
         return Err(Diagnostic::new(
-            "N0312",
+            "E0312",
             format!("type `{name}` conflicts with a required standard library type"),
             path,
             1,
@@ -1759,7 +1759,7 @@ fn reject_user_std_struct(
 fn reject_user_std_enum(path: &Path, enums: &[AstEnumDef], name: &str) -> Result<(), Diagnostic> {
     if enums.iter().any(|item| item.name == name) {
         return Err(Diagnostic::new(
-            "N0312",
+            "E0312",
             format!("type `{name}` conflicts with a required standard library type"),
             path,
             1,
@@ -1782,7 +1782,7 @@ fn lower_structs(
     for item in structs {
         if known.contains_key(&item.name) {
             return Err(Diagnostic::new(
-                "N0306",
+                "E0306",
                 format!("struct `{}` is already defined", item.name),
                 path,
                 1,
@@ -1810,7 +1810,7 @@ fn lower_structs(
         for field in &item.fields {
             if field_names.contains_key(&field.name) {
                 return Err(Diagnostic::new(
-                    "N0307",
+                    "E0307",
                     format!(
                         "field `{}` is already defined on `{}`",
                         field.name, item.name
@@ -1845,7 +1845,7 @@ fn lower_structs(
             ensure_supported_value_type(path, &value_type, &synthetic_span())?;
             if value_type == ValueType::Void {
                 return Err(Diagnostic::new(
-                    "N0403",
+                    "E0403",
                     "struct fields cannot have type `void`",
                     path,
                     1,
@@ -1881,7 +1881,7 @@ fn lower_enums(
     for item in enums {
         if known.contains_key(&item.name) {
             return Err(Diagnostic::new(
-                "N0313",
+                "E0313",
                 format!("enum `{}` is already defined", item.name),
                 path,
                 1,
@@ -1896,7 +1896,7 @@ fn lower_enums(
         for variant in &item.variants {
             if variant_names.contains_key(&variant.name) {
                 return Err(Diagnostic::new(
-                    "N0314",
+                    "E0314",
                     format!(
                         "variant `{}` is already defined on `{}`",
                         variant.name, item.name
@@ -1943,7 +1943,7 @@ fn lower_enums(
                 ensure_supported_value_type(path, &payload_type, &synthetic_span())?;
                 if payload_type == ValueType::Void {
                     return Err(Diagnostic::new(
-                        "N0403",
+                        "E0403",
                         format!("enum variant `{}` cannot carry `void`", type_name),
                         path,
                         1,
@@ -2298,7 +2298,7 @@ fn collect_expr_generic_function_instances(
                 }
                 let signature = signatures.get(name).ok_or_else(|| {
                     Diagnostic::new(
-                        "N0305",
+                        "E0305",
                         format!("unknown function `{name}`"),
                         path,
                         1,
@@ -2309,7 +2309,7 @@ fn collect_expr_generic_function_instances(
                 })?;
                 if signature.type_params.is_empty() {
                     return Err(Diagnostic::new(
-                        "N0404",
+                        "E0404",
                         format!("function `{name}` does not accept type arguments"),
                         path,
                         1,
@@ -2320,7 +2320,7 @@ fn collect_expr_generic_function_instances(
                 }
                 if type_args.len() != signature.type_params.len() {
                     return Err(Diagnostic::new(
-                        "N0407",
+                        "E0407",
                         format!(
                             "function `{name}` expects {} type argument(s), got {}",
                             signature.type_params.len(),
@@ -2922,7 +2922,7 @@ fn lower_function_as(
     for (param, value_type) in function.params.iter().zip(signature.params.iter()) {
         if scope.contains_key(&param.name) {
             return Err(Diagnostic::new(
-                "N0302",
+                "E0302",
                 format!(
                     "parameter `{}` is already defined in this scope",
                     param.name
@@ -2969,7 +2969,7 @@ fn lower_function_as(
 
     if signature.return_type != ValueType::Void && !statements_satisfy_function_return(&body) {
         return Err(Diagnostic::new(
-            "N0406",
+            "E0406",
             format!(
                 "function `{}` must return `{}`",
                 function.name,
@@ -3001,7 +3001,7 @@ fn validate_method_self(
 ) -> Result<(), Diagnostic> {
     let Some(self_param) = method.params.first() else {
         return Err(Diagnostic::new(
-            "N0256",
+            "E0256",
             format!("method `{owner_name}.{}` must declare `self`", method.name),
             path,
             1,
@@ -3012,7 +3012,7 @@ fn validate_method_self(
     };
     if self_param.name != "self" {
         return Err(Diagnostic::new(
-            "N0256",
+            "E0256",
             format!(
                 "method `{owner_name}.{}` first parameter must be `self`",
                 method.name
@@ -3028,7 +3028,7 @@ fn validate_method_self(
         parse_value_type(&self_param.type_ref, structs, enums)
     else {
         return Err(Diagnostic::new(
-            "N0257",
+            "E0257",
             format!(
                 "method `{owner_name}.{}` has invalid `self` type",
                 method.name
@@ -3042,7 +3042,7 @@ fn validate_method_self(
     };
     if self_type != owner_name || !self_args.is_empty() {
         return Err(Diagnostic::new(
-            "N0257",
+            "E0257",
             format!(
                 "method `{owner_name}.{}` declares `self` as `{self_type}`",
                 method.name
@@ -3079,7 +3079,7 @@ fn lower_stmt(
         } => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{name}` is already defined in this scope"),
                     path,
                     span.line,
@@ -3092,7 +3092,7 @@ fn lower_stmt(
             if let AstExpr::Try { expr } = value {
                 let Some(annotation) = type_annotation.as_ref() else {
                     return Err(Diagnostic::new(
-                        "N0403",
+                        "E0403",
                         "`?` let bindings require an explicit non-void type annotation",
                         path,
                         span.line,
@@ -3105,7 +3105,7 @@ fn lower_stmt(
                     parse_non_void_type(annotation, structs, enums).ok_or_else(|| {
                         if annotation.path == ["void"] {
                             Diagnostic::new(
-                                "N0403",
+                                "E0403",
                                 "`?` let bindings require an explicit non-void type annotation",
                                 path,
                                 span.line,
@@ -3395,7 +3395,7 @@ fn lower_stmt(
         Stmt::Break { span } => {
             if loop_depth == 0 {
                 return Err(Diagnostic::new(
-                    "N0510",
+                    "E0510",
                     "`break` is not allowed outside of a `for` loop",
                     path,
                     span.line,
@@ -3409,7 +3409,7 @@ fn lower_stmt(
         Stmt::Continue { span } => {
             if loop_depth == 0 {
                 return Err(Diagnostic::new(
-                    "N0511",
+                    "E0511",
                     "`continue` is not allowed outside of a `for` loop",
                     path,
                     span.line,
@@ -3423,7 +3423,7 @@ fn lower_stmt(
         Stmt::Defer { stmt, span } => {
             let Stmt::Expr { expr, .. } = stmt.as_ref() else {
                 return Err(Diagnostic::new(
-                    "N0265",
+                    "E0265",
                     "`defer` expects a call expression",
                     path,
                     span.line,
@@ -3482,7 +3482,7 @@ fn lower_stmt(
             )?;
             if expr_type != ValueType::Void {
                 return Err(Diagnostic::new(
-                    "N0203",
+                    "E0203",
                     "unsupported non-void expression statement in v0.1 current implementation",
                     path,
                     span.line,
@@ -3564,7 +3564,7 @@ fn lower_try_exprs_in_stmt_into(
         } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_try(value) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{name}` is already defined in this scope"),
                     path,
                     span.line,
@@ -3682,7 +3682,7 @@ fn lower_try_exprs_in_stmt_into(
                 annotated_type
             } else if then_type == ValueType::Never && else_type == ValueType::Never {
                 return Err(Diagnostic::new(
-                    "N0403",
+                    "E0403",
                     "`if` initializer must contain at least one value-producing branch",
                     path,
                     span.line,
@@ -3731,7 +3731,7 @@ fn lower_try_exprs_in_stmt_into(
         } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_try(value) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{name}` is already defined in this scope"),
                     path,
                     span.line,
@@ -3791,7 +3791,7 @@ fn lower_try_exprs_in_stmt_into(
                 let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
                 else {
                     return Err(Diagnostic::new(
-                        "N0316",
+                        "E0316",
                         format!(
                             "match arm must use `{enum_name}.Variant` or a supported prelude variant"
                         ),
@@ -3806,7 +3806,7 @@ fn lower_try_exprs_in_stmt_into(
                     enum_type.variants.iter().find(|item| item.name == *variant)
                 else {
                     return Err(Diagnostic::new(
-                        "N0315",
+                        "E0315",
                         format!("enum `{enum_name}` has no variant `{variant}`"),
                         path,
                         span.line,
@@ -3817,7 +3817,7 @@ fn lower_try_exprs_in_stmt_into(
                 };
                 if seen.insert(variant.clone(), ()).is_some() {
                     return Err(Diagnostic::new(
-                        "N0317",
+                        "E0317",
                         format!("duplicate match arm for `{enum_name}.{variant}`"),
                         path,
                         span.line,
@@ -3834,7 +3834,7 @@ fn lower_try_exprs_in_stmt_into(
                     (Some(payload_type), Some(binding)) => {
                         if scope.contains_key(binding) {
                             return Err(Diagnostic::new(
-                                "N0302",
+                                "E0302",
                                 format!("variable `{binding}` is already defined in this scope"),
                                 path,
                                 span.line,
@@ -3857,7 +3857,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (Some(_), None) => {
                         return Err(Diagnostic::new(
-                            "N0321",
+                            "E0321",
                             format!("match arm `{enum_name}.{variant}` must bind its payload"),
                             path,
                             span.line,
@@ -3868,7 +3868,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (None, Some(_)) => {
                         return Err(Diagnostic::new(
-                            "N0322",
+                            "E0322",
                             format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                             path,
                             span.line,
@@ -3918,7 +3918,7 @@ fn lower_try_exprs_in_stmt_into(
             for variant in &enum_type.variants {
                 if !seen.contains_key(&variant.name) {
                     return Err(Diagnostic::new(
-                        "N0318",
+                        "E0318",
                         format!("match is missing arm `{enum_name}.{}`", variant.name),
                         path,
                         span.line,
@@ -3930,7 +3930,7 @@ fn lower_try_exprs_in_stmt_into(
             }
             let Some(value_type) = result_type else {
                 return Err(Diagnostic::new(
-                    "N0319",
+                    "E0319",
                     "`match` initializer must contain at least one value-producing arm",
                     path,
                     span.line,
@@ -3966,7 +3966,7 @@ fn lower_try_exprs_in_stmt_into(
         } if !matches!(value, AstExpr::Try { .. }) => {
             if scope.contains_key(name) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{name}` is already defined in this scope"),
                     path,
                     span.line,
@@ -4215,7 +4215,7 @@ fn lower_try_exprs_in_stmt_into(
                 let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
                 else {
                     return Err(Diagnostic::new(
-                        "N0316",
+                        "E0316",
                         format!(
                             "match arm must use `{enum_name}.Variant` or a supported prelude variant"
                         ),
@@ -4230,7 +4230,7 @@ fn lower_try_exprs_in_stmt_into(
                     enum_type.variants.iter().find(|item| item.name == *variant)
                 else {
                     return Err(Diagnostic::new(
-                        "N0315",
+                        "E0315",
                         format!("enum `{enum_name}` has no variant `{variant}`"),
                         path,
                         span.line,
@@ -4241,7 +4241,7 @@ fn lower_try_exprs_in_stmt_into(
                 };
                 if seen.insert(variant.clone(), ()).is_some() {
                     return Err(Diagnostic::new(
-                        "N0317",
+                        "E0317",
                         format!("duplicate match arm for `{enum_name}.{variant}`"),
                         path,
                         span.line,
@@ -4258,7 +4258,7 @@ fn lower_try_exprs_in_stmt_into(
                     (Some(payload_type), Some(binding)) => {
                         if scope.contains_key(binding) {
                             return Err(Diagnostic::new(
-                                "N0302",
+                                "E0302",
                                 format!("variable `{binding}` is already defined in this scope"),
                                 path,
                                 span.line,
@@ -4281,7 +4281,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (Some(_), None) => {
                         return Err(Diagnostic::new(
-                            "N0321",
+                            "E0321",
                             format!("match arm `{enum_name}.{variant}` must bind its payload"),
                             path,
                             span.line,
@@ -4292,7 +4292,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (None, Some(_)) => {
                         return Err(Diagnostic::new(
-                            "N0322",
+                            "E0322",
                             format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                             path,
                             span.line,
@@ -4325,7 +4325,7 @@ fn lower_try_exprs_in_stmt_into(
             for variant in &enum_type.variants {
                 if !seen.contains_key(&variant.name) {
                     return Err(Diagnostic::new(
-                        "N0318",
+                        "E0318",
                         format!("match is missing arm `{enum_name}.{}`", variant.name),
                         path,
                         span.line,
@@ -4610,7 +4610,7 @@ fn lower_try_exprs_in_stmt_into(
                 let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
                 else {
                     return Err(Diagnostic::new(
-                        "N0316",
+                        "E0316",
                         format!(
                             "match arm must use `{enum_name}.Variant` or a supported prelude variant"
                         ),
@@ -4625,7 +4625,7 @@ fn lower_try_exprs_in_stmt_into(
                     enum_type.variants.iter().find(|item| item.name == *variant)
                 else {
                     return Err(Diagnostic::new(
-                        "N0315",
+                        "E0315",
                         format!("enum `{enum_name}` has no variant `{variant}`"),
                         path,
                         span.line,
@@ -4636,7 +4636,7 @@ fn lower_try_exprs_in_stmt_into(
                 };
                 if seen.insert(variant.clone(), ()).is_some() {
                     return Err(Diagnostic::new(
-                        "N0317",
+                        "E0317",
                         format!("duplicate match arm for `{enum_name}.{variant}`"),
                         path,
                         span.line,
@@ -4653,7 +4653,7 @@ fn lower_try_exprs_in_stmt_into(
                     (Some(payload_type), Some(binding)) => {
                         if scope.contains_key(binding) {
                             return Err(Diagnostic::new(
-                                "N0302",
+                                "E0302",
                                 format!("variable `{binding}` is already defined in this scope"),
                                 path,
                                 span.line,
@@ -4676,7 +4676,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (Some(_), None) => {
                         return Err(Diagnostic::new(
-                            "N0321",
+                            "E0321",
                             format!("match arm `{enum_name}.{variant}` must bind its payload"),
                             path,
                             span.line,
@@ -4687,7 +4687,7 @@ fn lower_try_exprs_in_stmt_into(
                     }
                     (None, Some(_)) => {
                         return Err(Diagnostic::new(
-                            "N0322",
+                            "E0322",
                             format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                             path,
                             span.line,
@@ -4723,7 +4723,7 @@ fn lower_try_exprs_in_stmt_into(
             for variant in &enum_type.variants {
                 if !seen.contains_key(&variant.name) {
                     return Err(Diagnostic::new(
-                        "N0318",
+                        "E0318",
                         format!("match is missing arm `{enum_name}.{}`", variant.name),
                         path,
                         span.line,
@@ -5050,7 +5050,7 @@ fn lower_tail_match_expr_as_statement(
     for arm in arms {
         let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope) else {
             return Err(Diagnostic::new(
-                "N0316",
+                "E0316",
                 format!("match arm must use `{enum_name}.Variant` or a supported prelude variant"),
                 path,
                 span.line,
@@ -5062,7 +5062,7 @@ fn lower_tail_match_expr_as_statement(
         let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == *variant)
         else {
             return Err(Diagnostic::new(
-                "N0315",
+                "E0315",
                 format!("enum `{enum_name}` has no variant `{variant}`"),
                 path,
                 span.line,
@@ -5073,7 +5073,7 @@ fn lower_tail_match_expr_as_statement(
         };
         if seen.insert(variant.clone(), ()).is_some() {
             return Err(Diagnostic::new(
-                "N0317",
+                "E0317",
                 format!("duplicate match arm for `{enum_name}.{variant}`"),
                 path,
                 span.line,
@@ -5091,7 +5091,7 @@ fn lower_tail_match_expr_as_statement(
             (Some(payload_type), Some(binding)) => {
                 if scope.contains_key(binding) {
                     return Err(Diagnostic::new(
-                        "N0302",
+                        "E0302",
                         format!("variable `{binding}` is already defined in this scope"),
                         path,
                         span.line,
@@ -5114,7 +5114,7 @@ fn lower_tail_match_expr_as_statement(
             }
             (Some(_), None) => {
                 return Err(Diagnostic::new(
-                    "N0321",
+                    "E0321",
                     format!("match arm `{enum_name}.{variant}` must bind its payload"),
                     path,
                     span.line,
@@ -5125,7 +5125,7 @@ fn lower_tail_match_expr_as_statement(
             }
             (None, Some(_)) => {
                 return Err(Diagnostic::new(
-                    "N0322",
+                    "E0322",
                     format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                     path,
                     span.line,
@@ -5156,7 +5156,7 @@ fn lower_tail_match_expr_as_statement(
     for variant in &enum_type.variants {
         if !seen.contains_key(&variant.name) {
             return Err(Diagnostic::new(
-                "N0318",
+                "E0318",
                 format!("match is missing arm `{enum_name}.{}`", variant.name),
                 path,
                 span.line,
@@ -5538,7 +5538,7 @@ fn lower_let_else_stmt(
 ) -> Result<Statement, Diagnostic> {
     if scope.contains_key(binding) {
         return Err(Diagnostic::new(
-            "N0302",
+            "E0302",
             format!("variable `{binding}` is already defined in this scope"),
             path,
             span.line,
@@ -5562,7 +5562,7 @@ fn lower_let_else_stmt(
         .expect("enum value must refer to a known enum");
     let Some(variant) = resolve_match_arm_variant(pattern, &enum_name, scope) else {
         return Err(Diagnostic::new(
-            "N0316",
+            "E0316",
             format!(
                 "let-else pattern must use `{enum_name}.Variant` or a supported prelude variant"
             ),
@@ -5575,7 +5575,7 @@ fn lower_let_else_stmt(
     };
     let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == variant) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("enum `{enum_name}` has no variant `{variant}`"),
             path,
             span.line,
@@ -5586,7 +5586,7 @@ fn lower_let_else_stmt(
     };
     let Some(raw_payload_type) = &variant_type.payload else {
         return Err(Diagnostic::new(
-            "N0322",
+            "E0322",
             format!("let-else pattern `{enum_name}.{variant}` has no payload to bind"),
             path,
             span.line,
@@ -5609,7 +5609,7 @@ fn lower_let_else_stmt(
     )?;
     if !statements_diverge(&lowered_else) {
         return Err(Diagnostic::new(
-            "N0521",
+            "E0521",
             "`let else` else body must diverge with `panic`, `return`, `break`, or `continue`",
             path,
             span.line,
@@ -5720,7 +5720,7 @@ fn lower_if_let_stmt(
         .expect("enum value must refer to a known enum");
     let Some(variant) = resolve_match_arm_variant(pattern, &enum_name, scope) else {
         return Err(Diagnostic::new(
-            "N0316",
+            "E0316",
             format!("if-let pattern must use `{enum_name}.Variant` or a supported prelude variant"),
             path,
             span.line,
@@ -5731,7 +5731,7 @@ fn lower_if_let_stmt(
     };
     let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == variant) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("enum `{enum_name}` has no variant `{variant}`"),
             path,
             span.line,
@@ -5750,7 +5750,7 @@ fn lower_if_let_stmt(
         (Some(payload_type), Some(binding)) => {
             if scope.contains_key(binding) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{binding}` is already defined in this scope"),
                     path,
                     span.line,
@@ -5770,7 +5770,7 @@ fn lower_if_let_stmt(
         }
         (Some(_), None) => {
             return Err(Diagnostic::new(
-                "N0234",
+                "E0234",
                 "expected binding name in if-let pattern with payload",
                 path,
                 span.line,
@@ -5781,7 +5781,7 @@ fn lower_if_let_stmt(
         }
         (None, Some(binding)) => {
             return Err(Diagnostic::new(
-                "N0322",
+                "E0322",
                 format!(
                     "if-let pattern `{enum_name}.{variant}` has no payload to bind as `{binding}`"
                 ),
@@ -5862,7 +5862,7 @@ fn lower_match_stmt(
     for arm in arms {
         let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope) else {
             return Err(Diagnostic::new(
-                "N0316",
+                "E0316",
                 format!("match arm must use `{enum_name}.Variant` or a supported prelude variant"),
                 path,
                 span.line,
@@ -5874,7 +5874,7 @@ fn lower_match_stmt(
         let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == *variant)
         else {
             return Err(Diagnostic::new(
-                "N0315",
+                "E0315",
                 format!("enum `{enum_name}` has no variant `{variant}`"),
                 path,
                 span.line,
@@ -5892,7 +5892,7 @@ fn lower_match_stmt(
             (Some(payload_type), Some(binding)) => {
                 if scope.contains_key(binding) {
                     return Err(Diagnostic::new(
-                        "N0302",
+                        "E0302",
                         format!("variable `{binding}` is already defined in this scope"),
                         path,
                         span.line,
@@ -5915,7 +5915,7 @@ fn lower_match_stmt(
             }
             (Some(_), None) => {
                 return Err(Diagnostic::new(
-                    "N0321",
+                    "E0321",
                     format!("match arm `{enum_name}.{variant}` must bind its payload"),
                     path,
                     span.line,
@@ -5926,7 +5926,7 @@ fn lower_match_stmt(
             }
             (None, Some(_)) => {
                 return Err(Diagnostic::new(
-                    "N0322",
+                    "E0322",
                     format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                     path,
                     span.line,
@@ -5939,7 +5939,7 @@ fn lower_match_stmt(
         }
         if seen.insert(variant.clone(), ()).is_some() {
             return Err(Diagnostic::new(
-                "N0317",
+                "E0317",
                 format!("duplicate match arm for `{enum_name}.{variant}`"),
                 path,
                 span.line,
@@ -5968,7 +5968,7 @@ fn lower_match_stmt(
     for variant in &enum_type.variants {
         if !seen.contains_key(&variant.name) {
             return Err(Diagnostic::new(
-                "N0318",
+                "E0318",
                 format!(
                     "match on `{enum_name}` is missing arm `{enum_name}.{}`",
                     variant.name
@@ -6120,7 +6120,7 @@ fn lower_for_stmt(
             };
             if scope.contains_key(binding) {
                 return Err(Diagnostic::new(
-                    "N0302",
+                    "E0302",
                     format!("variable `{binding}` is already defined in this scope"),
                     path,
                     span.line,
@@ -6213,7 +6213,7 @@ fn lower_assign_stmt(
         [name] => {
             let Some(binding) = scope.get(name) else {
                 return Err(Diagnostic::new(
-                    "N0303",
+                    "E0303",
                     format!("unknown variable `{name}`"),
                     path,
                     span.line,
@@ -6228,7 +6228,7 @@ fn lower_assign_stmt(
                     binding_source_noun(binding)
                 );
                 return Err(Diagnostic::new(
-                    "N0501",
+                    "E0501",
                     message,
                     path,
                     span.line,
@@ -6270,7 +6270,7 @@ fn lower_assign_stmt(
         [base, field] => {
             let Some(binding) = scope.get(base) else {
                 return Err(Diagnostic::new(
-                    "N0303",
+                    "E0303",
                     format!("unknown variable `{base}`"),
                     path,
                     span.line,
@@ -6285,7 +6285,7 @@ fn lower_assign_stmt(
                     binding_source_noun(binding)
                 );
                 return Err(Diagnostic::new(
-                    "N0501",
+                    "E0501",
                     message,
                     path,
                     span.line,
@@ -6313,7 +6313,7 @@ fn lower_assign_stmt(
                 })
             else {
                 return Err(Diagnostic::new(
-                    "N0316",
+                    "E0316",
                     format!("struct `{struct_name}` has no field `{field}`"),
                     path,
                     span.line,
@@ -6354,7 +6354,7 @@ fn lower_assign_stmt(
             })
         }
         _ => Err(Diagnostic::new(
-            "N0217",
+            "E0217",
             "assignment target must be a variable or field",
             path,
             span.line,
@@ -6449,7 +6449,7 @@ fn lower_return_stmt(
                 let (return_ok_type, return_err_type) =
                     result_parts(expected).ok_or_else(|| {
                         Diagnostic::new(
-                            "N0421",
+                            "E0421",
                             "`?` requires the current function to return `Result<T, E>`",
                             path,
                             span.line,
@@ -6463,7 +6463,7 @@ fn lower_return_stmt(
                 )?;
                 let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
                     Diagnostic::new(
-                        "N0420",
+                        "E0420",
                         "`?` can only be used with `Result<T, E>`",
                         path,
                         span.line,
@@ -6583,7 +6583,7 @@ fn lower_enum_variant_without_payload(
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     let Some(enum_type) = enums.get(enum_name) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("unknown prelude enum `{enum_name}`"),
             path,
             span.line,
@@ -6594,7 +6594,7 @@ fn lower_enum_variant_without_payload(
     };
     let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == variant) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("enum `{enum_name}` has no variant `{variant}`"),
             path,
             span.line,
@@ -6605,7 +6605,7 @@ fn lower_enum_variant_without_payload(
     };
     if variant_type.payload.is_some() {
         return Err(Diagnostic::new(
-            "N0320",
+            "E0320",
             format!("enum variant `{enum_name}.{variant}` requires a payload"),
             path,
             span.line,
@@ -6621,7 +6621,7 @@ fn lower_enum_variant_without_payload(
         _ if enum_type.type_params.is_empty() => Vec::new(),
         _ => {
             return Err(Diagnostic::new(
-                "N0324",
+                "E0324",
                 format!("generic enum constructor `{enum_name}.{variant}` needs a type annotation"),
                 path,
                 span.line,
@@ -6657,7 +6657,7 @@ fn lower_enum_variant_with_payload(
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     let Some(enum_type) = enums.get(enum_name) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("unknown prelude enum `{enum_name}`"),
             path,
             span.line,
@@ -6668,7 +6668,7 @@ fn lower_enum_variant_with_payload(
     };
     let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == variant) else {
         return Err(Diagnostic::new(
-            "N0315",
+            "E0315",
             format!("enum `{enum_name}` has no variant `{variant}`"),
             path,
             span.line,
@@ -6679,7 +6679,7 @@ fn lower_enum_variant_with_payload(
     };
     let Some(raw_payload_type) = &variant_type.payload else {
         return Err(Diagnostic::new(
-            "N0323",
+            "E0323",
             format!("enum variant `{enum_name}.{variant}` does not accept a payload"),
             path,
             span.line,
@@ -6690,7 +6690,7 @@ fn lower_enum_variant_with_payload(
     };
     let [arg] = args else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             format!("enum variant `{enum_name}.{variant}` expects exactly one payload"),
             path,
             span.line,
@@ -6706,7 +6706,7 @@ fn lower_enum_variant_with_payload(
         _ if enum_type.type_params.is_empty() => Vec::new(),
         _ => {
             return Err(Diagnostic::new(
-                "N0324",
+                "E0324",
                 format!("generic enum constructor `{enum_name}.{variant}` needs a type annotation"),
                 path,
                 span.line,
@@ -6769,7 +6769,7 @@ fn lower_value_expr_with_expected(
         AstExpr::Bool(value) => Ok((ValueType::Bool, ValueExpr::BoolLiteral(*value))),
         AstExpr::Void => Ok((ValueType::Void, ValueExpr::VoidLiteral)),
         AstExpr::MutArg { .. } => Err(Diagnostic::new(
-            "N0505",
+            "E0505",
             "`mut` is only valid in function call arguments",
             path,
             span.line,
@@ -6786,7 +6786,7 @@ fn lower_value_expr_with_expected(
                     );
                 }
                 return Err(Diagnostic::new(
-                    "N0303",
+                    "E0303",
                     format!("unknown variable `{name}`"),
                     path,
                     span.line,
@@ -6820,7 +6820,7 @@ fn lower_value_expr_with_expected(
                     .find(|variant| variant.name == *field)
                 else {
                     return Err(Diagnostic::new(
-                        "N0315",
+                        "E0315",
                         format!("enum `{base}` has no variant `{field}`"),
                         path,
                         span.line,
@@ -6831,7 +6831,7 @@ fn lower_value_expr_with_expected(
                 };
                 if variant_type.payload.is_some() {
                     return Err(Diagnostic::new(
-                        "N0320",
+                        "E0320",
                         format!("enum variant `{base}.{field}` requires a payload"),
                         path,
                         span.line,
@@ -6849,7 +6849,7 @@ fn lower_value_expr_with_expected(
                     _ if enum_type.type_params.is_empty() => Vec::new(),
                     _ => {
                         return Err(Diagnostic::new(
-                            "N0324",
+                            "E0324",
                             format!(
                                 "generic enum constructor `{base}.{field}` needs a type annotation"
                             ),
@@ -6873,7 +6873,7 @@ fn lower_value_expr_with_expected(
             }
             let Some(binding) = scope.get(base) else {
                 return Err(Diagnostic::new(
-                    "N0303",
+                    "E0303",
                     format!("unknown variable `{base}`"),
                     path,
                     span.line,
@@ -6901,7 +6901,7 @@ fn lower_value_expr_with_expected(
                 })
             else {
                 return Err(Diagnostic::new(
-                    "N0308",
+                    "E0308",
                     format!("struct `{type_name}` has no field `{field}`"),
                     path,
                     span.line,
@@ -6942,7 +6942,7 @@ fn lower_value_expr_with_expected(
                 let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
                 else {
                     return Err(Diagnostic::new(
-                        "N0316",
+                        "E0316",
                         format!(
                             "match arm must use `{enum_name}.Variant` or a supported prelude variant"
                         ),
@@ -6957,7 +6957,7 @@ fn lower_value_expr_with_expected(
                     enum_type.variants.iter().find(|item| item.name == *variant)
                 else {
                     return Err(Diagnostic::new(
-                        "N0315",
+                        "E0315",
                         format!("enum `{enum_name}` has no variant `{variant}`"),
                         path,
                         span.line,
@@ -6974,7 +6974,7 @@ fn lower_value_expr_with_expected(
                     (Some(payload_type), Some(binding)) => {
                         if scope.contains_key(binding) {
                             return Err(Diagnostic::new(
-                                "N0302",
+                                "E0302",
                                 format!("variable `{binding}` is already defined in this scope"),
                                 path,
                                 span.line,
@@ -6997,7 +6997,7 @@ fn lower_value_expr_with_expected(
                     }
                     (Some(_), None) => {
                         return Err(Diagnostic::new(
-                            "N0321",
+                            "E0321",
                             format!("match arm `{enum_name}.{variant}` must bind its payload"),
                             path,
                             span.line,
@@ -7008,7 +7008,7 @@ fn lower_value_expr_with_expected(
                     }
                     (None, Some(_)) => {
                         return Err(Diagnostic::new(
-                            "N0322",
+                            "E0322",
                             format!("match arm `{enum_name}.{variant}` has no payload to bind"),
                             path,
                             span.line,
@@ -7021,7 +7021,7 @@ fn lower_value_expr_with_expected(
                 }
                 if seen.insert(variant.clone(), ()).is_some() {
                     return Err(Diagnostic::new(
-                        "N0317",
+                        "E0317",
                         format!("duplicate match arm for `{enum_name}.{variant}`"),
                         path,
                         span.line,
@@ -7074,7 +7074,7 @@ fn lower_value_expr_with_expected(
             for variant in &enum_type.variants {
                 if !seen.contains_key(&variant.name) {
                     return Err(Diagnostic::new(
-                        "N0318",
+                        "E0318",
                         format!("match is missing arm `{enum_name}.{}`", variant.name),
                         path,
                         span.line,
@@ -7086,7 +7086,7 @@ fn lower_value_expr_with_expected(
             }
             let Some(result_type) = result_type else {
                 return Err(Diagnostic::new(
-                    "N0319",
+                    "E0319",
                     "`match` must contain at least one non-diverging arm",
                     path,
                     span.line,
@@ -7187,7 +7187,7 @@ fn lower_value_expr_with_expected(
             ))
         }
         AstExpr::Try { .. } => Err(Diagnostic::new(
-            "N0422",
+            "E0422",
             "`?` is currently supported only in statement-level expressions with unconditional evaluation",
             path,
             span.line,
@@ -7458,7 +7458,7 @@ fn lower_value_expr_with_expected(
             let Some(template_signature) = signatures.get(name) else {
                 if scope.contains_key(name) {
                     return Err(Diagnostic::new(
-                        "N0305",
+                        "E0305",
                         format!("local variable `{name}` is not callable"),
                         path,
                         span.line,
@@ -7483,7 +7483,7 @@ fn lower_value_expr_with_expected(
                     );
                 }
                 return Err(Diagnostic::new(
-                    "N0305",
+                    "E0305",
                     format!("unknown function `{name}`"),
                     path,
                     span.line,
@@ -7495,7 +7495,7 @@ fn lower_value_expr_with_expected(
             let (call_name, signature) = if type_args.is_empty() {
                 if !template_signature.type_params.is_empty() {
                     return Err(Diagnostic::new(
-                        "N0407",
+                        "E0407",
                         format!("generic function `{name}` requires explicit type arguments"),
                         path,
                         span.line,
@@ -7515,7 +7515,7 @@ fn lower_value_expr_with_expected(
                 }
                 if type_args.len() != template_signature.type_params.len() {
                     return Err(Diagnostic::new(
-                        "N0407",
+                        "E0407",
                         format!(
                             "function `{name}` expects {} type argument(s), got {}",
                             template_signature.type_params.len(),
@@ -7562,7 +7562,7 @@ fn lower_value_expr_with_expected(
             }
             if args.len() != signature.params.len() {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     format!(
                         "function `{call_name}` expects {} argument(s), got {}",
                         signature.params.len(),
@@ -7749,7 +7749,7 @@ fn lower_value_expr_with_expected(
             let variant = &callee[1];
             let Some(enum_type) = enums.get(enum_name) else {
                 return Err(Diagnostic::new(
-                    "N0305",
+                    "E0305",
                     format!("unknown function `{}`", callee.join(".")),
                     path,
                     span.line,
@@ -7761,7 +7761,7 @@ fn lower_value_expr_with_expected(
             let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == *variant)
             else {
                 return Err(Diagnostic::new(
-                    "N0315",
+                    "E0315",
                     format!("enum `{enum_name}` has no variant `{variant}`"),
                     path,
                     span.line,
@@ -7772,7 +7772,7 @@ fn lower_value_expr_with_expected(
             };
             let Some(raw_payload_type) = &variant_type.payload else {
                 return Err(Diagnostic::new(
-                    "N0323",
+                    "E0323",
                     format!("enum variant `{enum_name}.{variant}` does not accept a payload"),
                     path,
                     span.line,
@@ -7783,7 +7783,7 @@ fn lower_value_expr_with_expected(
             };
             let [arg] = args.as_slice() else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     format!("enum variant `{enum_name}.{variant}` expects exactly one payload"),
                     path,
                     span.line,
@@ -7801,7 +7801,7 @@ fn lower_value_expr_with_expected(
                 _ if enum_type.type_params.is_empty() => Vec::new(),
                 _ => {
                     return Err(Diagnostic::new(
-                        "N0324",
+                        "E0324",
                         format!(
                             "generic enum constructor `{enum_name}.{variant}` needs a type annotation"
                         ),
@@ -7851,7 +7851,7 @@ fn lower_value_expr_with_expected(
             let type_name = &type_name[0];
             let Some(struct_type) = structs.get(type_name) else {
                 return Err(Diagnostic::new(
-                    "N0309",
+                    "E0309",
                     format!("unknown struct `{type_name}`"),
                     path,
                     span.line,
@@ -7869,7 +7869,7 @@ fn lower_value_expr_with_expected(
                 _ if struct_type.type_params.is_empty() => Vec::new(),
                 _ => {
                     return Err(Diagnostic::new(
-                        "N0317",
+                        "E0317",
                         format!("generic struct literal `{type_name}` needs a type annotation"),
                         path,
                         span.line,
@@ -7883,7 +7883,7 @@ fn lower_value_expr_with_expected(
             for (field_name, _) in fields {
                 if seen.insert(field_name.clone(), ()).is_some() {
                     return Err(Diagnostic::new(
-                        "N0311",
+                        "E0311",
                         format!("field `{field_name}` is specified more than once"),
                         path,
                         span.line,
@@ -7905,7 +7905,7 @@ fn lower_value_expr_with_expected(
                     .find(|(field_name, _)| field_name == &expected_field.name)
                 else {
                     return Err(Diagnostic::new(
-                        "N0310",
+                        "E0310",
                         format!(
                             "missing field `{}` for struct `{type_name}`",
                             expected_field.name
@@ -7949,7 +7949,7 @@ fn lower_value_expr_with_expected(
                     .any(|field| field.name == *field_name)
                 {
                     return Err(Diagnostic::new(
-                        "N0312",
+                        "E0312",
                         format!("struct `{type_name}` has no field `{field_name}`"),
                         path,
                         span.line,
@@ -7969,7 +7969,7 @@ fn lower_value_expr_with_expected(
             ))
         }
         _ => Err(Diagnostic::new(
-            "N0405",
+            "E0405",
             "expression is not supported as a value in v0.1 current implementation",
             path,
             span.line,
@@ -8018,7 +8018,7 @@ fn lower_string_builtin(
         [module, name] if module == "string" && name == "len" => {
             let [arg] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`string.len` expects exactly one string argument",
                     path,
                     span.line,
@@ -8042,7 +8042,7 @@ fn lower_string_builtin(
         [module, name] if module == "string" && name == "concat" => {
             let [left, right] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`string.concat` expects exactly two string arguments",
                     path,
                     span.line,
@@ -8106,7 +8106,7 @@ fn lower_string_value_method(
         "len" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`string.len` does not accept arguments when called as a method",
                     path,
                     span.line,
@@ -8125,7 +8125,7 @@ fn lower_string_value_method(
         "concat" => {
             let [other] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`string.concat` expects exactly one string argument when called as a method",
                     path,
                     span.line,
@@ -8155,7 +8155,7 @@ fn lower_string_value_method(
             ))
         }
         _ => Err(Diagnostic::new(
-            "N0305",
+            "E0305",
             format!("unknown string method `{method}`"),
             path,
             span.line,
@@ -8182,7 +8182,7 @@ fn lower_fs_builtin(
         [module, name] if module == "fs" && name == "read_to_string" => {
             let [path_arg] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`fs.read_to_string` expects exactly one path string",
                     path,
                     span.line,
@@ -8211,7 +8211,7 @@ fn lower_fs_builtin(
         [module, name] if module == "fs" && name == "write_string" => {
             let [path_arg, content_arg] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`fs.write_string` expects path and content strings",
                     path,
                     span.line,
@@ -8251,7 +8251,7 @@ fn lower_fs_builtin(
         [module, name] if module == "fs" && name == "open" => {
             let [path_arg] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`fs.open` expects exactly one path string",
                     path,
                     span.line,
@@ -8295,7 +8295,7 @@ fn lower_env_builtin(
         [module, name] if module == "env" && name == "get" => {
             let [name_arg] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`env.get` expects exactly one environment variable name",
                     path,
                     span.line,
@@ -8324,7 +8324,7 @@ fn lower_env_builtin(
         [module, name] if module == "env" && name == "args" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`env.args` does not accept arguments",
                     path,
                     span.line,
@@ -8352,7 +8352,7 @@ fn lower_array_new(
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     let [type_arg] = type_args else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             "`Array.new` expects exactly one type argument",
             path,
             span.line,
@@ -8363,7 +8363,7 @@ fn lower_array_new(
     };
     if !args.is_empty() {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             "`Array.new<T>()` does not accept value arguments",
             path,
             span.line,
@@ -8422,7 +8422,7 @@ fn lower_array_value_method(
         "len" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`Array.len` does not accept arguments",
                     path,
                     span.line,
@@ -8441,7 +8441,7 @@ fn lower_array_value_method(
         "get" => {
             let [index] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`Array.get` expects exactly one index",
                     path,
                     span.line,
@@ -8474,7 +8474,7 @@ fn lower_array_value_method(
             ))
         }
         _ => Err(Diagnostic::new(
-            "N0305",
+            "E0305",
             format!("unknown Array method `{method}`"),
             path,
             span.line,
@@ -8509,7 +8509,7 @@ fn lower_file_value_method(
         "close" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`File.close` does not accept arguments",
                     path,
                     span.line,
@@ -8526,7 +8526,7 @@ fn lower_file_value_method(
             ))
         }
         _ => Err(Diagnostic::new(
-            "N0305",
+            "E0305",
             format!("unknown File method `{method}`"),
             path,
             span.line,
@@ -8574,7 +8574,7 @@ fn lower_result_value_method(
     }
     let [converter] = args else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             "`Result.map_err` expects exactly one converter function",
             path,
             span.line,
@@ -8585,7 +8585,7 @@ fn lower_result_value_method(
     };
     let AstExpr::Name(converter_path) = converter else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             "`Result.map_err` expects a converter function name",
             path,
             span.line,
@@ -8596,7 +8596,7 @@ fn lower_result_value_method(
     };
     let [converter_name] = converter_path.as_slice() else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             "`Result.map_err` expects an unqualified converter function name",
             path,
             span.line,
@@ -8607,7 +8607,7 @@ fn lower_result_value_method(
     };
     let Some(converter_signature) = signatures.get(converter_name) else {
         return Err(Diagnostic::new(
-            "N0305",
+            "E0305",
             format!("unknown converter function `{converter_name}`"),
             path,
             span.line,
@@ -8618,7 +8618,7 @@ fn lower_result_value_method(
     };
     if !converter_signature.type_params.is_empty() {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             format!("converter function `{converter_name}` must not be generic"),
             path,
             span.line,
@@ -8629,7 +8629,7 @@ fn lower_result_value_method(
     }
     let [converter_param] = converter_signature.params.as_slice() else {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             format!("converter function `{converter_name}` must take exactly one argument"),
             path,
             span.line,
@@ -8705,7 +8705,7 @@ fn lower_struct_value_method(
     let lowered_name = method_internal_name(owner_name, method_name);
     let Some(signature) = signatures.get(&lowered_name) else {
         return Err(Diagnostic::new(
-            "N0314",
+            "E0314",
             format!("struct `{owner_name}` has no method `{method_name}`"),
             path,
             span.line,
@@ -8725,7 +8725,7 @@ fn lower_struct_value_method(
     }
     if args.len() + 1 != signature.params.len() {
         return Err(Diagnostic::new(
-            "N0407",
+            "E0407",
             format!(
                 "method `{owner_name}.{method_name}` expects {} argument(s), got {}",
                 signature.params.len() - 1,
@@ -8743,7 +8743,7 @@ fn lower_struct_value_method(
     };
     if receiver_param.value_type != binding.value_type {
         return Err(Diagnostic::new(
-            "N0257",
+            "E0257",
             format!("method `{owner_name}.{method_name}` has invalid receiver type"),
             path,
             span.line,
@@ -8754,7 +8754,7 @@ fn lower_struct_value_method(
     }
     if receiver_param.mutable && !binding.mutable {
         return Err(Diagnostic::new(
-            "N0501",
+            "E0501",
             format!(
                 "cannot call mutating method `{owner_name}.{method_name}` on immutable {} `{receiver_name}`",
                 binding_source_noun(binding)
@@ -8828,7 +8828,7 @@ fn lower_call_arg_for_param(
             mutable_borrows,
         ),
         (true, _) => Err(Diagnostic::new(
-            "N0500",
+            "E0500",
             format!("argument {position} to `{callable}` must be passed as `mut`"),
             path,
             span.line,
@@ -8837,7 +8837,7 @@ fn lower_call_arg_for_param(
             &span.text,
         )),
         (false, AstExpr::MutArg { .. }) => Err(Diagnostic::new(
-            "N0504",
+            "E0504",
             format!("argument {position} to `{callable}` is not declared `mut`"),
             path,
             span.line,
@@ -8889,7 +8889,7 @@ fn lower_mut_call_arg(
 ) -> Result<ValueExpr, Diagnostic> {
     if name.is_empty() {
         return Err(Diagnostic::new(
-            "N0503",
+            "E0503",
             "`mut` call arguments must be local variables or fields",
             path,
             span.line,
@@ -8902,7 +8902,7 @@ fn lower_mut_call_arg(
     let root = &name[0];
     let Some(binding) = scope.get(root) else {
         return Err(Diagnostic::new(
-            "N0303",
+            "E0303",
             format!("unknown variable `{root}`"),
             path,
             span.line,
@@ -8913,7 +8913,7 @@ fn lower_mut_call_arg(
     };
     if !matches!(binding.source, BindingSource::Local | BindingSource::Param) {
         return Err(Diagnostic::new(
-            "N0503",
+            "E0503",
             "`mut` call arguments must be local variables or fields",
             path,
             span.line,
@@ -8928,7 +8928,7 @@ fn lower_mut_call_arg(
             _ => format!("cannot pass immutable variable `{root}` as `mut`"),
         };
         return Err(Diagnostic::new(
-            "N0501",
+            "E0501",
             message,
             path,
             span.line,
@@ -8958,7 +8958,7 @@ fn lower_mut_call_arg(
         .find(|borrowed| mut_borrow_paths_conflict(borrowed, name))
     {
         return Err(Diagnostic::new(
-            "N0502",
+            "E0502",
             format!(
                 "mutable borrow `{}` conflicts with active mutable borrow `{}` in this call",
                 mut_borrow_path_name(name),
@@ -9004,7 +9004,7 @@ fn mut_borrow_path_type(
             })
         else {
             return Err(Diagnostic::new(
-                "N0316",
+                "E0316",
                 format!("struct `{struct_name}` has no field `{field}`"),
                 path,
                 span.line,
@@ -9042,7 +9042,7 @@ fn lower_array_mutation(
     require_array_method_import(path, imports, span, method)?;
     let Some(binding) = scope.get(name) else {
         return Err(Diagnostic::new(
-            "N0303",
+            "E0303",
             format!("unknown variable `{name}`"),
             path,
             span.line,
@@ -9053,7 +9053,7 @@ fn lower_array_mutation(
     };
     if !binding.mutable {
         return Err(Diagnostic::new(
-            "N0501",
+            "E0501",
             format!(
                 "cannot call mutating Array method on immutable {} `{name}`",
                 binding_source_noun(binding)
@@ -9077,7 +9077,7 @@ fn lower_array_mutation(
         "push" => {
             let [value] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`Array.push` expects exactly one value",
                     path,
                     span.line,
@@ -9117,7 +9117,7 @@ fn lower_array_mutation(
         "set" => {
             let [index, value] = args else {
                 return Err(Diagnostic::new(
-                    "N0407",
+                    "E0407",
                     "`Array.set` expects index and value",
                     path,
                     span.line,
@@ -9170,7 +9170,7 @@ fn lower_array_mutation(
             })
         }
         _ => Err(Diagnostic::new(
-            "N0305",
+            "E0305",
             format!("unknown mutating Array method `{method}`"),
             path,
             span.line,
@@ -9443,7 +9443,7 @@ fn question_payload(
     if let Some((ok_type, err_type)) = result_parts(question_type) {
         let (_, return_err_type) = result_parts(return_type).ok_or_else(|| {
             Diagnostic::new(
-                "N0421",
+                "E0421",
                 "`?` on Result<T, E> requires the current function to return Result<U, E>",
                 path,
                 span.line,
@@ -9471,7 +9471,7 @@ fn question_payload(
     if let Some(payload_type) = option_payload(question_type) {
         option_payload(return_type).ok_or_else(|| {
             Diagnostic::new(
-                "N0421",
+                "E0421",
                 "`?` on Option<T> requires the current function to return Option<U>",
                 path,
                 span.line,
@@ -9484,7 +9484,7 @@ fn question_payload(
     }
 
     Err(Diagnostic::new(
-        "N0420",
+        "E0420",
         "`?` can only be used with `Result<T, E>` or `Option<T>`",
         path,
         span.line,
@@ -9731,7 +9731,7 @@ fn require_import(
         return Ok(());
     }
     Err(Diagnostic::new(
-        "N0301",
+        "E0301",
         format!("`{symbol}` requires `import {module_import}`"),
         path,
         span.line,
@@ -9754,7 +9754,7 @@ fn require_string_method_import(
         return Ok(());
     }
     Err(Diagnostic::new(
-        "N0301",
+        "E0301",
         format!("`string.{method}` requires `import std.string`"),
         path,
         span.line,
@@ -9776,7 +9776,7 @@ fn require_array_method_import(
         return Ok(());
     }
     Err(Diagnostic::new(
-        "N0301",
+        "E0301",
         format!("`Array.{method}` requires `import std.array`"),
         path,
         span.line,
@@ -9799,7 +9799,7 @@ fn require_result_method_import(
         return Ok(());
     }
     Err(Diagnostic::new(
-        "N0301",
+        "E0301",
         format!("`Result.{method}` requires `import std.result`"),
         path,
         span.line,
@@ -9854,7 +9854,7 @@ fn missing_io_import_diagnostic(path: &Path, span: &Span, callee: &[String]) -> 
         _ => "add `import std.io` to use io functions".to_string(),
     };
     let mut diagnostic = Diagnostic::new(
-        "N0301",
+        "E0301",
         io_print_import_error(callee),
         path,
         span.line,
@@ -9874,7 +9874,7 @@ fn missing_io_import_diagnostic(path: &Path, span: &Span, callee: &[String]) -> 
 
 fn println_type_error(path: &Path, span: &Span, function_name: &str) -> Diagnostic {
     Diagnostic::new(
-        "N0402",
+        "E0402",
         format!("`io.{function_name}` expects exactly one string argument"),
         path,
         span.line,
@@ -9886,7 +9886,7 @@ fn println_type_error(path: &Path, span: &Span, function_name: &str) -> Diagnost
 
 fn type_mismatch(path: &Path, span: &Span, message: impl Into<String>) -> Diagnostic {
     Diagnostic::new(
-        "N0404",
+        "E0404",
         message,
         path,
         span.line,
@@ -9985,7 +9985,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.typo"));
     }
 
@@ -10000,7 +10000,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.io.flush"));
     }
 
@@ -10015,7 +10015,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("app.other"));
     }
 
@@ -10044,7 +10044,7 @@ fn main() -> void {
             ),
         ] {
             let err = parse_inline(source).unwrap_err();
-            assert_eq!(err.code, "N0301");
+            assert_eq!(err.code, "E0301");
             assert!(err.message.contains(symbol), "{:?}", err.message);
             assert!(err.message.contains(import), "{:?}", err.message);
         }
@@ -10075,7 +10075,7 @@ fn main() -> void {
             ),
         ] {
             let err = parse_inline(source).unwrap_err();
-            assert_eq!(err.code, "N0301", "{:?}", err);
+            assert_eq!(err.code, "E0301", "{:?}", err);
             assert!(err.message.contains(type_name), "{:?}", err.message);
             assert!(err.message.contains(import), "{:?}", err.message);
         }
@@ -10296,7 +10296,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.string"));
     }
 
@@ -10313,7 +10313,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert_eq!(err.expected.as_deref(), Some("string"));
         assert_eq!(err.found.as_deref(), Some("i64"));
     }
@@ -10800,7 +10800,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
         assert!(err.message.contains("immutable variable"));
     }
 
@@ -11052,7 +11052,7 @@ fn main() -> void {
 "#,
         ] {
             let err = parse_inline(source).unwrap_err();
-            assert!(err.code == "N0403" || err.code == "N0404");
+            assert!(err.code == "E0403" || err.code == "E0404");
             assert!(err.message.contains("Array elements"));
         }
     }
@@ -11205,7 +11205,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0305");
+        assert_eq!(err.code, "E0305");
         assert!(err.message.contains("new"));
     }
 
@@ -11222,7 +11222,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.array"));
     }
 
@@ -11238,7 +11238,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -11304,7 +11304,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("comparable operands"));
     }
 
@@ -11393,7 +11393,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("numeric operands"));
     }
 
@@ -11440,7 +11440,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("bool operands"));
     }
 
@@ -11458,7 +11458,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("bool operand"));
     }
 
@@ -11501,7 +11501,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("integer operands"));
     }
 
@@ -11519,7 +11519,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
         assert!(err.message.contains("integer operands"));
     }
 
@@ -11595,7 +11595,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0407");
+        assert_eq!(err.code, "E0407");
     }
 
     #[test]
@@ -11727,7 +11727,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0500");
+        assert_eq!(err.code, "E0500");
     }
 
     #[test]
@@ -11748,7 +11748,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
     }
 
     #[test]
@@ -11769,7 +11769,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0502");
+        assert_eq!(err.code, "E0502");
     }
 
     #[test]
@@ -11791,7 +11791,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0502");
+        assert_eq!(err.code, "E0502");
         assert!(err.message.contains("point.x"));
         assert!(err.message.contains("point"));
     }
@@ -11913,7 +11913,7 @@ fn main() -> void {
         ] {
             let err = parse_inline(source).unwrap_err();
 
-            assert_eq!(err.code, "N0403");
+            assert_eq!(err.code, "E0403");
             assert!(err.message.contains(type_name));
         }
     }
@@ -12012,7 +12012,7 @@ fn main() -> void {
         ] {
             let err = parse_inline(source).unwrap_err();
 
-            assert_eq!(err.code, "N0403");
+            assert_eq!(err.code, "E0403");
             assert!(err.message.contains("`int` is not a v0.1 builtin type"));
             assert!(err.message.contains("i64"));
             assert!(err.message.contains("i32"));
@@ -12031,7 +12031,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12046,7 +12046,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12088,7 +12088,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12101,7 +12101,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12243,7 +12243,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12266,7 +12266,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12281,7 +12281,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0303");
+        assert_eq!(err.code, "E0303");
     }
 
     #[test]
@@ -12296,7 +12296,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12316,7 +12316,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12408,7 +12408,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
     }
 
     #[test]
@@ -12422,7 +12422,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
     }
 
     #[test]
@@ -12436,7 +12436,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12478,7 +12478,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
         assert!(err.message.contains("value"));
     }
 
@@ -12499,7 +12499,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
         assert!(
             err.message
                 .contains("cannot assign to field of immutable parameter `counter`")
@@ -12517,7 +12517,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
     }
 
     #[test]
@@ -12535,7 +12535,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0304");
+        assert_eq!(err.code, "E0304");
         assert_eq!(err.line, 6);
         assert_eq!(err.column, 1);
         assert_eq!(err.length, 1);
@@ -12556,7 +12556,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
     }
 
     #[test]
@@ -12672,7 +12672,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
     }
 
     #[test]
@@ -12689,7 +12689,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -12784,7 +12784,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0410");
+        assert_eq!(err.code, "E0410");
         assert!(err.message.contains("Node"));
         assert!(err.message.contains("recursively embedded"));
     }
@@ -12804,7 +12804,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0410");
+        assert_eq!(err.code, "E0410");
         assert!(err.message.contains("Node"));
         assert!(err.message.contains("recursively embedded"));
     }
@@ -12850,7 +12850,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0317");
+        assert_eq!(err.code, "E0317");
     }
 
     #[test]
@@ -12968,7 +12968,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0501");
+        assert_eq!(err.code, "E0501");
         assert!(err.message.contains(
             "cannot call mutating method `Counter.bump` on immutable parameter `counter`"
         ));
@@ -12994,7 +12994,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0502");
+        assert_eq!(err.code, "E0502");
         assert!(err.message.contains("counter"));
     }
 
@@ -13018,7 +13018,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0255");
+        assert_eq!(err.code, "E0255");
         assert!(err.message.contains("local struct"));
         assert!(err.message.contains("File"));
     }
@@ -13041,7 +13041,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0312");
+        assert_eq!(err.code, "E0312");
         assert!(err.message.contains("Status"));
     }
 
@@ -13061,7 +13061,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0312");
+        assert_eq!(err.code, "E0312");
         assert!(err.message.contains("Result"));
     }
 
@@ -13081,7 +13081,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0312");
+        assert_eq!(err.code, "E0312");
         assert!(err.message.contains("Result"));
         assert!(err.message.contains("standard library"));
     }
@@ -13104,7 +13104,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0312");
+        assert_eq!(err.code, "E0312");
         assert!(err.message.contains("Option"));
         assert!(err.message.contains("standard library"));
     }
@@ -13125,7 +13125,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0312");
+        assert_eq!(err.code, "E0312");
         assert!(err.message.contains("FsError"));
         assert!(err.message.contains("standard library"));
     }
@@ -13190,7 +13190,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0404");
+        assert_eq!(err.code, "E0404");
     }
 
     #[test]
@@ -13212,7 +13212,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0308");
+        assert_eq!(err.code, "E0308");
     }
 
     #[test]
@@ -13281,7 +13281,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0403");
+        assert_eq!(err.code, "E0403");
         assert!(err.message.contains("Option"));
     }
 
@@ -13300,7 +13300,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0403");
+        assert_eq!(err.code, "E0403");
         assert!(err.message.contains("Color"));
     }
 
@@ -13317,7 +13317,7 @@ fn main() -> void {
 
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0403");
+        assert_eq!(err.code, "E0403");
         assert!(err.message.contains("Result"));
     }
 
@@ -13344,7 +13344,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0318");
+        assert_eq!(err.code, "E0318");
     }
 
     #[test]
@@ -13517,7 +13517,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
         assert!(err.message.contains("text"));
     }
 
@@ -13538,7 +13538,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
         assert!(err.message.contains("text"));
     }
 
@@ -13560,7 +13560,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
         assert!(err.message.contains("text"));
     }
 
@@ -13580,7 +13580,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0302");
+        assert_eq!(err.code, "E0302");
         assert!(err.message.contains("item"));
     }
 
@@ -13730,7 +13730,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0521");
+        assert_eq!(err.code, "E0521");
         assert!(err.message.contains("must diverge"));
     }
 
@@ -13940,7 +13940,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0303");
+        assert_eq!(err.code, "E0303");
         assert!(err.message.contains("text"));
     }
 
@@ -13959,7 +13959,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0324");
+        assert_eq!(err.code, "E0324");
         assert!(err.message.contains("Option.Some"));
     }
 
@@ -13998,7 +13998,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0305");
+        assert_eq!(err.code, "E0305");
         assert!(err.message.contains("local variable `Ok` is not callable"));
     }
 
@@ -14017,7 +14017,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0316");
+        assert_eq!(err.code, "E0316");
         assert!(err.message.contains("Option.Variant"));
     }
 
@@ -15008,7 +15008,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.result"));
     }
 
@@ -15242,7 +15242,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0421");
+        assert_eq!(err.code, "E0421");
     }
 
     #[test]
@@ -15271,7 +15271,7 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0403");
+        assert_eq!(err.code, "E0403");
     }
 
     #[test]
@@ -15298,14 +15298,14 @@ fn main() -> void {
 "#;
 
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0321");
+        assert_eq!(err.code, "E0321");
     }
 
     #[test]
     fn rejects_missing_main() {
         let source = "package app.main\nimport std.io\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0201");
+        assert_eq!(err.code, "E0201");
     }
 
     #[test]
@@ -15331,7 +15331,7 @@ fn main() -> void {
         let source = "package app.main\n\nlet value: i32 = 1\n";
         let err = parse_inline(source).unwrap_err();
 
-        assert_eq!(err.code, "N0201");
+        assert_eq!(err.code, "E0201");
         assert!(err.message.contains("top-level script statements"));
     }
 
@@ -15340,7 +15340,7 @@ fn main() -> void {
         let source = "package app.main\n\nfn main() -> void {\n}\n\nlet value: i32 = 1\n";
         let err = check_script_source_text(Path::new("script.nomo"), source).unwrap_err();
 
-        assert_eq!(err.code, "N0201");
+        assert_eq!(err.code, "E0201");
         assert!(err.message.contains("explicit `main`"));
     }
 
@@ -15353,7 +15353,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert_eq!(err.suggestions.len(), 1);
         assert_eq!(err.suggestions[0].text, "import std.io\n");
         assert!(err.suggestions[0].description.contains("io.println"));
@@ -15370,7 +15370,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
         assert!(err.message.contains("std.io.println"));
         assert_eq!(err.suggestions.len(), 1);
         assert_eq!(err.suggestions[0].text, "import std.io.println\n");
@@ -15390,7 +15390,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0305");
+        assert_eq!(err.code, "E0305");
         assert!(err.message.contains("len"));
     }
 
@@ -15932,14 +15932,14 @@ fn main() -> void {
     fn rejects_break_outside_loop() {
         let source = "package app.main\nfn main() -> void {\n    break\n}\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0510");
+        assert_eq!(err.code, "E0510");
     }
 
     #[test]
     fn rejects_continue_outside_loop() {
         let source = "package app.main\nfn main() -> void {\n    continue\n}\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0511");
+        assert_eq!(err.code, "E0511");
     }
 
     #[test]
@@ -15957,7 +15957,7 @@ fn main() -> void {
     fn rejects_defer_non_expression() {
         let source = "package app.main\nfn main() -> void {\n    defer return\n}\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0265");
+        assert_eq!(err.code, "E0265");
     }
 
     #[test]
@@ -16040,7 +16040,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0301");
+        assert_eq!(err.code, "E0301");
     }
 
     #[test]
@@ -16070,7 +16070,7 @@ fn main() -> void {
     fn rejects_const_non_literal_initializer() {
         let source = "package app.main\nfn one() -> i32 {\n    return 1\n}\nconst X: i32 = one()\nfn main() -> void {\n}\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0430");
+        assert_eq!(err.code, "E0430");
     }
 
     #[test]
@@ -16078,7 +16078,7 @@ fn main() -> void {
         let source =
             "package app.main\nconst A: i32 = 1\nconst A: i32 = 2\nfn main() -> void {\n}\n";
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0304");
+        assert_eq!(err.code, "E0304");
     }
 
     #[test]
@@ -16105,7 +16105,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0303");
+        assert_eq!(err.code, "E0303");
         assert!(err.message.contains("word"));
     }
 
@@ -16124,7 +16124,7 @@ fn main() -> void {
 }
 "#;
         let err = parse_inline(source).unwrap_err();
-        assert_eq!(err.code, "N0303");
+        assert_eq!(err.code, "E0303");
         assert!(err.message.contains("message"));
     }
 

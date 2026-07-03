@@ -140,7 +140,7 @@ mod tests {
     #[test]
     fn json_escapes_strings() {
         let diagnostic = Diagnostic::new(
-            "N0200",
+            "E0200",
             "bad \"token\"",
             Path::new("main.nomo"),
             1,
@@ -151,14 +151,14 @@ mod tests {
 
         assert_eq!(
             diagnostic.json(),
-            "{\"status\":\"error\",\"error_code\":\"N0200\",\"severity\":\"error\",\"message\":\"bad \\\"token\\\"\",\"source\":{\"file\":\"main.nomo\",\"line\":1,\"column\":2,\"length\":3,\"text\":\"let x = \\\"a\\\"\"},\"suggestions\":[]}"
+            "{\"status\":\"error\",\"error_code\":\"E0200\",\"severity\":\"error\",\"message\":\"bad \\\"token\\\"\",\"source\":{\"file\":\"main.nomo\",\"line\":1,\"column\":2,\"length\":3,\"text\":\"let x = \\\"a\\\"\"},\"suggestions\":[]}"
         );
     }
 
     #[test]
     fn json_includes_stable_suggestions_shape() {
         let mut diagnostic = Diagnostic::new(
-            "N0301",
+            "E0301",
             "missing import",
             Path::new("src/main.nomo"),
             4,
@@ -176,14 +176,14 @@ mod tests {
 
         assert_eq!(
             diagnostic.json(),
-            "{\"status\":\"error\",\"error_code\":\"N0301\",\"severity\":\"error\",\"message\":\"missing import\",\"source\":{\"file\":\"src/main.nomo\",\"line\":4,\"column\":5,\"length\":7,\"text\":\"println(\\\"hi\\\")\"},\"suggestions\":[{\"action\":\"replace_text\",\"range\":{\"line\":2,\"column\":1,\"length\":0},\"text\":\"import std.io.println\\n\",\"description\":\"add the concrete println import\"}]}"
+            "{\"status\":\"error\",\"error_code\":\"E0301\",\"severity\":\"error\",\"message\":\"missing import\",\"source\":{\"file\":\"src/main.nomo\",\"line\":4,\"column\":5,\"length\":7,\"text\":\"println(\\\"hi\\\")\"},\"suggestions\":[{\"action\":\"replace_text\",\"range\":{\"line\":2,\"column\":1,\"length\":0},\"text\":\"import std.io.println\\n\",\"description\":\"add the concrete println import\"}]}"
         );
     }
 
     #[test]
     fn json_includes_expected_and_found_when_available() {
         let diagnostic = Diagnostic::new(
-            "N0404",
+            "E0404",
             "type mismatch",
             Path::new("src/main.nomo"),
             3,
@@ -195,7 +195,7 @@ mod tests {
 
         assert_eq!(
             diagnostic.json(),
-            "{\"status\":\"error\",\"error_code\":\"N0404\",\"severity\":\"error\",\"message\":\"type mismatch\",\"source\":{\"file\":\"src/main.nomo\",\"line\":3,\"column\":9,\"length\":5,\"text\":\"let value: i32 = \\\"bad\\\"\"},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}"
+            "{\"status\":\"error\",\"error_code\":\"E0404\",\"severity\":\"error\",\"message\":\"type mismatch\",\"source\":{\"file\":\"src/main.nomo\",\"line\":3,\"column\":9,\"length\":5,\"text\":\"let value: i32 = \\\"bad\\\"\"},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}"
         );
     }
 
@@ -207,7 +207,7 @@ mod tests {
 
         assert_eq!(
             diagnostic.json(),
-            "{\"status\":\"error\",\"error_code\":\"N0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{\"file\":\"samples/invalid.nomo\",\"line\":2,\"column\":1,\"length\":1,\"text\":\"@\"},\"suggestions\":[]}"
+            "{\"status\":\"error\",\"error_code\":\"E0102\",\"severity\":\"error\",\"message\":\"unexpected character `@`\",\"source\":{\"file\":\"samples/invalid.nomo\",\"line\":2,\"column\":1,\"length\":1,\"text\":\"@\"},\"suggestions\":[]}"
         );
     }
 }

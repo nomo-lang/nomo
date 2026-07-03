@@ -276,7 +276,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 '}' => tokens.push(token(TokenKind::RBrace, line, column, line_text)),
                 ';' => {
                     return Err(Diagnostic::new(
-                        "N0102",
+                        "E0102",
                         "semicolons are not supported in v0.1; use a newline to separate statements",
                         path,
                         line,
@@ -311,7 +311,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                     if !terminated {
                         return Err(Diagnostic::new(
-                            "N0101",
+                            "E0101",
                             "unterminated string literal",
                             path,
                             line,
@@ -325,7 +325,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 '\'' => {
                     let Some((_, value)) = chars.next() else {
                         return Err(Diagnostic::new(
-                            "N0104",
+                            "E0104",
                             "unterminated char literal",
                             path,
                             line,
@@ -343,7 +343,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                             Some((_, '\\')) => '\\',
                             Some((_, other)) => {
                                 return Err(Diagnostic::new(
-                                    "N0105",
+                                    "E0105",
                                     format!("unknown char escape `\\{other}`"),
                                     path,
                                     line,
@@ -354,7 +354,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                             }
                             None => {
                                 return Err(Diagnostic::new(
-                                    "N0104",
+                                    "E0104",
                                     "unterminated char literal",
                                     path,
                                     line,
@@ -366,7 +366,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         }
                     } else if value == '\'' {
                         return Err(Diagnostic::new(
-                            "N0106",
+                            "E0106",
                             "empty char literal",
                             path,
                             line,
@@ -379,7 +379,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     };
                     if !matches!(chars.next(), Some((_, '\''))) {
                         return Err(Diagnostic::new(
-                            "N0107",
+                            "E0107",
                             "char literal must contain exactly one character",
                             path,
                             line,
@@ -420,7 +420,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                     let parsed = value.parse::<i64>().map_err(|_| {
                         Diagnostic::new(
-                            "N0103",
+                            "E0103",
                             "integer literal is too large for `i64`",
                             path,
                             line,
@@ -443,7 +443,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                     }
                     if is_reserved_word(&value) {
                         return Err(Diagnostic::new(
-                            "N0104",
+                            "E0104",
                             format!("`{value}` is reserved for future Nomo versions"),
                             path,
                             line,
@@ -483,7 +483,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 other => {
                     return Err(Diagnostic::new(
-                        "N0102",
+                        "E0102",
                         format!("unexpected character `{other}`"),
                         path,
                         line,
@@ -505,7 +505,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
 
     if let Some((line, column, text)) = block_comment_start {
         return Err(Diagnostic::new(
-            "N0108",
+            "E0108",
             "unterminated block comment",
             path,
             line,
@@ -799,7 +799,7 @@ mod tests {
     fn rejects_unterminated_block_comment() {
         let err = lex(Path::new("main.nomo"), "package app.main\n/* open\n").unwrap_err();
 
-        assert_eq!(err.code, "N0108");
+        assert_eq!(err.code, "E0108");
         assert_eq!(err.message, "unterminated block comment");
         assert_eq!(err.line, 2);
         assert_eq!(err.column, 1);
@@ -905,7 +905,7 @@ Eof"#
         for word in ["interface", "unsafe", "extern", "export", "go", "chan"] {
             let source = format!("let {word}: i32 = 1\n");
             let err = lex(Path::new("main.nomo"), &source).unwrap_err();
-            assert_eq!(err.code, "N0104");
+            assert_eq!(err.code, "E0104");
             assert!(err.message.contains(word));
         }
     }
@@ -914,7 +914,7 @@ Eof"#
     fn rejects_null_special_name() {
         let err = lex(Path::new("main.nomo"), "let value = null\n").unwrap_err();
 
-        assert_eq!(err.code, "N0104");
+        assert_eq!(err.code, "E0104");
         assert!(err.message.contains("null"));
     }
 }

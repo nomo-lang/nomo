@@ -31,7 +31,7 @@ struct Parser<'a> {
 impl Parser<'_> {
     fn parse_source_file(&mut self) -> Result<SourceFile, Diagnostic> {
         self.skip_newlines();
-        self.expect_kind(TokenKind::Package, "N0200", "expected `package <name>`")?;
+        self.expect_kind(TokenKind::Package, "E0200", "expected `package <name>`")?;
         let package = self.parse_path()?;
         self.expect_newline("expected newline after package declaration")?;
 
@@ -58,7 +58,7 @@ impl Parser<'_> {
             let public = self.consume_pub();
             if parsing_script_body && is_declaration_start(&self.peek().kind, public) {
                 return Err(self.error(
-                    "N0201",
+                    "E0201",
                     "declarations must appear before top-level script statements",
                     self.peek().length(),
                 ));
@@ -78,7 +78,7 @@ impl Parser<'_> {
                 TokenKind::Eof if !public => break,
                 _ if public => {
                     return Err(self.error(
-                        "N0201",
+                        "E0201",
                         "expected struct, enum, impl, const, function declaration, or end of file",
                         self.peek().length(),
                     ));
@@ -120,12 +120,12 @@ impl Parser<'_> {
     }
 
     fn parse_enum(&mut self, public: bool) -> Result<EnumDef, Diagnostic> {
-        self.expect_kind(TokenKind::Enum, "N0226", "expected `enum`")?;
+        self.expect_kind(TokenKind::Enum, "E0226", "expected `enum`")?;
         let name = self.expect_ident("expected enum name")?;
         let type_params = self.parse_type_params()?;
         self.expect_kind(
             TokenKind::LBrace,
-            "N0227",
+            "E0227",
             "expected `{` before enum variants",
         )?;
         self.expect_newline("expected newline after `{`")?;
@@ -140,7 +140,7 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0228", "unterminated enum body; expected `}`", 1));
+                    return Err(self.error("E0228", "unterminated enum body; expected `}`", 1));
                 }
                 _ => {
                     let name = self.expect_ident("expected enum variant name")?;
@@ -149,7 +149,7 @@ impl Parser<'_> {
                         let type_ref = self.parse_type_ref()?;
                         self.expect_kind(
                             TokenKind::RParen,
-                            "N0233",
+                            "E0233",
                             "expected `)` after enum variant payload type",
                         )?;
                         Some(type_ref)
@@ -184,7 +184,7 @@ impl Parser<'_> {
             let name = self.expect_ident("expected generic type parameter name")?;
             if params.iter().any(|param| param == &name) {
                 return Err(self.error(
-                    "N0237",
+                    "E0237",
                     format!("generic type parameter `{name}` is already defined"),
                     self.peek().length(),
                 ));
@@ -200,7 +200,7 @@ impl Parser<'_> {
                 }
                 _ => {
                     return Err(self.error(
-                        "N0235",
+                        "E0235",
                         "expected `,` or `>` after generic type parameter",
                         self.peek().length(),
                     ));
@@ -211,12 +211,12 @@ impl Parser<'_> {
     }
 
     fn parse_struct(&mut self, public: bool) -> Result<StructDef, Diagnostic> {
-        self.expect_kind(TokenKind::Struct, "N0218", "expected `struct`")?;
+        self.expect_kind(TokenKind::Struct, "E0218", "expected `struct`")?;
         let name = self.expect_ident("expected struct name")?;
         let type_params = self.parse_type_params()?;
         self.expect_kind(
             TokenKind::LBrace,
-            "N0219",
+            "E0219",
             "expected `{` before struct fields",
         )?;
         self.expect_newline("expected newline after `{`")?;
@@ -231,12 +231,12 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0220", "unterminated struct body; expected `}`", 1));
+                    return Err(self.error("E0220", "unterminated struct body; expected `}`", 1));
                 }
                 _ => {
                     let public = self.consume_pub();
                     let field_name = self.expect_ident("expected field name")?;
-                    self.expect_kind(TokenKind::Colon, "N0221", "expected `:` after field name")?;
+                    self.expect_kind(TokenKind::Colon, "E0221", "expected `:` after field name")?;
                     let type_ref = self.parse_type_ref()?;
                     fields.push(Field {
                         public,
@@ -259,12 +259,12 @@ impl Parser<'_> {
 
     fn parse_function(&mut self, public: bool) -> Result<Function, Diagnostic> {
         let function_token = self.peek().clone();
-        self.expect_kind(TokenKind::Fn, "N0202", "expected `fn`")?;
+        self.expect_kind(TokenKind::Fn, "E0202", "expected `fn`")?;
         let name = self.expect_ident("expected function name")?;
         let type_params = self.parse_type_params()?;
         self.expect_kind(
             TokenKind::LParen,
-            "N0203",
+            "E0203",
             "expected `(` after function name",
         )?;
         let params = self.parse_params()?;
@@ -279,7 +279,7 @@ impl Parser<'_> {
         };
         self.expect_kind(
             TokenKind::LBrace,
-            "N0206",
+            "E0206",
             "expected `{` before function body",
         )?;
         self.expect_newline("expected newline after `{`")?;
@@ -294,7 +294,7 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0207", "unterminated function body; expected `}`", 1));
+                    return Err(self.error("E0207", "unterminated function body; expected `}`", 1));
                 }
                 _ => {
                     body.push(self.parse_stmt()?);
@@ -316,18 +316,18 @@ impl Parser<'_> {
     }
 
     fn parse_impl(&mut self) -> Result<ImplBlock, Diagnostic> {
-        self.expect_kind(TokenKind::Impl, "N0250", "expected `impl`")?;
+        self.expect_kind(TokenKind::Impl, "E0250", "expected `impl`")?;
         let type_name = self.parse_type_ref()?;
         if type_name.path.len() != 1 || !type_name.args.is_empty() {
             return Err(self.error(
-                "N0251",
+                "E0251",
                 "v0.1 impl blocks must target a local non-generic type",
                 self.peek().length(),
             ));
         }
         self.expect_kind(
             TokenKind::LBrace,
-            "N0252",
+            "E0252",
             "expected `{` before impl methods",
         )?;
         self.expect_newline("expected newline after `{`")?;
@@ -346,12 +346,12 @@ impl Parser<'_> {
                 }
                 TokenKind::Eof => {
                     self.impl_self_type = previous_self;
-                    return Err(self.error("N0253", "unterminated impl body; expected `}`", 1));
+                    return Err(self.error("E0253", "unterminated impl body; expected `}`", 1));
                 }
                 _ => {
                     self.impl_self_type = previous_self;
                     return Err(self.error(
-                        "N0254",
+                        "E0254",
                         "expected method declaration or `}` in impl body",
                         self.peek().length(),
                     ));
@@ -396,7 +396,7 @@ impl Parser<'_> {
             } else {
                 self.expect_kind(
                     TokenKind::Colon,
-                    "N0214",
+                    "E0214",
                     "expected `:` after parameter name",
                 )?;
                 self.parse_type_ref()?
@@ -417,7 +417,7 @@ impl Parser<'_> {
                 }
                 _ => {
                     return Err(self.error(
-                        "N0215",
+                        "E0215",
                         "expected `,` or `)` after parameter",
                         self.peek().length(),
                     ));
@@ -499,14 +499,14 @@ impl Parser<'_> {
         let target = self.parse_path()?;
         if target.len() > 2 {
             return Err(self.error(
-                "N0217",
+                "E0217",
                 "assignment target must be a variable or field",
                 token.length(),
             ));
         }
         let op = assign_op_from_token(&self.peek().kind).ok_or_else(|| {
             self.error(
-                "N0217",
+                "E0217",
                 "expected assignment operator in assignment",
                 token.length(),
             )
@@ -530,13 +530,13 @@ impl Parser<'_> {
         let target = self.parse_path()?;
         if target.len() > 2 {
             return Err(self.error(
-                "N0217",
+                "E0217",
                 "postfix update target must be a variable or field",
                 token.length(),
             ));
         }
         let op = postfix_op_from_token(&self.peek().kind).ok_or_else(|| {
-            self.error("N0217", "expected postfix update operator", token.length())
+            self.error("E0217", "expected postfix update operator", token.length())
         })?;
         self.advance();
         Ok(Stmt::Postfix {
@@ -552,7 +552,7 @@ impl Parser<'_> {
     }
 
     fn parse_return_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::Return, "N0216", "expected `return`")?;
+        self.expect_kind(TokenKind::Return, "E0216", "expected `return`")?;
         let value = if matches!(self.peek().kind, TokenKind::Newline | TokenKind::RBrace) {
             None
         } else {
@@ -570,7 +570,7 @@ impl Parser<'_> {
     }
 
     fn parse_let_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::Let, "N0212", "expected `let`")?;
+        self.expect_kind(TokenKind::Let, "E0212", "expected `let`")?;
         let mutable = if matches!(self.peek().kind, TokenKind::Mut) {
             self.advance();
             true
@@ -582,7 +582,7 @@ impl Parser<'_> {
         if !mutable && matches!(self.peek().kind, TokenKind::LParen) {
             let binding = self.parse_match_binding()?.ok_or_else(|| {
                 Diagnostic::new(
-                    "N0234",
+                    "E0234",
                     "expected binding name in let-else pattern",
                     self.path,
                     name_token.line,
@@ -591,14 +591,14 @@ impl Parser<'_> {
                     &name_token.text,
                 )
             })?;
-            self.expect_kind(TokenKind::Equal, "N0213", "expected `=` before initializer")?;
+            self.expect_kind(TokenKind::Equal, "E0213", "expected `=` before initializer")?;
             let value = self.parse_expr()?;
             self.expect_kind(
                 TokenKind::Else,
-                "N0267",
+                "E0267",
                 "expected `else` after let-else initializer",
             )?;
-            let else_body = self.parse_stmt_block("N0268", "expected `{` before let-else body")?;
+            let else_body = self.parse_stmt_block("E0268", "expected `{` before let-else body")?;
             return Ok(Stmt::LetElse {
                 pattern: path,
                 binding,
@@ -614,7 +614,7 @@ impl Parser<'_> {
         }
         let [name] = path.as_slice() else {
             return Err(Diagnostic::new(
-                "N0212",
+                "E0212",
                 "expected variable name after `let`",
                 self.path,
                 name_token.line,
@@ -630,7 +630,7 @@ impl Parser<'_> {
         } else {
             None
         };
-        self.expect_kind(TokenKind::Equal, "N0213", "expected `=` before initializer")?;
+        self.expect_kind(TokenKind::Equal, "E0213", "expected `=` before initializer")?;
         let value = self.parse_expr()?;
         Ok(Stmt::Let {
             name,
@@ -647,20 +647,20 @@ impl Parser<'_> {
     }
 
     fn parse_if_let_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::If, "N0269", "expected `if`")?;
-        self.expect_kind(TokenKind::Let, "N0270", "expected `let` after `if`")?;
+        self.expect_kind(TokenKind::If, "E0269", "expected `if`")?;
+        self.expect_kind(TokenKind::Let, "E0270", "expected `let` after `if`")?;
         let pattern = self.parse_match_pattern()?;
         let binding = self.parse_match_binding()?;
         self.expect_kind(
             TokenKind::Equal,
-            "N0271",
+            "E0271",
             "expected `=` before if-let value",
         )?;
         let value = self.parse_expr_no_struct_literals()?;
-        let body = self.parse_stmt_block("N0272", "expected `{` before if-let body")?;
+        let body = self.parse_stmt_block("E0272", "expected `{` before if-let body")?;
         let else_body = if matches!(self.peek().kind, TokenKind::Else) {
             self.advance();
-            Some(self.parse_stmt_block("N0273", "expected `{` before if-let else body")?)
+            Some(self.parse_stmt_block("E0273", "expected `{` before if-let else body")?)
         } else {
             None
         };
@@ -680,20 +680,20 @@ impl Parser<'_> {
     }
 
     fn parse_for_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::For, "N0260", "expected `for`")?;
+        self.expect_kind(TokenKind::For, "E0260", "expected `for`")?;
         let variant = if matches!(self.peek().kind, TokenKind::LBrace) {
             // for {}
             ForVariant::Infinite {
-                body: self.parse_stmt_block("N0261", "expected `{` before `for` body")?,
+                body: self.parse_stmt_block("E0261", "expected `{` before `for` body")?,
             }
         } else if matches!(self.peek().kind, TokenKind::Ident(_))
             && matches!(self.peek_n(1).kind, TokenKind::In)
         {
             // for binding in iterable {}
             let binding = self.expect_ident("expected binding name after `for`")?;
-            self.expect_kind(TokenKind::In, "N0262", "expected `in` after `for` binding")?;
+            self.expect_kind(TokenKind::In, "E0262", "expected `in` after `for` binding")?;
             let iterable = self.parse_expr_no_struct_literals()?;
-            let body = self.parse_stmt_block("N0263", "expected `{` before `for` body")?;
+            let body = self.parse_stmt_block("E0263", "expected `{` before `for` body")?;
             ForVariant::Iterate {
                 binding,
                 iterable,
@@ -702,7 +702,7 @@ impl Parser<'_> {
         } else {
             // for cond {}
             let condition = self.parse_expr_no_struct_literals()?;
-            let body = self.parse_stmt_block("N0264", "expected `{` before `for` body")?;
+            let body = self.parse_stmt_block("E0264", "expected `{` before `for` body")?;
             ForVariant::While { condition, body }
         };
         Ok(Stmt::For {
@@ -717,9 +717,9 @@ impl Parser<'_> {
     }
 
     fn parse_match_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::Match, "N0229", "expected `match`")?;
+        self.expect_kind(TokenKind::Match, "E0229", "expected `match`")?;
         let value = self.parse_expr_no_struct_literals()?;
-        self.expect_kind(TokenKind::LBrace, "N0230", "expected `{` before match arms")?;
+        self.expect_kind(TokenKind::LBrace, "E0230", "expected `{` before match arms")?;
         self.expect_newline("expected newline after `{`")?;
 
         let mut arms = Vec::new();
@@ -731,19 +731,19 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0231", "unterminated match body; expected `}`", 1));
+                    return Err(self.error("E0231", "unterminated match body; expected `}`", 1));
                 }
                 _ => {
                     let pattern = self.parse_match_pattern()?;
                     let binding = self.parse_match_binding()?;
                     self.expect_kind(
                         TokenKind::FatArrow,
-                        "N0232",
+                        "E0232",
                         "expected `=>` after match pattern",
                     )?;
                     self.skip_newlines();
                     let body =
-                        self.parse_stmt_block("N0235", "expected `{` before match arm body")?;
+                        self.parse_stmt_block("E0235", "expected `{` before match arm body")?;
                     arms.push(MatchStmtArm {
                         pattern,
                         binding,
@@ -775,7 +775,7 @@ impl Parser<'_> {
     }
 
     fn parse_defer_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
-        self.expect_kind(TokenKind::Defer, "N0265", "expected `defer`")?;
+        self.expect_kind(TokenKind::Defer, "E0265", "expected `defer`")?;
         let stmt = self.parse_stmt()?;
         Ok(Stmt::Defer {
             stmt: Box::new(stmt),
@@ -804,7 +804,7 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0266", "unterminated block; expected `}`", 1));
+                    return Err(self.error("E0266", "unterminated block; expected `}`", 1));
                 }
                 _ => {
                     body.push(self.parse_stmt()?);
@@ -817,17 +817,17 @@ impl Parser<'_> {
 
     fn parse_const(&mut self, public: bool) -> Result<ConstDef, Diagnostic> {
         let token = self.peek().clone();
-        self.expect_kind(TokenKind::Const, "N0267", "expected `const`")?;
+        self.expect_kind(TokenKind::Const, "E0267", "expected `const`")?;
         let name = self.expect_ident("expected constant name after `const`")?;
         self.expect_kind(
             TokenKind::Colon,
-            "N0268",
+            "E0268",
             "expected `:` after constant name",
         )?;
         let type_ref = self.parse_type_ref()?;
         self.expect_kind(
             TokenKind::Equal,
-            "N0269",
+            "E0269",
             "expected `=` before constant value",
         )?;
         let value = self.parse_expr()?;
@@ -1040,17 +1040,17 @@ impl Parser<'_> {
             TokenKind::Match => self.parse_match_expr(),
             TokenKind::Panic => self.parse_panic_expr(),
             TokenKind::Ident(_) => self.parse_name_or_call(),
-            _ => Err(self.error("N0208", "expected expression", self.peek().length())),
+            _ => Err(self.error("E0208", "expected expression", self.peek().length())),
         }
     }
 
     fn parse_panic_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.expect_kind(TokenKind::Panic, "N0246", "expected `panic`")?;
-        self.expect_kind(TokenKind::LParen, "N0247", "expected `(` after `panic`")?;
+        self.expect_kind(TokenKind::Panic, "E0246", "expected `panic`")?;
+        self.expect_kind(TokenKind::LParen, "E0247", "expected `(` after `panic`")?;
         let message = self.parse_expr()?;
         self.expect_kind(
             TokenKind::RParen,
-            "N0248",
+            "E0248",
             "expected `)` after panic message",
         )?;
         Ok(Expr::Panic {
@@ -1059,16 +1059,16 @@ impl Parser<'_> {
     }
 
     fn parse_if_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.expect_kind(TokenKind::If, "N0240", "expected `if`")?;
+        self.expect_kind(TokenKind::If, "E0240", "expected `if`")?;
         let previous = self.allow_struct_literals;
         self.allow_struct_literals = false;
         let condition = self.parse_expr();
         self.allow_struct_literals = previous;
         let condition = condition?;
-        let then_branch = self.parse_expr_block("N0241", "expected `{` before if branch")?;
+        let then_branch = self.parse_expr_block("E0241", "expected `{` before if branch")?;
         self.skip_newlines();
-        self.expect_kind(TokenKind::Else, "N0244", "expected `else` after if branch")?;
-        let else_branch = self.parse_expr_block("N0245", "expected `{` before else branch")?;
+        self.expect_kind(TokenKind::Else, "E0244", "expected `else` after if branch")?;
+        let else_branch = self.parse_expr_block("E0245", "expected `{` before else branch")?;
         Ok(Expr::If {
             condition: Box::new(condition),
             then_branch: Box::new(then_branch),
@@ -1087,16 +1087,16 @@ impl Parser<'_> {
         self.skip_newlines();
         self.expect_kind(
             TokenKind::RBrace,
-            "N0242",
+            "E0242",
             "expected `}` after expression block",
         )?;
         Ok(value)
     }
 
     fn parse_match_expr(&mut self) -> Result<Expr, Diagnostic> {
-        self.expect_kind(TokenKind::Match, "N0229", "expected `match`")?;
+        self.expect_kind(TokenKind::Match, "E0229", "expected `match`")?;
         let value = self.parse_expr_no_struct_literals()?;
-        self.expect_kind(TokenKind::LBrace, "N0230", "expected `{` before match arms")?;
+        self.expect_kind(TokenKind::LBrace, "E0230", "expected `{` before match arms")?;
         self.expect_newline("expected newline after `{`")?;
 
         let mut arms = Vec::new();
@@ -1108,14 +1108,14 @@ impl Parser<'_> {
                     break;
                 }
                 TokenKind::Eof => {
-                    return Err(self.error("N0231", "unterminated match body; expected `}`", 1));
+                    return Err(self.error("E0231", "unterminated match body; expected `}`", 1));
                 }
                 _ => {
                     let pattern = self.parse_match_pattern()?;
                     let binding = self.parse_match_binding()?;
                     self.expect_kind(
                         TokenKind::FatArrow,
-                        "N0232",
+                        "E0232",
                         "expected `=>` after match pattern",
                     )?;
                     self.skip_newlines();
@@ -1144,7 +1144,7 @@ impl Parser<'_> {
         let binding = self.expect_ident("expected binding name in match pattern")?;
         if binding == "_" {
             return Err(Diagnostic::new(
-                "N0238",
+                "E0238",
                 "`_` match bindings are not supported in v0.1",
                 self.path,
                 binding_token.line,
@@ -1155,7 +1155,7 @@ impl Parser<'_> {
         }
         self.expect_kind(
             TokenKind::RParen,
-            "N0234",
+            "E0234",
             "expected `)` after match pattern binding",
         )?;
         Ok(Some(binding))
@@ -1166,7 +1166,7 @@ impl Parser<'_> {
         let pattern = self.parse_path()?;
         if pattern.len() == 1 && pattern[0] == "_" {
             return Err(Diagnostic::new(
-                "N0238",
+                "E0238",
                 "`_` match patterns are not supported in v0.1",
                 self.path,
                 pattern_token.line,
@@ -1191,7 +1191,7 @@ impl Parser<'_> {
         if !matches!(self.peek().kind, TokenKind::LParen) {
             if !type_args.is_empty() {
                 return Err(self.error(
-                    "N0210",
+                    "E0210",
                     "expected `(` after generic call type arguments",
                     self.peek().length(),
                 ));
@@ -1216,7 +1216,7 @@ impl Parser<'_> {
         self.skip_newlines();
         self.expect_kind(
             TokenKind::RParen,
-            "N0210",
+            "E0210",
             "expected `)` after call arguments",
         )?;
         Ok(Expr::Call {
@@ -1296,7 +1296,7 @@ impl Parser<'_> {
     fn parse_struct_literal(&mut self, type_name: Vec<String>) -> Result<Expr, Diagnostic> {
         self.expect_kind(
             TokenKind::LBrace,
-            "N0222",
+            "E0222",
             "expected `{` before struct literal fields",
         )?;
         let mut fields = Vec::new();
@@ -1306,7 +1306,7 @@ impl Parser<'_> {
                 let field_name = self.expect_ident("expected struct literal field name")?;
                 self.expect_kind(
                     TokenKind::Colon,
-                    "N0223",
+                    "E0223",
                     "expected `:` after struct literal field name",
                 )?;
                 let value = self.parse_expr()?;
@@ -1323,7 +1323,7 @@ impl Parser<'_> {
                     TokenKind::RBrace => break,
                     _ => {
                         return Err(self.error(
-                            "N0224",
+                            "E0224",
                             "expected `,` or `}` after struct literal field",
                             self.peek().length(),
                         ));
@@ -1334,7 +1334,7 @@ impl Parser<'_> {
         self.skip_newlines();
         self.expect_kind(
             TokenKind::RBrace,
-            "N0225",
+            "E0225",
             "expected `}` after struct literal",
         )?;
         Ok(Expr::StructLiteral { type_name, fields })
@@ -1383,7 +1383,7 @@ impl Parser<'_> {
                 }
                 _ => {
                     return Err(self.error(
-                        "N0236",
+                        "E0236",
                         "expected `,` or `>` after generic type argument",
                         self.peek().length(),
                     ));
@@ -1408,7 +1408,7 @@ impl Parser<'_> {
             self.advance();
             if matches!(self.peek().kind, TokenKind::Star) {
                 return Err(self.error(
-                    "N0274",
+                    "E0274",
                     "wildcard imports are not supported in v0.1",
                     self.peek().length(),
                 ));
@@ -1437,7 +1437,7 @@ impl Parser<'_> {
                 self.advance();
                 Ok(value)
             }
-            _ => Err(self.error("N0300", message, self.peek().length())),
+            _ => Err(self.error("E0300", message, self.peek().length())),
         }
     }
 
@@ -1462,7 +1462,7 @@ impl Parser<'_> {
                 Ok(())
             }
             TokenKind::Eof => Ok(()),
-            _ => Err(self.error("N0211", message, self.peek().length())),
+            _ => Err(self.error("E0211", message, self.peek().length())),
         }
     }
 
@@ -1616,7 +1616,7 @@ mod tests {
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
-        assert_eq!(err.code, "N0274");
+        assert_eq!(err.code, "E0274");
         assert!(err.message.contains("wildcard imports"));
         assert!(err.message.contains("v0.1"));
     }
@@ -2227,7 +2227,7 @@ mod tests {
             let tokens = lex(Path::new("main.nomo"), source).unwrap();
             let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
-            assert_eq!(err.code, "N0211");
+            assert_eq!(err.code, "E0211");
             assert!(err.message.contains(message), "{:?}", err.message);
         }
     }
@@ -2311,7 +2311,7 @@ mod tests {
             let tokens = lex(Path::new("main.nomo"), source).unwrap();
             let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
-            assert_eq!(err.code, "N0238");
+            assert_eq!(err.code, "E0238");
             assert!(err.message.contains("not supported in v0.1"));
         }
     }
@@ -2470,7 +2470,7 @@ mod tests {
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
-        assert_eq!(err.code, "N0201");
+        assert_eq!(err.code, "E0201");
         assert!(err.message.contains("declarations must appear before"));
     }
 

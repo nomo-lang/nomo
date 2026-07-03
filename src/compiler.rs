@@ -110,6 +110,7 @@ pub enum Statement {
         arms: Vec<MatchStatementArm>,
     },
     TryLet {
+        carrier: QuestionCarrier,
         name: String,
         value_type: ValueType,
         result_type: ValueType,
@@ -176,6 +177,12 @@ pub enum Statement {
     Defer {
         call: DeferredCall,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum QuestionCarrier {
+    Result,
+    Option,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -3123,28 +3130,7 @@ fn lower_stmt(
                 ensure_supported_value_type(path, &annotated_type, span)?;
                 let (result_type, result_expr) =
                     lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
-                let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
-                    Diagnostic::new(
-                        "N0420",
-                        "`?` can only be used with `Result<T, E>`",
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    )
-                })?;
-                let (_, return_err_type) = result_parts(return_type).ok_or_else(|| {
-                    Diagnostic::new(
-                        "N0421",
-                        "`?` requires the current function to return `Result<T, E>`",
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    )
-                })?;
+                let (carrier, ok_type) = question_payload(path, span, &result_type, return_type)?;
                 if ok_type != annotated_type {
                     return Err(type_mismatch_expected_found(
                         path,
@@ -3158,19 +3144,6 @@ fn lower_stmt(
                         &ok_type,
                     ));
                 }
-                if err_type != return_err_type {
-                    return Err(type_mismatch_expected_found(
-                        path,
-                        span,
-                        format!(
-                            "`?` error type is `{}` but function returns `{}`",
-                            err_type.name(),
-                            return_err_type.name()
-                        ),
-                        &return_err_type,
-                        &err_type,
-                    ));
-                }
                 scope.insert(
                     name.clone(),
                     Binding {
@@ -3180,6 +3153,7 @@ fn lower_stmt(
                     },
                 );
                 return Ok(Statement::TryLet {
+                    carrier,
                     name: name.clone(),
                     value_type: annotated_type,
                     result_type,
@@ -5264,17 +5238,6 @@ fn extract_try_exprs(
                 span,
                 out,
             )?;
-            let (_, return_err_type) = result_parts(return_type).ok_or_else(|| {
-                Diagnostic::new(
-                    "N0421",
-                    "`?` requires the current function to return `Result<T, E>`",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                )
-            })?;
             let (result_type, result_expr) = lower_value_expr(
                 path,
                 &rewritten_result,
@@ -5285,30 +5248,7 @@ fn extract_try_exprs(
                 enums,
                 span,
             )?;
-            let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
-                Diagnostic::new(
-                    "N0420",
-                    "`?` can only be used with `Result<T, E>`",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                )
-            })?;
-            if err_type != return_err_type {
-                return Err(type_mismatch_expected_found(
-                    path,
-                    span,
-                    format!(
-                        "`?` error type is `{}` but function returns `{}`",
-                        err_type.name(),
-                        return_err_type.name()
-                    ),
-                    &return_err_type,
-                    &err_type,
-                ));
-            }
+            let (carrier, ok_type) = question_payload(path, span, &result_type, return_type)?;
             let temp = fresh_internal_binding(scope, "try_value");
             scope.insert(
                 temp.clone(),
@@ -5319,6 +5259,7 @@ fn extract_try_exprs(
                 },
             );
             out.push(Statement::TryLet {
+                carrier,
                 name: temp.clone(),
                 value_type: ok_type,
                 result_type,
@@ -9481,6 +9422,76 @@ fn result_parts(value_type: &ValueType) -> Option<(ValueType, ValueType)> {
         return None;
     }
     Some((args[0].clone(), args[1].clone()))
+}
+
+fn option_payload(value_type: &ValueType) -> Option<ValueType> {
+    let ValueType::Enum(name, args) = value_type else {
+        return None;
+    };
+    if name != "Option" || args.len() != 1 {
+        return None;
+    }
+    Some(args[0].clone())
+}
+
+fn question_payload(
+    path: &Path,
+    span: &Span,
+    question_type: &ValueType,
+    return_type: &ValueType,
+) -> Result<(QuestionCarrier, ValueType), Diagnostic> {
+    if let Some((ok_type, err_type)) = result_parts(question_type) {
+        let (_, return_err_type) = result_parts(return_type).ok_or_else(|| {
+            Diagnostic::new(
+                "N0421",
+                "`?` on Result<T, E> requires the current function to return Result<U, E>",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            )
+        })?;
+        if err_type != return_err_type {
+            return Err(type_mismatch_expected_found(
+                path,
+                span,
+                format!(
+                    "`?` error type is `{}` but function returns `{}`",
+                    err_type.name(),
+                    return_err_type.name()
+                ),
+                &return_err_type,
+                &err_type,
+            ));
+        }
+        return Ok((QuestionCarrier::Result, ok_type));
+    }
+
+    if let Some(payload_type) = option_payload(question_type) {
+        option_payload(return_type).ok_or_else(|| {
+            Diagnostic::new(
+                "N0421",
+                "`?` on Option<T> requires the current function to return Option<U>",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            )
+        })?;
+        return Ok((QuestionCarrier::Option, payload_type));
+    }
+
+    Err(Diagnostic::new(
+        "N0420",
+        "`?` can only be used with `Result<T, E>` or `Option<T>`",
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    ))
 }
 
 fn core_prelude_variant(name: &str) -> Option<(&'static str, &'static str)> {
@@ -15045,6 +15056,46 @@ fn main() -> void {
                 && enum_args == &vec![ValueType::Int, ValueType::String]
                 && return_name == "Result"
                 && return_args == &vec![ValueType::Int, ValueType::String]
+        ));
+    }
+
+    #[test]
+    fn accepts_option_question_let_binding() {
+        let source = r#"package app.main
+
+fn load() -> Option<string> {
+    return Some("value")
+}
+
+fn compute() -> Option<string> {
+    let text: string = load()?
+    return Some(text)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let compute = program
+            .functions
+            .iter()
+            .find(|function| function.name == "compute")
+            .unwrap();
+        assert!(matches!(
+            compute.body[0],
+            Statement::TryLet {
+                carrier: QuestionCarrier::Option,
+                ref name,
+                value_type: ValueType::String,
+                result_type: ValueType::Enum(ref enum_name, ref enum_args),
+                return_type: ValueType::Enum(ref return_name, ref return_args),
+                ..
+            } if name == "text"
+                && enum_name == "Option"
+                && enum_args == &vec![ValueType::String]
+                && return_name == "Option"
+                && return_args == &vec![ValueType::String]
         ));
     }
 

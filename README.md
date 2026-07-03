@@ -85,8 +85,8 @@ postfix `++`/`--` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`,
 `>>=`, `&=`, `^=`, `|=`, and `&^=` for mutable variables and mutable struct
 fields; they are not expressions and do not produce values. `%` and bitwise
 operators are restricted to integer operands; `/` works for integer and `f64`
-operands. Runtime divide-by-zero and invalid shift amounts now panic; signed
-overflow guards are still tracked as later full-scope safety work.
+operands. Runtime divide-by-zero, signed `i32`/`i64` arithmetic overflow, and
+invalid shift amounts panic.
 
 ```bash
 nomo new hello
@@ -255,6 +255,13 @@ The `--json-errors` flag produces machine-readable diagnostics (with positions
 and fix suggestions) suitable for tooling on `check` and `build`.
 `nomoc` remains a compiler driver rather than a script runner; top-level script
 statements are accepted only by `nomo run <source.nomo>`.
+
+## Language notes
+
+The postfix `?` operator works on both standard carriers in v0.1:
+`Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
+early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
+`None` early from the current `Option`-returning function.
 
 ## Library crate
 

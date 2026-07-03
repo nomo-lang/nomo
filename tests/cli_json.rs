@@ -873,7 +873,7 @@ fn nomoc_check_emits_json_for_try_on_non_result_value() {
     assert!(text.contains("\"status\":\"error\""), "{text}");
     assert!(text.contains("\"error_code\":\"N0420\""), "{text}");
     assert!(
-        text.contains("\"message\":\"`?` can only be used with `Result<T, E>`\""),
+        text.contains("\"message\":\"`?` can only be used with `Result<T, E>` or `Option<T>`\""),
         "{text}"
     );
     assert!(text.contains("\"line\":10"), "{text}");
@@ -907,7 +907,9 @@ fn nomoc_check_emits_json_for_try_in_non_result_function() {
     assert!(text.contains("\"status\":\"error\""), "{text}");
     assert!(text.contains("\"error_code\":\"N0421\""), "{text}");
     assert!(
-        text.contains("\"message\":\"`?` requires the current function to return `Result<T, E>`\""),
+        text.contains(
+            "\"message\":\"`?` on Result<T, E> requires the current function to return Result<U, E>\""
+        ),
         "{text}"
     );
     assert!(text.contains("\"line\":10"), "{text}");

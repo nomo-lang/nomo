@@ -4025,6 +4025,70 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_allows_option_question_early_return() {
+    let root = temp_test_root("option-question-early-return");
+    reset_dir(&root);
+    let project = root.join("option_question");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"option_question\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+fn load() -> Option<string> {
+    return None
+}
+
+fn compute() -> Option<string> {
+    let text: string = load()?
+    io.println("after")
+    return Some(text)
+}
+
+fn main() -> void {
+    let result: Option<string> = compute()
+    match result {
+        Some(text) => {
+            io.println(text)
+        }
+        None => {
+            io.println("fallback")
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "fallback\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_reports_result_main_error_status() {
     let root = temp_test_root("result-main-error");
     reset_dir(&root);
@@ -4184,6 +4248,51 @@ fn main() -> void {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("panic: division by zero"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_reports_signed_overflow_panic_status() {
+    let root = temp_test_root("signed-overflow-panic");
+    reset_dir(&root);
+    let project = root.join("overflow_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"overflow_panic\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    let max: i64 = 9223372036854775807
+    let value: i64 = max + 1
+    io.println("wrong")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("panic: signed integer overflow"),
+        "{stderr}"
+    );
     assert!(stderr.contains("program exited with status 1"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();

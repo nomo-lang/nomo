@@ -1,6 +1,6 @@
 use crate::compiler::{
-    BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, Program, Statement,
-    StructType, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, Program,
+    QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -156,20 +156,72 @@ pub fn emit_c(program: &Program) -> String {
 }
 
 fn emit_operator_runtime(out: &mut String) {
+    out.push_str("static long long nomo_add_i64(long long left, long long right) {\n");
+    out.push_str("    if ((right > 0 && left > LLONG_MAX - right) || (right < 0 && left < LLONG_MIN - right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    return left + right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_sub_i64(long long left, long long right) {\n");
+    out.push_str("    if ((right < 0 && left > LLONG_MAX + right) || (right > 0 && left < LLONG_MIN + right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    return left - right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_mul_i64(long long left, long long right) {\n");
+    out.push_str("    if (left == 0 || right == 0) { return 0; }\n");
+    out.push_str("    if ((left == -1 && right == LLONG_MIN) || (right == -1 && left == LLONG_MIN)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    if (left > 0) {\n");
+    out.push_str("        if (right > 0) { if (left > LLONG_MAX / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("        else { if (right < LLONG_MIN / left) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("    } else {\n");
+    out.push_str("        if (right > 0) { if (left < LLONG_MIN / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("        else { if (left < LLONG_MAX / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("    }\n");
+    out.push_str("    return left * right;\n");
+    out.push_str("}\n\n");
     out.push_str("static long long nomo_div_i64(long long left, long long right) {\n");
     out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str(
+        "    if (left == LLONG_MIN && right == -1) { nomo_panic(\"signed integer overflow\"); }\n",
+    );
     out.push_str("    return left / right;\n");
     out.push_str("}\n\n");
     out.push_str("static long long nomo_rem_i64(long long left, long long right) {\n");
     out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str(
+        "    if (left == LLONG_MIN && right == -1) { nomo_panic(\"signed integer overflow\"); }\n",
+    );
     out.push_str("    return left % right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_add_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    if ((right > 0 && left > INT32_MAX - right) || (right < 0 && left < INT32_MIN - right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    return left + right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_sub_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    if ((right < 0 && left > INT32_MAX + right) || (right > 0 && left < INT32_MIN + right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    return left - right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_mul_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    if (left == 0 || right == 0) { return 0; }\n");
+    out.push_str("    if ((left == -1 && right == INT32_MIN) || (right == -1 && left == INT32_MIN)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    if (left > 0) {\n");
+    out.push_str("        if (right > 0) { if (left > INT32_MAX / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("        else { if (right < INT32_MIN / left) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("    } else {\n");
+    out.push_str("        if (right > 0) { if (left < INT32_MIN / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("        else { if (left < INT32_MAX / right) { nomo_panic(\"signed integer overflow\"); } }\n");
+    out.push_str("    }\n");
+    out.push_str("    return left * right;\n");
     out.push_str("}\n\n");
     out.push_str("static int32_t nomo_div_i32(int32_t left, int32_t right) {\n");
     out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str(
+        "    if (left == INT32_MIN && right == -1) { nomo_panic(\"signed integer overflow\"); }\n",
+    );
     out.push_str("    return left / right;\n");
     out.push_str("}\n\n");
     out.push_str("static int32_t nomo_rem_i32(int32_t left, int32_t right) {\n");
     out.push_str("    if (right == 0) { nomo_panic(\"division by zero\"); }\n");
+    out.push_str(
+        "    if (left == INT32_MIN && right == -1) { nomo_panic(\"signed integer overflow\"); }\n",
+    );
     out.push_str("    return left % right;\n");
     out.push_str("}\n\n");
     out.push_str("static uint32_t nomo_div_u32(uint32_t left, uint32_t right) {\n");
@@ -1596,6 +1648,7 @@ fn emit_stmt(
             continue_cleanup_start,
         ),
         Statement::TryLet {
+            carrier,
             name,
             value_type,
             result_type,
@@ -1603,6 +1656,7 @@ fn emit_stmt(
             result_expr,
         } => emit_try_let(
             out,
+            *carrier,
             name,
             value_type,
             result_type,
@@ -2664,6 +2718,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
 
 fn emit_try_let(
     out: &mut String,
+    carrier: QuestionCarrier,
     name: &str,
     value_type: &ValueType,
     result_type: &ValueType,
@@ -2684,11 +2739,19 @@ fn emit_try_let(
     let ValueType::Enum(result_name, result_args) = result_type else {
         return;
     };
+    let (early_variant, payload_variant) = match carrier {
+        QuestionCarrier::Result => ("Err", "Ok"),
+        QuestionCarrier::Option => ("None", "Some"),
+    };
     write_indent(out, indent);
     out.push_str("if (");
     out.push_str(&temp);
     out.push_str(".tag == ");
-    out.push_str(&c_enum_variant_ident(result_name, result_args, "Err"));
+    out.push_str(&c_enum_variant_ident(
+        result_name,
+        result_args,
+        early_variant,
+    ));
     out.push_str(") {\n");
     write_indent(out, indent + 1);
     let (return_name, return_args) = match return_type {
@@ -2699,15 +2762,24 @@ fn emit_try_let(
     out.push_str(" nomo__try_return = (");
     out.push_str(&c_enum_ident(return_name, return_args));
     out.push_str("){.tag = ");
-    out.push_str(&c_enum_variant_ident(return_name, return_args, "Err"));
-    out.push_str(", .payload.");
-    out.push_str(&c_payload_ident("Err"));
-    out.push_str(" = ");
-    out.push_str(&temp);
-    out.push_str(".payload.");
-    out.push_str(&c_payload_ident("Err"));
+    out.push_str(&c_enum_variant_ident(
+        return_name,
+        return_args,
+        early_variant,
+    ));
+    if carrier == QuestionCarrier::Result {
+        out.push_str(", .payload.");
+        out.push_str(&c_payload_ident("Err"));
+        out.push_str(" = ");
+        out.push_str(&temp);
+        out.push_str(".payload.");
+        out.push_str(&c_payload_ident("Err"));
+    }
     out.push_str("};\n");
-    if expr_may_share_array_storage(result_expr) && value_type_needs_release(return_type) {
+    if carrier == QuestionCarrier::Result
+        && expr_may_share_array_storage(result_expr)
+        && value_type_needs_release(return_type)
+    {
         emit_value_retain_in_place(out, return_type, "nomo__try_return", indent + 1);
     }
     emit_deferred(out, indent + 1, deferred);
@@ -2723,7 +2795,7 @@ fn emit_try_let(
     out.push_str(" = ");
     out.push_str(&temp);
     out.push_str(".payload.");
-    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(&c_payload_ident(payload_variant));
     out.push_str(";\n");
     if expr_may_share_array_storage(result_expr) && value_type_needs_release(value_type) {
         emit_value_retain_in_place(out, value_type, &c_var_ident(name), indent);
@@ -5307,8 +5379,14 @@ fn c_binary_op(op: &BinaryOp) -> &'static str {
 
 fn checked_binary_helper(op: &BinaryOp, value_type: &ValueType) -> Option<&'static str> {
     match (op, value_type) {
+        (BinaryOp::Add, ValueType::Int) => Some("nomo_add_i64"),
+        (BinaryOp::Subtract, ValueType::Int) => Some("nomo_sub_i64"),
+        (BinaryOp::Multiply, ValueType::Int) => Some("nomo_mul_i64"),
         (BinaryOp::Divide, ValueType::Int) => Some("nomo_div_i64"),
         (BinaryOp::Remainder, ValueType::Int) => Some("nomo_rem_i64"),
+        (BinaryOp::Add, ValueType::I32) => Some("nomo_add_i32"),
+        (BinaryOp::Subtract, ValueType::I32) => Some("nomo_sub_i32"),
+        (BinaryOp::Multiply, ValueType::I32) => Some("nomo_mul_i32"),
         (BinaryOp::Divide, ValueType::I32) => Some("nomo_div_i32"),
         (BinaryOp::Remainder, ValueType::I32) => Some("nomo_rem_i32"),
         (BinaryOp::Divide, ValueType::U32) => Some("nomo_div_u32"),
@@ -5770,7 +5848,7 @@ mod tests {
         let c = emit_c(&program);
         assert!(c.contains("long long nomo_fn_add(long long nomo_a, long long nomo_b);"));
         assert!(c.contains("long long nomo_fn_add(long long nomo_a, long long nomo_b)"));
-        assert!(c.contains("return (nomo_a + nomo_b);"));
+        assert!(c.contains("return nomo_add_i64(nomo_a, nomo_b);"));
         assert!(c.contains("long long nomo_answer = nomo_fn_add(40, 2);"));
     }
 
@@ -5825,7 +5903,7 @@ mod tests {
         let c = emit_c(&program);
         assert!(c.contains("void nomo_fn_bump(long long * nomo_value);"));
         assert!(c.contains("#define nomo_value (*nomo_value)"));
-        assert!(c.contains("nomo_value = (nomo_value + 1);"));
+        assert!(c.contains("nomo_value = nomo_add_i64(nomo_value, 1);"));
         assert!(c.contains("#undef nomo_value"));
         assert!(c.contains("nomo_fn_bump(&nomo_count);"));
     }
@@ -6699,6 +6777,7 @@ mod tests {
                             },
                         },
                         Statement::TryLet {
+                            carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: ValueType::I32,
                             result_type: ValueType::Enum(
@@ -6931,6 +7010,7 @@ mod tests {
                             },
                         },
                         Statement::TryLet {
+                            carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: array_i32.clone(),
                             result_type: result_array_array.clone(),
@@ -8739,7 +8819,7 @@ mod tests {
 
         let c = emit_c(&program);
         assert!(c.contains("long long nomo_count = 1;"));
-        assert!(c.contains("nomo_count = (nomo_count + 1);"));
+        assert!(c.contains("nomo_count = nomo_add_i64(nomo_count, 1);"));
     }
 
     #[test]
@@ -8792,9 +8872,9 @@ mod tests {
         };
 
         let c = emit_c(&program);
-        assert!(
-            c.contains("nomo_counter.nomo_member_value = (nomo_counter.nomo_member_value + 1);")
-        );
+        assert!(c.contains(
+            "nomo_counter.nomo_member_value = nomo_add_i64(nomo_counter.nomo_member_value, 1);"
+        ));
     }
 
     #[test]
@@ -9151,6 +9231,7 @@ mod tests {
                     return_type: result_i64_string.clone(),
                     body: vec![
                         Statement::TryLet {
+                            carrier: QuestionCarrier::Result,
                             name: "value".to_string(),
                             value_type: ValueType::Int,
                             result_type: result_i64_string.clone(),

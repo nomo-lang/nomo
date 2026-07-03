@@ -26,6 +26,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `specific_type_import`: concrete type imports
 - `specific_value_import`: concrete value-function imports
 - `string_methods`: `string` value methods (`len`, `concat`)
+- `string_extended`: `std.string` predicates, trim, ASCII case conversion, and split
 - `string_lifecycle`: `string` parameter, return, and caller reuse lifecycle
 - `struct_methods`: struct methods
 - `mut_field_borrow`: `mut` field-path arguments, parameter forwarding, and non-overlapping field borrows

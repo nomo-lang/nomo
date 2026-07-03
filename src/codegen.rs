@@ -26,7 +26,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
+        "#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -67,6 +67,13 @@ pub fn emit_c(program: &Program) -> String {
     emit_nominal_lifecycle_helpers(&mut out, program);
     for element_type in &array_element_types {
         emit_array_helpers(&mut out, element_type);
+        out.push('\n');
+    }
+    if array_element_types
+        .iter()
+        .any(|item| item == &ValueType::String)
+    {
+        emit_string_split_helper(&mut out);
         out.push('\n');
     }
     if uses_env_args(program) {
@@ -371,6 +378,15 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    memcpy(data, value, len + 1);\n");
     out.push_str("    return nomo_string_owned(data);\n");
     out.push_str("}\n\n");
+    out.push_str(
+        "static nomo_string nomo_string_from_slice(const char *data, size_t start, size_t len) {\n",
+    );
+    out.push_str("    char *out = (char *)malloc(len + 1);\n");
+    out.push_str("    if (out == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    memcpy(out, data + start, len);\n");
+    out.push_str("    out[len] = '\\0';\n");
+    out.push_str("    return nomo_string_owned(out);\n");
+    out.push_str("}\n\n");
     out.push_str("static nomo_string nomo_string_retain(nomo_string value) {\n");
     out.push_str("    if (value.refcount != NULL) { *value.refcount += 1; }\n");
     out.push_str("    return value;\n");
@@ -396,12 +412,53 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("\nstatic int nomo_string_equal(nomo_string left, nomo_string right) {\n");
     out.push_str("    return strcmp(left.data, right.data) == 0;\n");
     out.push_str("}\n");
-    out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
+    out.push_str("\nstatic int nomo_string_is_empty(nomo_string value) {\n");
+    out.push_str("    return value.data[0] == '\\0';\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_string_contains(nomo_string value, nomo_string needle) {\n");
+    out.push_str("    return strstr(value.data, needle.data) != NULL;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_string_starts_with(nomo_string value, nomo_string prefix) {\n");
+    out.push_str("    size_t prefix_len = strlen(prefix.data);\n");
+    out.push_str("    return strncmp(value.data, prefix.data, prefix_len) == 0;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_string_ends_with(nomo_string value, nomo_string suffix) {\n");
+    out.push_str("    size_t value_len = strlen(value.data);\n");
+    out.push_str("    size_t suffix_len = strlen(suffix.data);\n");
+    out.push_str("    if (suffix_len > value_len) { return 0; }\n");
+    out.push_str(
+        "    return memcmp(value.data + value_len - suffix_len, suffix.data, suffix_len) == 0;\n",
+    );
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_string_trim(nomo_string value) {\n");
+    out.push_str("    size_t start = 0;\n");
+    out.push_str("    size_t end = strlen(value.data);\n");
+    out.push_str(
+        "    while (start < end && isspace((unsigned char)value.data[start])) { start += 1; }\n",
+    );
+    out.push_str(
+        "    while (end > start && isspace((unsigned char)value.data[end - 1])) { end -= 1; }\n",
+    );
+    out.push_str("    return nomo_string_from_slice(value.data, start, end - start);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_string_to_lower(nomo_string value) {\n");
+    out.push_str("    size_t len = strlen(value.data);\n");
     out.push_str("    char *out = (char *)malloc(len + 1);\n");
     out.push_str("    if (out == NULL) { nomo_panic(\"out of memory\"); }\n");
-    out.push_str("    memcpy(out, data + start, len);\n");
+    out.push_str("    for (size_t i = 0; i < len; i += 1) { out[i] = (char)tolower((unsigned char)value.data[i]); }\n");
     out.push_str("    out[len] = '\\0';\n");
     out.push_str("    return nomo_string_owned(out);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_string_to_upper(nomo_string value) {\n");
+    out.push_str("    size_t len = strlen(value.data);\n");
+    out.push_str("    char *out = (char *)malloc(len + 1);\n");
+    out.push_str("    if (out == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    for (size_t i = 0; i < len; i += 1) { out[i] = (char)toupper((unsigned char)value.data[i]); }\n");
+    out.push_str("    out[len] = '\\0';\n");
+    out.push_str("    return nomo_string_owned(out);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
+    out.push_str("    return nomo_string_from_slice(data, start, len);\n");
     out.push_str("}\n\n");
     out.push_str("static size_t nomo_path_trim_trailing_slashes(const char *data) {\n");
     out.push_str("    size_t len = strlen(data);\n");
@@ -1479,6 +1536,38 @@ fn emit_array_helpers(out: &mut String, element_type: &ValueType) {
     emit_array_element_retain_expr(out, element_type, "value");
     out.push_str(";\n");
     out.push_str("    return array;\n");
+    out.push_str("}\n");
+}
+
+fn emit_string_split_helper(out: &mut String) {
+    let array = c_array_ident(&ValueType::String);
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push_str(" nomo_string_split(nomo_string value, nomo_string separator) {\n");
+    out.push_str("    size_t separator_len = strlen(separator.data);\n");
+    out.push_str("    if (separator_len == 0) { nomo_panic(\"string.split separator must not be empty\"); }\n");
+    out.push_str("    const char *data = value.data;\n");
+    out.push_str("    size_t data_len = strlen(data);\n");
+    out.push_str("    size_t start = 0;\n");
+    out.push_str("    ");
+    out.push_str(&array);
+    out.push_str(" parts = ");
+    out.push_str(&array);
+    out.push_str("_new();\n");
+    out.push_str("    while (start <= data_len) {\n");
+    out.push_str("        const char *found = strstr(data + start, separator.data);\n");
+    out.push_str("        size_t segment_len = found == NULL ? data_len - start : (size_t)(found - (data + start));\n");
+    out.push_str(
+        "        nomo_string segment = nomo_string_from_slice(data, start, segment_len);\n",
+    );
+    out.push_str("        parts = ");
+    out.push_str(&array);
+    out.push_str("_push(parts, segment);\n");
+    out.push_str("        nomo_string_release(segment);\n");
+    out.push_str("        if (found == NULL) { break; }\n");
+    out.push_str("        start = (size_t)(found - data) + separator_len;\n");
+    out.push_str("    }\n");
+    out.push_str("    return parts;\n");
     out.push_str("}\n");
 }
 
@@ -2858,6 +2947,14 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
             content: right,
         } => expr_may_share_array_storage(left) || expr_may_share_array_storage(right),
         ValueExpr::StringConcat { .. }
+        | ValueExpr::StringIsEmpty { .. }
+        | ValueExpr::StringContains { .. }
+        | ValueExpr::StringStartsWith { .. }
+        | ValueExpr::StringEndsWith { .. }
+        | ValueExpr::StringSplit { .. }
+        | ValueExpr::StringTrim { .. }
+        | ValueExpr::StringToLower { .. }
+        | ValueExpr::StringToUpper { .. }
         | ValueExpr::PathJoin { .. }
         | ValueExpr::PathBasename { .. }
         | ValueExpr::PathDirname { .. }
@@ -3288,6 +3385,54 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, right);
             out.push(')');
         }
+        ValueExpr::StringIsEmpty { value } => {
+            out.push_str("nomo_string_is_empty(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::StringContains { value, needle } => {
+            out.push_str("nomo_string_contains(");
+            emit_expr(out, value);
+            out.push_str(", ");
+            emit_expr(out, needle);
+            out.push(')');
+        }
+        ValueExpr::StringStartsWith { value, prefix } => {
+            out.push_str("nomo_string_starts_with(");
+            emit_expr(out, value);
+            out.push_str(", ");
+            emit_expr(out, prefix);
+            out.push(')');
+        }
+        ValueExpr::StringEndsWith { value, suffix } => {
+            out.push_str("nomo_string_ends_with(");
+            emit_expr(out, value);
+            out.push_str(", ");
+            emit_expr(out, suffix);
+            out.push(')');
+        }
+        ValueExpr::StringSplit { value, separator } => {
+            out.push_str("nomo_string_split(");
+            emit_expr(out, value);
+            out.push_str(", ");
+            emit_expr(out, separator);
+            out.push(')');
+        }
+        ValueExpr::StringTrim { value } => {
+            out.push_str("nomo_string_trim(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::StringToLower { value } => {
+            out.push_str("nomo_string_to_lower(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::StringToUpper { value } => {
+            out.push_str("nomo_string_to_upper(");
+            emit_expr(out, value);
+            out.push(')');
+        }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
             emit_expr(out, left);
@@ -3634,6 +3779,22 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_result_map_err(left, out);
@@ -3644,6 +3805,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
+        | ValueExpr::StringIsEmpty { value: path }
+        | ValueExpr::StringTrim { value: path }
+        | ValueExpr::StringToLower { value: path }
+        | ValueExpr::StringToUpper { value: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
@@ -3939,6 +4104,23 @@ fn collect_expr_struct(
     match expr {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
+        | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_struct(left, seen, out);
@@ -3950,6 +4132,10 @@ fn collect_expr_struct(
             }
         }
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::PathBasename { path: value }
         | ValueExpr::PathDirname { path: value }
         | ValueExpr::PathExtension { path: value }
@@ -3957,10 +4143,6 @@ fn collect_expr_struct(
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
-        ValueExpr::StringConcat { left, right } => {
-            collect_expr_struct(left, seen, out);
-            collect_expr_struct(right, seen, out);
-        }
         ValueExpr::FsReadToString { path } => {
             push_struct_instance(seen, out, "FsError", &[]);
             collect_expr_struct(path, seen, out);
@@ -4322,6 +4504,23 @@ fn collect_expr_enum(
     match expr {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
+        | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_enum(left, seen, out);
@@ -4333,6 +4532,10 @@ fn collect_expr_enum(
             }
         }
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::PathBasename { path: value }
         | ValueExpr::PathDirname { path: value }
         | ValueExpr::PathExtension { path: value }
@@ -4340,10 +4543,6 @@ fn collect_expr_enum(
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
-        ValueExpr::StringConcat { left, right } => {
-            collect_expr_enum(left, seen, out);
-            collect_expr_enum(right, seen, out);
-        }
         ValueExpr::FsReadToString { path } => {
             push_enum_instance(
                 seen,
@@ -5168,6 +5367,22 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right)
@@ -5198,6 +5413,10 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_read_to_string),
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_read_to_string(value),
@@ -5242,6 +5461,22 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
@@ -5270,6 +5505,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_write_string),
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_write_string(value),
@@ -5312,6 +5551,22 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_open(left) || expr_uses_fs_open(right)
@@ -5340,6 +5595,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_open),
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -5379,6 +5638,22 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_get(left) || expr_uses_env_get(right)
@@ -5407,6 +5682,10 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_get),
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -5446,6 +5725,22 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
+        | ValueExpr::StringSplit {
+            value: left,
+            separator: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_args(left) || expr_uses_env_args(right)
@@ -5474,6 +5769,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_args),
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -5527,10 +5826,27 @@ fn collect_expr_array_elements(
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }
+        | ValueExpr::StringContains {
+            value: left,
+            needle: right,
+        }
+        | ValueExpr::StringStartsWith {
+            value: left,
+            prefix: right,
+        }
+        | ValueExpr::StringEndsWith {
+            value: left,
+            suffix: right,
+        }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
+        }
+        ValueExpr::StringSplit { value, separator } => {
+            push_array_element_type(seen, out, &ValueType::String);
+            collect_expr_array_elements(value, seen, out);
+            collect_expr_array_elements(separator, seen, out);
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::EnvGet { name: path }
@@ -5567,6 +5883,10 @@ fn collect_expr_array_elements(
             }
         }
         ValueExpr::StringLen { value }
+        | ValueExpr::StringIsEmpty { value }
+        | ValueExpr::StringTrim { value }
+        | ValueExpr::StringToLower { value }
+        | ValueExpr::StringToUpper { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }

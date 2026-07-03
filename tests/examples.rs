@@ -232,6 +232,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "specific_import" => "specific import ok\n",
         "specific_type_import" => "specific type import ok\n",
         "specific_value_import" => "specific value import ok\n",
+        "string_extended" => "predicates\ntrim\ncase\nb\n",
         "string_lifecycle" => "string lifecycle ok\n",
         "string_methods" => "string methods ok\n",
         "struct_array_lifecycle" => "struct array lifecycle ok\n",

@@ -293,6 +293,13 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on
 `f64` values.
 
+`std.string` provides value helpers: `string.len`, `string.concat`,
+`string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
+`string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.
+The helpers operate on UTF-8 byte strings; `trim` and case conversion use ASCII
+character classes in v0.1. `string.split(value, separator)` returns
+`Array<string>` and panics if the separator is empty.
+
 Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
 pages live under [`docs/diagnostics/`](docs/diagnostics/index.md).

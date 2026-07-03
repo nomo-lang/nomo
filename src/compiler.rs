@@ -286,6 +286,34 @@ pub enum ValueExpr {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
     },
+    StringIsEmpty {
+        value: Box<ValueExpr>,
+    },
+    StringContains {
+        value: Box<ValueExpr>,
+        needle: Box<ValueExpr>,
+    },
+    StringStartsWith {
+        value: Box<ValueExpr>,
+        prefix: Box<ValueExpr>,
+    },
+    StringEndsWith {
+        value: Box<ValueExpr>,
+        suffix: Box<ValueExpr>,
+    },
+    StringSplit {
+        value: Box<ValueExpr>,
+        separator: Box<ValueExpr>,
+    },
+    StringTrim {
+        value: Box<ValueExpr>,
+    },
+    StringToLower {
+        value: Box<ValueExpr>,
+    },
+    StringToUpper {
+        value: Box<ValueExpr>,
+    },
     PathJoin {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
@@ -1555,6 +1583,14 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.string"
             | "std.string.len"
             | "std.string.concat"
+            | "std.string.is_empty"
+            | "std.string.contains"
+            | "std.string.starts_with"
+            | "std.string.ends_with"
+            | "std.string.split"
+            | "std.string.trim"
+            | "std.string.to_lower"
+            | "std.string.to_upper"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -7768,7 +7804,7 @@ fn lower_value_expr_with_expected(
                 require_import(path, imports, span, "std.array", "Array.new")?;
                 return lower_array_new(path, type_args, args, structs, enums, span);
             }
-            if callee == &["string", "len"] || callee == &["string", "concat"] {
+            if is_string_builtin_call(callee) {
                 require_import(path, imports, span, "std.string", &callee.join("."))?;
                 if !type_args.is_empty() {
                     return Err(type_mismatch(
@@ -8140,6 +8176,27 @@ fn lower_panic_message(
     Ok(lowered)
 }
 
+fn is_string_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "string"
+                && matches!(
+                    name.as_str(),
+                    "len"
+                        | "concat"
+                        | "is_empty"
+                        | "contains"
+                        | "starts_with"
+                        | "ends_with"
+                        | "split"
+                        | "trim"
+                        | "to_lower"
+                        | "to_upper"
+                )
+    )
+}
+
 fn lower_string_builtin(
     path: &Path,
     callee: &[String],
@@ -8153,22 +8210,9 @@ fn lower_string_builtin(
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     match callee {
         [module, name] if module == "string" && name == "len" => {
-            let [arg] = args else {
-                return Err(Diagnostic::new(
-                    "E0407",
-                    "`string.len` expects exactly one string argument",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                ));
-            };
-            let (arg_type, lowered) =
-                lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
-            if arg_type != ValueType::String {
-                return Err(type_mismatch(path, span, "`string.len` expects a string"));
-            }
+            let lowered = lower_string_unary_builtin_arg(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
             Ok((
                 ValueType::U64,
                 ValueExpr::StringLen {
@@ -8177,29 +8221,9 @@ fn lower_string_builtin(
             ))
         }
         [module, name] if module == "string" && name == "concat" => {
-            let [left, right] = args else {
-                return Err(Diagnostic::new(
-                    "E0407",
-                    "`string.concat` expects exactly two string arguments",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                ));
-            };
-            let (left_type, lowered_left) =
-                lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
-            let (right_type, lowered_right) = lower_value_expr(
-                path, right, scope, imports, signatures, structs, enums, span,
+            let (lowered_left, lowered_right) = lower_string_binary_builtin_args(
+                path, name, args, scope, imports, signatures, structs, enums, span,
             )?;
-            if left_type != ValueType::String || right_type != ValueType::String {
-                return Err(type_mismatch(
-                    path,
-                    span,
-                    "`string.concat` expects two strings",
-                ));
-            }
             Ok((
                 ValueType::String,
                 ValueExpr::StringConcat {
@@ -8208,8 +8232,171 @@ fn lower_string_builtin(
                 },
             ))
         }
+        [module, name] if module == "string" && name == "is_empty" => {
+            let lowered = lower_string_unary_builtin_arg(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringIsEmpty {
+                    value: Box::new(lowered),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "contains" => {
+            let (lowered_value, lowered_needle) = lower_string_binary_builtin_args(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringContains {
+                    value: Box::new(lowered_value),
+                    needle: Box::new(lowered_needle),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "starts_with" => {
+            let (lowered_value, lowered_prefix) = lower_string_binary_builtin_args(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringStartsWith {
+                    value: Box::new(lowered_value),
+                    prefix: Box::new(lowered_prefix),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "ends_with" => {
+            let (lowered_value, lowered_suffix) = lower_string_binary_builtin_args(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringEndsWith {
+                    value: Box::new(lowered_value),
+                    suffix: Box::new(lowered_suffix),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "split" => {
+            let (lowered_value, lowered_separator) = lower_string_binary_builtin_args(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Array(Box::new(ValueType::String)),
+                ValueExpr::StringSplit {
+                    value: Box::new(lowered_value),
+                    separator: Box::new(lowered_separator),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "trim" => {
+            let lowered = lower_string_unary_builtin_arg(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringTrim {
+                    value: Box::new(lowered),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "to_lower" => {
+            let lowered = lower_string_unary_builtin_arg(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringToLower {
+                    value: Box::new(lowered),
+                },
+            ))
+        }
+        [module, name] if module == "string" && name == "to_upper" => {
+            let lowered = lower_string_unary_builtin_arg(
+                path, name, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringToUpper {
+                    value: Box::new(lowered),
+                },
+            ))
+        }
         _ => unreachable!("string builtin dispatcher only passes known calls"),
     }
+}
+
+fn lower_string_unary_builtin_arg(
+    path: &Path,
+    name: &str,
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<ValueExpr, Diagnostic> {
+    let [arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`string.{name}` expects exactly one string argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (arg_type, lowered) =
+        lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
+    if arg_type != ValueType::String {
+        return Err(type_mismatch(
+            path,
+            span,
+            format!("`string.{name}` expects a string"),
+        ));
+    }
+    Ok(lowered)
+}
+
+fn lower_string_binary_builtin_args(
+    path: &Path,
+    name: &str,
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueExpr, ValueExpr), Diagnostic> {
+    let [left, right] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`string.{name}` expects exactly two string arguments"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (left_type, lowered_left) =
+        lower_value_expr(path, left, scope, imports, signatures, structs, enums, span)?;
+    let (right_type, lowered_right) = lower_value_expr(
+        path, right, scope, imports, signatures, structs, enums, span,
+    )?;
+    if left_type != ValueType::String || right_type != ValueType::String {
+        return Err(type_mismatch(
+            path,
+            span,
+            format!("`string.{name}` expects two strings"),
+        ));
+    }
+    Ok((lowered_left, lowered_right))
 }
 
 fn is_string_value_method(callee: &[String], scope: &HashMap<String, Binding>) -> bool {
@@ -8260,34 +8447,98 @@ fn lower_string_value_method(
             ))
         }
         "concat" => {
-            let [other] = args else {
-                return Err(Diagnostic::new(
-                    "E0407",
-                    "`string.concat` expects exactly one string argument when called as a method",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                ));
-            };
-            let (other_type, lowered_other) = lower_value_expr(
-                path, other, scope, imports, signatures, structs, enums, span,
+            let lowered_other = lower_string_method_arg(
+                path, method, args, scope, imports, signatures, structs, enums, span,
             )?;
-            if other_type != ValueType::String {
-                return Err(type_mismatch_expected_found(
-                    path,
-                    span,
-                    "`string.concat` expects a string argument",
-                    &ValueType::String,
-                    &other_type,
-                ));
-            }
             Ok((
                 ValueType::String,
                 ValueExpr::StringConcat {
                     left: Box::new(receiver_expr),
                     right: Box::new(lowered_other),
+                },
+            ))
+        }
+        "is_empty" => {
+            require_string_method_arity(path, span, method, args, 0)?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringIsEmpty {
+                    value: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "contains" => {
+            let lowered_needle = lower_string_method_arg(
+                path, method, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringContains {
+                    value: Box::new(receiver_expr),
+                    needle: Box::new(lowered_needle),
+                },
+            ))
+        }
+        "starts_with" => {
+            let lowered_prefix = lower_string_method_arg(
+                path, method, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringStartsWith {
+                    value: Box::new(receiver_expr),
+                    prefix: Box::new(lowered_prefix),
+                },
+            ))
+        }
+        "ends_with" => {
+            let lowered_suffix = lower_string_method_arg(
+                path, method, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::StringEndsWith {
+                    value: Box::new(receiver_expr),
+                    suffix: Box::new(lowered_suffix),
+                },
+            ))
+        }
+        "split" => {
+            let lowered_separator = lower_string_method_arg(
+                path, method, args, scope, imports, signatures, structs, enums, span,
+            )?;
+            Ok((
+                ValueType::Array(Box::new(ValueType::String)),
+                ValueExpr::StringSplit {
+                    value: Box::new(receiver_expr),
+                    separator: Box::new(lowered_separator),
+                },
+            ))
+        }
+        "trim" => {
+            require_string_method_arity(path, span, method, args, 0)?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringTrim {
+                    value: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "to_lower" => {
+            require_string_method_arity(path, span, method, args, 0)?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringToLower {
+                    value: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "to_upper" => {
+            require_string_method_arity(path, span, method, args, 0)?;
+            Ok((
+                ValueType::String,
+                ValueExpr::StringToUpper {
+                    value: Box::new(receiver_expr),
                 },
             ))
         }
@@ -8301,6 +8552,61 @@ fn lower_string_value_method(
             &span.text,
         )),
     }
+}
+
+fn require_string_method_arity(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    args: &[AstExpr],
+    expected: usize,
+) -> Result<(), Diagnostic> {
+    if args.len() == expected {
+        return Ok(());
+    }
+    let message = if expected == 0 {
+        format!("`string.{method}` does not accept arguments when called as a method")
+    } else {
+        format!(
+            "`string.{method}` expects exactly {expected} string argument(s) when called as a method"
+        )
+    };
+    Err(Diagnostic::new(
+        "E0407",
+        message,
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    ))
+}
+
+fn lower_string_method_arg(
+    path: &Path,
+    method: &str,
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<ValueExpr, Diagnostic> {
+    require_string_method_arity(path, span, method, args, 1)?;
+    let (arg_type, lowered_arg) = lower_value_expr(
+        path, &args[0], scope, imports, signatures, structs, enums, span,
+    )?;
+    if arg_type != ValueType::String {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!("`string.{method}` expects a string argument"),
+            &ValueType::String,
+            &arg_type,
+        ));
+    }
+    Ok(lowered_arg)
 }
 
 fn lower_fs_builtin(
@@ -10118,6 +10424,30 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "concat" if imports.iter().any(|item| item == "std.string.concat") => {
             vec!["string".to_string(), "concat".to_string()]
         }
+        "is_empty" if imports.iter().any(|item| item == "std.string.is_empty") => {
+            vec!["string".to_string(), "is_empty".to_string()]
+        }
+        "contains" if imports.iter().any(|item| item == "std.string.contains") => {
+            vec!["string".to_string(), "contains".to_string()]
+        }
+        "starts_with" if imports.iter().any(|item| item == "std.string.starts_with") => {
+            vec!["string".to_string(), "starts_with".to_string()]
+        }
+        "ends_with" if imports.iter().any(|item| item == "std.string.ends_with") => {
+            vec!["string".to_string(), "ends_with".to_string()]
+        }
+        "split" if imports.iter().any(|item| item == "std.string.split") => {
+            vec!["string".to_string(), "split".to_string()]
+        }
+        "trim" if imports.iter().any(|item| item == "std.string.trim") => {
+            vec!["string".to_string(), "trim".to_string()]
+        }
+        "to_lower" if imports.iter().any(|item| item == "std.string.to_lower") => {
+            vec!["string".to_string(), "to_lower".to_string()]
+        }
+        "to_upper" if imports.iter().any(|item| item == "std.string.to_upper") => {
+            vec!["string".to_string(), "to_upper".to_string()]
+        }
         "read_to_string" if imports.iter().any(|item| item == "std.fs.read_to_string") => {
             vec!["fs".to_string(), "read_to_string".to_string()]
         }
@@ -10738,6 +11068,193 @@ fn main() -> void {
             Statement::Let {
                 value_type: ValueType::U64,
                 initializer: ValueExpr::StringLen { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_extended_string_builtins() {
+        let source = r#"package app.main
+
+import std.array
+import std.string
+
+fn main() -> void {
+    let empty: bool = string.is_empty("")
+    let contains: bool = string.contains("nomo", "om")
+    let starts: bool = string.starts_with("nomo", "no")
+    let ends: bool = string.ends_with("nomo", "mo")
+    let parts: Array<string> = string.split("no,mo", ",")
+    let trimmed: string = string.trim(" nomo ")
+    let lower: string = string.to_lower("NOMO")
+    let upper: string = string.to_upper("nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringIsEmpty { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringContains { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringStartsWith { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringEndsWith { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &main.body[4],
+            Statement::Let {
+                value_type: ValueType::Array(element),
+                initializer: ValueExpr::StringSplit { .. },
+                ..
+            } if **element == ValueType::String
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringTrim { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringToLower { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[7],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringToUpper { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_extended_string_builtin_imports() {
+        let source = r#"package app.main
+
+import std.array
+import std.string.contains
+import std.string.split
+import std.string.to_upper
+
+fn main() -> void {
+    let found: bool = contains("nomo", "no")
+    let parts: Array<string> = split("no/mo", "/")
+    let loud: string = to_upper("nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringContains { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &main.body[1],
+            Statement::Let {
+                value_type: ValueType::Array(element),
+                initializer: ValueExpr::StringSplit { .. },
+                ..
+            } if **element == ValueType::String
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringToUpper { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_extended_string_value_methods() {
+        let source = r#"package app.main
+
+import std.array
+import std.string
+
+fn main() -> void {
+    let text: string = " NoMo "
+    let empty: bool = text.is_empty()
+    let contains: bool = text.contains("No")
+    let starts: bool = text.starts_with(" ")
+    let ends: bool = text.ends_with(" ")
+    let parts: Array<string> = text.split("o")
+    let trimmed: string = text.trim()
+    let lower: string = text.to_lower()
+    let upper: string = text.to_upper()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringIsEmpty { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::StringContains { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &main.body[5],
+            Statement::Let {
+                value_type: ValueType::Array(element),
+                initializer: ValueExpr::StringSplit { .. },
+                ..
+            } if **element == ValueType::String
+        ));
+        assert!(matches!(
+            main.body[8],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringToUpper { .. },
                 ..
             }
         ));

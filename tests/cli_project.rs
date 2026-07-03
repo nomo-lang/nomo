@@ -5059,6 +5059,81 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_extended_std_string_helpers() {
+    let root = temp_test_root("std-string-helpers");
+    reset_dir(&root);
+    let project = root.join("string_demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"string_demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.array
+import std.io
+import std.option
+import std.string
+
+fn main() -> void {
+    let text: string = "  NoMo  "
+    if !text.is_empty() && text.contains("No") && text.starts_with("  N") && text.ends_with("  ") {
+        io.println("predicates")
+    } else {
+        io.println("bad predicates")
+    }
+    if text.trim() == "NoMo" {
+        io.println("trim")
+    } else {
+        io.println("bad trim")
+    }
+    if text.to_lower() == "  nomo  " && text.to_upper() == "  NOMO  " {
+        io.println("case")
+    } else {
+        io.println("bad case")
+    }
+    let csv: string = "a,b,c"
+    let parts: Array<string> = csv.split(",")
+    let second: Option<string> = parts.get(1)
+    let label: string = match second {
+        Some(value) => value
+        None => "missing"
+    }
+    io.println(label)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "predicates\ntrim\ncase\nb\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_math_helpers() {
     let root = temp_test_root("std-math-helpers");
     reset_dir(&root);

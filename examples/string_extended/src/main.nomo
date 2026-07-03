@@ -1,0 +1,36 @@
+package app.main
+
+import std.array
+import std.io
+import std.option
+import std.string
+
+fn main() -> void {
+    let text: string = "  NoMo  "
+    if !text.is_empty() && text.contains("No") && text.starts_with("  N") && text.ends_with("  ") {
+        io.println("predicates")
+    } else {
+        io.println("wrong predicates")
+    }
+
+    if text.trim() == "NoMo" {
+        io.println("trim")
+    } else {
+        io.println("wrong trim")
+    }
+
+    if text.to_lower() == "  nomo  " && text.to_upper() == "  NOMO  " {
+        io.println("case")
+    } else {
+        io.println("wrong case")
+    }
+
+    let csv: string = "a,b,c"
+    let parts: Array<string> = csv.split(",")
+    let second: Option<string> = parts.get(1)
+    let label: string = match second {
+        Some(value) => value
+        None => "missing"
+    }
+    io.println(label)
+}

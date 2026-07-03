@@ -3,8 +3,10 @@ use nomo::project::{
     dependency_tree, discover_project, resolve_project_dependencies,
     run_project_with_args_and_diagnostics,
 };
+use nomo::{Diagnostic, format_source};
 use std::env;
-use std::path::PathBuf;
+use std::fs;
+use std::path::{Path, PathBuf};
 use std::process;
 
 fn main() {
@@ -67,6 +69,20 @@ fn run() -> Result<(), String> {
                 Ok(())
             } else {
                 Err(format!("program exited with status {code}"))
+            }
+        }
+        "fmt" => {
+            let (path, check, json) = parse_fmt_args(args)?;
+            match format_path(&path, check) {
+                Ok(changed) if check && changed => Err("format check failed".to_string()),
+                Ok(changed) => {
+                    if !changed {
+                        println!("all files already formatted");
+                    }
+                    Ok(())
+                }
+                Err(FormatError::Diagnostic(diag)) if json => Err(diag.json()),
+                Err(err) => Err(err.human()),
             }
         }
         "clean" => {
@@ -179,8 +195,108 @@ fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), Str
     Ok((path.unwrap_or(current_dir()?), Vec::new(), json))
 }
 
+fn parse_fmt_args(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
+    let mut check = false;
+    let mut json = false;
+    let mut path = None;
+    for arg in args {
+        if arg == "--check" {
+            check = true;
+        } else if arg == "--json-errors" {
+            json = true;
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err("usage: nomo fmt [path] [--check] [--json-errors]".to_string());
+        }
+    }
+    Ok((
+        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+        check,
+        json,
+    ))
+}
+
+#[derive(Debug)]
+enum FormatError {
+    Diagnostic(Diagnostic),
+    Message(String),
+}
+
+impl FormatError {
+    fn human(&self) -> String {
+        match self {
+            FormatError::Diagnostic(diagnostic) => diagnostic.human(),
+            FormatError::Message(message) => message.clone(),
+        }
+    }
+}
+
+fn format_path(path: &Path, check: bool) -> Result<bool, FormatError> {
+    let files = format_targets(path)?;
+    let mut changed = false;
+    for file in files {
+        let source = fs::read_to_string(&file).map_err(|err| {
+            FormatError::Message(format!("failed to read {}: {err}", file.display()))
+        })?;
+        let formatted = format_source(&file, &source).map_err(FormatError::Diagnostic)?;
+        if formatted != source {
+            changed = true;
+            if check {
+                println!("would format {}", file.display());
+            } else {
+                fs::write(&file, formatted).map_err(|err| {
+                    FormatError::Message(format!("failed to write {}: {err}", file.display()))
+                })?;
+                println!("formatted {}", file.display());
+            }
+        }
+    }
+    Ok(changed)
+}
+
+fn format_targets(path: &Path) -> Result<Vec<PathBuf>, FormatError> {
+    if path.extension().and_then(|ext| ext.to_str()) == Some("nomo") {
+        if !path.is_file() {
+            return Err(FormatError::Message(format!(
+                "source file not found: {}",
+                path.display()
+            )));
+        }
+        return Ok(vec![path.to_path_buf()]);
+    }
+
+    let project = discover_project(path).map_err(FormatError::Message)?;
+    let src = project.root.join("src");
+    if !src.is_dir() {
+        return Err(FormatError::Message(format!(
+            "source directory not found: {}",
+            src.display()
+        )));
+    }
+    let mut files = Vec::new();
+    collect_nomo_files(&src, &mut files)?;
+    files.sort();
+    Ok(files)
+}
+
+fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), FormatError> {
+    for entry in fs::read_dir(dir).map_err(|err| {
+        FormatError::Message(format!("failed to read directory {}: {err}", dir.display()))
+    })? {
+        let entry = entry.map_err(|err| FormatError::Message(err.to_string()))?;
+        let path = entry.path();
+        if path.is_dir() {
+            collect_nomo_files(&path, files)?;
+        } else if path.is_file() && path.extension().and_then(|ext| ext.to_str()) == Some("nomo") {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n"
     );
 }

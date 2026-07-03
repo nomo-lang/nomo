@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -88,6 +88,171 @@ fn nomoc_help_flags_print_command_summary() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn nomo_fmt_formats_standalone_source_file() {
+    let root = temp_test_root("fmt-standalone");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        "package app . main\nfn main(){\nlet message:string=\"hi\"\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("formatted {}\n", source.display())
+    );
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "package app.main\n\nfn main() -> void {\n    let message: string = \"hi\"\n}\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_fmt_check_reports_differences_without_writing() {
+    let root = temp_test_root("fmt-check");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    let original = "package app . main\nfn main(){\n}\n";
+    fs::write(&source, original).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg("--check")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("would format {}\n", source.display())
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "format check failed\n"
+    );
+    assert_eq!(fs::read_to_string(&source).unwrap(), original);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_fmt_formats_project_sources_recursively() {
+    let root = temp_test_root("fmt-project");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src/math")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\nimport app.math.main\nfn main(){\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/math/main.nomo"),
+        "package app.math.main\npub fn add(a:i32,b:i32)->i32{\nreturn a+b\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!(
+        "formatted {}\n",
+        project.join("src/main.nomo").display()
+    )));
+    assert!(stdout.contains(&format!(
+        "formatted {}\n",
+        project.join("src/math/main.nomo").display()
+    )));
+    assert_eq!(
+        fs::read_to_string(project.join("src/main.nomo")).unwrap(),
+        "package app.main\n\nimport app.math.main\n\nfn main() -> void {\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(project.join("src/math/main.nomo")).unwrap(),
+        "package app.math.main\n\npub fn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
+    let root = temp_test_root("fmt-json-error");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        "package app.main\n\nfn main() -> void {\n    return;\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg("--json-errors")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("\"error_code\":\"N0102\""), "{stderr}");
+    assert!(stderr.contains("semicolons are not supported"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_fmt_directory_without_manifest_reports_project_error() {
+    let root = temp_test_root("fmt-no-manifest");
+    reset_dir(&root);
+    let dir = root.join("loose");
+    fs::create_dir_all(&dir).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg(&dir)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("could not find nomo.toml"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]

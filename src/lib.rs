@@ -2,6 +2,7 @@ pub mod ast;
 pub mod codegen;
 pub mod compiler;
 pub mod diagnostic;
+pub mod format;
 pub mod lexer;
 pub mod parser;
 pub mod project;
@@ -13,4 +14,5 @@ pub use compiler::{
     compile_source_to_c_with_external_imports,
 };
 pub use diagnostic::{Diagnostic, Suggestion};
+pub use format::format_source;
 pub use lexer::{Token, TokenKind, lex};

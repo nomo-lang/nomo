@@ -11,7 +11,7 @@ compiler (`cc`) to produce a native executable.
 
 This repository ships two binaries and one library:
 
-- `nomo` — the project manager (`new` / `check` / `build` / `run`).
+- `nomo` — the project manager (`new` / `check` / `build` / `run` / `fmt`).
 - `nomoc` — the compiler driver that operates on a single `.nomo` source file.
 - `nomo` (lib crate) — the reusable compiler API, consumed by other repositories
   such as the [`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server.
@@ -48,12 +48,20 @@ nomo new <name>                  # scaffold a new project (nomo.toml + src/main.
 nomo check [path] [--json-errors] # type-check the project
 nomo build [path] [--emit-c] [--json-errors] # compile to a native binary (or stop at C with --emit-c)
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
+nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo clean [path]                 # remove generated build artifacts
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
 entry point. `nomo build` writes generated C to `build/c/main.c` and the linked
 executable to `build/bin/<name>`.
+
+`nomo fmt` is an AST-based v0.1 formatter. With no path or a directory path, it
+discovers the project manifest and formats `src/**/*.nomo` in stable path order.
+With a direct `.nomo` file path, it formats only that file and does not require a
+manifest. `--check` prints `would format <path>` without writing and exits with
+failure if any target differs. The formatter emits canonical whitespace and
+indentation; it does not preserve original layout trivia.
 
 ```bash
 nomo new hello

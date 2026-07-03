@@ -1,7 +1,8 @@
 use nomo::project::{
     BuildError, build_project_with_diagnostics, check_project, clean_project, create_project,
-    dependency_tree, discover_project, resolve_project_dependencies,
-    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
+    dependency_tree, dependency_tree_current_sources, discover_project, discover_workspace,
+    resolve_project_dependencies, run_project_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -35,15 +36,29 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "check" => {
-            let (path, json) = parse_path_and_json(args)?;
-            let project = discover_project(&path)?;
-            match check_project(&project) {
-                Ok(()) => {
-                    println!("checked {}", project.main.display());
-                    Ok(())
+            let (path, json, workspace) = parse_path_json_workspace(
+                args,
+                "usage: nomo check [path] [--json-errors] [--workspace]",
+            )?;
+            if workspace {
+                for project in discover_workspace(&path)?.members {
+                    match check_project(&project) {
+                        Ok(()) => println!("checked {}", project.main.display()),
+                        Err(diag) if json => return Err(diag.json()),
+                        Err(diag) => return Err(diag.human()),
+                    }
                 }
-                Err(diag) if json => Err(diag.json()),
-                Err(diag) => Err(diag.human()),
+                Ok(())
+            } else {
+                let project = discover_project(&path)?;
+                match check_project(&project) {
+                    Ok(()) => {
+                        println!("checked {}", project.main.display());
+                        Ok(())
+                    }
+                    Err(diag) if json => Err(diag.json()),
+                    Err(diag) => Err(diag.human()),
+                }
             }
         }
         "build" => {
@@ -105,21 +120,33 @@ fn run() -> Result<(), String> {
         }
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
-                return Err("usage: nomo deps <resolve|tree> [path]".to_string());
+                return Err("usage: nomo deps <resolve|tree> [path] [--workspace]".to_string());
             };
-            let path = parse_optional_path(
+            let (path, workspace) = parse_optional_path_and_workspace(
                 rest.to_vec(),
-                &format!("usage: nomo deps {subcommand} [path]"),
+                &format!("usage: nomo deps {subcommand} [path] [--workspace]"),
             )?;
-            let project = discover_project(&path)?;
             match subcommand.as_str() {
                 "resolve" => {
+                    if workspace {
+                        return Err(
+                            "nomo deps resolve --workspace is not supported yet".to_string()
+                        );
+                    }
+                    let project = discover_project(&path)?;
                     let lock = resolve_project_dependencies(&project)?;
                     println!("resolved {}", lock.display());
                     Ok(())
                 }
                 "tree" => {
-                    print!("{}", dependency_tree(&project)?);
+                    if workspace {
+                        for project in discover_workspace(&path)?.members {
+                            print!("{}", dependency_tree_current_sources(&project)?);
+                        }
+                    } else {
+                        let project = discover_project(&path)?;
+                        print!("{}", dependency_tree(&project)?);
+                    }
                     Ok(())
                 }
                 other => Err(format!("unknown deps command `{other}`")),
@@ -133,21 +160,28 @@ fn run() -> Result<(), String> {
     }
 }
 
-fn parse_path_and_json(args: Vec<String>) -> Result<(PathBuf, bool), String> {
+fn parse_path_json_workspace(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, bool, bool), String> {
     let mut json = false;
+    let mut workspace = false;
     let mut path = None;
     for arg in args {
         if arg == "--json-errors" {
             json = true;
+        } else if arg == "--workspace" {
+            workspace = true;
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
-            return Err("usage: nomo check [path] [--json-errors]".to_string());
+            return Err(usage.to_string());
         }
     }
     Ok((
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         json,
+        workspace,
     ))
 }
 
@@ -179,6 +213,27 @@ fn parse_optional_path(args: Vec<String>, usage: &str) -> Result<PathBuf, String
         [path] => Ok(PathBuf::from(path)),
         _ => Err(usage.to_string()),
     }
+}
+
+fn parse_optional_path_and_workspace(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(PathBuf, bool), String> {
+    let mut workspace = false;
+    let mut path = None;
+    for arg in args {
+        if arg == "--workspace" {
+            workspace = true;
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err(usage.to_string());
+        }
+    }
+    Ok((
+        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+        workspace,
+    ))
 }
 
 fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), String> {
@@ -316,6 +371,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n"
     );
 }

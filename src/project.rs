@@ -50,8 +50,19 @@ pub struct WorkspacePackageDefaults {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceContext {
     pub root: PathBuf,
+    pub members: Vec<String>,
+    pub default_members: Vec<String>,
+    pub exclude: Vec<String>,
+    pub resolver: Option<String>,
     pub package: WorkspacePackageDefaults,
     pub dependencies: BTreeMap<String, Dependency>,
+}
+
+#[derive(Debug, Clone)]
+pub struct WorkspaceGraph {
+    pub root: PathBuf,
+    pub members: Vec<Project>,
+    pub default_members: Vec<Project>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +184,51 @@ fn find_manifest_root(start: &Path) -> Option<PathBuf> {
     None
 }
 
+pub fn discover_workspace(path: &Path) -> Result<WorkspaceGraph, String> {
+    let source_file = path.extension().and_then(|ext| ext.to_str()) == Some("nomo");
+    let search_root = if source_file {
+        path.parent()
+            .ok_or_else(|| format!("source file has no parent: {}", path.display()))?
+    } else {
+        path
+    };
+    let root = find_workspace_root(search_root)
+        .ok_or_else(|| format!("could not find workspace nomo.toml for {}", path.display()))?;
+    let text = fs::read_to_string(root.join("nomo.toml")).map_err(|err| err.to_string())?;
+    let document = parse_manifest_document(&text)?;
+    let context = parse_workspace_context(&root, &document)?;
+    let members = workspace_projects_from_patterns(&context, &context.members)?;
+    let default_members = if context.default_members.is_empty() {
+        Vec::new()
+    } else {
+        workspace_projects_from_patterns(&context, &context.default_members)?
+    };
+    Ok(WorkspaceGraph {
+        root,
+        members,
+        default_members,
+    })
+}
+
+fn find_workspace_root(start: &Path) -> Option<PathBuf> {
+    for candidate in start.ancestors() {
+        let manifest = candidate.join("nomo.toml");
+        if !manifest.is_file() {
+            continue;
+        }
+        let text = fs::read_to_string(&manifest).ok()?;
+        let document = parse_manifest_document(&text).ok()?;
+        if optional_table(&document, "workspace")
+            .ok()
+            .flatten()
+            .is_some()
+        {
+            return Some(candidate.to_path_buf());
+        }
+    }
+    None
+}
+
 pub fn parse_manifest_at_root(root: &Path) -> Result<Manifest, String> {
     let manifest_path = root.join("nomo.toml");
     let text = fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;
@@ -197,6 +253,12 @@ pub fn dependency_tree(project: &Project) -> Result<String, String> {
         resolve_dependency_graph(&project.root)?
     };
     Ok(render_dependency_tree(&graph))
+}
+
+pub fn dependency_tree_current_sources(project: &Project) -> Result<String, String> {
+    Ok(render_dependency_tree(&resolve_dependency_graph(
+        &project.root,
+    )?))
 }
 
 impl Project {
@@ -559,6 +621,11 @@ fn parse_workspace_context(
 ) -> Result<WorkspaceContext, String> {
     let workspace_table = optional_table(document, "workspace")?
         .ok_or_else(|| "manifest does not define a [workspace] table".to_string())?;
+    let members = optional_string_array_field(workspace_table, "workspace", "members")?;
+    let default_members =
+        optional_string_array_field(workspace_table, "workspace", "default-members")?;
+    let exclude = optional_string_array_field(workspace_table, "workspace", "exclude")?;
+    let resolver = optional_string_field(workspace_table, "workspace", "resolver")?;
     let package = match workspace_table.get("package") {
         Some(value) => parse_workspace_package_defaults(value)?,
         None => WorkspacePackageDefaults::default(),
@@ -569,8 +636,136 @@ fn parse_workspace_context(
     };
     Ok(WorkspaceContext {
         root: root.to_path_buf(),
+        members,
+        default_members,
+        exclude,
+        resolver,
         package,
         dependencies,
+    })
+}
+
+fn workspace_projects_from_patterns(
+    context: &WorkspaceContext,
+    patterns: &[String],
+) -> Result<Vec<Project>, String> {
+    if patterns.is_empty() {
+        return Ok(Vec::new());
+    }
+
+    let mut member_roots = BTreeSet::new();
+    for pattern in patterns {
+        let mut expanded = expand_workspace_pattern(&context.root, pattern)?;
+        expanded.sort();
+        if expanded.is_empty() {
+            return Err(format!(
+                "workspace member pattern `{pattern}` did not match any package"
+            ));
+        }
+        for root in expanded {
+            let relative = root
+                .strip_prefix(&context.root)
+                .unwrap_or(&root)
+                .to_string_lossy()
+                .replace('\\', "/");
+            if workspace_path_is_excluded(&relative, &context.exclude) {
+                continue;
+            }
+            if !root.join("nomo.toml").is_file() {
+                return Err(format!(
+                    "workspace member `{relative}` is missing nomo.toml"
+                ));
+            }
+            member_roots.insert(root);
+        }
+    }
+
+    member_roots
+        .into_iter()
+        .map(|root| discover_project(&root))
+        .collect()
+}
+
+fn expand_workspace_pattern(root: &Path, pattern: &str) -> Result<Vec<PathBuf>, String> {
+    let normalized = pattern.replace('\\', "/");
+    let parts = normalized
+        .split('/')
+        .filter(|part| !part.is_empty() && *part != ".")
+        .collect::<Vec<_>>();
+    let mut out = Vec::new();
+    expand_workspace_pattern_parts(root, &parts, &mut out)?;
+    Ok(out)
+}
+
+fn expand_workspace_pattern_parts(
+    base: &Path,
+    parts: &[&str],
+    out: &mut Vec<PathBuf>,
+) -> Result<(), String> {
+    let Some((part, rest)) = parts.split_first() else {
+        if base.is_dir() {
+            out.push(base.to_path_buf());
+        }
+        return Ok(());
+    };
+
+    if part.contains('*') {
+        if !base.is_dir() {
+            return Ok(());
+        }
+        for entry in fs::read_dir(base).map_err(|err| err.to_string())? {
+            let entry = entry.map_err(|err| err.to_string())?;
+            let path = entry.path();
+            if !path.is_dir() {
+                continue;
+            }
+            let Some(name) = path.file_name().and_then(|name| name.to_str()) else {
+                continue;
+            };
+            if wildcard_match(part, name) {
+                expand_workspace_pattern_parts(&path, rest, out)?;
+            }
+        }
+    } else {
+        expand_workspace_pattern_parts(&base.join(part), rest, out)?;
+    }
+    Ok(())
+}
+
+fn wildcard_match(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return pattern == value;
+    }
+    let mut remaining = value;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if index == 0 {
+            let Some(stripped) = remaining.strip_prefix(part) else {
+                return false;
+            };
+            remaining = stripped;
+        } else if index == parts.len() - 1 && !pattern.ends_with('*') {
+            return remaining.ends_with(part);
+        } else {
+            let Some(pos) = remaining.find(part) else {
+                return false;
+            };
+            remaining = &remaining[pos + part.len()..];
+        }
+    }
+    true
+}
+
+fn workspace_path_is_excluded(relative: &str, exclude: &[String]) -> bool {
+    exclude.iter().any(|pattern| {
+        let pattern = pattern.trim_matches('/');
+        relative == pattern || relative.starts_with(&format!("{pattern}/"))
     })
 }
 
@@ -628,6 +823,28 @@ fn optional_string_field(
             .ok_or_else(|| format!("manifest `{section}.{key}` must be a string")),
         None => Ok(None),
     }
+}
+
+fn optional_string_array_field(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    key: &str,
+) -> Result<Vec<String>, String> {
+    let Some(value) = table.get(key) else {
+        return Ok(Vec::new());
+    };
+    let Some(values) = value.as_array() else {
+        return Err(format!("manifest `{section}.{key}` must be an array"));
+    };
+    values
+        .iter()
+        .map(|value| {
+            value
+                .as_str()
+                .map(|value| value.to_string())
+                .ok_or_else(|| format!("manifest `{section}.{key}` entries must be strings"))
+        })
+        .collect()
 }
 
 fn optional_package_string_field(
@@ -2027,6 +2244,56 @@ path = "../utils"
         let err = discover_project(&root).unwrap_err();
 
         assert!(err.contains("workspace manifest"), "{err}");
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn discovers_workspace_members_defaults_and_excludes() {
+        let root = temp_test_root("workspace-discovery");
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        let app = root.join("apps/cli");
+        let core = root.join("packages/core");
+        let skipped = root.join("target/generated");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(core.join("src")).unwrap();
+        fs::create_dir_all(skipped.join("src")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[workspace]\nmembers = [\"apps/*\", \"packages/*\", \"target/*\"]\ndefault-members = [\"apps/cli\"]\nexclude = [\"target\"]\n\n[workspace.package]\nnamespace = \"fynn\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        for (dir, name) in [(&app, "cli"), (&core, "core"), (&skipped, "generated")] {
+            fs::write(
+                dir.join("nomo.toml"),
+                format!(
+                    "[package]\nname = \"{name}\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n"
+                ),
+            )
+            .unwrap();
+            fs::write(dir.join("src/main.nomo"), "package app.main\n").unwrap();
+        }
+
+        let workspace = discover_workspace(&app.join("src/main.nomo")).unwrap();
+
+        assert_eq!(workspace.root, root);
+        assert_eq!(
+            workspace
+                .members
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cli", "core"]
+        );
+        assert_eq!(
+            workspace
+                .default_members
+                .iter()
+                .map(|project| project.name.as_str())
+                .collect::<Vec<_>>(),
+            vec!["cli"]
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 

@@ -45,11 +45,12 @@ cargo install --path .
 
 ```bash
 nomo new <name>                  # scaffold a new project (nomo.toml + src/main.nomo)
-nomo check [path] [--json-errors] # type-check the project
+nomo check [path] [--json-errors] [--workspace] # type-check one project or every workspace member
 nomo build [path] [--emit-c] [--json-errors] # compile to a native binary (or stop at C with --emit-c)
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo clean [path]                 # remove generated build artifacts
+nomo deps tree [path] [--workspace] # print one package dependency tree or all workspace member trees
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
@@ -163,9 +164,10 @@ application package.
 are accepted as compatibility input, but the declaration is ignored as a normal
 dependency.
 `nomo deps resolve` for a workspace member writes `nomo.lock` at the workspace
-root. Workspace-wide batch commands such as `nomo check --workspace` are planned
-for the workspace graph slice; current project commands still operate on the
-selected member package.
+root. `nomo check --workspace` and `nomo deps tree --workspace` discover the
+workspace root, expand `members` minus `exclude`, and visit each member package
+in stable path order. Other workspace-wide batch commands are planned for later
+workspace graph slices.
 
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps tree [path]` prints dependency aliases and canonical package IDs. If

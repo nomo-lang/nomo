@@ -2,7 +2,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -600,6 +600,11 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
         "package core.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
     )
     .unwrap();
+    fs::write(
+        core.join("src/main.nomo"),
+        "package core.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
 
     let check_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("check")
@@ -611,6 +616,65 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
         check_output.status.success(),
         "{}",
         String::from_utf8_lossy(&check_output.stderr)
+    );
+
+    let workspace_check_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        workspace_check_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&workspace_check_output.stderr)
+    );
+    let workspace_check = String::from_utf8_lossy(&workspace_check_output.stdout);
+    assert!(
+        workspace_check.contains(&format!(
+            "checked {}\n",
+            app.join("src/main.nomo").display()
+        )),
+        "{workspace_check}"
+    );
+    assert!(
+        workspace_check.contains(&format!(
+            "checked {}\n",
+            core.join("src/main.nomo").display()
+        )),
+        "{workspace_check}"
+    );
+
+    let workspace_tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        workspace_tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&workspace_tree_output.stderr)
+    );
+    let workspace_tree = String::from_utf8_lossy(&workspace_tree_output.stdout);
+    assert!(
+        workspace_tree.contains("fynn/cli 0.1.0"),
+        "{workspace_tree}"
+    );
+    assert!(
+        workspace_tree.contains("fynn/core 0.1.0"),
+        "{workspace_tree}"
+    );
+    assert!(
+        workspace_tree.contains("+-- core -> fynn/core"),
+        "{workspace_tree}"
+    );
+    assert!(
+        workspace_tree.contains("+-- json -> nomo-lang/json 0.1.0 (registry)"),
+        "{workspace_tree}"
     );
 
     let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))

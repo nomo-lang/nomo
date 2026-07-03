@@ -283,6 +283,10 @@ early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 There is no `try` keyword or statement syntax in v0.1; postfix `?` is the
 only error/absence propagation syntax.
 
+Diagnostics use stable `E`-prefixed error codes across human output, JSON
+output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
+pages live under [`docs/diagnostics/`](docs/diagnostics/index.md).
+
 ## Library crate
 
 The `nomo` library exposes the compiler pipeline for embedding. Key entry points

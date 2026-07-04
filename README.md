@@ -334,7 +334,12 @@ the `num` module to avoid colliding with `char.to_string`.
 `std.hash` provides stable non-cryptographic FNV-1a helpers:
 `hash.string`, `hash.new`, `hash.write_string`, and `hash.finish`.
 `HashState` lets callers build the same hash incrementally from multiple
-strings. Use `std.crypto` for cryptographic hashes once that module lands.
+strings.
+
+`std.crypto` provides deterministic cryptographic digest helpers:
+`crypto.sha256` and `crypto.sha512` take a string and return a lowercase hex
+digest string. Random bytes remain a later slice until byte-array APIs are
+settled.
 
 `std.char` provides ASCII character-class helpers: `char.is_digit`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo

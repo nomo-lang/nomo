@@ -361,6 +361,12 @@ pub enum ValueExpr {
     HashFinish {
         state: Box<ValueExpr>,
     },
+    CryptoSha256 {
+        value: Box<ValueExpr>,
+    },
+    CryptoSha512 {
+        value: Box<ValueExpr>,
+    },
     ProcessExit {
         code: Box<ValueExpr>,
     },
@@ -1828,6 +1834,9 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.hash.string"
             | "std.hash.write_string"
             | "std.hash.finish"
+            | "std.crypto"
+            | "std.crypto.sha256"
+            | "std.crypto.sha512"
             | "std.os"
             | "std.os.platform"
             | "std.os.arch"
@@ -8439,6 +8448,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "crypto" {
+                    return lower_crypto_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8772,6 +8786,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_hash_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_crypto_builtin_call(callee) {
+                require_import(path, imports, span, "std.crypto", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "crypto builtins do not accept type arguments",
+                    ));
+                }
+                return lower_crypto_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10338,6 +10365,13 @@ fn is_hash_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_crypto_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "crypto" && matches!(name.as_str(), "sha256" | "sha512")
+    )
+}
+
 fn lower_hash_builtin(
     path: &Path,
     callee: &[String],
@@ -10481,6 +10515,56 @@ fn lower_hash_builtin(
         }
         _ => unreachable!("hash builtin dispatcher only passes known calls"),
     }
+}
+
+fn lower_crypto_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("crypto builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "crypto");
+    let [value_arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`crypto.{name}` expects exactly one string value"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (value_type, value) = lower_value_expr(
+        path, value_arg, scope, imports, signatures, structs, enums, span,
+    )?;
+    if value_type != ValueType::String {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!("`crypto.{name}` expects a string value"),
+            &ValueType::String,
+            &value_type,
+        ));
+    }
+    let expr = match name.as_str() {
+        "sha256" => ValueExpr::CryptoSha256 {
+            value: Box::new(value),
+        },
+        "sha512" => ValueExpr::CryptoSha512 {
+            value: Box::new(value),
+        },
+        _ => unreachable!("crypto builtin dispatcher only passes known calls"),
+    };
+    Ok((ValueType::String, expr))
 }
 
 fn lower_debug_builtin(
@@ -13989,6 +14073,12 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "finish" if imports.iter().any(|item| item == "std.hash.finish") => {
             vec!["hash".to_string(), "finish".to_string()]
         }
+        "sha256" if imports.iter().any(|item| item == "std.crypto.sha256") => {
+            vec!["crypto".to_string(), "sha256".to_string()]
+        }
+        "sha512" if imports.iter().any(|item| item == "std.crypto.sha512") => {
+            vec!["crypto".to_string(), "sha512".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -15664,6 +15754,85 @@ import std.hash
 
 fn main() -> void {
     let value: u64 = hash.string(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("string value"));
+    }
+
+    #[test]
+    fn accepts_crypto_builtins() {
+        let source = r#"package app.main
+
+import std.crypto
+
+fn main() -> void {
+    let sha256: string = crypto.sha256("nomo")
+    let sha512: string = crypto.sha512("nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::CryptoSha256 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::CryptoSha512 { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_crypto_builtin_imports() {
+        let source = r#"package app.main
+
+import std.crypto.sha256
+import std.crypto.sha512
+
+fn main() -> void {
+    let left: string = sha256("nomo")
+    let right: string = sha512("nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::CryptoSha256 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::CryptoSha512 { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_crypto_non_string_value() {
+        let source = r#"package app.main
+
+import std.crypto
+
+fn main() -> void {
+    let value: string = crypto.sha256(1)
 }
 "#;
 

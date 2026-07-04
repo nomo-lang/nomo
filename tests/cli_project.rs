@@ -4652,6 +4652,57 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_crypto_sha_helpers() {
+    let root = temp_test_root("std-crypto-helpers");
+    reset_dir(&root);
+    let project = root.join("std_crypto_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_crypto_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.crypto
+import std.io
+
+fn main() -> void {
+    io.println(crypto.sha256("nomo"))
+    io.println(crypto.sha512("nomo"))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "b2ef23fca2e63b943302abdf09318c938f43dc167676929643102591b6eeeff0\nf64a797448cbf54b2220274f024a6dfa4bb1c86c8bca1a3eaaf320bbf40c2a09a48385d62b050fc28b9ce85e36e619a8e06e0722baf4ad2c5449c424080f74b3\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
     let root = temp_test_root("try-identifier-question");
     reset_dir(&root);

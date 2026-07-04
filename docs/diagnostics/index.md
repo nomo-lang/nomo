@@ -50,6 +50,17 @@ the same code.
 - [E0215](E0215.md) - invalid parameter separator
 - [E0216](E0216.md) - expected return statement
 - [E0217](E0217.md) - invalid assignment or postfix update
+- [E0218](E0218.md) - expected struct declaration
+- [E0219](E0219.md) - missing struct body
+- [E0220](E0220.md) - unterminated struct body
+- [E0221](E0221.md) - missing struct field type separator
+- [E0222](E0222.md) - missing struct literal body
+- [E0223](E0223.md) - missing struct literal field separator
+- [E0224](E0224.md) - invalid struct literal field separator
+- [E0225](E0225.md) - unterminated struct literal
+- [E0226](E0226.md) - expected enum declaration
+- [E0227](E0227.md) - missing enum body
+- [E0228](E0228.md) - unterminated enum body
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

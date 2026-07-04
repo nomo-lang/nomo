@@ -128,11 +128,18 @@ the same code.
 - [E0322](E0322.md) - match arm cannot bind unit variant
 - [E0323](E0323.md) - enum variant does not accept payload
 - [E0324](E0324.md) - generic enum constructor needs annotation
+- [E0401](E0401.md) - invalid main signature
+- [E0402](E0402.md) - invalid io print arguments
 - [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch
+- [E0405](E0405.md) - unsupported value expression
+- [E0406](E0406.md) - missing return value
+- [E0407](E0407.md) - invalid call or constructor arguments
+- [E0410](E0410.md) - recursive value type
 - [E0420](E0420.md) - invalid question operator carrier
 - [E0421](E0421.md) - incompatible question operator propagation
 - [E0422](E0422.md) - unsupported question operator position
+- [E0430](E0430.md) - non-constant const initializer
 - [E0501](E0501.md) - immutable value mutation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error

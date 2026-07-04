@@ -5548,6 +5548,68 @@ fn main() -> Result<void, NumError> {
 }
 
 #[test]
+fn nomo_run_executes_std_num_checked_and_wrapping_helpers() {
+    let root = temp_test_root("std-num-checked-wrapping");
+    reset_dir(&root);
+    let project = root.join("num_checked_wrapping");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"num_checked_wrapping\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let checked: Option<i64> = num.checked_add(9223372036854775807, 1)
+    match checked {
+        Option.Some(value) => {
+            io.println(num.to_string(value))
+        }
+        Option.None => {
+            io.println("none")
+        }
+    }
+    let wrapped: i64 = num.wrapping_add(9223372036854775807, 1)
+    io.println(num.to_string(wrapped))
+    let unsigned: u64 = num.wrapping_sub(0 as u64, 1 as u64)
+    io.println(num.to_string(unsigned))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "none\n-9223372036854775808\n18446744073709551615\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_io_read_line() {
     let root = temp_test_root("std-io-read-line");
     reset_dir(&root);

@@ -1,7 +1,7 @@
 use crate::compiler::{
     BinaryOp, DeferredCall, EnumType, Function, LoopKind, MatchStatementArm, MathBinaryFunction,
-    MathUnaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr,
-    ValueType,
+    MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp,
+    ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -57,6 +57,12 @@ struct OptionAndThenInstance {
     source_type: ValueType,
     target_type: ValueType,
     converter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct NumCheckedBinaryInstance {
+    op: BinaryOp,
+    value_type: ValueType,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -173,6 +179,11 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_num_parse_f64(program) {
         emit_num_parse_f64_helper(&mut out);
+        out.push('\n');
+    }
+    let num_checked_binary_instances = collect_num_checked_binary_instances(program);
+    for instance in &num_checked_binary_instances {
+        emit_num_checked_binary_helper(&mut out, instance);
         out.push('\n');
     }
 
@@ -406,6 +417,50 @@ fn emit_operator_runtime(out: &mut String) {
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
     out.push_str("    return left >> right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_wrap_i64(uint64_t bits) {\n");
+    out.push_str("    if (bits <= (uint64_t)LLONG_MAX) { return (long long)bits; }\n");
+    out.push_str("    return -1 - (long long)(UINT64_MAX - bits);\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_wrap_i32(uint32_t bits) {\n");
+    out.push_str("    if (bits <= (uint32_t)INT32_MAX) { return (int32_t)bits; }\n");
+    out.push_str("    return (int32_t)(-1 - (int32_t)(UINT32_MAX - bits));\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_num_wrapping_add_i64(long long left, long long right) {\n");
+    out.push_str("    return nomo_wrap_i64((uint64_t)left + (uint64_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_num_wrapping_sub_i64(long long left, long long right) {\n");
+    out.push_str("    return nomo_wrap_i64((uint64_t)left - (uint64_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static long long nomo_num_wrapping_mul_i64(long long left, long long right) {\n");
+    out.push_str("    return nomo_wrap_i64((uint64_t)left * (uint64_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_num_wrapping_add_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    return nomo_wrap_i32((uint32_t)left + (uint32_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_num_wrapping_sub_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    return nomo_wrap_i32((uint32_t)left - (uint32_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_num_wrapping_mul_i32(int32_t left, int32_t right) {\n");
+    out.push_str("    return nomo_wrap_i32((uint32_t)left * (uint32_t)right);\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_num_wrapping_add_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    return left + right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_num_wrapping_sub_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    return left - right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint32_t nomo_num_wrapping_mul_u32(uint32_t left, uint32_t right) {\n");
+    out.push_str("    return left * right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_num_wrapping_add_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    return left + right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_num_wrapping_sub_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    return left - right;\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_num_wrapping_mul_u64(uint64_t left, uint64_t right) {\n");
+    out.push_str("    return left * right;\n");
     out.push_str("}\n");
 }
 
@@ -1484,6 +1539,83 @@ fn emit_num_parse_error(out: &mut String, result: &str, err: &str, num_error: &s
     out.push_str(" = nomo_string_literal(\"invalid ");
     out.push_str(suffix);
     out.push_str("\")}};\n");
+}
+
+fn emit_num_checked_binary_helper(out: &mut String, instance: &NumCheckedBinaryInstance) {
+    let option = c_enum_ident("Option", std::slice::from_ref(&instance.value_type));
+    let some = c_enum_variant_ident("Option", std::slice::from_ref(&instance.value_type), "Some");
+    let none = c_enum_variant_ident("Option", std::slice::from_ref(&instance.value_type), "None");
+    let c_type = c_type(&instance.value_type);
+    let helper = num_checked_binary_helper_name(&instance.op, &instance.value_type);
+    out.push_str("static ");
+    out.push_str(&option);
+    out.push(' ');
+    out.push_str(helper);
+    out.push('(');
+    out.push_str(&c_type);
+    out.push_str(" left, ");
+    out.push_str(&c_type);
+    out.push_str(" right) {\n");
+    emit_num_checked_overflow_guard(out, instance, &option, &none);
+    out.push_str("    return (");
+    out.push_str(&option);
+    out.push_str("){.tag = ");
+    out.push_str(&some);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = ");
+    out.push_str(num_wrapping_binary_helper_name(
+        &instance.op,
+        &instance.value_type,
+    ));
+    out.push_str("(left, right)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_num_checked_overflow_guard(
+    out: &mut String,
+    instance: &NumCheckedBinaryInstance,
+    option: &str,
+    none: &str,
+) {
+    let condition = num_checked_overflow_condition(&instance.op, &instance.value_type);
+    out.push_str("    if (");
+    out.push_str(condition);
+    out.push_str(") { return (");
+    out.push_str(option);
+    out.push_str("){.tag = ");
+    out.push_str(none);
+    out.push_str("}; }\n");
+}
+
+fn num_checked_overflow_condition(op: &BinaryOp, value_type: &ValueType) -> &'static str {
+    match (op, value_type) {
+        (BinaryOp::Add, ValueType::Int) => {
+            "(right > 0 && left > LLONG_MAX - right) || (right < 0 && left < LLONG_MIN - right)"
+        }
+        (BinaryOp::Subtract, ValueType::Int) => {
+            "(right < 0 && left > LLONG_MAX + right) || (right > 0 && left < LLONG_MIN + right)"
+        }
+        (BinaryOp::Multiply, ValueType::Int) => {
+            "left != 0 && right != 0 && ((left == -1 && right == LLONG_MIN) || (right == -1 && left == LLONG_MIN) || (left > 0 ? (right > 0 ? left > LLONG_MAX / right : right < LLONG_MIN / left) : (right > 0 ? left < LLONG_MIN / right : left < LLONG_MAX / right)))"
+        }
+        (BinaryOp::Add, ValueType::I32) => {
+            "(right > 0 && left > INT32_MAX - right) || (right < 0 && left < INT32_MIN - right)"
+        }
+        (BinaryOp::Subtract, ValueType::I32) => {
+            "(right < 0 && left > INT32_MAX + right) || (right > 0 && left < INT32_MIN + right)"
+        }
+        (BinaryOp::Multiply, ValueType::I32) => {
+            "left != 0 && right != 0 && ((left == -1 && right == INT32_MIN) || (right == -1 && left == INT32_MIN) || (left > 0 ? (right > 0 ? left > INT32_MAX / right : right < INT32_MIN / left) : (right > 0 ? left < INT32_MIN / right : left < INT32_MAX / right)))"
+        }
+        (BinaryOp::Add, ValueType::U32) => "left > UINT32_MAX - right",
+        (BinaryOp::Subtract, ValueType::U32) => "left < right",
+        (BinaryOp::Multiply, ValueType::U32) => "right != 0 && left > UINT32_MAX / right",
+        (BinaryOp::Add, ValueType::U64) => "left > UINT64_MAX - right",
+        (BinaryOp::Subtract, ValueType::U64) => "left < right",
+        (BinaryOp::Multiply, ValueType::U64) => "right != 0 && left > UINT64_MAX / right",
+        _ => unreachable!("num checked helpers only support integer add/sub/mul"),
+    }
 }
 
 fn emit_fs_read_to_string_helper(out: &mut String) {
@@ -3429,6 +3561,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         } => expr_may_share_array_storage(expr),
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::FsWriteString {
             path: left,
             content: right,
@@ -4209,6 +4342,24 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, value);
             out.push(')');
         }
+        ValueExpr::NumBinary {
+            function,
+            op,
+            left,
+            right,
+            value_type,
+        } => {
+            let helper = match function {
+                NumBinaryFunction::Checked => num_checked_binary_helper_name(op, value_type),
+                NumBinaryFunction::Wrapping => num_wrapping_binary_helper_name(op, value_type),
+            };
+            out.push_str(helper);
+            out.push('(');
+            emit_expr(out, left);
+            out.push_str(", ");
+            emit_expr(out, right);
+            out.push(')');
+        }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
             emit_expr(out, left);
@@ -4715,6 +4866,28 @@ fn collect_option_and_then_instances(program: &Program) -> Vec<OptionAndThenInst
     out
 }
 
+fn collect_num_checked_binary_instances(program: &Program) -> Vec<NumCheckedBinaryInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::NumBinary {
+            function: NumBinaryFunction::Checked,
+            op,
+            value_type,
+            ..
+        } = expr
+        {
+            let instance = NumCheckedBinaryInstance {
+                op: *op,
+                value_type: value_type.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
+    out
+}
+
 fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErrInstance>) {
     match statement {
         Statement::Let { initializer, .. }
@@ -4873,6 +5046,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_result_map_err(left, out);
             collect_expr_result_map_err(right, out);
@@ -5151,6 +5325,7 @@ where
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             walk_expr(left, visit);
             walk_expr(right, visit);
@@ -5527,6 +5702,7 @@ fn collect_expr_struct(
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_struct(left, seen, out);
             collect_expr_struct(right, seen, out);
@@ -6040,6 +6216,20 @@ fn collect_expr_enum(
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::MathBinary { left, right, .. } => {
+            collect_expr_enum(left, seen, out);
+            collect_expr_enum(right, seen, out);
+        }
+        ValueExpr::NumBinary {
+            function,
+            left,
+            right,
+            value_type,
+            ..
+        } => {
+            if function == &NumBinaryFunction::Checked {
+                push_enum_instance(seen, out, "Option", std::slice::from_ref(value_type));
+                collect_type_enum(value_type, seen, out);
+            }
             collect_expr_enum(left, seen, out);
             collect_expr_enum(right, seen, out);
         }
@@ -6902,6 +7092,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_contains(left, predicate) || expr_contains(right, predicate)
         }
@@ -7449,6 +7640,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right)
         }
@@ -7579,6 +7771,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
         }
@@ -7705,6 +7898,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_open(left) || expr_uses_fs_open(right)
         }
@@ -7824,6 +8018,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_get(left) || expr_uses_env_get(right)
         }
@@ -7945,6 +8140,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_env_args(left) || expr_uses_env_args(right)
         }
@@ -8076,6 +8272,7 @@ fn collect_expr_array_elements(
             suffix: right,
         }
         | ValueExpr::PathJoin { left, right }
+        | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::MathBinary { left, right, .. } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
@@ -8430,6 +8627,42 @@ fn num_to_string_helper_name(value_type: &ValueType) -> &'static str {
         ValueType::U64 => "nomo_num_u64_to_string",
         ValueType::Float => "nomo_num_f64_to_string",
         _ => unreachable!("num.to_string only lowers supported numeric types"),
+    }
+}
+
+fn num_checked_binary_helper_name(op: &BinaryOp, value_type: &ValueType) -> &'static str {
+    match (op, value_type) {
+        (BinaryOp::Add, ValueType::Int) => "nomo_num_checked_add_i64",
+        (BinaryOp::Subtract, ValueType::Int) => "nomo_num_checked_sub_i64",
+        (BinaryOp::Multiply, ValueType::Int) => "nomo_num_checked_mul_i64",
+        (BinaryOp::Add, ValueType::I32) => "nomo_num_checked_add_i32",
+        (BinaryOp::Subtract, ValueType::I32) => "nomo_num_checked_sub_i32",
+        (BinaryOp::Multiply, ValueType::I32) => "nomo_num_checked_mul_i32",
+        (BinaryOp::Add, ValueType::U32) => "nomo_num_checked_add_u32",
+        (BinaryOp::Subtract, ValueType::U32) => "nomo_num_checked_sub_u32",
+        (BinaryOp::Multiply, ValueType::U32) => "nomo_num_checked_mul_u32",
+        (BinaryOp::Add, ValueType::U64) => "nomo_num_checked_add_u64",
+        (BinaryOp::Subtract, ValueType::U64) => "nomo_num_checked_sub_u64",
+        (BinaryOp::Multiply, ValueType::U64) => "nomo_num_checked_mul_u64",
+        _ => unreachable!("num checked helpers only lower integer add/sub/mul"),
+    }
+}
+
+fn num_wrapping_binary_helper_name(op: &BinaryOp, value_type: &ValueType) -> &'static str {
+    match (op, value_type) {
+        (BinaryOp::Add, ValueType::Int) => "nomo_num_wrapping_add_i64",
+        (BinaryOp::Subtract, ValueType::Int) => "nomo_num_wrapping_sub_i64",
+        (BinaryOp::Multiply, ValueType::Int) => "nomo_num_wrapping_mul_i64",
+        (BinaryOp::Add, ValueType::I32) => "nomo_num_wrapping_add_i32",
+        (BinaryOp::Subtract, ValueType::I32) => "nomo_num_wrapping_sub_i32",
+        (BinaryOp::Multiply, ValueType::I32) => "nomo_num_wrapping_mul_i32",
+        (BinaryOp::Add, ValueType::U32) => "nomo_num_wrapping_add_u32",
+        (BinaryOp::Subtract, ValueType::U32) => "nomo_num_wrapping_sub_u32",
+        (BinaryOp::Multiply, ValueType::U32) => "nomo_num_wrapping_mul_u32",
+        (BinaryOp::Add, ValueType::U64) => "nomo_num_wrapping_add_u64",
+        (BinaryOp::Subtract, ValueType::U64) => "nomo_num_wrapping_sub_u64",
+        (BinaryOp::Multiply, ValueType::U64) => "nomo_num_wrapping_mul_u64",
+        _ => unreachable!("num wrapping helpers only lower integer add/sub/mul"),
     }
 }
 
@@ -9758,6 +9991,69 @@ mod tests {
         assert!(c.contains("static nomo_enum_Result_f64_struct_NumError nomo_num_parse_f64"));
         assert!(c.contains("nomo_num_parse_i64(nomo_string_literal(\"42\"))"));
         assert!(c.contains("nomo_num_i64_to_string(42)"));
+    }
+
+    #[test]
+    fn emits_num_checked_and_wrapping_helpers() {
+        let option_i64 = ValueType::Enum("Option".to_string(), vec![ValueType::Int]);
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.num".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                package: "std.option".to_string(),
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Some".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "checked".to_string(),
+                        value_type: option_i64,
+                        initializer: ValueExpr::NumBinary {
+                            function: NumBinaryFunction::Checked,
+                            op: BinaryOp::Add,
+                            left: Box::new(ValueExpr::IntLiteral(i64::MAX)),
+                            right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
+                        },
+                    },
+                    Statement::Let {
+                        name: "wrapped".to_string(),
+                        value_type: ValueType::Int,
+                        initializer: ValueExpr::NumBinary {
+                            function: NumBinaryFunction::Wrapping,
+                            op: BinaryOp::Subtract,
+                            left: Box::new(ValueExpr::IntLiteral(i64::MIN)),
+                            right: Box::new(ValueExpr::IntLiteral(1)),
+                            value_type: ValueType::Int,
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef enum nomo_enum_Option_i64_tag"));
+        assert!(c.contains("static nomo_enum_Option_i64 nomo_num_checked_add_i64"));
+        assert!(c.contains("nomo_num_checked_add_i64(9223372036854775807, 1)"));
+        assert!(c.contains("static long long nomo_num_wrapping_sub_i64"));
+        assert!(c.contains("nomo_wrapped = nomo_num_wrapping_sub_i64("));
     }
 
     #[test]

@@ -234,6 +234,12 @@ pub enum MathBinaryFunction {
     Pow,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum NumBinaryFunction {
+    Checked,
+    Wrapping,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -352,6 +358,13 @@ pub enum ValueExpr {
     },
     NumToString {
         value: Box<ValueExpr>,
+        value_type: ValueType,
+    },
+    NumBinary {
+        function: NumBinaryFunction,
+        op: BinaryOp,
+        left: Box<ValueExpr>,
+        right: Box<ValueExpr>,
         value_type: ValueType,
     },
     PathJoin {
@@ -1730,6 +1743,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.num.parse_i64"
             | "std.num.parse_u64"
             | "std.num.parse_f64"
+            | "std.num.checked_add"
+            | "std.num.checked_sub"
+            | "std.num.checked_mul"
+            | "std.num.wrapping_add"
+            | "std.num.wrapping_sub"
+            | "std.num.wrapping_mul"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -1998,7 +2017,7 @@ fn validate_standard_type_conflicts(
     if needs.io || needs.fs || needs.num || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
     }
-    if needs.env || needs.option || needs.array {
+    if needs.env || needs.num || needs.option || needs.array {
         reject_user_std_enum(path, enums, "Option")?;
     }
     Ok(())
@@ -2299,7 +2318,7 @@ fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String
     if needs.io || needs.fs || needs.num || needs.result {
         names.push(("Result".to_string(), 2));
     }
-    if needs.env || needs.option || needs.array {
+    if needs.env || needs.num || needs.option || needs.array {
         names.push(("Option".to_string(), 1));
     }
     names.into_iter()
@@ -2370,7 +2389,8 @@ fn inject_standard_types(
             ],
         });
     }
-    if (needs.env || needs.option || needs.array) && !enums.iter().any(|item| item.name == "Option")
+    if (needs.env || needs.num || needs.option || needs.array)
+        && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {
             package: "std.option".to_string(),
@@ -3081,7 +3101,16 @@ fn expr_uses_num_builtin(expr: &AstExpr) -> bool {
                 && callee[0] == "num"
                 && matches!(
                     callee[1].as_str(),
-                    "parse_i64" | "parse_u64" | "parse_f64" | "to_string"
+                    "parse_i64"
+                        | "parse_u64"
+                        | "parse_f64"
+                        | "to_string"
+                        | "checked_add"
+                        | "checked_sub"
+                        | "checked_mul"
+                        | "wrapping_add"
+                        | "wrapping_sub"
+                        | "wrapping_mul"
                 ))
                 || args.iter().any(expr_uses_num_builtin)
         }
@@ -9565,7 +9594,16 @@ fn is_num_builtin_call(callee: &[String]) -> bool {
             if module == "num"
                 && matches!(
                     name.as_str(),
-                    "parse_i64" | "parse_u64" | "parse_f64" | "to_string"
+                    "parse_i64"
+                        | "parse_u64"
+                        | "parse_f64"
+                        | "to_string"
+                        | "checked_add"
+                        | "checked_sub"
+                        | "checked_mul"
+                        | "wrapping_add"
+                        | "wrapping_sub"
+                        | "wrapping_mul"
                 )
     )
 }
@@ -9695,23 +9733,23 @@ fn lower_num_builtin(
         unreachable!("num builtin dispatcher only passes qualified calls")
     };
     debug_assert_eq!(module, "num");
-    let [value] = args else {
-        return Err(Diagnostic::new(
-            "E0407",
-            format!("`num.{name}` expects exactly one argument"),
-            path,
-            span.line,
-            span.column,
-            span.length,
-            &span.text,
-        ));
-    };
-    let (value_type, lowered_value) = lower_value_expr(
-        path, value, scope, imports, signatures, structs, enums, span,
-    )?;
     let num_error = ValueType::Struct("NumError".to_string(), Vec::new());
     match name.as_str() {
         "parse_i64" | "parse_u64" | "parse_f64" => {
+            let [value] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`num.{name}` expects exactly one argument"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, lowered_value) = lower_value_expr(
+                path, value, scope, imports, signatures, structs, enums, span,
+            )?;
             if value_type != ValueType::String {
                 return Err(type_mismatch_expected_found(
                     path,
@@ -9748,6 +9786,20 @@ fn lower_num_builtin(
             ))
         }
         "to_string" => {
+            let [value] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`num.to_string` expects exactly one argument",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, lowered_value) = lower_value_expr(
+                path, value, scope, imports, signatures, structs, enums, span,
+            )?;
             if !matches!(
                 value_type,
                 ValueType::Int
@@ -9767,6 +9819,56 @@ fn lower_num_builtin(
                 ValueExpr::NumToString {
                     value: Box::new(lowered_value),
                     value_type,
+                },
+            ))
+        }
+        "checked_add" | "checked_sub" | "checked_mul" | "wrapping_add" | "wrapping_sub"
+        | "wrapping_mul" => {
+            let [left, right] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`num.{name}` expects exactly two integer arguments"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let ((left_type, lowered_left), (right_type, lowered_right)) = lower_binary_operands(
+                path, left, right, scope, imports, signatures, structs, enums, span,
+            )?;
+            if left_type != right_type || !left_type.is_integer() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`num.{name}` expects two matching integer operands"),
+                ));
+            }
+            let op = match name.as_str() {
+                "checked_add" | "wrapping_add" => BinaryOp::Add,
+                "checked_sub" | "wrapping_sub" => BinaryOp::Subtract,
+                "checked_mul" | "wrapping_mul" => BinaryOp::Multiply,
+                _ => unreachable!("num binary dispatcher only passes known calls"),
+            };
+            let function = if name.starts_with("checked_") {
+                NumBinaryFunction::Checked
+            } else {
+                NumBinaryFunction::Wrapping
+            };
+            let result_type = if function == NumBinaryFunction::Checked {
+                ValueType::Enum("Option".to_string(), vec![left_type.clone()])
+            } else {
+                left_type.clone()
+            };
+            Ok((
+                result_type,
+                ValueExpr::NumBinary {
+                    function,
+                    op,
+                    left: Box::new(lowered_left),
+                    right: Box::new(lowered_right),
+                    value_type: left_type,
                 },
             ))
         }
@@ -12345,6 +12447,24 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "parse_f64" if imports.iter().any(|item| item == "std.num.parse_f64") => {
             vec!["num".to_string(), "parse_f64".to_string()]
         }
+        "checked_add" if imports.iter().any(|item| item == "std.num.checked_add") => {
+            vec!["num".to_string(), "checked_add".to_string()]
+        }
+        "checked_sub" if imports.iter().any(|item| item == "std.num.checked_sub") => {
+            vec!["num".to_string(), "checked_sub".to_string()]
+        }
+        "checked_mul" if imports.iter().any(|item| item == "std.num.checked_mul") => {
+            vec!["num".to_string(), "checked_mul".to_string()]
+        }
+        "wrapping_add" if imports.iter().any(|item| item == "std.num.wrapping_add") => {
+            vec!["num".to_string(), "wrapping_add".to_string()]
+        }
+        "wrapping_sub" if imports.iter().any(|item| item == "std.num.wrapping_sub") => {
+            vec!["num".to_string(), "wrapping_sub".to_string()]
+        }
+        "wrapping_mul" if imports.iter().any(|item| item == "std.num.wrapping_mul") => {
+            vec!["num".to_string(), "wrapping_mul".to_string()]
+        }
         "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
             vec!["result".to_string(), "is_ok".to_string()]
         }
@@ -13741,6 +13861,114 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_num_checked_and_wrapping_builtins() {
+        let source = r#"package app.main
+
+import std.num
+
+fn main() -> void {
+    let checked: Option<i64> = num.checked_add(9223372036854775807, 1)
+    let wrapped: i64 = num.wrapping_add(9223372036854775807, 1)
+    let checked32: Option<i32> = num.checked_mul(100000 as i32, 100000 as i32)
+    let wrapped64: u64 = num.wrapping_sub(0 as u64, 1 as u64)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            &main.body[0],
+            Statement::Let {
+                value_type: ValueType::Enum(name, args),
+                initializer:
+                    ValueExpr::NumBinary {
+                        function: NumBinaryFunction::Checked,
+                        op: BinaryOp::Add,
+                        ..
+                    },
+                ..
+            } if name == "Option" && args == &vec![ValueType::Int]
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Int,
+                initializer: ValueExpr::NumBinary {
+                    function: NumBinaryFunction::Wrapping,
+                    op: BinaryOp::Add,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            &main.body[2],
+            Statement::Let {
+                value_type: ValueType::Enum(name, args),
+                initializer:
+                    ValueExpr::NumBinary {
+                        function: NumBinaryFunction::Checked,
+                        op: BinaryOp::Multiply,
+                        ..
+                    },
+                ..
+            } if name == "Option" && args == &vec![ValueType::I32]
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::NumBinary {
+                    function: NumBinaryFunction::Wrapping,
+                    op: BinaryOp::Subtract,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_num_checked_and_wrapping_imports() {
+        let source = r#"package app.main
+
+import std.num.checked_add
+import std.num.wrapping_mul
+
+fn main() -> void {
+    let checked: Option<u32> = checked_add(1 as u32, 2 as u32)
+    let wrapped: u32 = wrapping_mul(3 as u32, 4 as u32)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::NumBinary {
+                    function: NumBinaryFunction::Checked,
+                    op: BinaryOp::Add,
+                    ..
+                },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::NumBinary {
+                    function: NumBinaryFunction::Wrapping,
+                    op: BinaryOp::Multiply,
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn rejects_num_parse_non_string_argument() {
         let source = r#"package app.main
 
@@ -13772,6 +14000,22 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("num.to_string"));
+    }
+
+    #[test]
+    fn rejects_num_checked_mismatched_operands() {
+        let source = r#"package app.main
+
+import std.num
+
+fn main() -> void {
+    let value: Option<i64> = num.checked_add(1, true)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("num.checked_add"));
     }
 
     #[test]

@@ -314,8 +314,11 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `std.num` provides numeric conversion helpers: `num.parse_i64`,
 `num.parse_u64`, and `num.parse_f64` parse strings and return
 `Result<T, NumError>`. `num.to_string` converts `i64`, `i32`, `u32`, `u64`, and
-`f64` values to strings. In v0.1, `to_string` is used through the `num` module
-to avoid colliding with `char.to_string`.
+`f64` values to strings. `num.checked_add`, `num.checked_sub`, and
+`num.checked_mul` return `Option<T>` for matching integer operands;
+`num.wrapping_add`, `num.wrapping_sub`, and `num.wrapping_mul` return the same
+integer type with wraparound semantics. In v0.1, `to_string` is used through
+the `num` module to avoid colliding with `char.to_string`.
 
 `std.char` provides ASCII character-class helpers: `char.is_digit`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo

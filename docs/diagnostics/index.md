@@ -28,6 +28,7 @@ the same code.
 
 - [E0102](E0102.md) - unexpected character
 - [E0200](E0200.md) - missing package declaration
+- [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch
 - [E0501](E0501.md) - immutable value mutation

@@ -1038,15 +1038,24 @@ impl Parser<'_> {
     }
 
     fn parse_unary_expr(&mut self) -> Result<Expr, Diagnostic> {
-        if matches!(self.peek().kind, TokenKind::Bang) {
-            self.advance();
-            let expr = self.parse_unary_expr()?;
-            Ok(Expr::Unary {
-                op: crate::ast::UnaryOp::Not,
-                expr: Box::new(expr),
-            })
-        } else {
-            self.parse_postfix_expr()
+        match self.peek().kind {
+            TokenKind::Bang => {
+                self.advance();
+                let expr = self.parse_unary_expr()?;
+                Ok(Expr::Unary {
+                    op: crate::ast::UnaryOp::Not,
+                    expr: Box::new(expr),
+                })
+            }
+            TokenKind::Minus => {
+                self.advance();
+                let expr = self.parse_unary_expr()?;
+                Ok(Expr::Unary {
+                    op: crate::ast::UnaryOp::Negate,
+                    expr: Box::new(expr),
+                })
+            }
+            _ => self.parse_postfix_expr(),
         }
     }
 
@@ -1090,6 +1099,18 @@ impl Parser<'_> {
             TokenKind::Void => {
                 self.advance();
                 Ok(Expr::Void)
+            }
+            TokenKind::LParen => {
+                self.advance();
+                self.skip_newlines();
+                let expr = self.parse_expr()?;
+                self.skip_newlines();
+                self.expect_kind(
+                    TokenKind::RParen,
+                    "E0209",
+                    "expected `)` after parenthesized expression",
+                )?;
+                Ok(expr)
             }
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
@@ -1667,6 +1688,7 @@ fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::ast::UnaryOp;
     use crate::lexer::lex;
 
     #[test]
@@ -1781,6 +1803,32 @@ mod tests {
                 left,
                 ..
             } if matches!(left.as_ref(), Expr::Unary { .. }))
+        ));
+    }
+
+    #[test]
+    fn parses_unary_negation_and_parenthesized_expressions() {
+        let source = "package app.main\n\nfn calc(a: i64, b: i64, c: i64) -> i64 {\n    return -(a + b) * -c\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Return {
+                value: Some(Expr::Binary {
+                    op: BinaryOp::Multiply,
+                    ref left,
+                    ref right,
+                }),
+                ..
+            } if matches!(left.as_ref(), Expr::Unary {
+                op: UnaryOp::Negate,
+                expr,
+            } if matches!(expr.as_ref(), Expr::Binary { op: BinaryOp::Add, .. }))
+                && matches!(right.as_ref(), Expr::Unary {
+                    op: UnaryOp::Negate,
+                    expr,
+                } if matches!(expr.as_ref(), Expr::Name(name) if name == &vec!["c".to_string()]))
         ));
     }
 

@@ -97,14 +97,16 @@ visibility, source locations, and module names. By default it writes
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with
 short-circuit evaluation, bitwise operators (`&`, `|`, `^`, `&^`, `<<`, `>>`),
-plus equality and ordering comparisons. Statement-level update operators include
-postfix `++`/`--` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`,
-`>>=`, `&=`, `^=`, `|=`, and `&^=` for mutable variables and mutable struct
-fields; they are not expressions and do not produce values. `%` and bitwise
-operators are restricted to integer operands; `/` works for integer and `f64`
-operands. Runtime divide-by-zero, signed `i32`/`i64` arithmetic overflow, and
-invalid shift amounts panic. Signed right shift is arithmetic: negative values
-shift in `1` bits, and non-negative values shift in `0` bits.
+unary negation (`-`), parenthesized subexpressions, plus equality and ordering
+comparisons. Statement-level update operators include postfix `++`/`--` and
+compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`,
+`|=`, and `&^=` for mutable variables and mutable struct fields; they are not
+expressions and do not produce values. `%` and bitwise operators are restricted
+to integer operands; `/` works for integer and `f64` operands. Unary `-` works
+for `i32`, `i64`, and `f64`. Runtime divide-by-zero, signed `i32`/`i64`
+arithmetic overflow, and invalid shift amounts panic. Signed right shift is
+arithmetic: negative values shift in `1` bits, and non-negative values shift in
+`0` bits.
 
 ```bash
 nomo new hello

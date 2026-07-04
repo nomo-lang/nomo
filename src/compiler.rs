@@ -794,6 +794,7 @@ pub enum BinaryOp {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
+    Negate,
 }
 
 #[derive(Debug, Clone)]
@@ -8970,11 +8971,17 @@ fn lower_value_expr_with_expected(
             }
         }
         AstExpr::Unary { op, expr } => {
-            let (expr_type, expr) =
-                lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
             let lowered_op = match op {
                 AstUnaryOp::Not => UnaryOp::Not,
+                AstUnaryOp::Negate => UnaryOp::Negate,
             };
+            if matches!(lowered_op, UnaryOp::Negate) {
+                return lower_negate_expr(
+                    path, expr, scope, imports, signatures, structs, enums, expected, span,
+                );
+            }
+            let (expr_type, expr) =
+                lower_value_expr(path, expr, scope, imports, signatures, structs, enums, span)?;
             match (lowered_op, &expr_type) {
                 (UnaryOp::Not, ValueType::Bool) => Ok((
                     ValueType::Bool,
@@ -8988,6 +8995,7 @@ fn lower_value_expr_with_expected(
                     span,
                     "`!` expects a bool operand".to_string(),
                 )),
+                (UnaryOp::Negate, _) => unreachable!("negation is lowered before this match"),
             }
         }
         AstExpr::Binary { left, op, right } => {
@@ -16207,6 +16215,95 @@ fn is_supported_array_element(element_type: &ValueType) -> bool {
 }
 
 type LoweredValue = (ValueType, ValueExpr);
+
+#[allow(clippy::too_many_arguments)]
+fn lower_negate_expr(
+    path: &Path,
+    expr: &AstExpr,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    expected: Option<&ValueType>,
+    span: &Span,
+) -> Result<LoweredValue, Diagnostic> {
+    if let AstExpr::Int(value) = expr {
+        let value_type = expected
+            .filter(|value_type| matches!(value_type, ValueType::Int | ValueType::I32))
+            .cloned()
+            .unwrap_or(ValueType::Int);
+        let negated = value.checked_neg().ok_or_else(|| {
+            type_mismatch(
+                path,
+                span,
+                format!("integer literal `-{value}` does not fit in `i64`"),
+            )
+        })?;
+        return match value_type {
+            ValueType::Int => Ok((ValueType::Int, ValueExpr::IntLiteral(negated))),
+            ValueType::I32 if *value <= i32::MAX as i64 + 1 => {
+                Ok((ValueType::I32, ValueExpr::IntLiteral(negated)))
+            }
+            ValueType::I32 => Err(type_mismatch(
+                path,
+                span,
+                format!("integer literal `-{value}` does not fit in `i32`"),
+            )),
+            _ => unreachable!("negative integer literal only selects signed integer types"),
+        };
+    }
+
+    if let AstExpr::Float(value) = expr {
+        return Ok((
+            ValueType::Float,
+            ValueExpr::FloatLiteral(format!("-{value}")),
+        ));
+    }
+
+    let inner_expected = expected.filter(|value_type| {
+        matches!(
+            value_type,
+            ValueType::Int | ValueType::I32 | ValueType::Float
+        )
+    });
+    let (expr_type, expr) = lower_value_expr_with_expected(
+        path,
+        expr,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        inner_expected,
+        span,
+    )?;
+    match expr_type {
+        ValueType::Int | ValueType::I32 => Ok((
+            expr_type.clone(),
+            ValueExpr::Binary {
+                left: Box::new(ValueExpr::IntLiteral(0)),
+                op: BinaryOp::Subtract,
+                right: Box::new(expr),
+                value_type: expr_type,
+            },
+        )),
+        ValueType::Float => Ok((
+            ValueType::Float,
+            ValueExpr::Binary {
+                left: Box::new(ValueExpr::FloatLiteral("0.0".to_string())),
+                op: BinaryOp::Subtract,
+                right: Box::new(expr),
+                value_type: ValueType::Float,
+            },
+        )),
+        _ => Err(type_mismatch(
+            path,
+            span,
+            "`-` expects an i32, i64, or f64 operand".to_string(),
+        )),
+    }
+}
 
 fn lower_binary_operands(
     path: &Path,

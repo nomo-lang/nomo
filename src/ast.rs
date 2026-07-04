@@ -240,6 +240,7 @@ pub enum Expr {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum UnaryOp {
     Not,
+    Negate,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

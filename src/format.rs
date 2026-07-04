@@ -1230,6 +1230,7 @@ fn binary_op(op: &BinaryOp) -> &'static str {
 fn unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "!",
+        UnaryOp::Negate => "-",
     }
 }
 
@@ -1319,7 +1320,7 @@ mod tests {
 
     #[test]
     fn formats_expr_variants_and_escaping() {
-        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let mask: i64 = a&b&^c<<d>>e|f^g\n    let ratio: f64 = total as f64\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
+        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let mask: i64 = a&b&^c<<d>>e|f^g\n    let ratio: f64 = total as f64\n    let grouped: i64 = (a+b)*-(c-d)\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("Point { x: 1, y: 2 }"));
@@ -1327,6 +1328,7 @@ mod tests {
         assert!(formatted.contains("a - b * c / d % e"));
         assert!(formatted.contains("a & b &^ c << d >> e | f ^ g"));
         assert!(formatted.contains("total as f64"));
+        assert!(formatted.contains("(a + b) * -(c - d)"));
         assert!(formatted.contains("\"a\\n\\\"b\""));
         assert!(formatted.contains("'\\n'"));
     }

@@ -941,6 +941,56 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_unary_negation_and_parentheses() {
+    let root = temp_test_root("run-unary-negation-parentheses");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let base: i64 = -(2 + 3) * 4
+    let shifted: i64 = (-8) >> 1
+    let min32: i32 = -2147483648
+    let ratio: f64 = -1.5
+    io.println(num.to_string(base))
+    io.println(num.to_string(shifted))
+    io.println(num.to_string(min32))
+    if ratio < 0.0 {
+        io.println("negative f64")
+    } else {
+        io.println("wrong")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "-20\n-4\n-2147483648\nnegative f64\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomoc_still_rejects_top_level_script_statements() {
     let root = temp_test_root("nomoc-script-reject");
     reset_dir(&root);

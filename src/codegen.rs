@@ -14990,6 +14990,7 @@ fn checked_binary_helper(op: &BinaryOp, value_type: &ValueType) -> Option<&'stat
 fn c_unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "!",
+        UnaryOp::Negate => "-",
     }
 }
 

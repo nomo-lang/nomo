@@ -61,6 +61,16 @@ the same code.
 - [E0226](E0226.md) - expected enum declaration
 - [E0227](E0227.md) - missing enum body
 - [E0228](E0228.md) - unterminated enum body
+- [E0229](E0229.md) - expected match expression
+- [E0230](E0230.md) - missing match body
+- [E0231](E0231.md) - unterminated match body
+- [E0232](E0232.md) - missing match arm arrow
+- [E0233](E0233.md) - missing enum payload closing parenthesis
+- [E0234](E0234.md) - invalid match binding
+- [E0235](E0235.md) - invalid generic parameter or match arm body
+- [E0236](E0236.md) - invalid generic type argument separator
+- [E0237](E0237.md) - duplicate generic type parameter
+- [E0238](E0238.md) - unsupported match wildcard
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

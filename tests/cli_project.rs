@@ -380,6 +380,89 @@ fn nomo_doc_json_reports_project_docs() {
 }
 
 #[test]
+fn nomo_doc_workspace_json_reports_member_docs() {
+    let root = temp_test_root("doc-workspace-json");
+    reset_dir(&root);
+    let app = root.join("apps/cli");
+    let core = root.join("packages/core");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(core.join("src")).unwrap();
+    fs::write(
+        root.join("nomo.toml"),
+        "[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\n\n[workspace.package]\nnamespace = \"fynn\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nname = \"cli\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("nomo.toml"),
+        "[package]\nname = \"core\"\nversion = \"0.1.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("src/main.nomo"),
+        "package app.main\n\n/// Runs the CLI.\npub fn run_cli() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        core.join("src/main.nomo"),
+        "package core.main\n\n/// Runs the core package.\npub fn run_core() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--workspace")
+        .arg("--json")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stderr.is_empty());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"package\":\"fynn/cli\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"run_cli\""), "{stdout}");
+    assert!(stdout.contains("\"package\":\"fynn/core\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"run_core\""), "{stdout}");
+    assert!(!root.join("build/doc").exists());
+
+    let filtered = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--workspace")
+        .arg("--package")
+        .arg("fynn/core")
+        .arg("--json")
+        .arg(&root)
+        .output()
+        .unwrap();
+
+    assert!(
+        filtered.status.success(),
+        "{}",
+        String::from_utf8_lossy(&filtered.stderr)
+    );
+    let filtered_stdout = String::from_utf8_lossy(&filtered.stdout);
+    assert!(
+        !filtered_stdout.contains("\"package\":\"fynn/cli\""),
+        "{filtered_stdout}"
+    );
+    assert!(
+        filtered_stdout.contains("\"package\":\"fynn/core\""),
+        "{filtered_stdout}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_doc_std_json_reports_builtin_modules() {
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("doc")

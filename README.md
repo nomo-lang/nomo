@@ -203,10 +203,10 @@ are accepted as compatibility input, but the declaration is ignored as a normal
 dependency.
 `nomo deps resolve` for a workspace member writes `nomo.lock` at the workspace
 root. `nomo check --workspace`, `nomo build --workspace`,
+`nomo test --workspace`, `nomo doc --workspace`,
 `nomo deps resolve --workspace`, and `nomo deps tree --workspace` discover the
 workspace root, expand `members` minus `exclude`, and visit each member package
-in stable path order. Other
-workspace-wide batch commands are planned for later workspace graph slices.
+in stable path order.
 
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps resolve --workspace [path]` writes a single workspace-root lockfile

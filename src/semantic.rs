@@ -1,6 +1,6 @@
 use crate::ast::{
     ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, ImplBlock,
-    Param, SourceFile, Span, StructDef, TypeRef,
+    InterfaceDef, Param, SourceFile, Span, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
@@ -34,6 +34,8 @@ pub enum SemanticSymbolKind {
     Enum,
     Field,
     Variant,
+    Interface,
+    InterfaceMethod,
     Const,
     Function,
     ExternFunction,
@@ -306,9 +308,13 @@ fn symbol_lookup_preference(
 
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Fn)) {
         return Ok(vec![
+            SemanticSymbolKind::InterfaceMethod,
             SemanticSymbolKind::Method,
             SemanticSymbolKind::Function,
         ]);
+    }
+    if previous.is_some_and(|token| matches!(token.kind, TokenKind::Interface)) {
+        return Ok(vec![SemanticSymbolKind::Interface]);
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) && starts_upper {
         return Ok(vec![SemanticSymbolKind::Variant, SemanticSymbolKind::Field]);
@@ -493,6 +499,23 @@ fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<Se
         });
         symbols.extend(variant_symbols(path, item, docs));
     }
+    for item in &ast.interfaces {
+        symbols.push(SemanticSymbol {
+            source_path: path.to_path_buf(),
+            name: item.name.clone(),
+            kind: SemanticSymbolKind::Interface,
+            signature: interface_signature(item),
+            docs: docs
+                .item_docs
+                .get(&item.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            line: item.span.line,
+            range: line_range(&item.span),
+            selection_range: name_selection_range(&item.span, &item.name),
+        });
+        symbols.extend(interface_method_symbols(path, item, docs));
+    }
     for item in &ast.consts {
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
@@ -570,6 +593,30 @@ fn variant_symbols(path: &Path, item: &EnumDef, docs: &DocComments) -> Vec<Seman
             line: variant.span.line,
             range: line_range(&variant.span),
             selection_range: name_selection_range(&variant.span, &variant.name),
+        })
+        .collect()
+}
+
+fn interface_method_symbols(
+    path: &Path,
+    item: &InterfaceDef,
+    docs: &DocComments,
+) -> Vec<SemanticSymbol> {
+    item.methods
+        .iter()
+        .map(|method| SemanticSymbol {
+            source_path: path.to_path_buf(),
+            name: method.name.clone(),
+            kind: SemanticSymbolKind::InterfaceMethod,
+            signature: interface_method_signature(&item.name, method),
+            docs: docs
+                .item_docs
+                .get(&method.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            line: method.span.line,
+            range: line_range(&method.span),
+            selection_range: name_selection_range(&method.span, &method.name),
         })
         .collect()
 }
@@ -713,6 +760,10 @@ fn enum_signature(item: &EnumDef) -> String {
     )
 }
 
+fn interface_signature(item: &InterfaceDef) -> String {
+    format!("{}interface {}", visibility_prefix(item.public), item.name)
+}
+
 fn const_signature(item: &ConstDef) -> String {
     format!(
         "{}const {}: {}",
@@ -770,6 +821,22 @@ fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String 
         type_params(&function.type_params),
         params,
         type_ref(&function.return_type)
+    )
+}
+
+fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String {
+    let params = method
+        .params
+        .iter()
+        .map(param)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "fn {owner}.{}{}({}) -> {}",
+        method.name,
+        type_params(&method.type_params),
+        params,
+        type_ref(&method.return_type)
     )
 }
 
@@ -893,7 +960,7 @@ mod tests {
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
-        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
+        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -903,7 +970,16 @@ mod tests {
                 .map(|symbol| symbol.name.as_str())
                 .collect::<Vec<_>>(),
             vec![
-                "User", "email", "Status", "Ready", "Done", "add", "puts", "email"
+                "User",
+                "email",
+                "Status",
+                "Ready",
+                "Done",
+                "Display",
+                "to_string",
+                "add",
+                "puts",
+                "email"
             ]
         );
         assert_eq!(symbols[1].kind, SemanticSymbolKind::Field);
@@ -927,11 +1003,33 @@ mod tests {
         assert_eq!(symbols[3].docs, "Ready state.");
         assert_eq!(symbols[4].signature, "variant Status.Done(i32)");
         assert_eq!(symbols[4].docs, "Done state.");
-        assert_eq!(symbols[5].kind, SemanticSymbolKind::Function);
-        assert_eq!(symbols[5].signature, "pub fn add(a: i64, b: i64) -> i64");
-        assert_eq!(symbols[5].docs, "Adds numbers.");
+        assert_eq!(symbols[5].kind, SemanticSymbolKind::Interface);
+        assert_eq!(symbols[5].signature, "pub interface Display");
+        assert_eq!(symbols[5].docs, "Displayable values.");
+        assert_eq!(symbols[6].kind, SemanticSymbolKind::InterfaceMethod);
         assert_eq!(
-            symbols[5].selection_range,
+            symbols[6].signature,
+            "fn Display.to_string(self: Self) -> string"
+        );
+        assert_eq!(symbols[6].docs, "Converts to text.");
+        assert_eq!(
+            symbols[6].selection_range,
+            TextRange {
+                start: TextPosition {
+                    line: 22,
+                    character: 7,
+                },
+                end: TextPosition {
+                    line: 22,
+                    character: 16,
+                },
+            }
+        );
+        assert_eq!(symbols[7].kind, SemanticSymbolKind::Function);
+        assert_eq!(symbols[7].signature, "pub fn add(a: i64, b: i64) -> i64");
+        assert_eq!(symbols[7].docs, "Adds numbers.");
+        assert_eq!(
+            symbols[7].selection_range,
             TextRange {
                 start: TextPosition {
                     line: 3,
@@ -943,27 +1041,27 @@ mod tests {
                 },
             }
         );
-        assert_eq!(symbols[6].kind, SemanticSymbolKind::ExternFunction);
+        assert_eq!(symbols[8].kind, SemanticSymbolKind::ExternFunction);
         assert_eq!(
-            symbols[6].signature,
+            symbols[8].signature,
             "extern \"C\" fn puts(message: string) -> i32"
         );
-        assert_eq!(symbols[6].docs, "Writes a C string.");
+        assert_eq!(symbols[8].docs, "Writes a C string.");
         assert_eq!(
-            symbols[6].selection_range,
+            symbols[8].selection_range,
             TextRange {
                 start: TextPosition {
-                    line: 21,
+                    line: 27,
                     character: 7,
                 },
                 end: TextPosition {
-                    line: 21,
+                    line: 27,
                     character: 11,
                 },
             }
         );
         assert_eq!(
-            symbols[7].signature,
+            symbols[9].signature,
             "pub fn User.email(self: User) -> string"
         );
     }

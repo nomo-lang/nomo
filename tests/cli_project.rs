@@ -302,6 +302,12 @@ enum Status {
     Ready
 }
 
+/// Display contract.
+pub interface Display {
+    /// Converts to text.
+    fn to_string(self) -> string
+}
+
 extern "C" {
     /// Writes a C string.
     fn puts(message: string) -> i32
@@ -343,6 +349,16 @@ extern "C" {
     );
     assert!(module_html.contains("Ready to run."), "{module_html}");
     assert!(
+        module_html.contains("pub interface Display"),
+        "{module_html}"
+    );
+    assert!(module_html.contains("Display contract."), "{module_html}");
+    assert!(
+        module_html.contains("fn Display.to_string(self: Self) -&gt; string"),
+        "{module_html}"
+    );
+    assert!(module_html.contains("Converts to text."), "{module_html}");
+    assert!(
         module_html.contains("extern &quot;C&quot; fn puts(message: string) -&gt; i32"),
         "{module_html}"
     );
@@ -355,6 +371,13 @@ extern "C" {
     assert!(search.contains("\"name\":\"User.name\""), "{search}");
     assert!(search.contains("\"kind\":\"variant\""), "{search}");
     assert!(search.contains("\"name\":\"Status.Ready\""), "{search}");
+    assert!(search.contains("\"kind\":\"interface\""), "{search}");
+    assert!(search.contains("\"name\":\"Display\""), "{search}");
+    assert!(search.contains("\"kind\":\"interface_method\""), "{search}");
+    assert!(
+        search.contains("\"name\":\"Display.to_string\""),
+        "{search}"
+    );
     assert!(search.contains("\"kind\":\"extern_function\""), "{search}");
     assert!(search.contains("\"name\":\"puts\""), "{search}");
 
@@ -374,7 +397,7 @@ fn nomo_doc_json_reports_project_docs() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n",
+        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\n/// Display contract.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n",
     )
     .unwrap();
 
@@ -408,6 +431,29 @@ fn nomo_doc_json_reports_project_docs() {
     assert!(stdout.contains("\"kind\":\"variant\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Status.Ready\""), "{stdout}");
     assert!(stdout.contains("\"docs\":\"Ready to run.\""), "{stdout}");
+    assert!(stdout.contains("\"kind\":\"interface\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Display\""), "{stdout}");
+    assert!(
+        stdout.contains("\"docs\":\"Display contract.\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"signature\":\"pub interface Display\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"kind\":\"interface_method\""), "{stdout}");
+    assert!(
+        stdout.contains("\"name\":\"Display.to_string\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"signature\":\"fn Display.to_string(self: Self) -> string\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"docs\":\"Converts to text.\""),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"kind\":\"extern_function\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"puts\""), "{stdout}");
     assert!(

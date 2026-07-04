@@ -91,9 +91,10 @@ member name, and `--json` prints a machine-readable test report.
 `nomo doc` extracts Rust-style doc comments (`//!`, `///`, `/*! */`, `/** */`)
 from project source files and combines them with parsed signatures,
 visibility, source locations, and module names. Functions, extern functions,
-structs, enums, methods, and constants are emitted as top-level documentation
-items. Struct fields and enum variants are emitted as documented child items and
-are included in the search index. By default it writes `build/doc/index.html`,
+structs, enums, interfaces, methods, and constants are emitted as top-level
+documentation items. Struct fields, enum variants, and interface methods are
+emitted as documented child items and are included in the search index. By
+default it writes `build/doc/index.html`,
 package/module HTML pages, and `search-index.json`. `--json` prints the same
 documentation model to stdout without writing files. `--workspace` documents
 workspace members, `--package` selects one member, and `--std` adds the current

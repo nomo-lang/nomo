@@ -1,6 +1,6 @@
 use crate::ast::{
-    ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, Param,
-    SourceFile, StructDef, TypeRef,
+    ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, InterfaceDef,
+    Param, SourceFile, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::lex;
@@ -180,6 +180,9 @@ fn module_docs(ast: &SourceFile, comments: &DocComments, source: String) -> DocM
     for item in &ast.enums {
         items.push(enum_doc(item, comments, &source));
     }
+    for item in &ast.interfaces {
+        items.push(interface_doc(item, comments, &source));
+    }
     for item in &ast.consts {
         items.push(const_doc(item, comments, &source));
     }
@@ -262,6 +265,27 @@ fn enum_doc(item: &EnumDef, comments: &DocComments, source: &str) -> DocItem {
     }
 }
 
+fn interface_doc(item: &InterfaceDef, comments: &DocComments, source: &str) -> DocItem {
+    DocItem {
+        kind: "interface".to_string(),
+        name: item.name.clone(),
+        signature: format!("{}interface {}", visibility_prefix(item.public), item.name),
+        visibility: visibility(item.public).to_string(),
+        docs: comments
+            .item_docs
+            .get(&item.span.line)
+            .cloned()
+            .unwrap_or_default(),
+        source: source.to_string(),
+        line: item.span.line,
+        children: item
+            .methods
+            .iter()
+            .map(|method| interface_method_doc(&item.name, method, comments, source))
+            .collect(),
+    }
+}
+
 fn const_doc(item: &ConstDef, comments: &DocComments, source: &str) -> DocItem {
     DocItem {
         kind: "const".to_string(),
@@ -320,6 +344,28 @@ fn extern_function_docs(block: &ExternBlock, comments: &DocComments, source: &st
             children: Vec::new(),
         })
         .collect()
+}
+
+fn interface_method_doc(
+    owner: &str,
+    method: &FunctionSignature,
+    comments: &DocComments,
+    source: &str,
+) -> DocItem {
+    DocItem {
+        kind: "interface_method".to_string(),
+        name: format!("{owner}.{}", method.name),
+        signature: interface_method_signature(owner, method),
+        visibility: "public".to_string(),
+        docs: comments
+            .item_docs
+            .get(&method.span.line)
+            .cloned()
+            .unwrap_or_default(),
+        source: source.to_string(),
+        line: method.span.line,
+        children: Vec::new(),
+    }
 }
 
 fn field_doc(owner: &str, field: &Field, comments: &DocComments, source: &str) -> DocItem {
@@ -401,6 +447,22 @@ fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String 
         type_params(&function.type_params),
         params,
         type_ref(&function.return_type)
+    )
+}
+
+fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String {
+    let params = method
+        .params
+        .iter()
+        .map(param)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "fn {owner}.{}{}({}) -> {}",
+        method.name,
+        type_params(&method.type_params),
+        params,
+        type_ref(&method.return_type)
     )
 }
 

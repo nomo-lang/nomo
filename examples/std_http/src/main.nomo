@@ -1,0 +1,34 @@
+package app.main
+
+import std.env
+import std.http
+import std.io
+import std.string.concat
+
+fn request(port: string) -> Result<void, HttpError> {
+    let base: string = concat("http://127.0.0.1:", port)
+    let first: HttpResponse = http.get(concat(base, "/hello"))?
+    io.println(first.body)
+    let second: HttpResponse = http.post(concat(base, "/echo"), "post-body")?
+    io.println(second.body)
+    return Ok(void)
+}
+
+fn main() -> void {
+    let port: Option<string> = env.get("NOMO_HTTP_PORT")
+    match port {
+        Some(value) => {
+            let result: Result<void, HttpError> = request(value)
+            match result {
+                Ok(done) => {
+                }
+                Err(err) => {
+                    io.println(err.message)
+                }
+            }
+        }
+        None => {
+            io.println("missing NOMO_HTTP_PORT")
+        }
+    }
+}

@@ -1,7 +1,10 @@
 use nomo::project::{build_project, check_project, discover_project};
 use std::fs;
+use std::io::{ErrorKind, Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output};
+use std::time::{Duration, Instant};
 
 const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "hello",
@@ -13,6 +16,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_process",
     "std_time",
     "std_json",
+    "std_http",
     "operators_arithmetic",
     "operators_logical",
     "operators_bitwise",
@@ -37,11 +41,7 @@ fn examples_check_and_run() {
         });
         let bin = build_project(&project, false)
             .unwrap_or_else(|err| panic!("failed to build {}: {err}", example.display()));
-        let output = Command::new(&bin)
-            .current_dir(&project.root)
-            .env("NOMO_EXAMPLE_ENV", "env get ok")
-            .output()
-            .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()));
+        let output = run_built_example(&project.root, &bin, &example);
         assert!(
             output.status.success(),
             "example exited unsuccessfully: {}\nstdout:\n{}\nstderr:\n{}",
@@ -138,12 +138,24 @@ fn assert_cli_build_emit_c(example: &Path) {
 }
 
 fn assert_cli_run(example: &Path) {
-    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
-        .arg("run")
-        .arg(example)
-        .env("NOMO_EXAMPLE_ENV", "env get ok")
-        .output()
-        .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()));
+    let output = if example_name(example) == "std_http" {
+        run_with_http_example_server(|port| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_EXAMPLE_ENV", "env get ok")
+                .env("NOMO_HTTP_PORT", port.to_string())
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        })
+    } else {
+        Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(example)
+            .env("NOMO_EXAMPLE_ENV", "env get ok")
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+    };
     assert!(
         output.status.success(),
         "nomo run failed for {}\nstdout:\n{}\nstderr:\n{}",
@@ -152,6 +164,111 @@ fn assert_cli_run(example: &Path) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_example_output(example, &output.stdout, &output.stderr);
+}
+
+fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output {
+    if example_name(example) == "std_http" {
+        run_with_http_example_server(|port| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_EXAMPLE_ENV", "env get ok")
+                .env("NOMO_HTTP_PORT", port.to_string())
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        })
+    } else {
+        Command::new(bin)
+            .current_dir(project_root)
+            .env("NOMO_EXAMPLE_ENV", "env get ok")
+            .output()
+            .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+    }
+}
+
+fn run_with_http_example_server<F>(run: F) -> Output
+where
+    F: FnOnce(u16) -> Output,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut handled = 0;
+        while handled < 2 {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let request = read_http_request(&mut stream);
+                    let body_start = request.find("\r\n\r\n").map(|index| index + 4).unwrap();
+                    let body = &request[body_start..];
+                    let (expected_line, expected_body, response_body) = if handled == 0 {
+                        ("GET /hello HTTP/1.0", "", "get-ok")
+                    } else {
+                        ("POST /echo HTTP/1.0", "post-body", "post-ok")
+                    };
+                    assert!(
+                        request.starts_with(expected_line),
+                        "request was:\n{request}"
+                    );
+                    assert_eq!(body, expected_body);
+                    let response = format!(
+                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                    handled += 1;
+                }
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) => panic!("failed to accept HTTP client connection: {err}"),
+            }
+        }
+    });
+    let output = run(port);
+    server.join().unwrap();
+    output
+}
+
+fn read_http_request(stream: &mut impl Read) -> String {
+    let mut request = Vec::new();
+    let mut buffer = [0_u8; 512];
+    loop {
+        let read = stream.read(&mut buffer).unwrap();
+        if read == 0 {
+            break;
+        }
+        request.extend_from_slice(&buffer[..read]);
+        let text = String::from_utf8_lossy(&request);
+        let header_end = text.find("\r\n\r\n");
+        if let Some(header_end) = header_end {
+            let content_length = text
+                .lines()
+                .find_map(|line| {
+                    line.strip_prefix("Content-Length: ")
+                        .and_then(|value| value.parse::<usize>().ok())
+                })
+                .unwrap_or(0);
+            if request.len() >= header_end + 4 + content_length {
+                break;
+            }
+        }
+    }
+    String::from_utf8(request).unwrap()
+}
+
+fn example_name(example: &Path) -> &str {
+    example
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or_else(|| panic!("example path has no file name: {}", example.display()))
 }
 
 fn assert_example_output(example: &Path, stdout: &[u8], stderr: &[u8]) {
@@ -252,6 +369,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "specific_type_import" => "specific type import ok\n",
         "specific_value_import" => "specific value import ok\n",
         "std_json" => "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n",
+        "std_http" => "get-ok\npost-ok\n",
         "std_path" => "/tmp/nomo.txt\nnomo.txt\n/tmp\ngz\n/tmp/b\n../b\nabsolute\n",
         "std_process" => "spawn-ok\nstatus-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n",
         "std_time" => "1500\n2000\n1500ms\n",

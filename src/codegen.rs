@@ -6,7 +6,9 @@ use crate::compiler::{
 use std::collections::BTreeSet;
 
 const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
+const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
+const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct ResultMapErrInstance {
@@ -1874,6 +1876,12 @@ fn emit_deferred_call(out: &mut String, indent: usize, call: &DeferredCall) {
             emit_string_data_expr(out, arg);
             out.push_str(");\n");
         }
+        DeferredCall::Print(arg) => {
+            write_indent(out, indent);
+            out.push_str("fputs(");
+            emit_string_data_expr(out, arg);
+            out.push_str(", stdout);\n");
+        }
         DeferredCall::Eprintln(arg) => {
             write_indent(out, indent);
             out.push_str("fputs(");
@@ -1881,6 +1889,12 @@ fn emit_deferred_call(out: &mut String, indent: usize, call: &DeferredCall) {
             out.push_str(", stderr);\n");
             write_indent(out, indent);
             out.push_str("fputc('\\n', stderr);\n");
+        }
+        DeferredCall::Eprint(arg) => {
+            write_indent(out, indent);
+            out.push_str("fputs(");
+            emit_string_data_expr(out, arg);
+            out.push_str(", stderr);\n");
         }
     }
 }
@@ -2112,6 +2126,12 @@ fn emit_stmt(
             emit_string_data_expr(out, arg);
             out.push_str(");\n");
         }
+        Statement::Print(arg) => {
+            write_indent(out, indent);
+            out.push_str("fputs(");
+            emit_string_data_expr(out, arg);
+            out.push_str(", stdout);\n");
+        }
         Statement::Eprintln(arg) => {
             write_indent(out, indent);
             out.push_str("fputs(");
@@ -2119,6 +2139,12 @@ fn emit_stmt(
             out.push_str(", stderr);\n");
             write_indent(out, indent);
             out.push_str("fputc('\\n', stderr);\n");
+        }
+        Statement::Eprint(arg) => {
+            write_indent(out, indent);
+            out.push_str("fputs(");
+            emit_string_data_expr(out, arg);
+            out.push_str(", stderr);\n");
         }
         Statement::Panic(message) => {
             emit_deferred(out, indent, deferred);
@@ -3712,10 +3738,18 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
                 out.push_str("(puts(");
                 emit_string_data_expr(out, &args[0]);
                 out.push_str("), 0)");
+            } else if name == BUILTIN_PRINT_EXPR {
+                out.push_str("(fputs(");
+                emit_string_data_expr(out, &args[0]);
+                out.push_str(", stdout), 0)");
             } else if name == BUILTIN_EPRINTLN_EXPR {
                 out.push_str("(fputs(");
                 emit_string_data_expr(out, &args[0]);
                 out.push_str(", stderr), fputc('\\n', stderr), 0)");
+            } else if name == BUILTIN_EPRINT_EXPR {
+                out.push_str("(fputs(");
+                emit_string_data_expr(out, &args[0]);
+                out.push_str(", stderr), 0)");
             } else {
                 out.push_str(&c_fn_ident(name));
                 out.push('(');
@@ -4309,7 +4343,9 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
             value: initializer, ..
         }
         | Statement::Println(initializer)
+        | Statement::Print(initializer)
         | Statement::Eprintln(initializer)
+        | Statement::Eprint(initializer)
         | Statement::Panic(initializer)
         | Statement::Return(Some(initializer))
         | Statement::Expr(initializer) => collect_expr_result_map_err(initializer, out),
@@ -4397,7 +4433,11 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
 
 fn collect_deferred_result_map_err(call: &DeferredCall, out: &mut Vec<ResultMapErrInstance>) {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => {
             collect_expr_result_map_err(expr, out);
         }
     }
@@ -4584,7 +4624,9 @@ where
             value: initializer, ..
         }
         | Statement::Println(initializer)
+        | Statement::Print(initializer)
         | Statement::Eprintln(initializer)
+        | Statement::Eprint(initializer)
         | Statement::Panic(initializer)
         | Statement::Return(Some(initializer))
         | Statement::Expr(initializer) => walk_expr(initializer, visit),
@@ -4667,7 +4709,11 @@ where
     F: FnMut(&ValueExpr),
 {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => {
             walk_expr(expr, visit);
         }
     }
@@ -4956,7 +5002,9 @@ fn collect_stmt_struct(
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => {
@@ -4999,7 +5047,11 @@ fn collect_deferred_struct(
     out: &mut Vec<(String, Vec<ValueType>)>,
 ) {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => {
             collect_expr_struct(expr, seen, out);
         }
     }
@@ -5439,7 +5491,9 @@ fn collect_stmt_enum(
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => {
@@ -5488,7 +5542,11 @@ fn collect_deferred_enum(
     out: &mut Vec<(String, Vec<ValueType>)>,
 ) {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => {
             collect_expr_enum(expr, seen, out);
         }
     }
@@ -5967,7 +6025,9 @@ fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_fs_read_to_string(value),
@@ -6044,7 +6104,9 @@ fn statement_uses_fs_write_string(statement: &Statement) -> bool {
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_fs_write_string(value),
@@ -6119,7 +6181,9 @@ fn statement_uses_fs_open(statement: &Statement) -> bool {
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_fs_open(value),
@@ -6227,7 +6291,9 @@ fn statement_contains_expr(statement: &Statement, predicate: fn(&ValueExpr) -> b
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_contains(value, predicate),
@@ -6263,9 +6329,11 @@ fn statement_contains_expr(statement: &Statement, predicate: fn(&ValueExpr) -> b
 
 fn deferred_contains_expr(call: &DeferredCall, predicate: fn(&ValueExpr) -> bool) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_contains(expr, predicate)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_contains(expr, predicate),
     }
 }
 
@@ -6447,7 +6515,9 @@ fn statement_uses_env_get(statement: &Statement) -> bool {
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_env_get(value),
@@ -6520,7 +6590,9 @@ fn statement_uses_env_args(statement: &Statement) -> bool {
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_env_args(value),
@@ -6672,7 +6744,9 @@ fn collect_statement_array_elements(
         Statement::Assign { value, .. }
         | Statement::AssignField { value, .. }
         | Statement::Println(value)
+        | Statement::Print(value)
         | Statement::Eprintln(value)
+        | Statement::Eprint(value)
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => collect_expr_array_elements(value, seen, out),
@@ -6716,41 +6790,51 @@ fn collect_statement_array_elements(
 
 fn deferred_uses_fs_read_to_string(call: &DeferredCall) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_uses_fs_read_to_string(expr)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_uses_fs_read_to_string(expr),
     }
 }
 
 fn deferred_uses_fs_write_string(call: &DeferredCall) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_uses_fs_write_string(expr)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_uses_fs_write_string(expr),
     }
 }
 
 fn deferred_uses_fs_open(call: &DeferredCall) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_uses_fs_open(expr)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_uses_fs_open(expr),
     }
 }
 
 fn deferred_uses_env_get(call: &DeferredCall) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_uses_env_get(expr)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_uses_env_get(expr),
     }
 }
 
 fn deferred_uses_env_args(call: &DeferredCall) -> bool {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
-            expr_uses_env_args(expr)
-        }
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => expr_uses_env_args(expr),
     }
 }
 
@@ -6760,7 +6844,11 @@ fn collect_deferred_array_elements(
     out: &mut Vec<ValueType>,
 ) {
     match call {
-        DeferredCall::Expr(expr) | DeferredCall::Println(expr) | DeferredCall::Eprintln(expr) => {
+        DeferredCall::Expr(expr)
+        | DeferredCall::Println(expr)
+        | DeferredCall::Print(expr)
+        | DeferredCall::Eprintln(expr)
+        | DeferredCall::Eprint(expr) => {
             collect_expr_array_elements(expr, seen, out);
         }
     }
@@ -7927,6 +8015,10 @@ mod tests {
         format!("fputs(({}).data, stderr);", string_literal(value))
     }
 
+    fn fputs_stdout_literal(value: &str) -> String {
+        format!("fputs(({}).data, stdout);", string_literal(value))
+    }
+
     fn panic_literal(value: &str) -> String {
         format!("nomo_panic(({}).data);", string_literal(value))
     }
@@ -8098,6 +8190,57 @@ mod tests {
         let c = emit_c(&program);
         assert!(c.contains(&fputs_literal("error")));
         assert!(c.contains("fputc('\\n', stderr);"));
+    }
+
+    #[test]
+    fn emits_fputs_for_print_without_newline() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Print(ValueExpr::StringLiteral(
+                    "partial".to_string(),
+                ))],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains(&fputs_stdout_literal("partial")));
+        assert!(!c.contains(&puts_literal("partial")));
+    }
+
+    #[test]
+    fn emits_fputs_for_eprint_without_newline() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Eprint(ValueExpr::StringLiteral(
+                    "partial error".to_string(),
+                ))],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains(&fputs_literal("partial error")));
+        assert!(!c.contains(&format!(
+            "{}\n    fputc('\\n', stderr);",
+            fputs_literal("partial error")
+        )));
     }
 
     #[test]

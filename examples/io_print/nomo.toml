@@ -1,0 +1,6 @@
+[package]
+name = "io_print"
+version = "0.1.0"
+
+[dependencies]
+std = "0.1.0"

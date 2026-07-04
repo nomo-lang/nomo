@@ -12,7 +12,9 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
+const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
+const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -157,8 +159,10 @@ pub enum Statement {
         value_type: ValueType,
         value: ValueExpr,
     },
-    Println(ValueExpr),
     Eprintln(ValueExpr),
+    Eprint(ValueExpr),
+    Println(ValueExpr),
+    Print(ValueExpr),
     Panic(ValueExpr),
     Return(Option<ValueExpr>),
     Expr(ValueExpr),
@@ -206,8 +210,10 @@ pub enum LoopKind {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum DeferredCall {
     Expr(ValueExpr),
-    Println(ValueExpr),
     Eprintln(ValueExpr),
+    Eprint(ValueExpr),
+    Println(ValueExpr),
+    Print(ValueExpr),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -1619,7 +1625,9 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
     matches!(
         import,
         "std.io"
+            | "std.io.print"
             | "std.io.println"
+            | "std.io.eprint"
             | "std.io.eprintln"
             | "std.fs"
             | "std.fs.FsError"
@@ -3534,11 +3542,7 @@ fn lower_stmt(
             if arg_type != ValueType::String {
                 return Err(println_type_error(path, span, function_name));
             }
-            if function_name == "eprintln" {
-                Ok(Statement::Eprintln(lowered))
-            } else {
-                Ok(Statement::Println(lowered))
-            }
+            Ok(io_print_statement(function_name, lowered))
         }
         Stmt::Expr {
             expr: AstExpr::Panic { message },
@@ -3649,11 +3653,7 @@ fn lower_stmt(
                 if arg_type != ValueType::String {
                     return Err(println_type_error(path, span, function_name));
                 }
-                let call = if function_name == "eprintln" {
-                    DeferredCall::Eprintln(lowered)
-                } else {
-                    DeferredCall::Println(lowered)
-                };
+                let call = io_print_deferred_call(function_name, lowered);
                 return Ok(Statement::Defer { call });
             }
             let (_call_type, call) = lower_value_expr_with_expected(
@@ -7880,15 +7880,11 @@ fn lower_value_expr_with_expected(
                 if arg_type != ValueType::String {
                     return Err(println_type_error(path, span, function_name));
                 }
-                let name = if function_name == "eprintln" {
-                    BUILTIN_EPRINTLN_EXPR
-                } else {
-                    BUILTIN_PRINTLN_EXPR
-                };
+                let name = io_print_builtin_expr_name(function_name);
                 return Ok((
                     ValueType::Void,
                     ValueExpr::Call {
-                        name: name.to_string(),
+                        name,
                         args: vec![lowered],
                     },
                 ));
@@ -11442,8 +11438,43 @@ fn generic_type_suffix(args: &[ValueType]) -> String {
 fn is_io_print_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "io" && matches!(name.as_str(), "println" | "eprintln")
-    ) || matches!(callee, [name] if matches!(name.as_str(), "println" | "eprintln"))
+        [module, name]
+            if module == "io"
+                && matches!(name.as_str(), "print" | "println" | "eprint" | "eprintln")
+    ) || matches!(
+        callee,
+        [name] if matches!(name.as_str(), "print" | "println" | "eprint" | "eprintln")
+    )
+}
+
+fn io_print_statement(function_name: &str, arg: ValueExpr) -> Statement {
+    match function_name {
+        "print" => Statement::Print(arg),
+        "eprint" => Statement::Eprint(arg),
+        "eprintln" => Statement::Eprintln(arg),
+        "println" => Statement::Println(arg),
+        _ => unreachable!("io print dispatcher only passes known functions"),
+    }
+}
+
+fn io_print_deferred_call(function_name: &str, arg: ValueExpr) -> DeferredCall {
+    match function_name {
+        "print" => DeferredCall::Print(arg),
+        "eprint" => DeferredCall::Eprint(arg),
+        "eprintln" => DeferredCall::Eprintln(arg),
+        "println" => DeferredCall::Println(arg),
+        _ => unreachable!("io print dispatcher only passes known functions"),
+    }
+}
+
+fn io_print_builtin_expr_name(function_name: &str) -> String {
+    match function_name {
+        "print" => BUILTIN_PRINT_EXPR.to_string(),
+        "eprint" => BUILTIN_EPRINT_EXPR.to_string(),
+        "eprintln" => BUILTIN_EPRINTLN_EXPR.to_string(),
+        "println" => BUILTIN_PRINTLN_EXPR.to_string(),
+        _ => unreachable!("io print dispatcher only passes known functions"),
+    }
 }
 
 fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<String>> {
@@ -11720,13 +11751,13 @@ fn resolve_io_print_function<'a>(callee: &'a [String], imports: &[String]) -> Op
     match callee {
         [module, name]
             if module == "io"
-                && matches!(name.as_str(), "println" | "eprintln")
+                && matches!(name.as_str(), "print" | "println" | "eprint" | "eprintln")
                 && imports.iter().any(|item| item == "std.io") =>
         {
             Some(name.as_str())
         }
         [name]
-            if matches!(name.as_str(), "println" | "eprintln")
+            if matches!(name.as_str(), "print" | "println" | "eprint" | "eprintln")
                 && imports.iter().any(|item| item == &format!("std.io.{name}")) =>
         {
             Some(name.as_str())
@@ -12099,6 +12130,54 @@ fn main() -> void {
             vec![Statement::Eprintln(ValueExpr::StringLiteral(
                 "error".to_string()
             ))]
+        );
+    }
+
+    #[test]
+    fn accepts_print_and_eprint() {
+        let source = r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    io.print("out")
+    io.eprint("err")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(
+            main.body,
+            vec![
+                Statement::Print(ValueExpr::StringLiteral("out".to_string())),
+                Statement::Eprint(ValueExpr::StringLiteral("err".to_string())),
+            ]
+        );
+    }
+
+    #[test]
+    fn accepts_specific_print_and_eprint_imports() {
+        let source = r#"package app.main
+
+import std.io.print
+import std.io.eprint
+
+fn main() -> void {
+    print("out")
+    eprint("err")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert_eq!(program.imports, vec!["std.io.print", "std.io.eprint"]);
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(
+            main.body,
+            vec![
+                Statement::Print(ValueExpr::StringLiteral("out".to_string())),
+                Statement::Eprint(ValueExpr::StringLiteral("err".to_string())),
+            ]
         );
     }
 
@@ -18112,6 +18191,24 @@ fn main() -> void {
         assert_eq!(err.suggestions.len(), 1);
         assert_eq!(err.suggestions[0].text, "import std.io.println\n");
         assert!(err.suggestions[0].description.contains("println"));
+    }
+
+    #[test]
+    fn rejects_unqualified_print_without_specific_import() {
+        let source = r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    print("Hello")
+}
+"#;
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0301");
+        assert!(err.message.contains("std.io.print"));
+        assert_eq!(err.suggestions.len(), 1);
+        assert_eq!(err.suggestions[0].text, "import std.io.print\n");
+        assert!(err.suggestions[0].description.contains("print"));
     }
 
     #[test]

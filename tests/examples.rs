@@ -213,6 +213,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "generic_struct" => "generic struct ok\n",
         "hello" => "Hello, Nomo\n",
         "if_let" => "if let ok\n",
+        "io_print" => "stdout ok\n",
         "io_stderr" => "stdout ok\n",
         "let_else" => "let else ok\n",
         "loops" => "counted\ncounted\ncounted\na\nb\nonce\n",
@@ -250,6 +251,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
 
 fn expected_stderr(example: &str) -> &'static str {
     match example {
+        "io_print" => "stderr ok\n",
         "io_stderr" => "stderr ok\n",
         _ => "",
     }

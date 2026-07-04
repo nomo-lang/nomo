@@ -1,0 +1,12 @@
+package app.main
+
+import std.io
+import std.io.print
+import std.io.eprint
+
+fn main() -> void {
+    io.print("stdout ")
+    print("ok\n")
+    io.eprint("stderr ")
+    eprint("ok\n")
+}

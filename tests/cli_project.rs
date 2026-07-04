@@ -4703,6 +4703,74 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_json_parse_and_stringify() {
+    let root = temp_test_root("std-json-helpers");
+    reset_dir(&root);
+    let project = root.join("std_json_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_json_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.json
+
+fn main() -> void {
+    let parsed: Result<JsonValue, JsonError> = json.parse("{\"lang\":\"nomo\",\"versions\":[1,true,null]}")
+    match parsed {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+
+    let broken: Result<JsonValue, JsonError> = json.parse("{\"lang\":")
+    match broken {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_collections_helpers() {
     let root = temp_test_root("std-collections-helpers");
     reset_dir(&root);

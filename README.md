@@ -386,6 +386,10 @@ placeholder string in v0.1.
 filtered by `NOMO_LOG`; accepted levels are `debug`, `info`, `warn`, `error`,
 and `off`. The default threshold is `info`.
 
+`std.json` provides `json.parse` and `json.stringify`. In v0.1 `JsonValue`
+stores validated raw JSON text; `parse` returns `Result<JsonValue, JsonError>`
+and `stringify` returns the stored JSON text.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

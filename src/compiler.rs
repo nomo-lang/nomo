@@ -367,6 +367,12 @@ pub enum ValueExpr {
     CryptoSha512 {
         value: Box<ValueExpr>,
     },
+    JsonParse {
+        value: Box<ValueExpr>,
+    },
+    JsonStringify {
+        value: Box<ValueExpr>,
+    },
     CollectionsStringMapNew,
     CollectionsStringMapLen {
         map: Box<ValueExpr>,
@@ -1874,6 +1880,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.crypto"
             | "std.crypto.sha256"
             | "std.crypto.sha512"
+            | "std.json"
+            | "std.json.JsonValue"
+            | "std.json.JsonError"
+            | "std.json.parse"
+            | "std.json.stringify"
             | "std.collections"
             | "std.collections.StringMap"
             | "std.collections.StringSet"
@@ -2039,6 +2050,7 @@ fn missing_standard_type_import(
         "IoError" => Some("std.io"),
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
+        "JsonValue" | "JsonError" => Some("std.json"),
         "StringMap" | "StringSet" => Some("std.collections"),
         _ => None,
     }
@@ -2443,6 +2455,7 @@ struct StandardTypeNeeds {
     env: bool,
     process: bool,
     hash: bool,
+    json: bool,
     collections: bool,
     num: bool,
     result: bool,
@@ -2470,6 +2483,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.hash" || item.starts_with("std.hash."))
             || source_uses_hash_builtin(ast),
+        json: imports
+            .iter()
+            .any(|item| item == "std.json" || item.starts_with("std.json."))
+            || source_uses_json_builtin(ast),
         collections: imports
             .iter()
             .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
@@ -2515,6 +2532,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.hash {
         names.push(("HashState".to_string(), 0));
     }
+    if needs.json {
+        names.push(("JsonValue".to_string(), 0));
+        names.push(("JsonError".to_string(), 0));
+    }
     if needs.collections {
         names.push(("StringMap".to_string(), 0));
         names.push(("StringSet".to_string(), 0));
@@ -2524,7 +2545,7 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
 
 fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
-    if needs.io || needs.fs || needs.num || needs.process || needs.result {
+    if needs.io || needs.fs || needs.num || needs.process || needs.json || needs.result {
         names.push(("Result".to_string(), 2));
     }
     if needs.env || needs.num || needs.option || needs.array || needs.collections {
@@ -2643,6 +2664,28 @@ fn inject_standard_types(
             }],
         });
     }
+    if needs.json && !structs.iter().any(|item| item.name == "JsonValue") {
+        structs.push(StructType {
+            package: "std.json".to_string(),
+            name: "JsonValue".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "raw".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.json && !structs.iter().any(|item| item.name == "JsonError") {
+        structs.push(StructType {
+            package: "std.json".to_string(),
+            name: "JsonError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
     if needs.collections && !structs.iter().any(|item| item.name == "StringMap") {
         structs.push(StructType {
             package: "std.collections".to_string(),
@@ -2671,7 +2714,7 @@ fn inject_standard_types(
             }],
         });
     }
-    if (needs.io || needs.fs || needs.num || needs.result)
+    if (needs.io || needs.fs || needs.num || needs.json || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
         enums.push(EnumType {
@@ -2690,7 +2733,7 @@ fn inject_standard_types(
             ],
         });
     }
-    if (needs.env || needs.num || needs.option || needs.array)
+    if (needs.env || needs.num || needs.option || needs.array || needs.collections)
         && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {
@@ -2739,6 +2782,12 @@ fn source_uses_hash_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_hash_builtin)
+}
+
+fn source_uses_json_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_json_builtin)
 }
 
 fn source_uses_num_builtin(ast: &SourceFile) -> bool {
@@ -3289,6 +3338,46 @@ fn stmt_uses_hash_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_json_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_json_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_json_builtin(value) || else_body.iter().any(stmt_uses_json_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_json_builtin(value)
+                || body.iter().any(stmt_uses_json_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_json_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_json_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_json_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_json_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_json_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_json_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_json_builtin(condition) || body.iter().any(stmt_uses_json_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_json_builtin(iterable) || body.iter().any(stmt_uses_json_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_json_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_num_builtin(value),
@@ -3559,6 +3648,45 @@ fn expr_uses_hash_builtin(expr: &AstExpr) -> bool {
         AstExpr::Cast { expr, .. } => expr_uses_hash_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_hash_builtin(left) || expr_uses_hash_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_json_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            is_json_builtin_call(callee) || args.iter().any(expr_uses_json_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_json_builtin(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_json_builtin(value)
+                || arms.iter().any(|arm| expr_uses_json_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_json_builtin(condition)
+                || expr_uses_json_builtin(then_branch)
+                || expr_uses_json_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_json_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_json_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_json_builtin(left) || expr_uses_json_builtin(right)
         }
         AstExpr::Name(_)
         | AstExpr::String(_)
@@ -8545,6 +8673,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "json" {
+                    return lower_json_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "collections" {
                     return lower_collections_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8896,6 +9029,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_crypto_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_json_builtin_call(callee) {
+                require_import(path, imports, span, "std.json", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "json builtins do not accept type arguments",
+                    ));
+                }
+                return lower_json_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10482,6 +10628,13 @@ fn is_crypto_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_json_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "json" && matches!(name.as_str(), "parse" | "stringify")
+    )
+}
+
 fn is_collections_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -10697,6 +10850,81 @@ fn lower_crypto_builtin(
         _ => unreachable!("crypto builtin dispatcher only passes known calls"),
     };
     Ok((ValueType::String, expr))
+}
+
+fn lower_json_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("json builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "json");
+    let [value_arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`json.{name}` expects exactly one argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (value_type, value) = lower_value_expr(
+        path, value_arg, scope, imports, signatures, structs, enums, span,
+    )?;
+    match name.as_str() {
+        "parse" => {
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.parse` expects a string value",
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("JsonValue".to_string(), Vec::new()),
+                        ValueType::Struct("JsonError".to_string(), Vec::new()),
+                    ],
+                ),
+                ValueExpr::JsonParse {
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "stringify" => {
+            let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
+            if value_type != json_value {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.stringify` expects a JsonValue value",
+                    &json_value,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::String,
+                ValueExpr::JsonStringify {
+                    value: Box::new(value),
+                },
+            ))
+        }
+        _ => unreachable!("json builtin dispatcher only passes known calls"),
+    }
 }
 
 fn lower_collections_builtin(
@@ -14627,6 +14855,12 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "sha512" if imports.iter().any(|item| item == "std.crypto.sha512") => {
             vec!["crypto".to_string(), "sha512".to_string()]
         }
+        "parse" if imports.iter().any(|item| item == "std.json.parse") => {
+            vec!["json".to_string(), "parse".to_string()]
+        }
+        "stringify" if imports.iter().any(|item| item == "std.json.stringify") => {
+            vec!["json".to_string(), "stringify".to_string()]
+        }
         "map_new" if imports.iter().any(|item| item == "std.collections.map_new") => {
             vec!["collections".to_string(), "map_new".to_string()]
         }
@@ -16424,6 +16658,94 @@ fn main() -> void {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn accepts_json_builtins() {
+        let source = r#"package app.main
+
+import std.json
+
+fn main() -> Result<void, JsonError> {
+    let parsed: Result<JsonValue, JsonError> = json.parse("{\"lang\":\"nomo\"}")
+    let value: JsonValue = parsed?
+    let text: string = json.stringify(value)
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "JsonValue"));
+        assert!(program.structs.iter().any(|item| item.name == "JsonError"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::JsonParse { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::JsonStringify { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_json_builtin_imports() {
+        let source = r#"package app.main
+
+import std.json.JsonError
+import std.json.JsonValue
+import std.json.parse
+import std.json.stringify
+
+fn main() -> Result<void, JsonError> {
+    let parsed: Result<JsonValue, JsonError> = parse("true")
+    let value: JsonValue = parsed?
+    let text: string = stringify(value)
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::JsonParse { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::JsonStringify { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_json_parse_non_string_argument() {
+        let source = r#"package app.main
+
+import std.json
+
+fn main() -> void {
+    let parsed: Result<JsonValue, JsonError> = json.parse(42)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("json.parse"));
+        assert_eq!(err.expected.as_deref(), Some("string"));
+        assert_eq!(err.found.as_deref(), Some("i64"));
     }
 
     #[test]

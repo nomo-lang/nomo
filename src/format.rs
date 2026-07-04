@@ -11,8 +11,25 @@ use std::path::Path;
 pub fn format_source(path: &Path, source: &str) -> Result<String, Diagnostic> {
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
+    if uses_unprinted_boundary_syntax(&tokens) {
+        return Ok(ensure_single_trailing_newline(source));
+    }
     validate_format_ast(path, &ast)?;
     Ok(Formatter::new(&ast, &tokens, collect_trivia(source)).format())
+}
+
+fn uses_unprinted_boundary_syntax(tokens: &[Token]) -> bool {
+    tokens.iter().any(|token| {
+        matches!(
+            token.kind,
+            TokenKind::Interface | TokenKind::Extern | TokenKind::Unsafe
+        )
+    })
+}
+
+fn ensure_single_trailing_newline(source: &str) -> String {
+    let trimmed = source.trim_end_matches(['\n', '\r']);
+    format!("{trimmed}\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

@@ -76,6 +76,10 @@ impl Parser<'_> {
                     structs.push(self.parse_struct(public)?)
                 }
                 TokenKind::Enum if !parsing_script_body => enums.push(self.parse_enum(public)?),
+                TokenKind::Interface if !parsing_script_body => self.parse_interface()?,
+                TokenKind::Extern if !public && !parsing_script_body => {
+                    self.parse_extern_block()?
+                }
                 TokenKind::Impl if !public && !parsing_script_body => {
                     impls.push(self.parse_impl()?)
                 }
@@ -370,9 +374,117 @@ impl Parser<'_> {
         })
     }
 
+    fn parse_interface(&mut self) -> Result<(), Diagnostic> {
+        self.expect_kind(TokenKind::Interface, "E1500", "expected `interface`")?;
+        self.expect_ident("expected interface name")?;
+        self.expect_kind(
+            TokenKind::LBrace,
+            "E1501",
+            "expected `{` before interface methods",
+        )?;
+        self.expect_newline("expected newline after `{`")?;
+        loop {
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::RBrace => {
+                    self.advance();
+                    self.consume_newline();
+                    return Ok(());
+                }
+                TokenKind::Fn => self.parse_interface_method_signature()?,
+                TokenKind::Eof => {
+                    return Err(self.error(
+                        "E1502",
+                        "unterminated interface body; expected `}`",
+                        1,
+                    ));
+                }
+                _ => {
+                    return Err(self.error(
+                        "E1503",
+                        "expected interface method signature or `}`",
+                        self.peek().length(),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn parse_interface_method_signature(&mut self) -> Result<(), Diagnostic> {
+        self.expect_kind(TokenKind::Fn, "E1504", "expected `fn`")?;
+        self.expect_ident("expected interface method name")?;
+        self.skip_balanced_parens("E1505", "expected `(` after interface method name")?;
+        if matches!(self.peek().kind, TokenKind::Arrow) {
+            self.advance();
+            self.parse_type_ref()?;
+        }
+        self.expect_newline("expected newline after interface method signature")
+    }
+
+    fn parse_extern_block(&mut self) -> Result<(), Diagnostic> {
+        self.expect_kind(TokenKind::Extern, "E1510", "expected `extern`")?;
+        match self.peek().kind.clone() {
+            TokenKind::String(abi) if abi == "C" => {
+                self.advance();
+            }
+            _ => {
+                return Err(self.error("E1511", "expected extern ABI string `\"C\"`", 1));
+            }
+        }
+        self.expect_kind(
+            TokenKind::LBrace,
+            "E1512",
+            "expected `{` before extern declarations",
+        )?;
+        self.expect_newline("expected newline after `{`")?;
+        loop {
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::RBrace => {
+                    self.advance();
+                    self.consume_newline();
+                    return Ok(());
+                }
+                TokenKind::Fn => self.parse_extern_function_signature()?,
+                TokenKind::Eof => {
+                    return Err(self.error("E1513", "unterminated extern block; expected `}`", 1));
+                }
+                _ => {
+                    return Err(self.error(
+                        "E1514",
+                        "expected extern function declaration or `}`",
+                        self.peek().length(),
+                    ));
+                }
+            }
+        }
+    }
+
+    fn parse_extern_function_signature(&mut self) -> Result<(), Diagnostic> {
+        self.expect_kind(TokenKind::Fn, "E1515", "expected `fn`")?;
+        self.expect_ident("expected extern function name")?;
+        self.expect_kind(
+            TokenKind::LParen,
+            "E1516",
+            "expected `(` after extern function name",
+        )?;
+        self.parse_params()?;
+        if matches!(self.peek().kind, TokenKind::Arrow) {
+            self.advance();
+            self.parse_type_ref()?;
+        }
+        self.expect_newline("expected newline after extern function declaration")
+    }
+
     fn parse_impl(&mut self) -> Result<ImplBlock, Diagnostic> {
         self.expect_kind(TokenKind::Impl, "E0250", "expected `impl`")?;
-        let type_name = self.parse_type_ref()?;
+        let first_type = self.parse_type_ref()?;
+        let type_name = if matches!(self.peek().kind, TokenKind::For) {
+            self.advance();
+            self.parse_type_ref()?
+        } else {
+            first_type
+        };
         if type_name.path.len() != 1 || !type_name.args.is_empty() {
             return Err(self.error(
                 "E0251",
@@ -524,6 +636,9 @@ impl Parser<'_> {
         }
         if matches!(token.kind, TokenKind::Defer) {
             return self.parse_defer_stmt(token);
+        }
+        if matches!(token.kind, TokenKind::Unsafe) {
+            return self.parse_unsafe_stmt(token);
         }
         if matches!(token.kind, TokenKind::Ident(_))
             && (assign_op_from_token(&self.peek_n(1).kind).is_some()
@@ -841,6 +956,49 @@ impl Parser<'_> {
                 text: token.text,
             },
         })
+    }
+
+    fn parse_unsafe_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        self.expect_kind(TokenKind::Unsafe, "E1517", "expected `unsafe`")?;
+        let mut body = self.parse_stmt_block("E1518", "expected `{` before unsafe block")?;
+        if body.len() != 1 {
+            return Err(Diagnostic::new(
+                "E1519",
+                "v0.1 unsafe blocks must contain exactly one statement",
+                self.path,
+                token.line,
+                token.column,
+                token.length(),
+                &token.text,
+            ));
+        }
+        Ok(body.remove(0))
+    }
+
+    fn skip_balanced_parens(
+        &mut self,
+        open_code: &'static str,
+        open_message: &'static str,
+    ) -> Result<(), Diagnostic> {
+        self.expect_kind(TokenKind::LParen, open_code, open_message)?;
+        let mut depth = 1usize;
+        while depth > 0 {
+            match self.peek().kind {
+                TokenKind::LParen => {
+                    depth += 1;
+                    self.advance();
+                }
+                TokenKind::RParen => {
+                    depth -= 1;
+                    self.advance();
+                }
+                TokenKind::Eof => {
+                    return Err(self.error(open_code, "unterminated parenthesized list", 1));
+                }
+                _ => self.advance(),
+            }
+        }
+        Ok(())
     }
 
     fn parse_stmt_block(
@@ -1681,8 +1839,12 @@ fn postfix_op_from_token(kind: &TokenKind) -> Option<PostfixOp> {
 fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
     matches!(
         kind,
-        TokenKind::Struct | TokenKind::Enum | TokenKind::Const | TokenKind::Fn
-    ) || (!public && matches!(kind, TokenKind::Impl))
+        TokenKind::Struct
+            | TokenKind::Enum
+            | TokenKind::Interface
+            | TokenKind::Const
+            | TokenKind::Fn
+    ) || (!public && matches!(kind, TokenKind::Impl | TokenKind::Extern))
 }
 
 #[cfg(test)]

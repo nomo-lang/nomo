@@ -1,0 +1,22 @@
+package app.main
+
+import std.io
+
+pub interface Display {
+    fn to_string(self) -> string
+}
+
+struct User {
+    name: string
+}
+
+impl Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+fn main() -> void {
+    let user: User = User { name: "interface display ok" }
+    io.println(user.to_string())
+}

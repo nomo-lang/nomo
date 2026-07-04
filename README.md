@@ -299,6 +299,13 @@ and `and_then`. `Result.map`, `Result.map_err`, and `Result.and_then` accept
 named, unqualified, non-generic converter functions in v0.1; `and_then`
 requires the converter to return the same error type.
 
+Nomo includes minimal boundary syntax for native integration and static
+abstractions. `interface` declarations and `impl Interface for Type` blocks are
+accepted for statically dispatched methods; full generic constraints, dynamic
+dispatch, associated types and blanket impls are not part of v0.1. `extern "C"`
+blocks plus `unsafe { ... }` support the initial C FFI path, currently including
+string calls to C `puts`.
+
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
 `fs.write_string`, `fs.read_bytes`, `fs.write_bytes`, `fs.exists`,
 `fs.metadata`, `fs.create_dir`, `fs.remove_dir`, `fs.read_dir`, `fs.open`,

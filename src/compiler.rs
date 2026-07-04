@@ -15,6 +15,7 @@ const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
 const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
+const BUILTIN_FFI_PUTS_EXPR: &str = "__nomo_ffi_puts";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
@@ -9288,6 +9289,56 @@ fn lower_value_expr_with_expected(
                 }
             }
             let Some(template_signature) = signatures.get(name) else {
+                if name == "puts" {
+                    if !type_args.is_empty() {
+                        return Err(type_mismatch(
+                            path,
+                            span,
+                            "extern function `puts` does not accept type arguments",
+                        ));
+                    }
+                    let [arg] = args.as_slice() else {
+                        return Err(Diagnostic::new(
+                            "E1519",
+                            "extern function `puts` expects 1 argument",
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    };
+                    let (arg_type, lowered) = lower_value_expr_with_expected(
+                        path,
+                        arg,
+                        scope,
+                        imports,
+                        signatures,
+                        structs,
+                        enums,
+                        Some(&ValueType::String),
+                        span,
+                    )?;
+                    if arg_type != ValueType::String {
+                        return Err(type_mismatch(
+                            path,
+                            span,
+                            "extern function `puts` expects a `string` argument",
+                        ));
+                    }
+                    let return_type = if matches!(expected, Some(ValueType::Void)) {
+                        ValueType::Void
+                    } else {
+                        ValueType::I32
+                    };
+                    return Ok((
+                        return_type,
+                        ValueExpr::Call {
+                            name: BUILTIN_FFI_PUTS_EXPR.to_string(),
+                            args: vec![lowered],
+                        },
+                    ));
+                }
                 if scope.contains_key(name) {
                     return Err(Diagnostic::new(
                         "E0305",

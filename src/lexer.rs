@@ -15,6 +15,9 @@ pub enum TokenKind {
     Import,
     Pub,
     Impl,
+    Interface,
+    Unsafe,
+    Extern,
     Fn,
     Struct,
     Enum,
@@ -463,6 +466,9 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         "import" => TokenKind::Import,
                         "pub" => TokenKind::Pub,
                         "impl" => TokenKind::Impl,
+                        "interface" => TokenKind::Interface,
+                        "unsafe" => TokenKind::Unsafe,
+                        "extern" => TokenKind::Extern,
                         "fn" => TokenKind::Fn,
                         "struct" => TokenKind::Struct,
                         "enum" => TokenKind::Enum,
@@ -549,10 +555,7 @@ fn is_ident_continue(ch: char) -> bool {
 }
 
 fn is_reserved_word(value: &str) -> bool {
-    matches!(
-        value,
-        "interface" | "unsafe" | "extern" | "export" | "go" | "chan" | "null"
-    )
+    matches!(value, "export" | "go" | "chan" | "null")
 }
 
 #[cfg(test)]
@@ -919,7 +922,7 @@ Eof"#
 
     #[test]
     fn rejects_reserved_future_words() {
-        for word in ["interface", "unsafe", "extern", "export", "go", "chan"] {
+        for word in ["export", "go", "chan"] {
             let source = format!("let {word}: i32 = 1\n");
             let err = lex(Path::new("main.nomo"), &source).unwrap_err();
             assert_eq!(err.code, "E0104");

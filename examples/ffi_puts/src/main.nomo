@@ -1,0 +1,11 @@
+package app.main
+
+extern "C" {
+    fn puts(message: string) -> i32
+}
+
+fn main() -> void {
+    unsafe {
+        puts("ffi puts ok")
+    }
+}

@@ -35,6 +35,13 @@ the same code.
 - [E0107](E0107.md) - character literal has too many characters
 - [E0108](E0108.md) - unterminated block comment
 - [E0200](E0200.md) - missing package declaration
+- [E0201](E0201.md) - invalid top-level declaration order
+- [E0202](E0202.md) - expected function declaration
+- [E0203](E0203.md) - missing function parameter list
+- [E0206](E0206.md) - missing function body
+- [E0207](E0207.md) - unterminated function body
+- [E0208](E0208.md) - expected expression
+- [E0209](E0209.md) - missing closing parenthesis
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

@@ -1,0 +1,17 @@
+package app.main
+
+import std.io
+import std.testing
+
+fn add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+#[test]
+fn adds_numbers() -> void {
+    testing.assert_equal(add(20, 22), 42)
+}
+
+fn main() -> void {
+    io.println("nomo test basic ok")
+}

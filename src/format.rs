@@ -393,6 +393,10 @@ impl<'a> Formatter<'a> {
     }
 
     fn function(&mut self, function: &Function, indent: usize, in_impl: bool) {
+        if function.is_test {
+            self.emit_leading_comments(function.span.line, indent);
+            self.line(indent, "#[test]");
+        }
         let prefix = if function.public { "pub " } else { "" };
         self.line_at(
             indent,
@@ -1316,6 +1320,16 @@ mod tests {
         let twice = format_source(Path::new("main.nomo"), &once).unwrap();
 
         assert_eq!(once, twice);
+    }
+
+    #[test]
+    fn preserves_test_attributes() {
+        let source = "package app.main\n\n#[test]\nfn adds_numbers(){\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+        let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
+
+        assert_eq!(formatted, twice);
+        assert!(formatted.contains("#[test]\nfn adds_numbers() -> void"));
     }
 
     #[test]

@@ -17,6 +17,8 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_time",
     "std_json",
     "std_http",
+    "nomo_test_basic",
+    "nomo_doc_basic",
     "operators_arithmetic",
     "operators_logical",
     "operators_bitwise",
@@ -33,6 +35,7 @@ fn examples_check_and_run() {
         assert_cli_check(&example);
         assert_cli_build_emit_c(&example);
         assert_cli_run(&example);
+        assert_extra_cli_commands(&example);
 
         let project = discover_project(&example)
             .unwrap_or_else(|err| panic!("failed to discover {}: {err}", example.display()));
@@ -164,6 +167,78 @@ fn assert_cli_run(example: &Path) {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_example_output(example, &output.stdout, &output.stderr);
+}
+
+fn assert_extra_cli_commands(example: &Path) {
+    match example_name(example) {
+        "nomo_test_basic" => assert_cli_test_basic(example),
+        "nomo_doc_basic" => assert_cli_doc_basic(example),
+        _ => {}
+    }
+}
+
+fn assert_cli_test_basic(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run nomo test {}: {err}", example.display()));
+    assert!(
+        output.status.success(),
+        "nomo test failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "running 1 tests\nok app.main.adds_numbers\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_cli_doc_basic(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--json")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run nomo doc --json {}: {err}", example.display()));
+    assert!(
+        output.status.success(),
+        "nomo doc --json failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("\"package\":\"local/nomo_doc_basic\""),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("\"docs\":\"Basic documentation generation example.\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"name\":\"greet\""), "{stdout}");
+    assert!(
+        stdout.contains("\"docs\":\"Greets a caller by name.\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"name\":\"User\""), "{stdout}");
+    assert!(
+        stdout.contains("User-facing record documented from a block doc comment."),
+        "{stdout}"
+    );
 }
 
 fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output {
@@ -347,6 +422,8 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "mut_field_borrow" => "mut field borrow ok\n",
         "mut_methods" => "mut method ok\n",
         "newline_dot" => "newline dot ok\n",
+        "nomo_doc_basic" => "nomo doc basic ok\n",
+        "nomo_test_basic" => "nomo test basic ok\n",
         "option_helpers" => "predicates\nseed\nfallback\nseed!\nseed ok\n",
         "option_question" => "option ? ok\n",
         "option_result_lang_items" => "lang items ok\n",

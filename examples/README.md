@@ -28,6 +28,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
 - `std_http`: `std.http` blocking GET and POST client helpers
+- `nomo_test_basic`: package-level `#[test]` functions and `std.testing` helpers
+- `nomo_doc_basic`: Rust-style doc comments consumed by `nomo doc`
 - `result_chain`: `Result` with `?`
 - `result_helpers`: `Result` predicates, fallback, map, map_err, and and_then helpers with `?`
 - `result_map_err`: `Result.map_err(converter)?` across error types

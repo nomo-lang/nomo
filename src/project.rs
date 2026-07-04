@@ -945,10 +945,12 @@ fn run_single_project_test(
         ));
     }
 
-    let output = Command::new(&bin_path)
+    let run_path = fs::canonicalize(&bin_path)
+        .map_err(|err| format!("failed to resolve {}: {err}", bin_path.display()))?;
+    let output = Command::new(&run_path)
         .current_dir(&project.root)
         .output()
-        .map_err(|err| format!("failed to run {}: {err}", bin_path.display()))?;
+        .map_err(|err| format!("failed to run {}: {err}", run_path.display()))?;
     if output.status.success() {
         return Ok(());
     }

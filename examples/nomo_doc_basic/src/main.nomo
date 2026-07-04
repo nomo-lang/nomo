@@ -1,0 +1,19 @@
+//! Basic documentation generation example.
+package app.main
+
+import std.io
+
+/// Greets a caller by name.
+pub fn greet(name: string) -> string {
+    return "hello"
+}
+
+/** User-facing record documented from a block doc comment. */
+pub struct User {
+    /// User display name.
+    pub name: string
+}
+
+fn main() -> void {
+    io.println("nomo doc basic ok")
+}

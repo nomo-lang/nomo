@@ -119,6 +119,10 @@ pub fn emit_c(program: &Program) -> String {
         emit_string_split_helper(&mut out);
         out.push('\n');
     }
+    if uses_io_read_line(program) {
+        emit_io_read_line_helper(&mut out);
+        out.push('\n');
+    }
     if uses_env_args(program) {
         out.push_str("static int nomo_argc = 0;\n");
         out.push_str("static char **nomo_argv = NULL;\n\n");
@@ -1176,6 +1180,82 @@ fn emit_enum_lifecycle_helpers(out: &mut String, enum_type: &EnumType, enum_args
             out.push_str("    }\n");
         }
     }
+    out.push_str("}\n");
+}
+
+fn emit_io_read_line_helper(out: &mut String) {
+    let io_error = c_struct_ident("IoError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("IoError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("IoError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("IoError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_io_read_line(void) {\n");
+    out.push_str("    size_t capacity = 128;\n");
+    out.push_str("    size_t len = 0;\n");
+    out.push_str("    char *buffer = (char *)malloc(capacity);\n");
+    out.push_str("    if (buffer == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    int ch = 0;\n");
+    out.push_str("    while ((ch = fgetc(stdin)) != EOF) {\n");
+    out.push_str("        if (ch == '\\n') { break; }\n");
+    out.push_str("        if (len + 1 >= capacity) {\n");
+    out.push_str("            capacity *= 2;\n");
+    out.push_str("            char *next = (char *)realloc(buffer, capacity);\n");
+    out.push_str("            if (next == NULL) {\n");
+    out.push_str("                free(buffer);\n");
+    out.push_str("                nomo_panic(\"out of memory\");\n");
+    out.push_str("            }\n");
+    out.push_str("            buffer = next;\n");
+    out.push_str("        }\n");
+    out.push_str("        buffer[len] = (char)ch;\n");
+    out.push_str("        len += 1;\n");
+    out.push_str("    }\n");
+    out.push_str("    if (ch == EOF && len == 0) {\n");
+    out.push_str(
+        "        const char *message = ferror(stdin) ? strerror(errno) : \"end of input\";\n",
+    );
+    out.push_str("        free(buffer);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&io_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (len > 0 && buffer[len - 1] == '\\r') { len -= 1; }\n");
+    out.push_str("    buffer[len] = '\\0';\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = nomo_string_owned(buffer)};\n");
     out.push_str("}\n");
 }
 
@@ -3188,6 +3268,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
         | ValueExpr::EnvArgs
+        | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::ArrayGet { .. }
         | ValueExpr::EnumVariant { payload: None, .. } => false,
@@ -3894,6 +3975,9 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, path);
             out.push(')');
         }
+        ValueExpr::IoReadLine => {
+            out.push_str("nomo_io_read_line()");
+        }
         ValueExpr::FileClose { file } => {
             out.push_str("nomo_file_close(");
             emit_expr(out, file);
@@ -4587,6 +4671,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
         | ValueExpr::EnvArgs
+        | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::FieldAccess { .. } => {}
     }
@@ -4850,6 +4935,7 @@ where
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
         | ValueExpr::EnvArgs
+        | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::FieldAccess { .. } => {}
     }
@@ -5139,6 +5225,9 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "FsError", &[]);
             push_struct_instance(seen, out, "File", &[]);
             collect_expr_struct(path, seen, out);
+        }
+        ValueExpr::IoReadLine => {
+            push_struct_instance(seen, out, "IoError", &[]);
         }
         ValueExpr::FileClose { file } => collect_expr_struct(file, seen, out),
         ValueExpr::ResultMapErr {
@@ -5790,6 +5879,17 @@ fn collect_expr_enum(
         }
         ValueExpr::EnvCwd | ValueExpr::EnvTempDir => {}
         ValueExpr::EnvArgs => {}
+        ValueExpr::IoReadLine => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::String,
+                    ValueType::Struct("IoError".to_string(), Vec::new()),
+                ],
+            );
+        }
         ValueExpr::ArrayNew { .. } => {}
         ValueExpr::ArrayLen { array } => collect_expr_enum(array, seen, out),
         ValueExpr::ArrayGet {
@@ -5879,6 +5979,13 @@ fn uses_fs_open(program: &Program) -> bool {
             .iter()
             .any(|statement| statement_uses_fs_open(statement))
     })
+}
+
+fn uses_io_read_line(program: &Program) -> bool {
+    program
+        .functions
+        .iter()
+        .any(|function| function.body.iter().any(statement_uses_io_read_line))
 }
 
 fn uses_env_get(program: &Program) -> bool {
@@ -6224,6 +6331,10 @@ fn statement_uses_env_temp_dir(statement: &Statement) -> bool {
     statement_contains_expr(statement, expr_is_env_temp_dir)
 }
 
+fn statement_uses_io_read_line(statement: &Statement) -> bool {
+    statement_contains_expr(statement, expr_is_io_read_line)
+}
+
 fn statement_contains_expr(statement: &Statement, predicate: fn(&ValueExpr) -> bool) -> bool {
     match statement {
         Statement::Let { initializer, .. } => expr_contains(initializer, predicate),
@@ -6443,6 +6554,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvArgs
+        | ValueExpr::IoReadLine
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
@@ -6453,6 +6565,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
 
 fn expr_is_env_set(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::EnvSet { .. })
+}
+
+fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::IoReadLine)
 }
 
 fn expr_is_env_cwd(expr: &ValueExpr) -> bool {
@@ -6963,6 +7079,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_read_to_string(value),
     }
@@ -7073,6 +7190,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_write_string(value),
     }
@@ -7177,6 +7295,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
 }
@@ -7282,6 +7401,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
 }
@@ -7390,6 +7510,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
 }
@@ -7599,6 +7720,7 @@ fn collect_expr_array_elements(
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => {}
     }
 }
@@ -8801,6 +8923,58 @@ mod tests {
         assert!(c.contains(
             "nomo_fs_write_string(nomo_string_literal(\"output.txt\"), nomo_string_literal(\"hello\"))"
         ));
+    }
+
+    #[test]
+    fn emits_io_read_line_helper() {
+        let io_error = ValueType::Struct("IoError".to_string(), Vec::new());
+        let result_string_error =
+            ValueType::Enum("Result".to_string(), vec![ValueType::String, io_error]);
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: vec![StructType {
+                package: "std.io".to_string(),
+                name: "IoError".to_string(),
+                type_params: Vec::new(),
+                fields: vec![StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                }],
+            }],
+            enums: vec![EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Let {
+                    name: "read_result".to_string(),
+                    value_type: result_string_error,
+                    initializer: ValueExpr::IoReadLine,
+                }],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_IoError"));
+        assert!(c.contains("static nomo_enum_Result_string_struct_IoError nomo_io_read_line"));
+        assert!(c.contains("nomo_io_read_line()"));
     }
 
     #[test]

@@ -360,6 +360,7 @@ pub enum ValueExpr {
     FsOpen {
         path: Box<ValueExpr>,
     },
+    IoReadLine,
     FileClose {
         file: Box<ValueExpr>,
     },
@@ -1627,6 +1628,7 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
         "std.io"
             | "std.io.print"
             | "std.io.println"
+            | "std.io.read_line"
             | "std.io.eprint"
             | "std.io.eprintln"
             | "std.fs"
@@ -1792,6 +1794,7 @@ fn missing_standard_type_import(
         "Option" => Some("std.option"),
         "Array" => Some("std.array"),
         "FsError" | "File" => Some("std.fs"),
+        "IoError" => Some("std.io"),
         _ => None,
     }
 }
@@ -1928,11 +1931,14 @@ fn validate_standard_type_conflicts(
     structs: &[AstStructDef],
     enums: &[AstEnumDef],
 ) -> Result<(), Diagnostic> {
+    if needs.io {
+        reject_user_std_struct(path, structs, "IoError")?;
+    }
     if needs.fs {
         reject_user_std_struct(path, structs, "FsError")?;
         reject_user_std_struct(path, structs, "File")?;
     }
-    if needs.fs || needs.result {
+    if needs.io || needs.fs || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
     }
     if needs.env || needs.option || needs.array {
@@ -2177,6 +2183,7 @@ fn lower_enums(
 
 #[derive(Debug, Clone, Copy)]
 struct StandardTypeNeeds {
+    io: bool,
     fs: bool,
     env: bool,
     result: bool,
@@ -2186,6 +2193,8 @@ struct StandardTypeNeeds {
 
 fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeeds {
     StandardTypeNeeds {
+        io: imports.iter().any(|item| item == "std.io.read_line")
+            || (imports.iter().any(|item| item == "std.io") && source_uses_io_read_line(ast)),
         fs: imports
             .iter()
             .any(|item| item == "std.fs" || item.starts_with("std.fs."))
@@ -2210,6 +2219,9 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
 
 fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
+    if needs.io {
+        names.push(("IoError".to_string(), 0));
+    }
     if needs.fs {
         names.push(("FsError".to_string(), 0));
         names.push(("File".to_string(), 0));
@@ -2219,7 +2231,7 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
 
 fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
-    if needs.fs || needs.result {
+    if needs.io || needs.fs || needs.result {
         names.push(("Result".to_string(), 2));
     }
     if needs.env || needs.option || needs.array {
@@ -2233,6 +2245,17 @@ fn inject_standard_types(
     structs: &mut Vec<StructType>,
     enums: &mut Vec<EnumType>,
 ) {
+    if needs.io && !structs.iter().any(|item| item.name == "IoError") {
+        structs.push(StructType {
+            package: "std.io".to_string(),
+            name: "IoError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
     if needs.fs && !structs.iter().any(|item| item.name == "FsError") {
         structs.push(StructType {
             package: "std.fs".to_string(),
@@ -2252,7 +2275,7 @@ fn inject_standard_types(
             fields: Vec::new(),
         });
     }
-    if (needs.fs || needs.result) && !enums.iter().any(|item| item.name == "Result") {
+    if (needs.io || needs.fs || needs.result) && !enums.iter().any(|item| item.name == "Result") {
         enums.push(EnumType {
             package: "std.result".to_string(),
             name: "Result".to_string(),
@@ -2293,6 +2316,12 @@ fn source_uses_fs_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_fs_builtin)
+}
+
+fn source_uses_io_read_line(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_io_read_line)
 }
 
 fn source_uses_env_builtin(ast: &SourceFile) -> bool {
@@ -2683,6 +2712,46 @@ fn stmt_uses_fs_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_io_read_line(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_io_read_line(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_io_read_line(value) || else_body.iter().any(stmt_uses_io_read_line),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_io_read_line(value)
+                || body.iter().any(stmt_uses_io_read_line)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_io_read_line))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_io_read_line),
+        Stmt::Expr { expr, .. } => expr_uses_io_read_line(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_io_read_line(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_io_read_line))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_io_read_line),
+            ForVariant::While { condition, body } => {
+                expr_uses_io_read_line(condition) || body.iter().any(stmt_uses_io_read_line)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_io_read_line(iterable) || body.iter().any(stmt_uses_io_read_line)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_io_read_line(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_env_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_env_builtin(value),
@@ -2795,6 +2864,45 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
             expr_uses_fs_builtin(left) || expr_uses_fs_builtin(right)
         }
         AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_io_read_line(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            callee == &["io", "read_line"] || args.iter().any(expr_uses_io_read_line)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_io_read_line(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_io_read_line(value)
+                || arms.iter().any(|arm| expr_uses_io_read_line(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_io_read_line(condition)
+                || expr_uses_io_read_line(then_branch)
+                || expr_uses_io_read_line(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_io_read_line(message),
+        AstExpr::Cast { expr, .. } => expr_uses_io_read_line(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_io_read_line(left) || expr_uses_io_read_line(right)
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
         | AstExpr::String(_)
         | AstExpr::Int(_)
         | AstExpr::Float(_)
@@ -7669,6 +7777,9 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "io" {
+                    return lower_io_builtin(path, &qualified, args, span);
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -7921,6 +8032,17 @@ fn lower_value_expr_with_expected(
                 return lower_fs_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
+            }
+            if is_io_value_builtin_call(callee) {
+                require_import(path, imports, span, "std.io", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "io builtins do not accept type arguments",
+                    ));
+                }
+                return lower_io_builtin(path, callee, args, span);
             }
             if is_env_builtin_call(callee) {
                 require_import(path, imports, span, "std.env", &callee.join("."))?;
@@ -8843,6 +8965,40 @@ fn lower_fs_builtin(
     }
 }
 
+fn lower_io_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    match callee {
+        [module, name] if module == "io" && name == "read_line" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`io.read_line` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::String,
+                        ValueType::Struct("IoError".to_string(), Vec::new()),
+                    ],
+                ),
+                ValueExpr::IoReadLine,
+            ))
+        }
+        _ => unreachable!("io builtin dispatcher only passes known calls"),
+    }
+}
+
 fn lower_env_builtin(
     path: &Path,
     callee: &[String],
@@ -8992,6 +9148,13 @@ fn is_env_builtin_call(callee: &[String]) -> bool {
                     name.as_str(),
                     "args" | "get" | "set" | "cwd" | "home_dir" | "temp_dir"
                 )
+    )
+}
+
+fn is_io_value_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "io" && matches!(name.as_str(), "read_line")
     )
 }
 
@@ -11518,6 +11681,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "open" if imports.iter().any(|item| item == "std.fs.open") => {
             vec!["fs".to_string(), "open".to_string()]
         }
+        "read_line" if imports.iter().any(|item| item == "std.io.read_line") => {
+            vec!["io".to_string(), "read_line".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -12179,6 +12345,61 @@ fn main() -> void {
                 Statement::Eprint(ValueExpr::StringLiteral("err".to_string())),
             ]
         );
+    }
+
+    #[test]
+    fn accepts_io_read_line_builtin() {
+        let source = r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    let result: Result<string, IoError> = io.read_line()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "IoError"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body.as_slice(),
+            [Statement::Let {
+                name,
+                value_type: ValueType::Enum(result_name, args),
+                initializer: ValueExpr::IoReadLine,
+            }] if name == "result"
+                && result_name == "Result"
+                && matches!(
+                    args.as_slice(),
+                    [
+                        ValueType::String,
+                        ValueType::Struct(error_name, error_args),
+                    ] if error_name == "IoError" && error_args.is_empty()
+                )
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_io_read_line_import() {
+        let source = r#"package app.main
+
+import std.io.read_line
+
+fn main() -> void {
+    let result: Result<string, IoError> = read_line()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert_eq!(program.imports, vec!["std.io.read_line"]);
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body.as_slice(),
+            [Statement::Let {
+                initializer: ValueExpr::IoReadLine,
+                ..
+            }]
+        ));
     }
 
     #[test]

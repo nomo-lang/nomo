@@ -1,5 +1,6 @@
 use crate::ast::{
-    ConstDef, EnumDef, Function, ImplBlock, Param, SourceFile, Span, StructDef, TypeRef,
+    ConstDef, EnumDef, EnumVariant, Field, Function, ImplBlock, Param, SourceFile, Span, StructDef,
+    TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
@@ -31,6 +32,8 @@ pub struct SemanticLocation {
 pub enum SemanticSymbolKind {
     Struct,
     Enum,
+    Field,
+    Variant,
     Const,
     Function,
     Method,
@@ -52,7 +55,7 @@ pub fn symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
     let docs = extract_doc_comments(source);
-    Ok(symbols_from_ast(path, &ast, &docs))
+    Ok(symbols_from_ast(path, &ast, &tokens, &docs))
 }
 
 pub fn symbols_for_project_with_overrides(
@@ -103,10 +106,14 @@ pub fn symbol_at_position(
     let Some(name) = identifier_at_position(source, position) else {
         return Ok(None);
     };
-    Ok(symbols_for_text(path, source)?
-        .into_iter()
-        .filter(|symbol| symbol.name == name)
-        .min_by_key(|symbol| symbol.line))
+    let preference = symbol_lookup_preference(path, source, position)?;
+    Ok(resolve_symbol(
+        path,
+        position,
+        &name,
+        symbols_for_text(path, source)?,
+        &preference,
+    ))
 }
 
 pub fn symbol_at_project_position(
@@ -121,7 +128,8 @@ pub fn symbol_at_project_position(
     };
     let overrides = overrides_with_current(path, source, source_overrides);
     let symbols = symbols_for_project_with_overrides(project, &overrides)?;
-    Ok(resolve_symbol(path, position, &name, symbols))
+    let preference = symbol_lookup_preference(path, source, position)?;
+    Ok(resolve_symbol(path, position, &name, symbols, &preference))
 }
 
 pub fn definition_for_text(
@@ -224,6 +232,7 @@ fn resolve_symbol(
     position: TextPosition,
     name: &str,
     symbols: Vec<SemanticSymbol>,
+    preference: &[SemanticSymbolKind],
 ) -> Option<SemanticSymbol> {
     let mut matches = symbols
         .into_iter()
@@ -246,7 +255,7 @@ fn resolve_symbol(
                     .cmp(&right.selection_range.start.character),
             )
     });
-    matches
+    let fallback = matches
         .iter()
         .find(|symbol| {
             symbol.source_path == path && range_contains(symbol.selection_range, position)
@@ -258,7 +267,93 @@ fn resolve_symbol(
                 .find(|symbol| symbol.source_path == path)
                 .cloned()
         })
-        .or_else(|| matches.into_iter().next())
+        .or_else(|| matches.first().cloned());
+    prefer_symbol_kind(fallback, &matches, preference)
+}
+
+fn prefer_symbol_kind(
+    fallback: Option<SemanticSymbol>,
+    matches: &[SemanticSymbol],
+    preference: &[SemanticSymbolKind],
+) -> Option<SemanticSymbol> {
+    for kind in preference {
+        if let Some(symbol) = matches.iter().find(|symbol| symbol.kind == *kind) {
+            return Some(symbol.clone());
+        }
+    }
+    fallback
+}
+
+fn symbol_lookup_preference(
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+) -> Result<Vec<SemanticSymbolKind>, Diagnostic> {
+    let tokens = lex(path, source)?;
+    let Some(index) = ident_token_at_position(&tokens, position) else {
+        return Ok(Vec::new());
+    };
+    let TokenKind::Ident(name) = &tokens[index].kind else {
+        return Ok(Vec::new());
+    };
+    let previous = previous_significant_token(&tokens, index);
+    let next = next_significant_index(&tokens, index, tokens.len()).map(|index| &tokens[index]);
+    let starts_upper = name
+        .chars()
+        .next()
+        .is_some_and(|ch| ch.is_ascii_uppercase());
+
+    if previous.is_some_and(|token| matches!(token.kind, TokenKind::Fn)) {
+        return Ok(vec![
+            SemanticSymbolKind::Method,
+            SemanticSymbolKind::Function,
+        ]);
+    }
+    if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) && starts_upper {
+        return Ok(vec![SemanticSymbolKind::Variant, SemanticSymbolKind::Field]);
+    }
+    if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot))
+        && next.is_some_and(|token| matches!(token.kind, TokenKind::LParen))
+    {
+        return Ok(vec![
+            SemanticSymbolKind::Method,
+            SemanticSymbolKind::Function,
+        ]);
+    }
+    if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) {
+        return Ok(vec![SemanticSymbolKind::Field, SemanticSymbolKind::Method]);
+    }
+    if next.is_some_and(|token| matches!(token.kind, TokenKind::Colon)) {
+        return Ok(vec![SemanticSymbolKind::Field]);
+    }
+    Ok(Vec::new())
+}
+
+fn ident_token_at_position(
+    tokens: &[crate::lexer::Token],
+    position: TextPosition,
+) -> Option<usize> {
+    tokens.iter().position(|token| {
+        matches!(token.kind, TokenKind::Ident(_))
+            && range_contains(token_range_for_lookup(token), position)
+    })
+}
+
+fn token_range_for_lookup(token: &crate::lexer::Token) -> TextRange {
+    match &token.kind {
+        TokenKind::Ident(name) => token_range(token.line, token.column, name),
+        _ => source_line_range(token.line, &token.text),
+    }
+}
+
+fn previous_significant_token(
+    tokens: &[crate::lexer::Token],
+    index: usize,
+) -> Option<&crate::lexer::Token> {
+    (0..index)
+        .rev()
+        .map(|candidate| &tokens[candidate])
+        .find(|token| !matches!(token.kind, TokenKind::Newline | TokenKind::Eof))
 }
 
 fn range_contains(range: TextRange, position: TextPosition) -> bool {
@@ -353,7 +448,12 @@ fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String
     Ok(())
 }
 
-fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol> {
+fn symbols_from_ast(
+    path: &Path,
+    ast: &SourceFile,
+    tokens: &[crate::lexer::Token],
+    docs: &DocComments,
+) -> Vec<SemanticSymbol> {
     let mut symbols = Vec::new();
     for item in &ast.structs {
         symbols.push(SemanticSymbol {
@@ -370,6 +470,7 @@ fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<Se
             range: line_range(&item.span),
             selection_range: name_selection_range(&item.span, &item.name),
         });
+        symbols.extend(field_symbols(path, item, tokens, docs));
     }
     for item in &ast.enums {
         symbols.push(SemanticSymbol {
@@ -386,6 +487,7 @@ fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<Se
             range: line_range(&item.span),
             selection_range: name_selection_range(&item.span, &item.name),
         });
+        symbols.extend(variant_symbols(path, item, tokens, docs));
     }
     for item in &ast.consts {
         symbols.push(SemanticSymbol {
@@ -425,6 +527,190 @@ fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<Se
     symbols
 }
 
+#[derive(Debug, Clone)]
+struct MemberLocation {
+    name: String,
+    line: usize,
+    column: usize,
+    text: String,
+}
+
+fn field_symbols(
+    path: &Path,
+    item: &StructDef,
+    tokens: &[crate::lexer::Token],
+    docs: &DocComments,
+) -> Vec<SemanticSymbol> {
+    let mut locations = struct_field_locations(tokens, item);
+    item.fields
+        .iter()
+        .filter_map(|field| {
+            let location_index = locations
+                .iter()
+                .position(|location| location.name == field.name)?;
+            let location = locations.remove(location_index);
+            Some(member_symbol(
+                path,
+                &location,
+                SemanticSymbolKind::Field,
+                field_signature(&item.name, field),
+                docs.item_docs
+                    .get(&location.line)
+                    .cloned()
+                    .unwrap_or_default(),
+            ))
+        })
+        .collect()
+}
+
+fn variant_symbols(
+    path: &Path,
+    item: &EnumDef,
+    tokens: &[crate::lexer::Token],
+    docs: &DocComments,
+) -> Vec<SemanticSymbol> {
+    let mut locations = enum_variant_locations(tokens, item);
+    item.variants
+        .iter()
+        .filter_map(|variant| {
+            let location_index = locations
+                .iter()
+                .position(|location| location.name == variant.name)?;
+            let location = locations.remove(location_index);
+            Some(member_symbol(
+                path,
+                &location,
+                SemanticSymbolKind::Variant,
+                variant_signature(&item.name, variant),
+                docs.item_docs
+                    .get(&location.line)
+                    .cloned()
+                    .unwrap_or_default(),
+            ))
+        })
+        .collect()
+}
+
+fn member_symbol(
+    path: &Path,
+    location: &MemberLocation,
+    kind: SemanticSymbolKind,
+    signature: String,
+    docs: String,
+) -> SemanticSymbol {
+    SemanticSymbol {
+        source_path: path.to_path_buf(),
+        name: location.name.clone(),
+        kind,
+        signature,
+        docs,
+        line: location.line,
+        range: source_line_range(location.line, &location.text),
+        selection_range: token_range(location.line, location.column, &location.name),
+    }
+}
+
+fn struct_field_locations(tokens: &[crate::lexer::Token], item: &StructDef) -> Vec<MemberLocation> {
+    let Some((start, end)) = declaration_body_bounds(tokens, item.span.line, |kind| {
+        matches!(kind, TokenKind::Struct)
+    }) else {
+        return Vec::new();
+    };
+    let mut locations = Vec::new();
+    for index in start..end {
+        let crate::lexer::Token {
+            kind: TokenKind::Ident(name),
+            line,
+            column,
+            text,
+        } = &tokens[index]
+        else {
+            continue;
+        };
+        if next_significant_index(tokens, index, end)
+            .is_some_and(|next| matches!(tokens[next].kind, TokenKind::Colon))
+        {
+            locations.push(MemberLocation {
+                name: name.clone(),
+                line: *line,
+                column: *column,
+                text: text.clone(),
+            });
+        }
+    }
+    locations
+}
+
+fn enum_variant_locations(tokens: &[crate::lexer::Token], item: &EnumDef) -> Vec<MemberLocation> {
+    let Some((start, end)) = declaration_body_bounds(tokens, item.span.line, |kind| {
+        matches!(kind, TokenKind::Enum)
+    }) else {
+        return Vec::new();
+    };
+    let mut locations = Vec::new();
+    for index in start..end {
+        let crate::lexer::Token {
+            kind: TokenKind::Ident(name),
+            line,
+            column,
+            text,
+        } = &tokens[index]
+        else {
+            continue;
+        };
+        if matches!(
+            tokens.get(index + 1).map(|token| &token.kind),
+            Some(TokenKind::LParen | TokenKind::Newline | TokenKind::RBrace)
+        ) {
+            locations.push(MemberLocation {
+                name: name.clone(),
+                line: *line,
+                column: *column,
+                text: text.clone(),
+            });
+        }
+    }
+    locations
+}
+
+fn declaration_body_bounds(
+    tokens: &[crate::lexer::Token],
+    line: usize,
+    keyword: impl Fn(&TokenKind) -> bool,
+) -> Option<(usize, usize)> {
+    let keyword_index = tokens
+        .iter()
+        .position(|token| token.line == line && keyword(&token.kind))?;
+    let name_index = next_significant_index(tokens, keyword_index, tokens.len())?;
+    if !matches!(tokens[name_index].kind, TokenKind::Ident(_)) {
+        return None;
+    }
+    let open_index = (name_index + 1..tokens.len())
+        .find(|index| matches!(tokens[*index].kind, TokenKind::LBrace))?;
+    let mut depth = 0usize;
+    for (index, token) in tokens.iter().enumerate().skip(open_index) {
+        match token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return Some((open_index + 1, index));
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn next_significant_index(
+    tokens: &[crate::lexer::Token],
+    index: usize,
+    end: usize,
+) -> Option<usize> {
+    (index + 1..end).find(|next| !matches!(tokens[*next].kind, TokenKind::Newline))
+}
+
 fn method_symbols(path: &Path, impl_block: &ImplBlock, docs: &DocComments) -> Vec<SemanticSymbol> {
     let receiver = type_ref(&impl_block.type_name);
     impl_block
@@ -454,6 +740,17 @@ fn line_range(span: &Span) -> TextRange {
         end: TextPosition {
             line,
             character: span.text.chars().map(|ch| ch.len_utf16() as u32).sum(),
+        },
+    }
+}
+
+fn source_line_range(line: usize, text: &str) -> TextRange {
+    let line = line.saturating_sub(1) as u32;
+    TextRange {
+        start: TextPosition { line, character: 0 },
+        end: TextPosition {
+            line,
+            character: text.chars().map(|ch| ch.len_utf16() as u32).sum(),
         },
     }
 }
@@ -571,6 +868,22 @@ fn method_signature(receiver: &str, function: &Function) -> String {
     )
 }
 
+fn field_signature(owner: &str, field: &Field) -> String {
+    format!(
+        "{}field {owner}.{}: {}",
+        visibility_prefix(field.public),
+        field.name,
+        type_ref(&field.type_ref)
+    )
+}
+
+fn variant_signature(owner: &str, variant: &EnumVariant) -> String {
+    match &variant.payload {
+        Some(payload) => format!("variant {owner}.{}({})", variant.name, type_ref(payload)),
+        None => format!("variant {owner}.{}", variant.name),
+    }
+}
+
 fn param(param: &Param) -> String {
     let mutable = if param.mutable { "mut " } else { "" };
     format!("{mutable}{}: {}", param.name, type_ref(&param.type_ref))
@@ -684,13 +997,15 @@ mod tests {
                 .iter()
                 .map(|symbol| symbol.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["User", "add", "email"]
+            vec!["User", "email", "add", "email"]
         );
-        assert_eq!(symbols[1].kind, SemanticSymbolKind::Function);
-        assert_eq!(symbols[1].signature, "pub fn add(a: i64, b: i64) -> i64");
-        assert_eq!(symbols[1].docs, "Adds numbers.");
+        assert_eq!(symbols[1].kind, SemanticSymbolKind::Field);
+        assert_eq!(symbols[1].signature, "field User.email: string");
+        assert_eq!(symbols[2].kind, SemanticSymbolKind::Function);
+        assert_eq!(symbols[2].signature, "pub fn add(a: i64, b: i64) -> i64");
+        assert_eq!(symbols[2].docs, "Adds numbers.");
         assert_eq!(
-            symbols[1].selection_range,
+            symbols[2].selection_range,
             TextRange {
                 start: TextPosition {
                     line: 3,
@@ -703,7 +1018,7 @@ mod tests {
             }
         );
         assert_eq!(
-            symbols[2].signature,
+            symbols[3].signature,
             "pub fn User.email(self: User) -> string"
         );
     }
@@ -733,6 +1048,66 @@ mod tests {
                 end: TextPosition {
                     line: 2,
                     character: 6,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn definition_returns_field_declaration_range() {
+        let source = "package app.main\n\nstruct User {\n    email: string\n}\n\nfn main() -> void {\n    let user: User = User { email: \"hi\" }\n}\n";
+
+        let definition = definition_for_text(
+            Path::new("main.nomo"),
+            source,
+            TextPosition {
+                line: 7,
+                character: 30,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            definition,
+            TextRange {
+                start: TextPosition {
+                    line: 3,
+                    character: 4,
+                },
+                end: TextPosition {
+                    line: 3,
+                    character: 9,
+                },
+            }
+        );
+    }
+
+    #[test]
+    fn definition_returns_enum_variant_declaration_range() {
+        let source = "package app.main\n\nenum Status {\n    Ok\n    Err(string)\n}\n\nfn main() -> void {\n    let status: Status = Status.Err(\"bad\")\n}\n";
+
+        let definition = definition_for_text(
+            Path::new("main.nomo"),
+            source,
+            TextPosition {
+                line: 8,
+                character: 33,
+            },
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            definition,
+            TextRange {
+                start: TextPosition {
+                    line: 4,
+                    character: 4,
+                },
+                end: TextPosition {
+                    line: 4,
+                    character: 7,
                 },
             }
         );

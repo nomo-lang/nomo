@@ -1639,7 +1639,8 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::For { span, .. }
         | Stmt::Break { span, .. }
         | Stmt::Continue { span, .. }
-        | Stmt::Defer { span, .. } => span,
+        | Stmt::Defer { span, .. }
+        | Stmt::Unsafe { span, .. } => span,
     }
 }
 
@@ -1791,6 +1792,12 @@ fn validate_stmt_type_imports(
             }
         },
         Stmt::Defer { stmt, .. } => validate_stmt_type_imports(path, imports, stmt),
+        Stmt::Unsafe { body, .. } => {
+            for stmt in body {
+                validate_stmt_type_imports(path, imports, stmt)?;
+            }
+            Ok(())
+        }
     }
 }
 
@@ -3316,6 +3323,14 @@ fn collect_stmt_generic_function_instances(
         Stmt::Defer { stmt, .. } => collect_stmt_generic_function_instances(
             path, stmt, imports, signatures, structs, enums, out,
         ),
+        Stmt::Unsafe { body, .. } => {
+            for stmt in body {
+                collect_stmt_generic_function_instances(
+                    path, stmt, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
         Stmt::Postfix { .. } => Ok(()),
         Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
     }
@@ -3533,6 +3548,7 @@ fn stmt_uses_fs_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_fs_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_fs_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3573,6 +3589,7 @@ fn stmt_uses_io_read_line(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_io_read_line(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_io_read_line),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3613,6 +3630,7 @@ fn stmt_uses_env_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_env_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_env_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3653,6 +3671,7 @@ fn stmt_uses_process_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_process_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_process_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3693,6 +3712,7 @@ fn stmt_uses_hash_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_hash_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_hash_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3733,6 +3753,7 @@ fn stmt_uses_json_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_json_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_json_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3773,6 +3794,7 @@ fn stmt_uses_regex_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_regex_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_regex_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3813,6 +3835,7 @@ fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_num_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_num_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3853,6 +3876,7 @@ fn stmt_uses_time_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_time_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_time_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -3893,6 +3917,7 @@ fn stmt_uses_array_builtin(stmt: &Stmt) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_array_builtin(stmt),
+        Stmt::Unsafe { body, .. } => body.iter().any(stmt_uses_array_builtin),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -4398,6 +4423,9 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_core_prelude_variant(stmt, enum_name),
+        Stmt::Unsafe { body, .. } => body
+            .iter()
+            .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name)),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }
@@ -5108,6 +5136,31 @@ fn lower_stmt(
             Ok(Statement::Defer {
                 call: DeferredCall::Expr(call),
             })
+        }
+        Stmt::Unsafe { body, span } => {
+            let [stmt] = body.as_slice() else {
+                return Err(Diagnostic::new(
+                    "E1519",
+                    "v0.1 unsafe blocks must contain exactly one statement",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            lower_stmt(
+                path,
+                stmt,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                is_tail,
+                loop_depth,
+            )
         }
         Stmt::Expr { expr, span } => {
             let (expr_type, lowered) = lower_value_expr_with_expected(

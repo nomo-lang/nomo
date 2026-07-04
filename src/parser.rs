@@ -1,7 +1,7 @@
 use crate::ast::{
-    AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, Field, ForVariant, Function,
-    ImplBlock, MatchArm, MatchStmtArm, Param, PostfixOp, SourceFile, Span, Stmt, StructDef,
-    TypeRef,
+    AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, ExternBlock, Field, ForVariant,
+    Function, FunctionSignature, ImplBlock, InterfaceDef, MatchArm, MatchStmtArm, Param, PostfixOp,
+    SourceFile, Span, Stmt, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -48,6 +48,8 @@ impl Parser<'_> {
 
         let mut structs = Vec::new();
         let mut enums = Vec::new();
+        let mut interfaces = Vec::new();
+        let mut extern_blocks = Vec::new();
         let mut impls = Vec::new();
         let mut consts = Vec::new();
         let mut functions = Vec::new();
@@ -76,9 +78,11 @@ impl Parser<'_> {
                     structs.push(self.parse_struct(public)?)
                 }
                 TokenKind::Enum if !parsing_script_body => enums.push(self.parse_enum(public)?),
-                TokenKind::Interface if !parsing_script_body => self.parse_interface()?,
+                TokenKind::Interface if !parsing_script_body => {
+                    interfaces.push(self.parse_interface(public)?)
+                }
                 TokenKind::Extern if !public && !parsing_script_body => {
-                    self.parse_extern_block()?
+                    extern_blocks.push(self.parse_extern_block()?)
                 }
                 TokenKind::Impl if !public && !parsing_script_body => {
                     impls.push(self.parse_impl()?)
@@ -131,6 +135,8 @@ impl Parser<'_> {
             imports,
             structs,
             enums,
+            interfaces,
+            extern_blocks,
             impls,
             consts,
             functions,
@@ -374,24 +380,31 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_interface(&mut self) -> Result<(), Diagnostic> {
+    fn parse_interface(&mut self, public: bool) -> Result<InterfaceDef, Diagnostic> {
+        let interface_token = self.peek().clone();
         self.expect_kind(TokenKind::Interface, "E1500", "expected `interface`")?;
-        self.expect_ident("expected interface name")?;
+        let name = self.expect_ident("expected interface name")?;
         self.expect_kind(
             TokenKind::LBrace,
             "E1501",
             "expected `{` before interface methods",
         )?;
         self.expect_newline("expected newline after `{`")?;
+        let mut methods = Vec::new();
         loop {
             self.skip_newlines();
             match self.peek().kind {
                 TokenKind::RBrace => {
                     self.advance();
                     self.consume_newline();
-                    return Ok(());
+                    return Ok(InterfaceDef {
+                        public,
+                        name,
+                        methods,
+                        span: token_span(&interface_token),
+                    });
                 }
-                TokenKind::Fn => self.parse_interface_method_signature()?,
+                TokenKind::Fn => methods.push(self.parse_interface_method_signature()?),
                 TokenKind::Eof => {
                     return Err(self.error(
                         "E1502",
@@ -410,42 +423,51 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_interface_method_signature(&mut self) -> Result<(), Diagnostic> {
-        self.expect_kind(TokenKind::Fn, "E1504", "expected `fn`")?;
-        self.expect_ident("expected interface method name")?;
-        self.skip_balanced_parens("E1505", "expected `(` after interface method name")?;
-        if matches!(self.peek().kind, TokenKind::Arrow) {
-            self.advance();
-            self.parse_type_ref()?;
-        }
+    fn parse_interface_method_signature(&mut self) -> Result<FunctionSignature, Diagnostic> {
+        let signature = self.parse_function_signature(
+            "E1504",
+            "expected `fn`",
+            "expected interface method name",
+            "E1505",
+            "expected `(` after interface method name",
+            true,
+        )?;
         self.expect_newline("expected newline after interface method signature")
+            .map(|_| signature)
     }
 
-    fn parse_extern_block(&mut self) -> Result<(), Diagnostic> {
+    fn parse_extern_block(&mut self) -> Result<ExternBlock, Diagnostic> {
+        let extern_token = self.peek().clone();
         self.expect_kind(TokenKind::Extern, "E1510", "expected `extern`")?;
-        match self.peek().kind.clone() {
+        let abi = match self.peek().kind.clone() {
             TokenKind::String(abi) if abi == "C" => {
                 self.advance();
+                abi
             }
             _ => {
                 return Err(self.error("E1511", "expected extern ABI string `\"C\"`", 1));
             }
-        }
+        };
         self.expect_kind(
             TokenKind::LBrace,
             "E1512",
             "expected `{` before extern declarations",
         )?;
         self.expect_newline("expected newline after `{`")?;
+        let mut functions = Vec::new();
         loop {
             self.skip_newlines();
             match self.peek().kind {
                 TokenKind::RBrace => {
                     self.advance();
                     self.consume_newline();
-                    return Ok(());
+                    return Ok(ExternBlock {
+                        abi,
+                        functions,
+                        span: token_span(&extern_token),
+                    });
                 }
-                TokenKind::Fn => self.parse_extern_function_signature()?,
+                TokenKind::Fn => functions.push(self.parse_extern_function_signature()?),
                 TokenKind::Eof => {
                     return Err(self.error("E1513", "unterminated extern block; expected `}`", 1));
                 }
@@ -460,30 +482,27 @@ impl Parser<'_> {
         }
     }
 
-    fn parse_extern_function_signature(&mut self) -> Result<(), Diagnostic> {
-        self.expect_kind(TokenKind::Fn, "E1515", "expected `fn`")?;
-        self.expect_ident("expected extern function name")?;
-        self.expect_kind(
-            TokenKind::LParen,
+    fn parse_extern_function_signature(&mut self) -> Result<FunctionSignature, Diagnostic> {
+        let signature = self.parse_function_signature(
+            "E1515",
+            "expected `fn`",
+            "expected extern function name",
             "E1516",
             "expected `(` after extern function name",
+            false,
         )?;
-        self.parse_params()?;
-        if matches!(self.peek().kind, TokenKind::Arrow) {
-            self.advance();
-            self.parse_type_ref()?;
-        }
         self.expect_newline("expected newline after extern function declaration")
+            .map(|_| signature)
     }
 
     fn parse_impl(&mut self) -> Result<ImplBlock, Diagnostic> {
         self.expect_kind(TokenKind::Impl, "E0250", "expected `impl`")?;
         let first_type = self.parse_type_ref()?;
-        let type_name = if matches!(self.peek().kind, TokenKind::For) {
+        let (interface_name, type_name) = if matches!(self.peek().kind, TokenKind::For) {
             self.advance();
-            self.parse_type_ref()?
+            (Some(first_type), self.parse_type_ref()?)
         } else {
-            first_type
+            (None, first_type)
         };
         if type_name.path.len() != 1 || !type_name.args.is_empty() {
             return Err(self.error(
@@ -526,7 +545,41 @@ impl Parser<'_> {
             }
         }
         self.impl_self_type = previous_self;
-        Ok(ImplBlock { type_name, methods })
+        Ok(ImplBlock {
+            interface_name,
+            type_name,
+            methods,
+        })
+    }
+
+    fn parse_function_signature(
+        &mut self,
+        fn_code: &'static str,
+        fn_message: &'static str,
+        name_message: &'static str,
+        paren_code: &'static str,
+        paren_message: &'static str,
+        allow_bare_self: bool,
+    ) -> Result<FunctionSignature, Diagnostic> {
+        let function_token = self.peek().clone();
+        self.expect_kind(TokenKind::Fn, fn_code, fn_message)?;
+        let name = self.expect_ident(name_message)?;
+        let type_params = self.parse_type_params()?;
+        self.expect_kind(TokenKind::LParen, paren_code, paren_message)?;
+        let params = self.parse_params_with_bare_self(allow_bare_self)?;
+        let return_type = if matches!(self.peek().kind, TokenKind::Arrow) {
+            self.advance();
+            self.parse_type_ref()?
+        } else {
+            void_type_ref()
+        };
+        Ok(FunctionSignature {
+            name,
+            type_params,
+            params,
+            return_type,
+            span: token_span(&function_token),
+        })
     }
 
     fn consume_pub(&mut self) -> bool {
@@ -539,6 +592,13 @@ impl Parser<'_> {
     }
 
     fn parse_params(&mut self) -> Result<Vec<Param>, Diagnostic> {
+        self.parse_params_with_bare_self(false)
+    }
+
+    fn parse_params_with_bare_self(
+        &mut self,
+        allow_bare_self: bool,
+    ) -> Result<Vec<Param>, Diagnostic> {
         let mut params = Vec::new();
         if matches!(self.peek().kind, TokenKind::RParen) {
             self.advance();
@@ -553,12 +613,17 @@ impl Parser<'_> {
                 false
             };
             let name = self.expect_ident("expected parameter name")?;
-            let type_ref = if name == "self" && self.impl_self_type.is_some() {
+            let type_ref = if name == "self" && (self.impl_self_type.is_some() || allow_bare_self) {
                 if matches!(self.peek().kind, TokenKind::Colon) {
                     self.advance();
                     self.parse_type_ref()?
+                } else if let Some(self_type) = &self.impl_self_type {
+                    self_type.clone()
                 } else {
-                    self.impl_self_type.clone().expect("checked above")
+                    TypeRef {
+                        path: vec!["Self".to_string()],
+                        args: Vec::new(),
+                    }
                 }
             } else {
                 self.expect_kind(
@@ -960,7 +1025,7 @@ impl Parser<'_> {
 
     fn parse_unsafe_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
         self.expect_kind(TokenKind::Unsafe, "E1517", "expected `unsafe`")?;
-        let mut body = self.parse_stmt_block("E1518", "expected `{` before unsafe block")?;
+        let body = self.parse_stmt_block("E1518", "expected `{` before unsafe block")?;
         if body.len() != 1 {
             return Err(Diagnostic::new(
                 "E1519",
@@ -972,33 +1037,15 @@ impl Parser<'_> {
                 &token.text,
             ));
         }
-        Ok(body.remove(0))
-    }
-
-    fn skip_balanced_parens(
-        &mut self,
-        open_code: &'static str,
-        open_message: &'static str,
-    ) -> Result<(), Diagnostic> {
-        self.expect_kind(TokenKind::LParen, open_code, open_message)?;
-        let mut depth = 1usize;
-        while depth > 0 {
-            match self.peek().kind {
-                TokenKind::LParen => {
-                    depth += 1;
-                    self.advance();
-                }
-                TokenKind::RParen => {
-                    depth -= 1;
-                    self.advance();
-                }
-                TokenKind::Eof => {
-                    return Err(self.error(open_code, "unterminated parenthesized list", 1));
-                }
-                _ => self.advance(),
-            }
-        }
-        Ok(())
+        Ok(Stmt::Unsafe {
+            body,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
     }
 
     fn parse_stmt_block(
@@ -1803,6 +1850,13 @@ fn token_span(token: &Token) -> Span {
         column: token.column,
         length: token.length(),
         text: token.text.clone(),
+    }
+}
+
+fn void_type_ref() -> TypeRef {
+    TypeRef {
+        path: vec!["void".to_string()],
+        args: Vec::new(),
     }
 }
 
@@ -2858,6 +2912,8 @@ mod tests {
             },
         },
     ],
+    interfaces: [],
+    extern_blocks: [],
     impls: [],
     consts: [],
     functions: [

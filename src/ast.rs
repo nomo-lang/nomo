@@ -4,6 +4,8 @@ pub struct SourceFile {
     pub imports: Vec<Vec<String>>,
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
+    pub interfaces: Vec<InterfaceDef>,
+    pub extern_blocks: Vec<ExternBlock>,
     pub impls: Vec<ImplBlock>,
     pub consts: Vec<ConstDef>,
     pub functions: Vec<Function>,
@@ -44,7 +46,32 @@ pub struct EnumVariant {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct InterfaceDef {
+    pub public: bool,
+    pub name: String,
+    pub methods: Vec<FunctionSignature>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternBlock {
+    pub abi: String,
+    pub functions: Vec<FunctionSignature>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct FunctionSignature {
+    pub name: String,
+    pub type_params: Vec<String>,
+    pub params: Vec<Param>,
+    pub return_type: TypeRef,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ImplBlock {
+    pub interface_name: Option<TypeRef>,
     pub type_name: TypeRef,
     pub methods: Vec<Function>,
 }
@@ -144,6 +171,10 @@ pub enum Stmt {
     },
     Defer {
         stmt: Box<Stmt>,
+        span: Span,
+    },
+    Unsafe {
+        body: Vec<Stmt>,
         span: Span,
     },
 }

@@ -1,6 +1,7 @@
 use crate::ast::{
-    AssignOp, BinaryOp, ConstDef, EnumDef, Expr, Field, ForVariant, Function, ImplBlock, MatchArm,
-    MatchStmtArm, Param, PostfixOp, SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
+    AssignOp, BinaryOp, ConstDef, EnumDef, Expr, ExternBlock, Field, ForVariant, Function,
+    FunctionSignature, ImplBlock, InterfaceDef, MatchArm, MatchStmtArm, Param, PostfixOp,
+    SourceFile, Stmt, StructDef, TypeRef, UnaryOp,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
@@ -11,25 +12,8 @@ use std::path::Path;
 pub fn format_source(path: &Path, source: &str) -> Result<String, Diagnostic> {
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
-    if uses_unprinted_boundary_syntax(&tokens) {
-        return Ok(ensure_single_trailing_newline(source));
-    }
     validate_format_ast(path, &ast)?;
     Ok(Formatter::new(&ast, &tokens, collect_trivia(source)).format())
-}
-
-fn uses_unprinted_boundary_syntax(tokens: &[Token]) -> bool {
-    tokens.iter().any(|token| {
-        matches!(
-            token.kind,
-            TokenKind::Interface | TokenKind::Extern | TokenKind::Unsafe
-        )
-    })
-}
-
-fn ensure_single_trailing_newline(source: &str) -> String {
-    let trimmed = source.trim_end_matches(['\n', '\r']);
-    format!("{trimmed}\n")
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -218,6 +202,8 @@ fn skip_quoted(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, quote
 enum TopLevelItem {
     Struct(usize),
     Enum(usize),
+    Interface(usize),
+    ExternBlock(usize),
     Impl(usize),
     Const(usize),
     Function(usize),
@@ -299,6 +285,8 @@ impl<'a> Formatter<'a> {
     fn has_top_level_items(&self) -> bool {
         !(self.ast.structs.is_empty()
             && self.ast.enums.is_empty()
+            && self.ast.interfaces.is_empty()
+            && self.ast.extern_blocks.is_empty()
             && self.ast.impls.is_empty()
             && self.ast.consts.is_empty()
             && self.ast.functions.is_empty()
@@ -309,6 +297,8 @@ impl<'a> Formatter<'a> {
         match item {
             TopLevelItem::Struct(index) => self.struct_def(index, &self.ast.structs[index]),
             TopLevelItem::Enum(index) => self.enum_def(index, &self.ast.enums[index]),
+            TopLevelItem::Interface(index) => self.interface_def(&self.ast.interfaces[index]),
+            TopLevelItem::ExternBlock(index) => self.extern_block(&self.ast.extern_blocks[index]),
             TopLevelItem::Impl(index) => self.impl_block(index, &self.ast.impls[index]),
             TopLevelItem::Const(index) => self.const_def(&self.ast.consts[index]),
             TopLevelItem::Function(index) => self.function(&self.ast.functions[index], 0, false),
@@ -377,10 +367,59 @@ impl<'a> Formatter<'a> {
         self.line(0, "}");
     }
 
-    fn impl_block(&mut self, index: usize, block: &ImplBlock) {
+    fn interface_def(&mut self, def: &InterfaceDef) {
+        let prefix = if def.public { "pub " } else { "" };
         self.line_at(
             0,
-            &format!("impl {} {{", type_ref(&block.type_name)),
+            &format!("{prefix}interface {} {{", def.name),
+            def.span.line,
+        );
+        for method in &def.methods {
+            self.signature(method, 1, true);
+        }
+        self.line(0, "}");
+    }
+
+    fn extern_block(&mut self, block: &ExternBlock) {
+        self.line_at(
+            0,
+            &format!("extern \"{}\" {{", escape_string(&block.abi)),
+            block.span.line,
+        );
+        for function in &block.functions {
+            self.signature(function, 1, false);
+        }
+        self.line(0, "}");
+    }
+
+    fn signature(&mut self, signature: &FunctionSignature, indent: usize, in_interface: bool) {
+        self.line_at(
+            indent,
+            &format!(
+                "fn {}{}({}) -> {}",
+                signature.name,
+                type_params(&signature.type_params),
+                params(&signature.params, in_interface),
+                type_ref(&signature.return_type)
+            ),
+            signature.span.line,
+        );
+    }
+
+    fn impl_block(&mut self, index: usize, block: &ImplBlock) {
+        let target = match &block.interface_name {
+            Some(interface_name) => {
+                format!(
+                    "{} for {}",
+                    type_ref(interface_name),
+                    type_ref(&block.type_name)
+                )
+            }
+            None => type_ref(&block.type_name),
+        };
+        self.line_at(
+            0,
+            &format!("impl {target} {{"),
             self.impl_lines
                 .get(index)
                 .copied()
@@ -561,6 +600,11 @@ impl<'a> Formatter<'a> {
                 }
                 _ => unreachable!("formatter validates defer statements before printing"),
             },
+            Stmt::Unsafe { body, .. } => {
+                self.line_at(indent, "unsafe {", stmt_line(stmt));
+                self.stmt_block(body, indent + 1);
+                self.line(indent, "}");
+            }
         }
     }
 
@@ -674,6 +718,8 @@ fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
     let mut depth = 0usize;
     let mut structs = 0usize;
     let mut enums = 0usize;
+    let mut interfaces = 0usize;
+    let mut extern_blocks = 0usize;
     let mut impls = 0usize;
     let mut consts = 0usize;
     let mut functions = 0usize;
@@ -689,6 +735,7 @@ fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
                     tokens.get(index + 1),
                     &mut structs,
                     &mut enums,
+                    &mut interfaces,
                     &mut consts,
                     &mut functions,
                 ) {
@@ -700,6 +747,8 @@ fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
                 &token.kind,
                 &mut structs,
                 &mut enums,
+                &mut interfaces,
+                &mut extern_blocks,
                 &mut impls,
                 &mut consts,
                 &mut functions,
@@ -725,6 +774,7 @@ fn public_top_level_item(
     token: Option<&Token>,
     structs: &mut usize,
     enums: &mut usize,
+    interfaces: &mut usize,
     consts: &mut usize,
     functions: &mut usize,
 ) -> Option<TopLevelItem> {
@@ -738,6 +788,11 @@ fn public_top_level_item(
             let index = *enums;
             *enums += 1;
             Some(TopLevelItem::Enum(index))
+        }
+        Some(TokenKind::Interface) => {
+            let index = *interfaces;
+            *interfaces += 1;
+            Some(TopLevelItem::Interface(index))
         }
         Some(TokenKind::Const) => {
             let index = *consts;
@@ -757,6 +812,8 @@ fn top_level_item(
     kind: &TokenKind,
     structs: &mut usize,
     enums: &mut usize,
+    interfaces: &mut usize,
+    extern_blocks: &mut usize,
     impls: &mut usize,
     consts: &mut usize,
     functions: &mut usize,
@@ -771,6 +828,16 @@ fn top_level_item(
             let index = *enums;
             *enums += 1;
             Some(TopLevelItem::Enum(index))
+        }
+        TokenKind::Interface => {
+            let index = *interfaces;
+            *interfaces += 1;
+            Some(TopLevelItem::Interface(index))
+        }
+        TokenKind::Extern => {
+            let index = *extern_blocks;
+            *extern_blocks += 1;
+            Some(TopLevelItem::ExternBlock(index))
         }
         TokenKind::Impl => {
             let index = *impls;
@@ -996,6 +1063,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
                     ));
                 }
             }
+            Stmt::Unsafe { body, .. } => validate_stmts(path, body)?,
             Stmt::Let { .. }
             | Stmt::Assign { .. }
             | Stmt::Postfix { .. }
@@ -1021,7 +1089,8 @@ fn stmt_span(stmt: &Stmt) -> &crate::ast::Span {
         | Stmt::For { span, .. }
         | Stmt::Break { span, .. }
         | Stmt::Continue { span, .. }
-        | Stmt::Defer { span, .. } => span,
+        | Stmt::Defer { span, .. }
+        | Stmt::Unsafe { span, .. } => span,
     }
 }
 
@@ -1455,6 +1524,19 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\nimport std.io\n\nlet message: string = \"hi\"\nio.println(message)\n"
+        );
+    }
+
+    #[test]
+    fn formats_interface_extern_impl_and_unsafe_blocks() {
+        let source = "package app.main\n\npub interface Display{\nfn to_string(self)->string\n}\n\nextern \"C\"{\nfn puts(message:string)->i32\n}\n\nstruct User{\nname:string\n}\n\nimpl Display for User{\nfn to_string(self)->string{\nreturn self.name\n}\n}\n\nfn main(){\nlet user:User=User{name:\"ok\"}\nunsafe{\nputs(user.to_string())\n}\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+        let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
+
+        assert_eq!(formatted, twice);
+        assert_eq!(
+            formatted,
+            "package app.main\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: string) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user: User = User { name: \"ok\" }\n    unsafe {\n        puts(user.to_string())\n    }\n}\n"
         );
     }
 }

@@ -315,6 +315,10 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
 `char` scalar to a UTF-8 string.
 
+`std.os` provides target platform helpers: `os.platform`, `os.arch`,
+`os.path_separator`, and `os.line_ending`. The values are determined by the C
+compiler target used for the generated program.
+
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
 `string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.

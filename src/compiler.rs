@@ -332,6 +332,10 @@ pub enum ValueExpr {
     CharToString {
         value: Box<ValueExpr>,
     },
+    OsPlatform,
+    OsArch,
+    OsPathSeparator,
+    OsLineEnding,
     PathJoin {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
@@ -1694,6 +1698,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.char.is_alpha"
             | "std.char.is_whitespace"
             | "std.char.to_string"
+            | "std.os"
+            | "std.os.platform"
+            | "std.os.arch"
+            | "std.os.path_separator"
+            | "std.os.line_ending"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -7817,6 +7826,9 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "os" {
+                    return lower_os_builtin(path, &qualified, args, span);
+                }
                 if qualified[0] == "option" {
                     return lower_option_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8117,6 +8129,17 @@ fn lower_value_expr_with_expected(
                 return lower_char_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
+            }
+            if is_os_builtin_call(callee) {
+                require_import(path, imports, span, "std.os", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "os builtins do not accept type arguments",
+                    ));
+                }
+                return lower_os_builtin(path, callee, args, span);
             }
             if is_option_builtin_call(callee) {
                 require_option_method_import(path, imports, span, &callee[1])?;
@@ -9331,6 +9354,49 @@ fn is_char_builtin_call(callee: &[String]) -> bool {
                     "is_digit" | "is_alpha" | "is_whitespace" | "to_string"
                 )
     )
+}
+
+fn is_os_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "os"
+                && matches!(
+                    name.as_str(),
+                    "platform" | "arch" | "path_separator" | "line_ending"
+                )
+    )
+}
+
+fn lower_os_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("os builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "os");
+    if !args.is_empty() {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`os.{name}` does not accept arguments"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    let expr = match name.as_str() {
+        "platform" => ValueExpr::OsPlatform,
+        "arch" => ValueExpr::OsArch,
+        "path_separator" => ValueExpr::OsPathSeparator,
+        "line_ending" => ValueExpr::OsLineEnding,
+        _ => unreachable!("os builtin dispatcher only passes known calls"),
+    };
+    Ok((ValueType::String, expr))
 }
 
 fn lower_char_builtin(
@@ -11870,6 +11936,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "to_string" if imports.iter().any(|item| item == "std.char.to_string") => {
             vec!["char".to_string(), "to_string".to_string()]
         }
+        "platform" if imports.iter().any(|item| item == "std.os.platform") => {
+            vec!["os".to_string(), "platform".to_string()]
+        }
+        "arch" if imports.iter().any(|item| item == "std.os.arch") => {
+            vec!["os".to_string(), "arch".to_string()]
+        }
+        "path_separator" if imports.iter().any(|item| item == "std.os.path_separator") => {
+            vec!["os".to_string(), "path_separator".to_string()]
+        }
+        "line_ending" if imports.iter().any(|item| item == "std.os.line_ending") => {
+            vec!["os".to_string(), "line_ending".to_string()]
+        }
         "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
             vec!["result".to_string(), "is_ok".to_string()]
         }
@@ -12991,6 +13069,103 @@ fn main() -> void {
         assert_eq!(err.code, "E0404");
         assert_eq!(err.expected.as_deref(), Some("char"));
         assert_eq!(err.found.as_deref(), Some("string"));
+    }
+
+    #[test]
+    fn accepts_os_builtins() {
+        let source = r#"package app.main
+
+import std.os
+
+fn main() -> void {
+    let platform: string = os.platform()
+    let arch: string = os.arch()
+    let separator: string = os.path_separator()
+    let ending: string = os.line_ending()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::OsPlatform,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::OsArch,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::OsPathSeparator,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::OsLineEnding,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_os_builtin_imports() {
+        let source = r#"package app.main
+
+import std.os.platform
+import std.os.path_separator
+
+fn main() -> void {
+    let platform: string = platform()
+    let separator: string = path_separator()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::OsPlatform,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::OsPathSeparator,
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_os_builtin_arguments() {
+        let source = r#"package app.main
+
+import std.os
+
+fn main() -> void {
+    let platform: string = os.platform("extra")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0407");
+        assert!(err.message.contains("os.platform"));
     }
 
     #[test]

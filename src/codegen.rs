@@ -586,6 +586,46 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    }\n");
     out.push_str("    return nomo_string_owned(out);\n");
     out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_os_platform(void) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    return nomo_string_literal(\"windows\");\n");
+    out.push_str("#elif defined(__APPLE__)\n");
+    out.push_str("    return nomo_string_literal(\"macos\");\n");
+    out.push_str("#elif defined(__linux__)\n");
+    out.push_str("    return nomo_string_literal(\"linux\");\n");
+    out.push_str("#elif defined(__FreeBSD__)\n");
+    out.push_str("    return nomo_string_literal(\"freebsd\");\n");
+    out.push_str("#else\n");
+    out.push_str("    return nomo_string_literal(\"unknown\");\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_os_arch(void) {\n");
+    out.push_str("#if defined(__aarch64__) || defined(_M_ARM64)\n");
+    out.push_str("    return nomo_string_literal(\"aarch64\");\n");
+    out.push_str("#elif defined(__x86_64__) || defined(_M_X64)\n");
+    out.push_str("    return nomo_string_literal(\"x86_64\");\n");
+    out.push_str("#elif defined(__i386__) || defined(_M_IX86)\n");
+    out.push_str("    return nomo_string_literal(\"x86\");\n");
+    out.push_str("#elif defined(__arm__) || defined(_M_ARM)\n");
+    out.push_str("    return nomo_string_literal(\"arm\");\n");
+    out.push_str("#else\n");
+    out.push_str("    return nomo_string_literal(\"unknown\");\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_os_path_separator(void) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    return nomo_string_literal(\"\\\\\");\n");
+    out.push_str("#else\n");
+    out.push_str("    return nomo_string_literal(\"/\");\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_os_line_ending(void) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    return nomo_string_literal(\"\\r\\n\");\n");
+    out.push_str("#else\n");
+    out.push_str("    return nomo_string_literal(\"\\n\");\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
     out.push_str("    return nomo_string_from_slice(data, start, len);\n");
     out.push_str("}\n\n");
@@ -3307,6 +3347,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -3962,6 +4006,18 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push_str("nomo_char_to_string(");
             emit_expr(out, value);
             out.push(')');
+        }
+        ValueExpr::OsPlatform => {
+            out.push_str("nomo_os_platform()");
+        }
+        ValueExpr::OsArch => {
+            out.push_str("nomo_os_arch()");
+        }
+        ValueExpr::OsPathSeparator => {
+            out.push_str("nomo_os_path_separator()");
+        }
+        ValueExpr::OsLineEnding => {
+            out.push_str("nomo_os_line_ending()");
         }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
@@ -4734,6 +4790,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -5002,6 +5062,10 @@ where
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -5492,6 +5556,10 @@ fn collect_expr_struct(
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::FieldAccess { .. } => {}
     }
 }
@@ -6026,6 +6094,10 @@ fn collect_expr_enum(
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::FieldAccess { .. } => {}
     }
 }
@@ -6638,6 +6710,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7163,6 +7239,10 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_read_to_string(value),
@@ -7278,6 +7358,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_write_string(value),
@@ -7387,6 +7471,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7497,6 +7585,10 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7610,6 +7702,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7824,6 +7920,10 @@ fn collect_expr_array_elements(
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
         | ValueExpr::EnvTempDir
+        | ValueExpr::OsPlatform
+        | ValueExpr::OsArch
+        | ValueExpr::OsPathSeparator
+        | ValueExpr::OsLineEnding
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => {}
     }
@@ -8791,6 +8891,51 @@ mod tests {
         assert!(c.contains("static nomo_string nomo_char_to_string(uint32_t value)"));
         assert!(c.contains("int nomo_digit = nomo_char_is_digit(55);"));
         assert!(c.contains("nomo_string nomo_text = nomo_char_to_string(35486);"));
+    }
+
+    #[test]
+    fn emits_os_helpers() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.os".to_string()],
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "platform".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::OsPlatform,
+                    },
+                    Statement::Let {
+                        name: "arch".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::OsArch,
+                    },
+                    Statement::Let {
+                        name: "separator".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::OsPathSeparator,
+                    },
+                    Statement::Let {
+                        name: "ending".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::OsLineEnding,
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("static nomo_string nomo_os_platform(void)"));
+        assert!(c.contains("static nomo_string nomo_os_arch(void)"));
+        assert!(c.contains("nomo_string nomo_platform = nomo_os_platform();"));
+        assert!(c.contains("nomo_string nomo_separator = nomo_os_path_separator();"));
     }
 
     #[test]

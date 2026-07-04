@@ -5355,6 +5355,84 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_os_helpers() {
+    let root = temp_test_root("std-os-helpers");
+    reset_dir(&root);
+    let project = root.join("os_demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"os_demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.os
+
+fn main() -> void {
+    io.println(os.platform())
+    io.println(os.arch())
+    io.println(os.path_separator())
+    let ending: string = if os.line_ending() == "\n" { "lf" } else { "crlf" }
+    io.println(ending)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let expected_platform = if cfg!(target_os = "windows") {
+        "windows"
+    } else if cfg!(target_os = "macos") {
+        "macos"
+    } else if cfg!(target_os = "linux") {
+        "linux"
+    } else if cfg!(target_os = "freebsd") {
+        "freebsd"
+    } else {
+        "unknown"
+    };
+    let expected_arch = if cfg!(target_arch = "aarch64") {
+        "aarch64"
+    } else if cfg!(target_arch = "x86_64") {
+        "x86_64"
+    } else if cfg!(target_arch = "x86") {
+        "x86"
+    } else if cfg!(target_arch = "arm") {
+        "arm"
+    } else {
+        "unknown"
+    };
+    let expected_separator = if cfg!(windows) { "\\" } else { "/" };
+    let expected_ending = if cfg!(windows) { "crlf" } else { "lf" };
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("{expected_platform}\n{expected_arch}\n{expected_separator}\n{expected_ending}\n")
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_io_read_line() {
     let root = temp_test_root("std-io-read-line");
     reset_dir(&root);

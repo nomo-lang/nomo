@@ -69,7 +69,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#ifdef _WIN32\n#include <direct.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -624,6 +624,44 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    return nomo_string_literal(\"\\r\\n\");\n");
     out.push_str("#else\n");
     out.push_str("    return nomo_string_literal(\"\\n\");\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int64_t nomo_time_now_millis(void) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    FILETIME ft;\n");
+    out.push_str("    ULARGE_INTEGER value;\n");
+    out.push_str("    GetSystemTimeAsFileTime(&ft);\n");
+    out.push_str("    value.LowPart = ft.dwLowDateTime;\n");
+    out.push_str("    value.HighPart = ft.dwHighDateTime;\n");
+    out.push_str("    return (int64_t)((value.QuadPart - 116444736000000000ULL) / 10000ULL);\n");
+    out.push_str("#else\n");
+    out.push_str("    struct timeval tv;\n");
+    out.push_str(
+        "    if (gettimeofday(&tv, NULL) != 0) { nomo_panic(\"time.now_millis failed\"); }\n",
+    );
+    out.push_str("    return ((int64_t)tv.tv_sec * 1000) + ((int64_t)tv.tv_usec / 1000);\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int64_t nomo_time_monotonic_millis(void) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    return (int64_t)GetTickCount64();\n");
+    out.push_str("#else\n");
+    out.push_str("    struct timespec ts;\n");
+    out.push_str("    if (clock_gettime(CLOCK_MONOTONIC, &ts) != 0) { nomo_panic(\"time.monotonic_millis failed\"); }\n");
+    out.push_str("    return ((int64_t)ts.tv_sec * 1000) + ((int64_t)ts.tv_nsec / 1000000);\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic void nomo_time_sleep_millis(int64_t duration) {\n");
+    out.push_str("    if (duration < 0) { nomo_panic(\"time.sleep_millis duration must be non-negative\"); }\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    Sleep((DWORD)duration);\n");
+    out.push_str("#else\n");
+    out.push_str("    struct timespec request;\n");
+    out.push_str("    request.tv_sec = (time_t)(duration / 1000);\n");
+    out.push_str("    request.tv_nsec = (long)((duration % 1000) * 1000000);\n");
+    out.push_str("    while (nanosleep(&request, &request) != 0) {\n");
+    out.push_str("        if (errno != EINTR) { nomo_panic(\"time.sleep_millis failed\"); }\n");
+    out.push_str("    }\n");
     out.push_str("#endif\n");
     out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
@@ -3266,6 +3304,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FsOpen { path: expr }
         | ValueExpr::FileClose { file: expr }
         | ValueExpr::EnvGet { name: expr }
+        | ValueExpr::TimeSleepMillis { duration: expr }
         | ValueExpr::ArrayLen { array: expr }
         | ValueExpr::EnumVariant {
             payload: Some(expr),
@@ -3351,6 +3390,8 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -4018,6 +4059,17 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         }
         ValueExpr::OsLineEnding => {
             out.push_str("nomo_os_line_ending()");
+        }
+        ValueExpr::TimeNowMillis => {
+            out.push_str("nomo_time_now_millis()");
+        }
+        ValueExpr::TimeMonotonicMillis => {
+            out.push_str("nomo_time_monotonic_millis()");
+        }
+        ValueExpr::TimeSleepMillis { duration } => {
+            out.push_str("nomo_time_sleep_millis(");
+            emit_expr(out, duration);
+            out.push(')');
         }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
@@ -4706,6 +4758,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -4794,6 +4847,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -4977,6 +5032,7 @@ where
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -5066,6 +5122,8 @@ where
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
@@ -5347,6 +5405,7 @@ fn collect_expr_struct(
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
+        | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::FsReadToString { path } => {
             push_struct_instance(seen, out, "FsError", &[]);
@@ -5560,6 +5619,8 @@ fn collect_expr_struct(
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::FieldAccess { .. } => {}
     }
 }
@@ -5849,6 +5910,7 @@ fn collect_expr_enum(
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
+        | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::FsReadToString { path } => {
             push_enum_instance(
@@ -6098,6 +6160,8 @@ fn collect_expr_enum(
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::FieldAccess { .. } => {}
     }
 }
@@ -6657,6 +6721,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -6714,6 +6779,8 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7182,7 +7249,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathExtension { path: name }
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
-        | ValueExpr::MathUnary { value: name, .. } => expr_uses_fs_read_to_string(name),
+        | ValueExpr::MathUnary { value: name, .. }
+        | ValueExpr::TimeSleepMillis { duration: name } => expr_uses_fs_read_to_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
@@ -7243,6 +7311,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_read_to_string(value),
@@ -7303,7 +7373,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathExtension { path: name }
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
-        | ValueExpr::MathUnary { value: name, .. } => expr_uses_fs_write_string(name),
+        | ValueExpr::MathUnary { value: name, .. }
+        | ValueExpr::TimeSleepMillis { duration: name } => expr_uses_fs_write_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
@@ -7362,6 +7433,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
         ValueExpr::EnumPayloadFieldAccess { value, .. } => expr_uses_fs_write_string(value),
@@ -7402,6 +7475,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -7475,6 +7549,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7512,7 +7588,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
-        | ValueExpr::MathUnary { value: path, .. } => expr_uses_env_get(path),
+        | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
         }
@@ -7589,6 +7666,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7630,6 +7709,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -7706,6 +7786,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => false,
     }
@@ -7757,7 +7839,8 @@ fn collect_expr_array_elements(
         | ValueExpr::PathExtension { path }
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
-        | ValueExpr::MathUnary { value: path, .. } => {
+        | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeSleepMillis { duration: path } => {
             collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
@@ -7924,6 +8007,8 @@ fn collect_expr_array_elements(
         | ValueExpr::OsArch
         | ValueExpr::OsPathSeparator
         | ValueExpr::OsLineEnding
+        | ValueExpr::TimeNowMillis
+        | ValueExpr::TimeMonotonicMillis
         | ValueExpr::IoReadLine
         | ValueExpr::FieldAccess { .. } => {}
     }
@@ -8936,6 +9021,45 @@ mod tests {
         assert!(c.contains("static nomo_string nomo_os_arch(void)"));
         assert!(c.contains("nomo_string nomo_platform = nomo_os_platform();"));
         assert!(c.contains("nomo_string nomo_separator = nomo_os_path_separator();"));
+    }
+
+    #[test]
+    fn emits_time_helpers() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.time".to_string()],
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "now".to_string(),
+                        value_type: ValueType::Int,
+                        initializer: ValueExpr::TimeNowMillis,
+                    },
+                    Statement::Let {
+                        name: "tick".to_string(),
+                        value_type: ValueType::Int,
+                        initializer: ValueExpr::TimeMonotonicMillis,
+                    },
+                    Statement::Expr(ValueExpr::TimeSleepMillis {
+                        duration: Box::new(ValueExpr::IntLiteral(0)),
+                    }),
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("static int64_t nomo_time_now_millis(void)"));
+        assert!(c.contains("static int64_t nomo_time_monotonic_millis(void)"));
+        assert!(c.contains("static void nomo_time_sleep_millis(int64_t duration)"));
+        assert!(c.contains("nomo_now = nomo_time_now_millis();"));
+        assert!(c.contains("nomo_time_sleep_millis(0);"));
     }
 
     #[test]

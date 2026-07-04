@@ -5433,6 +5433,61 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_time_helpers() {
+    let root = temp_test_root("std-time-helpers");
+    reset_dir(&root);
+    let project = root.join("time_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"time_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.time
+
+fn main() -> void {
+    let now: i64 = time.now_millis()
+    let before: i64 = time.monotonic_millis()
+    time.sleep_millis(0)
+    let after: i64 = time.monotonic_millis()
+    if now > 0 && after >= before {
+        io.println("ok")
+    } else {
+        io.println("bad")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "ok\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_io_read_line() {
     let root = temp_test_root("std-io-read-line");
     reset_dir(&root);

@@ -319,6 +319,12 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `os.path_separator`, and `os.line_ending`. The values are determined by the C
 compiler target used for the generated program.
 
+`std.time` provides basic clock helpers: `time.now_millis`,
+`time.monotonic_millis`, and `time.sleep_millis`. The first returns Unix epoch
+milliseconds, the second returns monotonic milliseconds suitable for measuring
+elapsed time within one process, and `sleep_millis` panics for negative
+durations.
+
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
 `string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.

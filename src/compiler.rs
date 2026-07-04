@@ -336,6 +336,11 @@ pub enum ValueExpr {
     OsArch,
     OsPathSeparator,
     OsLineEnding,
+    TimeNowMillis,
+    TimeMonotonicMillis,
+    TimeSleepMillis {
+        duration: Box<ValueExpr>,
+    },
     PathJoin {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
@@ -1703,6 +1708,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.os.arch"
             | "std.os.path_separator"
             | "std.os.line_ending"
+            | "std.time"
+            | "std.time.now_millis"
+            | "std.time.monotonic_millis"
+            | "std.time.sleep_millis"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -7829,6 +7838,11 @@ fn lower_value_expr_with_expected(
                 if qualified[0] == "os" {
                     return lower_os_builtin(path, &qualified, args, span);
                 }
+                if qualified[0] == "time" {
+                    return lower_time_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "option" {
                     return lower_option_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8140,6 +8154,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_os_builtin(path, callee, args, span);
+            }
+            if is_time_builtin_call(callee) {
+                require_import(path, imports, span, "std.time", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "time builtins do not accept type arguments",
+                    ));
+                }
+                return lower_time_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
             }
             if is_option_builtin_call(callee) {
                 require_option_method_import(path, imports, span, &callee[1])?;
@@ -9368,6 +9395,18 @@ fn is_os_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_time_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "time"
+                && matches!(
+                    name.as_str(),
+                    "now_millis" | "monotonic_millis" | "sleep_millis"
+                )
+    )
+}
+
 fn lower_os_builtin(
     path: &Path,
     callee: &[String],
@@ -9397,6 +9436,85 @@ fn lower_os_builtin(
         _ => unreachable!("os builtin dispatcher only passes known calls"),
     };
     Ok((ValueType::String, expr))
+}
+
+fn lower_time_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("time builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "time");
+    match name.as_str() {
+        "now_millis" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.now_millis` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((ValueType::Int, ValueExpr::TimeNowMillis))
+        }
+        "monotonic_millis" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.monotonic_millis` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((ValueType::Int, ValueExpr::TimeMonotonicMillis))
+        }
+        "sleep_millis" => {
+            let [duration] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.sleep_millis` expects exactly one i64 duration in milliseconds",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (duration_type, lowered_duration) = lower_value_expr(
+                path, duration, scope, imports, signatures, structs, enums, span,
+            )?;
+            if duration_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.sleep_millis` expects an i64 duration in milliseconds",
+                    &ValueType::Int,
+                    &duration_type,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::TimeSleepMillis {
+                    duration: Box::new(lowered_duration),
+                },
+            ))
+        }
+        _ => unreachable!("time builtin dispatcher only passes known calls"),
+    }
 }
 
 fn lower_char_builtin(
@@ -11948,6 +12066,19 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "line_ending" if imports.iter().any(|item| item == "std.os.line_ending") => {
             vec!["os".to_string(), "line_ending".to_string()]
         }
+        "now_millis" if imports.iter().any(|item| item == "std.time.now_millis") => {
+            vec!["time".to_string(), "now_millis".to_string()]
+        }
+        "monotonic_millis"
+            if imports
+                .iter()
+                .any(|item| item == "std.time.monotonic_millis") =>
+        {
+            vec!["time".to_string(), "monotonic_millis".to_string()]
+        }
+        "sleep_millis" if imports.iter().any(|item| item == "std.time.sleep_millis") => {
+            vec!["time".to_string(), "sleep_millis".to_string()]
+        }
         "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
             vec!["result".to_string(), "is_ok".to_string()]
         }
@@ -13166,6 +13297,89 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0407");
         assert!(err.message.contains("os.platform"));
+    }
+
+    #[test]
+    fn accepts_time_builtins() {
+        let source = r#"package app.main
+
+import std.time
+
+fn main() -> void {
+    let now: i64 = time.now_millis()
+    let monotonic: i64 = time.monotonic_millis()
+    time.sleep_millis(0)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Int,
+                initializer: ValueExpr::TimeNowMillis,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Int,
+                initializer: ValueExpr::TimeMonotonicMillis,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Expr(ValueExpr::TimeSleepMillis { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_time_builtin_imports() {
+        let source = r#"package app.main
+
+import std.time.now_millis
+import std.time.sleep_millis
+
+fn main() -> void {
+    let now: i64 = now_millis()
+    sleep_millis(0)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::TimeNowMillis,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Expr(ValueExpr::TimeSleepMillis { .. })
+        ));
+    }
+
+    #[test]
+    fn rejects_time_sleep_non_i64_argument() {
+        let source = r#"package app.main
+
+import std.time
+
+fn main() -> void {
+    time.sleep_millis("soon")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("time.sleep_millis"));
+        assert_eq!(err.expected.as_deref(), Some("i64"));
+        assert_eq!(err.found.as_deref(), Some("string"));
     }
 
     #[test]

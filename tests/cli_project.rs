@@ -5766,6 +5766,18 @@ fn main() -> void {
             io.println(err.message)
         }
     }
+    let captured: Result<ProcessOutput, ProcessError> = process.output("printf captured-out; printf captured-err 1>&2; exit 7")
+    match captured {
+        Ok(value) => {
+            let marker: string = if value.status == 7 { "status-7" } else { "bad-status" }
+            io.println(marker)
+            io.println(value.stdout)
+            io.println(value.stderr)
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
 }
 "#,
     )
@@ -5785,7 +5797,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "status-ok\nprocess-ok\n"
+        "status-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n"
     );
     assert!(
         output.stderr.is_empty(),

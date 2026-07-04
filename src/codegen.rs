@@ -199,7 +199,7 @@ pub fn emit_c(program: &Program) -> String {
         emit_env_temp_dir_helper(&mut out);
         out.push('\n');
     }
-    if uses_process_status(program) || uses_process_exec(program) {
+    if uses_process_status(program) || uses_process_exec(program) || uses_process_output(program) {
         emit_process_common_helpers(&mut out);
         out.push('\n');
     }
@@ -209,6 +209,10 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_process_exec(program) {
         emit_process_exec_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_process_output(program) {
+        emit_process_output_helper(&mut out);
         out.push('\n');
     }
     if uses_num_parse_i64(program) {
@@ -2541,6 +2545,60 @@ fn emit_process_common_helpers(out: &mut String) {
     );
     out.push_str("    return nomo_string_from_cstr(buffer);\n");
     out.push_str("}\n");
+    out.push_str("\nstatic char *nomo_process_temp_path(const char *label) {\n");
+    out.push_str("    static unsigned long counter = 0;\n");
+    out.push_str("    const char *dir = getenv(\"TMPDIR\");\n");
+    out.push_str("    if (dir == NULL) { dir = getenv(\"TEMP\"); }\n");
+    out.push_str("    if (dir == NULL) { dir = getenv(\"TMP\"); }\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    if (dir == NULL) { dir = \".\"; }\n");
+    out.push_str("    unsigned long pid = (unsigned long)GetCurrentProcessId();\n");
+    out.push_str("    const char *sep = \"\\\\\";\n");
+    out.push_str("#else\n");
+    out.push_str("    if (dir == NULL) { dir = \"/tmp\"; }\n");
+    out.push_str("    unsigned long pid = (unsigned long)getpid();\n");
+    out.push_str("    const char *sep = \"/\";\n");
+    out.push_str("#endif\n");
+    out.push_str("    unsigned long id = counter++;\n");
+    out.push_str("    size_t cap = strlen(dir) + strlen(label) + 96;\n");
+    out.push_str("    char *path = (char *)malloc(cap);\n");
+    out.push_str("    if (path == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    snprintf(path, cap, \"%s%s%s-%lu-%lu.tmp\", dir, sep, label, pid, id);\n");
+    out.push_str("    return path;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_process_read_file(const char *path, nomo_string *text, nomo_string *error_message) {\n");
+    out.push_str("    FILE *file = fopen(path, \"rb\");\n");
+    out.push_str("    if (file == NULL) { *error_message = nomo_string_from_cstr(strerror(errno)); return 0; }\n");
+    out.push_str("    if (fseek(file, 0, SEEK_END) != 0) {\n");
+    out.push_str("        const char *message = strerror(errno);\n");
+    out.push_str("        fclose(file);\n");
+    out.push_str("        *error_message = nomo_string_from_cstr(message);\n");
+    out.push_str("        return 0;\n");
+    out.push_str("    }\n");
+    out.push_str("    long size = ftell(file);\n");
+    out.push_str("    if (size < 0 || fseek(file, 0, SEEK_SET) != 0) {\n");
+    out.push_str("        const char *message = strerror(errno);\n");
+    out.push_str("        fclose(file);\n");
+    out.push_str("        *error_message = nomo_string_from_cstr(message);\n");
+    out.push_str("        return 0;\n");
+    out.push_str("    }\n");
+    out.push_str("    char *buffer = (char *)malloc((size_t)size + 1);\n");
+    out.push_str("    if (buffer == NULL) { fclose(file); nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    size_t read = fread(buffer, 1, (size_t)size, file);\n");
+    out.push_str("    if (read != (size_t)size) {\n");
+    out.push_str(
+        "        const char *message = ferror(file) ? strerror(errno) : \"short read\";\n",
+    );
+    out.push_str("        free(buffer);\n");
+    out.push_str("        fclose(file);\n");
+    out.push_str("        *error_message = nomo_string_from_cstr(message);\n");
+    out.push_str("        return 0;\n");
+    out.push_str("    }\n");
+    out.push_str("    buffer[size] = '\\0';\n");
+    out.push_str("    fclose(file);\n");
+    out.push_str("    *text = nomo_string_owned(buffer);\n");
+    out.push_str("    return 1;\n");
+    out.push_str("}\n");
 }
 
 fn emit_process_status_helper(out: &mut String) {
@@ -2709,6 +2767,114 @@ fn emit_process_exec_helper(out: &mut String) {
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = nomo_string_owned(buffer)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_process_output_helper(out: &mut String) {
+    let process_error = c_struct_ident("ProcessError", &[]);
+    let process_output = c_struct_ident("ProcessOutput", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+            ValueType::Struct("ProcessError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+            ValueType::Struct("ProcessError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+            ValueType::Struct("ProcessError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_process_output(nomo_string command) {\n");
+    out.push_str("    char *stdout_path = nomo_process_temp_path(\"nomo-stdout\");\n");
+    out.push_str("    char *stderr_path = nomo_process_temp_path(\"nomo-stderr\");\n");
+    out.push_str("    size_t command_len = strlen(command.data) + strlen(stdout_path) + strlen(stderr_path) + 40;\n");
+    out.push_str("    char *wrapped = (char *)malloc(command_len);\n");
+    out.push_str("    if (wrapped == NULL) { free(stdout_path); free(stderr_path); nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    snprintf(wrapped, command_len, \"(%s) > \\\"%s\\\" 2> \\\"%s\\\"\", command.data, stdout_path, stderr_path);\n");
+    out.push_str("    int status = system(wrapped);\n");
+    out.push_str("    free(wrapped);\n");
+    out.push_str("    if (status == -1) {\n");
+    out.push_str("        nomo_string message = nomo_string_from_cstr(strerror(errno));\n");
+    out.push_str("        remove(stdout_path); remove(stderr_path);\n");
+    out.push_str("        free(stdout_path); free(stderr_path);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&process_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = message}};\n");
+    out.push_str("    }\n");
+    out.push_str("    nomo_string stdout_text;\n");
+    out.push_str("    nomo_string stderr_text;\n");
+    out.push_str("    nomo_string message;\n");
+    out.push_str("    if (!nomo_process_read_file(stdout_path, &stdout_text, &message)) {\n");
+    out.push_str("        remove(stdout_path); remove(stderr_path);\n");
+    out.push_str("        free(stdout_path); free(stderr_path);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&process_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = message}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (!nomo_process_read_file(stderr_path, &stderr_text, &message)) {\n");
+    out.push_str("        nomo_string_release(stdout_text);\n");
+    out.push_str("        remove(stdout_path); remove(stderr_path);\n");
+    out.push_str("        free(stdout_path); free(stderr_path);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&process_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = message}};\n");
+    out.push_str("    }\n");
+    out.push_str("    remove(stdout_path); remove(stderr_path);\n");
+    out.push_str("    free(stdout_path); free(stderr_path);\n");
+    out.push_str("    ");
+    out.push_str(&process_output);
+    out.push_str(" output = {.");
+    out.push_str(&c_member_ident("status"));
+    out.push_str(" = nomo_process_exit_code(status), .");
+    out.push_str(&c_member_ident("stdout"));
+    out.push_str(" = stdout_text, .");
+    out.push_str(&c_member_ident("stderr"));
+    out.push_str(" = stderr_text};\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = output};\n");
     out.push_str("}\n");
 }
 
@@ -4411,6 +4577,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: expr }
         | ValueExpr::ProcessStatus { command: expr }
         | ValueExpr::ProcessExec { command: expr }
+        | ValueExpr::ProcessOutput { command: expr }
         | ValueExpr::NumParseI64 { value: expr }
         | ValueExpr::NumParseU64 { value: expr }
         | ValueExpr::NumParseF64 { value: expr }
@@ -5202,6 +5369,11 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         }
         ValueExpr::ProcessExec { command } => {
             out.push_str("nomo_process_exec(");
+            emit_expr(out, command);
+            out.push(')');
+        }
+        ValueExpr::ProcessOutput { command } => {
+            out.push_str("nomo_process_output(");
             emit_expr(out, command);
             out.push(')');
         }
@@ -6064,6 +6236,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -6365,6 +6538,7 @@ where
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -6758,6 +6932,11 @@ fn collect_expr_struct(
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::ProcessStatus { command } | ValueExpr::ProcessExec { command } => {
             push_struct_instance(seen, out, "ProcessError", &[]);
+            collect_expr_struct(command, seen, out);
+        }
+        ValueExpr::ProcessOutput { command } => {
+            push_struct_instance(seen, out, "ProcessError", &[]);
+            push_struct_instance(seen, out, "ProcessOutput", &[]);
             collect_expr_struct(command, seen, out);
         }
         ValueExpr::FsReadToString { path } => {
@@ -7360,6 +7539,18 @@ fn collect_expr_enum(
             );
             collect_expr_enum(command, seen, out);
         }
+        ValueExpr::ProcessOutput { command } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+                    ValueType::Struct("ProcessError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(command, seen, out);
+        }
         ValueExpr::FsReadToString { path } => {
             push_enum_instance(
                 seen,
@@ -7933,6 +8124,15 @@ fn uses_process_exec(program: &Program) -> bool {
     })
 }
 
+fn uses_process_output(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_process_output))
+    })
+}
+
 fn collect_array_element_types(program: &Program) -> Vec<ValueType> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
@@ -8424,6 +8624,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -8506,6 +8707,10 @@ fn expr_is_process_status(expr: &ValueExpr) -> bool {
 
 fn expr_is_process_exec(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::ProcessExec { .. })
+}
+
+fn expr_is_process_output(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::ProcessOutput { .. })
 }
 
 fn expr_is_fs_exists(expr: &ValueExpr) -> bool {
@@ -9025,6 +9230,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
+        | ValueExpr::ProcessOutput { command: name }
         | ValueExpr::NumParseI64 { value: name }
         | ValueExpr::NumParseU64 { value: name }
         | ValueExpr::NumParseF64 { value: name }
@@ -9172,6 +9378,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
+        | ValueExpr::ProcessOutput { command: name }
         | ValueExpr::NumParseI64 { value: name }
         | ValueExpr::NumParseU64 { value: name }
         | ValueExpr::NumParseF64 { value: name }
@@ -9292,6 +9499,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -9429,6 +9637,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -9572,6 +9781,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -9736,6 +9946,7 @@ fn collect_expr_array_elements(
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
+        | ValueExpr::ProcessOutput { command: path }
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
@@ -11026,15 +11237,36 @@ mod tests {
             consts: Vec::new(),
             package: "app.main".to_string(),
             imports: vec!["std.process".to_string()],
-            structs: vec![StructType {
-                package: "std.process".to_string(),
-                name: "ProcessError".to_string(),
-                type_params: Vec::new(),
-                fields: vec![StructField {
-                    name: "message".to_string(),
-                    value_type: ValueType::String,
-                }],
-            }],
+            structs: vec![
+                StructType {
+                    package: "std.process".to_string(),
+                    name: "ProcessError".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    }],
+                },
+                StructType {
+                    package: "std.process".to_string(),
+                    name: "ProcessOutput".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![
+                        StructField {
+                            name: "status".to_string(),
+                            value_type: ValueType::I32,
+                        },
+                        StructField {
+                            name: "stdout".to_string(),
+                            value_type: ValueType::String,
+                        },
+                        StructField {
+                            name: "stderr".to_string(),
+                            value_type: ValueType::String,
+                        },
+                    ],
+                },
+            ],
             enums: vec![EnumType {
                 package: "std.result".to_string(),
                 name: "Result".to_string(),
@@ -11070,10 +11302,25 @@ mod tests {
                         name: "output".to_string(),
                         value_type: ValueType::Enum(
                             "Result".to_string(),
-                            vec![ValueType::String, process_error],
+                            vec![ValueType::String, process_error.clone()],
                         ),
                         initializer: ValueExpr::ProcessExec {
                             command: Box::new(ValueExpr::StringLiteral("printf ok".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "captured".to_string(),
+                        value_type: ValueType::Enum(
+                            "Result".to_string(),
+                            vec![
+                                ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+                                process_error,
+                            ],
+                        ),
+                        initializer: ValueExpr::ProcessOutput {
+                            command: Box::new(ValueExpr::StringLiteral(
+                                "printf ok; printf err 1>&2".to_string(),
+                            )),
                         },
                     },
                     Statement::Expr(ValueExpr::ProcessExit {
@@ -11087,10 +11334,14 @@ mod tests {
         assert!(c.contains("static int32_t nomo_process_exit_code(int status)"));
         assert!(c.contains("nomo_process_status(nomo_string command)"));
         assert!(c.contains("nomo_process_exec(nomo_string command)"));
+        assert!(c.contains("nomo_process_output(nomo_string command)"));
         assert!(
             c.contains("nomo_status = nomo_process_status(nomo_string_literal(\"printf ok\"));")
         );
         assert!(c.contains("nomo_output = nomo_process_exec(nomo_string_literal(\"printf ok\"));"));
+        assert!(
+            c.contains("nomo_captured = nomo_process_output(nomo_string_literal(\"printf ok; printf err 1>&2\"));")
+        );
         assert!(c.contains("exit((int)0);"));
     }
 

@@ -346,9 +346,12 @@ elapsed time within one process, and `sleep_millis` panics for negative
 durations.
 
 `std.process` provides synchronous process helpers: `process.exit`,
-`process.status`, and `process.exec`. `status` returns a command exit code as
-`Result<i32, ProcessError>`. `exec` captures stdout as
+`process.status`, `process.exec`, and `process.output`. `status` returns a
+command exit code as `Result<i32, ProcessError>`. `exec` captures stdout as
 `Result<string, ProcessError>` and treats a non-zero exit status as an error.
+`output` returns `Result<ProcessOutput, ProcessError>` with `status`, `stdout`,
+and `stderr`; non-zero exits stay in `Ok(ProcessOutput)` so callers can inspect
+the captured streams.
 `exec` does not capture stderr in v0.1.
 
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,

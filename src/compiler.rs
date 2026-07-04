@@ -356,6 +356,9 @@ pub enum ValueExpr {
     ProcessExec {
         command: Box<ValueExpr>,
     },
+    ProcessOutput {
+        command: Box<ValueExpr>,
+    },
     NumParseI64 {
         value: Box<ValueExpr>,
     },
@@ -1805,9 +1808,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.time.sleep_millis"
             | "std.process"
             | "std.process.ProcessError"
+            | "std.process.ProcessOutput"
             | "std.process.exit"
             | "std.process.status"
             | "std.process.exec"
+            | "std.process.output"
             | "std.num"
             | "std.num.NumError"
             | "std.num.parse_i64"
@@ -2086,6 +2091,7 @@ fn validate_standard_type_conflicts(
     }
     if needs.process {
         reject_user_std_struct(path, structs, "ProcessError")?;
+        reject_user_std_struct(path, structs, "ProcessOutput")?;
     }
     if needs.io || needs.fs || needs.num || needs.process || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
@@ -2391,6 +2397,7 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     }
     if needs.process {
         names.push(("ProcessError".to_string(), 0));
+        names.push(("ProcessOutput".to_string(), 0));
     }
     names.into_iter()
 }
@@ -2482,6 +2489,27 @@ fn inject_standard_types(
                 name: "message".to_string(),
                 value_type: ValueType::String,
             }],
+        });
+    }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessOutput") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessOutput".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "status".to_string(),
+                    value_type: ValueType::I32,
+                },
+                StructField {
+                    name: "stdout".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "stderr".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
         });
     }
     if (needs.io || needs.fs || needs.num || needs.result)
@@ -9884,7 +9912,9 @@ fn lower_process_builtin(
                 },
             ))
         }
-        [module, name] if module == "process" && (name == "status" || name == "exec") => {
+        [module, name]
+            if module == "process" && (name == "status" || name == "exec" || name == "output") =>
+        {
             let [command_arg] = args else {
                 return Err(Diagnostic::new(
                     "E0407",
@@ -9920,10 +9950,23 @@ fn lower_process_builtin(
                         command: Box::new(lowered_command),
                     },
                 ))
-            } else {
+            } else if name == "exec" {
                 Ok((
                     ValueType::Enum("Result".to_string(), vec![ValueType::String, process_error]),
                     ValueExpr::ProcessExec {
+                        command: Box::new(lowered_command),
+                    },
+                ))
+            } else {
+                Ok((
+                    ValueType::Enum(
+                        "Result".to_string(),
+                        vec![
+                            ValueType::Struct("ProcessOutput".to_string(), Vec::new()),
+                            process_error,
+                        ],
+                    ),
+                    ValueExpr::ProcessOutput {
                         command: Box::new(lowered_command),
                     },
                 ))
@@ -9956,7 +9999,8 @@ fn is_process_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
         [module, name]
-            if module == "process" && matches!(name.as_str(), "exit" | "status" | "exec")
+            if module == "process"
+                && matches!(name.as_str(), "exit" | "status" | "exec" | "output")
     )
 }
 
@@ -13159,6 +13203,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "exec" if imports.iter().any(|item| item == "std.process.exec") => {
             vec!["process".to_string(), "exec".to_string()]
         }
+        "output" if imports.iter().any(|item| item == "std.process.output") => {
+            vec!["process".to_string(), "output".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.path.join") => {
             vec!["path".to_string(), "join".to_string()]
         }
@@ -14303,6 +14350,10 @@ fn main() -> void {
 import std.process
 import std.result
 
+fn capture() -> Result<ProcessOutput, ProcessError> {
+    return process.output("printf captured-ok")?
+}
+
 fn run() -> Result<string, ProcessError> {
     let status: i32 = process.status("printf status-ok >/dev/null")?
     return process.exec("printf process-ok")
@@ -14323,6 +14374,24 @@ fn main() -> void {
                 .iter()
                 .any(|item| item.name == "ProcessError")
         );
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "ProcessOutput")
+        );
+        let capture = program
+            .functions
+            .iter()
+            .find(|f| f.name == "capture")
+            .unwrap();
+        assert!(matches!(
+            capture.body[0],
+            Statement::QuestionReturnOk {
+                result_expr: ValueExpr::ProcessOutput { .. },
+                ..
+            }
+        ));
         let run = program.functions.iter().find(|f| f.name == "run").unwrap();
         assert!(matches!(
             run.body[0],
@@ -14348,8 +14417,13 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.process.exec
+import std.process.output
 import std.process.status
 import std.result
+
+fn capture() -> Result<ProcessOutput, ProcessError> {
+    return output("printf captured-ok")?
+}
 
 fn run() -> Result<string, ProcessError> {
     let status: i32 = status("printf status-ok >/dev/null")?
@@ -14361,6 +14435,18 @@ fn main() -> void {
 "#;
 
         let program = parse_inline(source).unwrap();
+        let capture = program
+            .functions
+            .iter()
+            .find(|f| f.name == "capture")
+            .unwrap();
+        assert!(matches!(
+            capture.body[0],
+            Statement::QuestionReturnOk {
+                result_expr: ValueExpr::ProcessOutput { .. },
+                ..
+            }
+        ));
         let run = program.functions.iter().find(|f| f.name == "run").unwrap();
         assert!(matches!(
             run.body[0],

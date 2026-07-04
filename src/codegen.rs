@@ -75,7 +75,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <sys/time.h>\n#include <sys/wait.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <regex.h>\n#include <sys/time.h>\n#include <sys/wait.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -233,6 +233,10 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_json_builtin(program) {
         emit_json_helpers(&mut out);
+        out.push('\n');
+    }
+    if uses_regex_builtin(program) {
+        emit_regex_helpers(&mut out);
         out.push('\n');
     }
     if uses_num_parse_i64(program) {
@@ -2013,6 +2017,155 @@ fn emit_json_parse_error(out: &mut String, result: &str, err: &str, json_error: 
     out.push_str("){.");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_literal(\"invalid json\")}};\n");
+}
+
+fn emit_regex_helpers(out: &mut String) {
+    let regex_type = ValueType::Struct("Regex".to_string(), Vec::new());
+    let regex_error = ValueType::Struct("RegexError".to_string(), Vec::new());
+    let result = c_enum_ident("Result", &[regex_type.clone(), regex_error.clone()]);
+    let ok = c_enum_variant_ident("Result", &[regex_type.clone(), regex_error.clone()], "Ok");
+    let err = c_enum_variant_ident("Result", &[regex_type.clone(), regex_error.clone()], "Err");
+    let regex_struct = c_struct_ident("Regex", &[]);
+    let regex_error_struct = c_struct_ident("RegexError", &[]);
+    let string_array_type = ValueType::Array(Box::new(ValueType::String));
+    let option_array = c_enum_ident("Option", std::slice::from_ref(&string_array_type));
+    let some_array =
+        c_enum_variant_ident("Option", std::slice::from_ref(&string_array_type), "Some");
+    let none_array =
+        c_enum_variant_ident("Option", std::slice::from_ref(&string_array_type), "None");
+    let string_array = c_array_ident(&ValueType::String);
+
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_regex_compile(nomo_string pattern) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    (void)pattern;\n");
+    out.push_str("#else\n");
+    out.push_str("    regex_t compiled;\n");
+    out.push_str("    int status = regcomp(&compiled, pattern.data, REG_EXTENDED);\n");
+    out.push_str("    if (status != 0) {\n");
+    out.push_str("        char message[256];\n");
+    out.push_str("        regerror(status, &compiled, message, sizeof(message));\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&regex_error_struct);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    regfree(&compiled);\n");
+    out.push_str("#endif\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = (");
+    out.push_str(&regex_struct);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(" = nomo_string_retain(pattern)}};\n");
+    out.push_str("}\n\nstatic int nomo_regex_is_match(");
+    out.push_str(&regex_struct);
+    out.push_str(" regex, nomo_string value) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    return strstr(value.data, regex.");
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(".data) != NULL;\n");
+    out.push_str("#else\n");
+    out.push_str("    regex_t compiled;\n");
+    out.push_str("    int status = regcomp(&compiled, regex.");
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(".data, REG_EXTENDED);\n");
+    out.push_str("    if (status != 0) { return 0; }\n");
+    out.push_str("    status = regexec(&compiled, value.data, 0, NULL, 0);\n");
+    out.push_str("    regfree(&compiled);\n");
+    out.push_str("    return status == 0;\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n\nstatic ");
+    out.push_str(&option_array);
+    out.push_str(" nomo_regex_captures(");
+    out.push_str(&regex_struct);
+    out.push_str(" regex, nomo_string value) {\n");
+    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("    char *found = strstr(value.data, regex.");
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(".data);\n");
+    out.push_str("    if (found == NULL) { return (");
+    out.push_str(&option_array);
+    out.push_str("){.tag = ");
+    out.push_str(&none_array);
+    out.push_str("}; }\n");
+    out.push_str("    ");
+    out.push_str(&string_array);
+    out.push_str(" captures = ");
+    out.push_str(&string_array);
+    out.push_str("_new();\n");
+    out.push_str("    size_t start = (size_t)(found - value.data);\n");
+    out.push_str(
+        "    nomo_string capture = nomo_string_from_slice(value.data, start, strlen(regex.",
+    );
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(".data));\n");
+    out.push_str("    captures = ");
+    out.push_str(&string_array);
+    out.push_str("_push(captures, capture);\n");
+    out.push_str("    nomo_string_release(capture);\n");
+    out.push_str("#else\n");
+    out.push_str("    regex_t compiled;\n");
+    out.push_str("    int status = regcomp(&compiled, regex.");
+    out.push_str(&c_member_ident("pattern"));
+    out.push_str(".data, REG_EXTENDED);\n");
+    out.push_str("    if (status != 0) { return (");
+    out.push_str(&option_array);
+    out.push_str("){.tag = ");
+    out.push_str(&none_array);
+    out.push_str("}; }\n");
+    out.push_str("    size_t count = compiled.re_nsub + 1;\n");
+    out.push_str("    regmatch_t *matches = (regmatch_t *)calloc(count, sizeof(regmatch_t));\n");
+    out.push_str(
+        "    if (matches == NULL) { regfree(&compiled); nomo_panic(\"out of memory\"); }\n",
+    );
+    out.push_str("    status = regexec(&compiled, value.data, count, matches, 0);\n");
+    out.push_str("    if (status != 0) { free(matches); regfree(&compiled); return (");
+    out.push_str(&option_array);
+    out.push_str("){.tag = ");
+    out.push_str(&none_array);
+    out.push_str("}; }\n");
+    out.push_str("    ");
+    out.push_str(&string_array);
+    out.push_str(" captures = ");
+    out.push_str(&string_array);
+    out.push_str("_new();\n");
+    out.push_str("    for (size_t i = 0; i < count; i += 1) {\n");
+    out.push_str("        nomo_string capture;\n");
+    out.push_str("        if (matches[i].rm_so >= 0 && matches[i].rm_eo >= matches[i].rm_so) {\n");
+    out.push_str("            capture = nomo_string_from_slice(value.data, (size_t)matches[i].rm_so, (size_t)(matches[i].rm_eo - matches[i].rm_so));\n");
+    out.push_str("        } else {\n");
+    out.push_str("            capture = nomo_string_literal(\"\");\n");
+    out.push_str("        }\n");
+    out.push_str("        captures = ");
+    out.push_str(&string_array);
+    out.push_str("_push(captures, capture);\n");
+    out.push_str("        nomo_string_release(capture);\n");
+    out.push_str("    }\n");
+    out.push_str("    free(matches);\n");
+    out.push_str("    regfree(&compiled);\n");
+    out.push_str("#endif\n");
+    out.push_str("    return (");
+    out.push_str(&option_array);
+    out.push_str("){.tag = ");
+    out.push_str(&some_array);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = captures};\n");
+    out.push_str("}\n");
 }
 
 fn emit_num_checked_binary_helper(out: &mut String, instance: &NumCheckedBinaryInstance) {
@@ -5290,6 +5443,9 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { .. }
         | ValueExpr::StringToLower { .. }
         | ValueExpr::StringToUpper { .. }
+        | ValueExpr::RegexCompile { .. }
+        | ValueExpr::RegexIsMatch { .. }
+        | ValueExpr::RegexCaptures { .. }
         | ValueExpr::CharIsDigit { .. }
         | ValueExpr::CharIsAlpha { .. }
         | ValueExpr::CharIsWhitespace { .. }
@@ -6094,6 +6250,25 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         }
         ValueExpr::JsonStringify { value } => {
             out.push_str("nomo_json_stringify(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::RegexCompile { pattern } => {
+            out.push_str("nomo_regex_compile(");
+            emit_expr(out, pattern);
+            out.push(')');
+        }
+        ValueExpr::RegexIsMatch { regex, value } => {
+            out.push_str("nomo_regex_is_match(");
+            emit_expr(out, regex);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::RegexCaptures { regex, value } => {
+            out.push_str("nomo_regex_captures(");
+            emit_expr(out, regex);
+            out.push_str(", ");
             emit_expr(out, value);
             out.push(')');
         }
@@ -7034,6 +7209,14 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => {
             collect_expr_result_map_err(left, out);
             collect_expr_result_map_err(right, out);
@@ -7071,6 +7254,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -7381,6 +7565,14 @@ where
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => {
             walk_expr(left, visit);
             walk_expr(right, visit);
@@ -7418,6 +7610,7 @@ where
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -7860,6 +8053,16 @@ fn collect_expr_struct(
         | ValueExpr::CollectionsStringSetLen { set: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
+        ValueExpr::RegexCompile { pattern } => {
+            push_struct_instance(seen, out, "Regex", &[]);
+            push_struct_instance(seen, out, "RegexError", &[]);
+            collect_expr_struct(pattern, seen, out);
+        }
+        ValueExpr::RegexIsMatch { regex, value } | ValueExpr::RegexCaptures { regex, value } => {
+            push_struct_instance(seen, out, "Regex", &[]);
+            collect_expr_struct(regex, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
         ValueExpr::HashNew => {
             push_struct_instance(seen, out, "HashState", &[]);
         }
@@ -8504,6 +8707,32 @@ fn collect_expr_enum(
         | ValueExpr::CollectionsStringSetLen { set: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
+        ValueExpr::RegexCompile { pattern } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("Regex".to_string(), Vec::new()),
+                    ValueType::Struct("RegexError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(pattern, seen, out);
+        }
+        ValueExpr::RegexIsMatch { regex, value } => {
+            collect_expr_enum(regex, seen, out);
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::RegexCaptures { regex, value } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Option",
+                &[ValueType::Array(Box::new(ValueType::String))],
+            );
+            collect_expr_enum(regex, seen, out);
+            collect_expr_enum(value, seen, out);
+        }
         ValueExpr::HashNew
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew => {}
@@ -9062,6 +9291,15 @@ fn uses_json_builtin(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_json_builtin))
+    })
+}
+
+fn uses_regex_builtin(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_regex_builtin))
     })
 }
 
@@ -9638,6 +9876,14 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_contains(left, predicate) || expr_contains(right, predicate),
         ValueExpr::FsWriteString { path, content } => {
             expr_contains(path, predicate) || expr_contains(content, predicate)
@@ -9699,6 +9945,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -9857,6 +10104,15 @@ fn expr_is_json_builtin(expr: &ValueExpr) -> bool {
     matches!(
         expr,
         ValueExpr::JsonParse { .. } | ValueExpr::JsonStringify { .. }
+    )
+}
+
+fn expr_is_regex_builtin(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::RegexCompile { .. }
+            | ValueExpr::RegexIsMatch { .. }
+            | ValueExpr::RegexCaptures { .. }
     )
 }
 
@@ -10336,6 +10592,14 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(content)
@@ -10384,6 +10648,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CryptoSha512 { value: name }
         | ValueExpr::JsonParse { value: name }
         | ValueExpr::JsonStringify { value: name }
+        | ValueExpr::RegexCompile { pattern: name }
         | ValueExpr::CollectionsStringMapLen { map: name }
         | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
@@ -10527,6 +10792,14 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
@@ -10574,6 +10847,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CryptoSha512 { value: name }
         | ValueExpr::JsonParse { value: name }
         | ValueExpr::JsonStringify { value: name }
+        | ValueExpr::RegexCompile { pattern: name }
         | ValueExpr::CollectionsStringMapLen { map: name }
         | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
@@ -10715,6 +10989,14 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_uses_fs_open(left) || expr_uses_fs_open(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
@@ -10737,6 +11019,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -10894,6 +11177,14 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_uses_env_get(left) || expr_uses_env_get(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
@@ -10915,6 +11206,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -11075,6 +11367,14 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
+        }
+        | ValueExpr::RegexCaptures {
+            regex: left,
+            value: right,
         } => expr_uses_env_args(left) || expr_uses_env_args(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
@@ -11099,6 +11399,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
@@ -11277,9 +11578,18 @@ fn collect_expr_array_elements(
         | ValueExpr::CollectionsStringSetRemove {
             set: left,
             value: right,
+        }
+        | ValueExpr::RegexIsMatch {
+            regex: left,
+            value: right,
         } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
+        }
+        ValueExpr::RegexCaptures { regex, value } => {
+            push_array_element_type(seen, out, &ValueType::String);
+            collect_expr_array_elements(regex, seen, out);
+            collect_expr_array_elements(value, seen, out);
         }
         ValueExpr::CollectionsStringMapNew | ValueExpr::CollectionsStringSetNew => {
             push_array_element_type(seen, out, &ValueType::String);
@@ -11315,6 +11625,7 @@ fn collect_expr_array_elements(
         | ValueExpr::CryptoSha512 { value: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
+        | ValueExpr::RegexCompile { pattern: path }
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }

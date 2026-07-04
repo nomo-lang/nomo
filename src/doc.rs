@@ -98,6 +98,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.num", "numeric parsing and conversion helpers"),
         ("std.hash", "stable non-cryptographic hashing helpers"),
         ("std.crypto", "cryptographic digest helpers"),
+        ("std.regex", "regular expression helpers"),
         ("std.json", "JSON parse and stringify helpers"),
         ("std.collections", "string map and string set helpers"),
         ("std.char", "character helpers"),

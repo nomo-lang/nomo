@@ -4771,6 +4771,87 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_regex_helpers_with_question() {
+    let root = temp_test_root("std-regex-helpers");
+    reset_dir(&root);
+    let project = root.join("std_regex_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_regex_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.array
+import std.io
+import std.num
+import std.regex
+
+fn print_group(groups: Array<string>, index: u64) -> void {
+    match groups.get(index) {
+        Some(value) => {
+            io.println(value)
+        }
+        None => {
+            io.println("missing")
+        }
+    }
+}
+
+fn main() -> Result<void, RegexError> {
+    let rx: Regex = regex.compile("(nomo)-([0-9]+)")?
+    if regex.is_match(rx, "hello nomo-42") {
+        io.println("matched")
+    } else {
+        io.println("missing")
+    }
+
+    match regex.captures(rx, "hello nomo-42") {
+        Some(groups) => {
+            io.println(num.to_string(groups.len()))
+            print_group(groups, 0)
+            print_group(groups, 1)
+            print_group(groups, 2)
+        }
+        None => {
+            io.println("no-captures")
+        }
+    }
+    return Ok(void)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "matched\n3\nnomo-42\nnomo\n42\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_collections_helpers() {
     let root = temp_test_root("std-collections-helpers");
     reset_dir(&root);

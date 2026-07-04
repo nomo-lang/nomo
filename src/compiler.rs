@@ -373,6 +373,17 @@ pub enum ValueExpr {
     JsonStringify {
         value: Box<ValueExpr>,
     },
+    RegexCompile {
+        pattern: Box<ValueExpr>,
+    },
+    RegexIsMatch {
+        regex: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    RegexCaptures {
+        regex: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
     CollectionsStringMapNew,
     CollectionsStringMapLen {
         map: Box<ValueExpr>,
@@ -1885,6 +1896,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.json.JsonError"
             | "std.json.parse"
             | "std.json.stringify"
+            | "std.regex"
+            | "std.regex.Regex"
+            | "std.regex.RegexError"
+            | "std.regex.compile"
+            | "std.regex.is_match"
+            | "std.regex.captures"
             | "std.collections"
             | "std.collections.StringMap"
             | "std.collections.StringSet"
@@ -2051,6 +2068,7 @@ fn missing_standard_type_import(
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
         "JsonValue" | "JsonError" => Some("std.json"),
+        "Regex" | "RegexError" => Some("std.regex"),
         "StringMap" | "StringSet" => Some("std.collections"),
         _ => None,
     }
@@ -2456,6 +2474,7 @@ struct StandardTypeNeeds {
     process: bool,
     hash: bool,
     json: bool,
+    regex: bool,
     collections: bool,
     num: bool,
     result: bool,
@@ -2487,6 +2506,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.json" || item.starts_with("std.json."))
             || source_uses_json_builtin(ast),
+        regex: imports
+            .iter()
+            .any(|item| item == "std.regex" || item.starts_with("std.regex."))
+            || source_uses_regex_builtin(ast),
         collections: imports
             .iter()
             .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
@@ -2502,13 +2525,16 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.option" || item == "std.option.Option")
             || source_uses_option_prelude_variant(ast),
-        // std.collections is backed by Array<string> and Option<string> in v0.1.
+        // std.collections/std.regex are backed by Array<string> and Option in v0.1.
         array: imports.iter().any(|item| {
             item == "std.array" || item == "std.array.Array" || item.starts_with("std.array.")
         }) || source_uses_array_builtin(ast)
-            || imports
-                .iter()
-                .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
+            || imports.iter().any(|item| {
+                item == "std.collections"
+                    || item.starts_with("std.collections.")
+                    || item == "std.regex"
+                    || item.starts_with("std.regex.")
+            }),
     }
 }
 
@@ -2536,6 +2562,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("JsonValue".to_string(), 0));
         names.push(("JsonError".to_string(), 0));
     }
+    if needs.regex {
+        names.push(("Regex".to_string(), 0));
+        names.push(("RegexError".to_string(), 0));
+    }
     if needs.collections {
         names.push(("StringMap".to_string(), 0));
         names.push(("StringSet".to_string(), 0));
@@ -2545,10 +2575,17 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
 
 fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
-    if needs.io || needs.fs || needs.num || needs.process || needs.json || needs.result {
+    if needs.io
+        || needs.fs
+        || needs.num
+        || needs.process
+        || needs.json
+        || needs.regex
+        || needs.result
+    {
         names.push(("Result".to_string(), 2));
     }
-    if needs.env || needs.num || needs.option || needs.array || needs.collections {
+    if needs.env || needs.num || needs.option || needs.array || needs.collections || needs.regex {
         names.push(("Option".to_string(), 1));
     }
     names.into_iter()
@@ -2686,6 +2723,28 @@ fn inject_standard_types(
             }],
         });
     }
+    if needs.regex && !structs.iter().any(|item| item.name == "Regex") {
+        structs.push(StructType {
+            package: "std.regex".to_string(),
+            name: "Regex".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "pattern".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.regex && !structs.iter().any(|item| item.name == "RegexError") {
+        structs.push(StructType {
+            package: "std.regex".to_string(),
+            name: "RegexError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
     if needs.collections && !structs.iter().any(|item| item.name == "StringMap") {
         structs.push(StructType {
             package: "std.collections".to_string(),
@@ -2714,7 +2773,7 @@ fn inject_standard_types(
             }],
         });
     }
-    if (needs.io || needs.fs || needs.num || needs.json || needs.result)
+    if (needs.io || needs.fs || needs.num || needs.json || needs.regex || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
         enums.push(EnumType {
@@ -2733,7 +2792,7 @@ fn inject_standard_types(
             ],
         });
     }
-    if (needs.env || needs.num || needs.option || needs.array || needs.collections)
+    if (needs.env || needs.num || needs.option || needs.array || needs.collections || needs.regex)
         && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {
@@ -2788,6 +2847,12 @@ fn source_uses_json_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_json_builtin)
+}
+
+fn source_uses_regex_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_regex_builtin)
 }
 
 fn source_uses_num_builtin(ast: &SourceFile) -> bool {
@@ -3378,6 +3443,46 @@ fn stmt_uses_json_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_regex_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_regex_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_regex_builtin(value) || else_body.iter().any(stmt_uses_regex_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_regex_builtin(value)
+                || body.iter().any(stmt_uses_regex_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_regex_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_regex_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_regex_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_regex_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_regex_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_regex_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_regex_builtin(condition) || body.iter().any(stmt_uses_regex_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_regex_builtin(iterable) || body.iter().any(stmt_uses_regex_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_regex_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_num_builtin(value),
@@ -3687,6 +3792,45 @@ fn expr_uses_json_builtin(expr: &AstExpr) -> bool {
         AstExpr::Cast { expr, .. } => expr_uses_json_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_json_builtin(left) || expr_uses_json_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_regex_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            is_regex_builtin_call(callee) || args.iter().any(expr_uses_regex_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_regex_builtin(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_regex_builtin(value)
+                || arms.iter().any(|arm| expr_uses_regex_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_regex_builtin(condition)
+                || expr_uses_regex_builtin(then_branch)
+                || expr_uses_regex_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_regex_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_regex_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_regex_builtin(left) || expr_uses_regex_builtin(right)
         }
         AstExpr::Name(_)
         | AstExpr::String(_)
@@ -8678,6 +8822,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "regex" {
+                    return lower_regex_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "collections" {
                     return lower_collections_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -9042,6 +9191,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_json_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_regex_builtin_call(callee) {
+                require_import(path, imports, span, "std.regex", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "regex builtins do not accept type arguments",
+                    ));
+                }
+                return lower_regex_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10635,6 +10797,14 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_regex_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "regex" && matches!(name.as_str(), "compile" | "is_match" | "captures")
+    )
+}
+
 fn is_collections_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -10924,6 +11094,123 @@ fn lower_json_builtin(
             ))
         }
         _ => unreachable!("json builtin dispatcher only passes known calls"),
+    }
+}
+
+fn lower_regex_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("regex builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "regex");
+    let regex_type = ValueType::Struct("Regex".to_string(), Vec::new());
+    let regex_error = ValueType::Struct("RegexError".to_string(), Vec::new());
+    match name.as_str() {
+        "compile" => {
+            let [pattern_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`regex.compile` expects exactly one string pattern",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (pattern_type, pattern) = lower_value_expr(
+                path,
+                pattern_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if pattern_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`regex.compile` expects a string pattern",
+                    &ValueType::String,
+                    &pattern_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![regex_type.clone(), regex_error]),
+                ValueExpr::RegexCompile {
+                    pattern: Box::new(pattern),
+                },
+            ))
+        }
+        "is_match" | "captures" => {
+            let [regex_arg, value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`regex.{name}` expects a Regex and string value"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (actual_regex_type, regex) = lower_value_expr(
+                path, regex_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if actual_regex_type != regex_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`regex.{name}` expects a Regex value"),
+                    &regex_type,
+                    &actual_regex_type,
+                ));
+            }
+            let (value_type, value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`regex.{name}` expects a string value"),
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            if name == "is_match" {
+                Ok((
+                    ValueType::Bool,
+                    ValueExpr::RegexIsMatch {
+                        regex: Box::new(regex),
+                        value: Box::new(value),
+                    },
+                ))
+            } else {
+                Ok((
+                    ValueType::Enum(
+                        "Option".to_string(),
+                        vec![ValueType::Array(Box::new(ValueType::String))],
+                    ),
+                    ValueExpr::RegexCaptures {
+                        regex: Box::new(regex),
+                        value: Box::new(value),
+                    },
+                ))
+            }
+        }
+        _ => unreachable!("regex builtin dispatcher only passes known calls"),
     }
 }
 
@@ -14861,6 +15148,15 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "stringify" if imports.iter().any(|item| item == "std.json.stringify") => {
             vec!["json".to_string(), "stringify".to_string()]
         }
+        "compile" if imports.iter().any(|item| item == "std.regex.compile") => {
+            vec!["regex".to_string(), "compile".to_string()]
+        }
+        "is_match" if imports.iter().any(|item| item == "std.regex.is_match") => {
+            vec!["regex".to_string(), "is_match".to_string()]
+        }
+        "captures" if imports.iter().any(|item| item == "std.regex.captures") => {
+            vec!["regex".to_string(), "captures".to_string()]
+        }
         "map_new" if imports.iter().any(|item| item == "std.collections.map_new") => {
             vec!["collections".to_string(), "map_new".to_string()]
         }
@@ -16728,6 +17024,128 @@ fn main() -> Result<void, JsonError> {
                 ..
             }
         ));
+    }
+
+    #[test]
+    fn accepts_regex_builtins_with_question() {
+        let source = r#"package app.main
+
+import std.regex
+import std.array
+
+fn main() -> Result<void, RegexError> {
+    let compiled: Result<Regex, RegexError> = regex.compile("(nomo)-([0-9]+)")
+    let rx: Regex = compiled?
+    let matched: bool = regex.is_match(rx, "hello nomo-42")
+    let groups: Option<Array<string>> = regex.captures(rx, "hello nomo-42")
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "Regex"));
+        assert!(program.structs.iter().any(|item| item.name == "RegexError"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::RegexCompile { .. },
+                ..
+            }
+        ));
+        assert!(main.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                carrier: QuestionCarrier::Result,
+                ..
+            }
+        )));
+        assert!(main.body.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Let {
+                    value_type: ValueType::Bool,
+                    initializer: ValueExpr::RegexIsMatch { .. },
+                    ..
+                }
+            )
+        }));
+        assert!(main.body.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Let {
+                    value_type: ValueType::Enum(name, args),
+                    initializer: ValueExpr::RegexCaptures { .. },
+                    ..
+                } if name == "Option" && args == &[ValueType::Array(Box::new(ValueType::String))]
+            )
+        }));
+    }
+
+    #[test]
+    fn accepts_specific_regex_builtin_imports() {
+        let source = r#"package app.main
+
+import std.regex.Regex
+import std.regex.RegexError
+import std.regex.captures
+import std.regex.compile
+import std.regex.is_match
+import std.array.Array
+
+fn main() -> Result<void, RegexError> {
+    let rx: Regex = compile("nomo")?
+    let matched: bool = is_match(rx, "nomo")
+    let groups: Option<Array<string>> = captures(rx, "nomo")
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(main.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                result_expr: ValueExpr::RegexCompile { .. },
+                ..
+            }
+        )));
+        assert!(main.body.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Let {
+                    initializer: ValueExpr::RegexIsMatch { .. },
+                    ..
+                }
+            )
+        }));
+        assert!(main.body.iter().any(|stmt| {
+            matches!(
+                stmt,
+                Statement::Let {
+                    initializer: ValueExpr::RegexCaptures { .. },
+                    ..
+                }
+            )
+        }));
+    }
+
+    #[test]
+    fn rejects_regex_compile_non_string_pattern() {
+        let source = r#"package app.main
+
+import std.regex
+
+fn main() -> void {
+    let parsed: Result<Regex, RegexError> = regex.compile(42)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("regex.compile"));
+        assert_eq!(err.expected.as_deref(), Some("string"));
+        assert_eq!(err.found.as_deref(), Some("i64"));
     }
 
     #[test]

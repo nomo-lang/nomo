@@ -341,6 +341,12 @@ strings.
 digest string. Random bytes remain a later slice until byte-array APIs are
 settled.
 
+`std.regex` provides regular expression helpers: `regex.compile`,
+`regex.is_match`, and `regex.captures`. `compile` returns
+`Result<Regex, RegexError>`, so callers use postfix `?` for propagation.
+`captures` returns `Option<Array<string>>` containing the full match followed
+by capture groups.
+
 `std.collections` provides v0.1 string-specialized collection helpers.
 `StringMap` stores string keys and string values; `StringSet` stores unique
 strings. Use `collections.map_new`, `map_len`, `map_get`, `map_contains`,

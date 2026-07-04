@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -41,6 +42,22 @@ fn every_diagnostics_doc_is_linked_from_index() {
     }
 }
 
+#[test]
+fn emitted_diagnostic_codes_are_registered() {
+    let registered = registered_codes().into_iter().collect::<BTreeSet<String>>();
+    let emitted = emitted_codes();
+    let missing = emitted
+        .iter()
+        .filter(|code| code.as_str() != "E9999" && !registered.contains(*code))
+        .cloned()
+        .collect::<Vec<_>>();
+
+    assert!(
+        missing.is_empty(),
+        "emitted diagnostic codes must be documented: {missing:?}"
+    );
+}
+
 fn diagnostics_dir() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/diagnostics")
 }
@@ -63,6 +80,40 @@ fn documented_codes(index: &str) -> Vec<String> {
             rest.contains(&link).then(|| code.to_string())
         })
         .collect()
+}
+
+fn emitted_codes() -> BTreeSet<String> {
+    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let mut files = Vec::new();
+    collect_rs_files(&root.join("src"), &mut files);
+    collect_rs_files(&root.join("tests"), &mut files);
+
+    let mut codes = BTreeSet::new();
+    for file in files {
+        let text = fs::read_to_string(file).unwrap();
+        for quoted in text.split('"').skip(1).step_by(2) {
+            if is_diagnostic_code(quoted) {
+                codes.insert(quoted.to_string());
+            }
+        }
+    }
+    codes
+}
+
+fn collect_rs_files(dir: &Path, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(dir).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_rs_files(&path, files);
+        } else if path.extension().and_then(|ext| ext.to_str()) == Some("rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn is_diagnostic_code(value: &str) -> bool {
+    let bytes = value.as_bytes();
+    bytes.len() == 5 && bytes[0] == b'E' && bytes[1..].iter().all(|byte| byte.is_ascii_digit())
 }
 
 fn assert_doc_has_required_sections(code: &str, path: &Path) {

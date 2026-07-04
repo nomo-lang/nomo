@@ -919,6 +919,41 @@ fn nomoc_check_emits_json_for_question_in_non_result_function() {
 }
 
 #[test]
+fn nomoc_check_emits_json_for_unsupported_question_position() {
+    let root = temp_test_root("nomoc-json-question-unsupported-position");
+    reset_dir(&root);
+    let source = root.join("question-unsupported-position.nomo");
+    fs::write(
+        &source,
+        "package app.main\n\nimport std.result\n\nfn parse() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nconst VALUE: string = parse()?\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("check")
+        .arg(&source)
+        .arg("--json-errors")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let text = String::from_utf8_lossy(&output.stderr);
+    let text = text.trim();
+    assert_single_json_object(text);
+    assert!(text.contains("\"status\":\"error\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0422\""), "{text}");
+    assert!(
+        text.contains(
+            "\"message\":\"`?` is currently supported only in statement-level expressions with unconditional evaluation\""
+        ),
+        "{text}"
+    );
+    assert!(text.contains("\"suggestions\":[]"), "{text}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomoc_check_emits_json_for_implicit_numeric_conversion() {
     let root = temp_test_root("nomoc-json-implicit-numeric-conversion");
     reset_dir(&root);

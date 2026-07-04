@@ -89,9 +89,11 @@ the same code.
 - [E0257](E0257.md) - invalid method receiver type
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
+- [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch
 - [E0420](E0420.md) - invalid question operator carrier
 - [E0421](E0421.md) - incompatible question operator propagation
+- [E0422](E0422.md) - unsupported question operator position
 - [E0501](E0501.md) - immutable value mutation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error

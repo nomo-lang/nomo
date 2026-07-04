@@ -8,6 +8,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "args",
     "read_file",
     "result_chain",
+    "comments",
     "operators_arithmetic",
     "operators_logical",
     "operators_bitwise",
@@ -203,6 +204,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "array_swap" => "array swap ok\n",
         "array_value_semantics" => "array value semantics ok\n",
         "c_keywords" => "c keywords ok\n",
+        "comments" => "comments ok\nhttp://example.test/*literal*/\n",
         "const" => "hello\nhello\nhello\nconst primitives ok\n",
         "defer" => {
             "working\ncontinue cleanup\nbreak cleanup\nblock\ninner\nafter block\ninner early\nouter early\nclose\nflush\nlog\n"

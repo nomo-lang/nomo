@@ -1,0 +1,23 @@
+//! Example module documentation.
+
+package app.main
+
+import std.io
+
+/// Returns text even when comment markers appear inside strings.
+fn marker_text() -> string {
+    return "http://example.test/*literal*/"
+}
+
+/** Keeps nested block comments out of the token stream. */
+fn main() -> void {
+    // Line comments can trail ordinary code.
+    let text: string = marker_text() // trailing comment
+    /*
+       Outer block comment.
+       /* Nested block comment. */
+       Back in the outer block.
+    */
+    io.println("comments ok")
+    io.println(text)
+}

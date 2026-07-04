@@ -13,6 +13,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `io_print`: `std.io.print` and `std.io.eprint` output without automatic newlines
 - `io_stderr`: `std.io.eprintln` writing to stderr while stdout remains independent
 - `primitives`: fixed-width primitives, Unicode `char`, and explicit casts
+- `comments`: line, block, doc, nested block, and trailing comments
 - `operators_arithmetic`: arithmetic precedence, grouping, and unary negation
 - `operators_logical`: logical negation and short-circuit boolean operators
 - `operators_bitwise`: bitwise operators, bit clear, and shifts

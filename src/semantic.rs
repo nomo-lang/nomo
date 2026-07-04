@@ -5,8 +5,8 @@ use crate::ast::{
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
 use crate::parser::parse;
-use crate::project::Project;
-use std::collections::BTreeMap;
+use crate::project::{Project, project_module_context, resolve_module_source_path};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -130,7 +130,7 @@ pub fn symbol_at_project_position(
         return Ok(None);
     };
     let overrides = overrides_with_current(path, source, source_overrides);
-    let symbols = symbols_for_project_with_overrides(project, &overrides)?;
+    let symbols = accessible_symbols_for_document(project, source, &overrides)?;
     let preference = symbol_lookup_preference(path, source, position)?;
     Ok(resolve_symbol(path, position, &name, symbols, &preference))
 }
@@ -203,6 +203,10 @@ pub fn references_for_project_text(
     else {
         return Ok(None);
     };
+    let local_source_root = project.root.join("src");
+    if !is_project_nomo_source(&local_source_root, &symbol.source_path) {
+        return Ok(None);
+    }
     let overrides = overrides_with_current(path, source, source_overrides);
     let mut locations = Vec::new();
     for (source_path, source) in project_sources(project, &overrides)? {
@@ -228,6 +232,168 @@ pub fn references_for_project_text(
         }
     }
     Ok(Some(locations))
+}
+
+fn accessible_symbols_for_document(
+    project: &Project,
+    source: &str,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let mut symbols = symbols_for_project_with_overrides(project, source_overrides)?;
+    symbols.extend(dependency_symbols_for_document(
+        project,
+        source,
+        source_overrides,
+    )?);
+    Ok(symbols)
+}
+
+fn dependency_symbols_for_document(
+    project: &Project,
+    source: &str,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let Ok(context) = project_module_context(project) else {
+        return Ok(Vec::new());
+    };
+    let Some(local_root) = package_root(source) else {
+        return Ok(Vec::new());
+    };
+    let external_roots = context
+        .external_modules
+        .iter()
+        .map(|module| module.source_root.as_path())
+        .collect::<Vec<_>>();
+    let mut files = source
+        .lines()
+        .filter_map(import_path)
+        .filter(|import| {
+            import
+                .first()
+                .is_some_and(|root| root != "std" && root != &local_root)
+        })
+        .filter_map(|import| resolve_module_source_path(&context, &local_root, &import))
+        .filter(|path| {
+            external_roots
+                .iter()
+                .any(|source_root| path.starts_with(source_root))
+        })
+        .collect::<Vec<_>>();
+    files.sort();
+    files.dedup();
+
+    let overrides = source_overrides
+        .iter()
+        .map(|(path, source)| (path.clone(), source.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut symbols = Vec::new();
+    for path in files {
+        let source = match overrides.get(&path) {
+            Some(source) => source.clone(),
+            None => fs::read_to_string(&path).map_err(|err| {
+                Diagnostic::new(
+                    "E0902",
+                    format!("failed to read {}: {err}", path.display()),
+                    &path,
+                    1,
+                    1,
+                    1,
+                    "",
+                )
+            })?,
+        };
+        symbols.extend(public_symbols_for_text(&path, &source)?);
+    }
+    Ok(symbols)
+}
+
+fn package_root(source: &str) -> Option<String> {
+    source.lines().find_map(|line| {
+        let package = line.trim().strip_prefix("package ")?;
+        package
+            .split('.')
+            .next()
+            .filter(|segment| !segment.is_empty())
+            .map(str::to_string)
+    })
+}
+
+fn import_path(line: &str) -> Option<Vec<String>> {
+    let import = line.trim().strip_prefix("import ")?;
+    let path = import.split_whitespace().next()?;
+    let parts = path
+        .split('.')
+        .filter(|part| !part.is_empty())
+        .map(str::to_string)
+        .collect::<Vec<_>>();
+    (parts.len() >= 2).then_some(parts)
+}
+
+fn public_symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let tokens = lex(path, source)?;
+    let ast = parse(path, &tokens)?;
+    let docs = extract_doc_comments(source);
+    let public_structs = ast
+        .structs
+        .iter()
+        .filter(|item| item.public)
+        .map(|item| item.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let public_enums = ast
+        .enums
+        .iter()
+        .filter(|item| item.public)
+        .map(|item| item.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let public_interfaces = ast
+        .interfaces
+        .iter()
+        .filter(|item| item.public)
+        .map(|item| item.name.as_str())
+        .collect::<BTreeSet<_>>();
+
+    Ok(symbols_from_ast(path, &ast, &docs)
+        .into_iter()
+        .filter(|symbol| {
+            public_dependency_symbol(symbol, &public_structs, &public_enums, &public_interfaces)
+        })
+        .collect())
+}
+
+fn public_dependency_symbol(
+    symbol: &SemanticSymbol,
+    public_structs: &BTreeSet<&str>,
+    public_enums: &BTreeSet<&str>,
+    public_interfaces: &BTreeSet<&str>,
+) -> bool {
+    match symbol.kind {
+        SemanticSymbolKind::Struct
+        | SemanticSymbolKind::Enum
+        | SemanticSymbolKind::Interface
+        | SemanticSymbolKind::Const
+        | SemanticSymbolKind::Function => symbol.signature.starts_with("pub "),
+        SemanticSymbolKind::ExternFunction => true,
+        SemanticSymbolKind::Method => symbol.signature.starts_with("pub "),
+        SemanticSymbolKind::Field => symbol
+            .signature
+            .strip_prefix("pub field ")
+            .and_then(|rest| rest.split_once(':'))
+            .and_then(|(path, _)| path.rsplit_once('.'))
+            .is_some_and(|(owner, _)| public_structs.contains(owner)),
+        SemanticSymbolKind::Variant => symbol
+            .signature
+            .strip_prefix("variant ")
+            .and_then(|rest| rest.split('(').next())
+            .and_then(|path| path.rsplit_once('.'))
+            .is_some_and(|(owner, _)| public_enums.contains(owner)),
+        SemanticSymbolKind::InterfaceMethod => symbol
+            .signature
+            .strip_prefix("fn ")
+            .and_then(|rest| rest.split('(').next())
+            .and_then(|path| path.rsplit_once('.'))
+            .is_some_and(|(owner, _)| public_interfaces.contains(owner)),
+    }
 }
 
 fn resolve_symbol(
@@ -1241,6 +1407,89 @@ mod tests {
                 },
             }
         );
+    }
+
+    #[test]
+    fn project_definition_resolves_imported_dependency_public_symbol() {
+        let root = env::temp_dir().join(format!(
+            "nomo_semantic_dependency_definition_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project_root = root.join("hello");
+        let dependency_root = root.join("utils");
+        fs::create_dir_all(project_root.join("src")).unwrap();
+        fs::create_dir_all(dependency_root.join("src")).unwrap();
+        fs::write(
+            project_root.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            dependency_root.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        let main = project_root.join("src/main.nomo");
+        let dep_module = dependency_root.join("src/path.nomo");
+        let main_source = "package app.main\n\nimport local_utils.path\n\nfn main() -> void {\n    let total: i64 = join(1, 2)\n}\n";
+        write_source(&main, main_source);
+        write_source(
+            &dep_module,
+            "package local_utils.path\n\n/// Joins values.\npub fn join(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn hidden() -> i64 {\n    return 1\n}\n",
+        );
+        let project = Project {
+            main: main.clone(),
+            root: project_root,
+            name: "hello".to_string(),
+            workspace_root: None,
+        };
+
+        let definition = definition_for_project_text(
+            &project,
+            &main,
+            main_source,
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(
+            fs::canonicalize(&definition.path).unwrap(),
+            fs::canonicalize(&dep_module).unwrap()
+        );
+        assert_eq!(
+            definition.range,
+            TextRange {
+                start: TextPosition {
+                    line: 3,
+                    character: 7,
+                },
+                end: TextPosition {
+                    line: 3,
+                    character: 11,
+                },
+            }
+        );
+        let missing_private = symbol_at_project_position(
+            &project,
+            &main,
+            "package app.main\n\nimport local_utils.path\n\nfn main() -> void {\n    let total: i64 = hidden()\n}\n",
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            &[],
+        )
+        .unwrap();
+        assert!(missing_private.is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]

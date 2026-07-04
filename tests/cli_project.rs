@@ -365,6 +365,8 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("\"package\":\"nomo-lang/std\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.io\""), "{stdout}");
     assert!(stdout.contains("printing and terminal I/O"), "{stdout}");
+    assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
+    assert!(stdout.contains("test assertion helpers"), "{stdout}");
 }
 
 #[test]
@@ -468,6 +470,64 @@ fn nomo_test_json_reports_failures() {
         "{stdout}"
     );
     assert!(stdout.contains("panic: boom"), "{stdout}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_runs_std_testing_assert_helpers() {
+    let root = temp_test_root("test-std-testing-asserts");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.result
+import std.testing
+
+fn fail() -> Result<i64, string> {
+    return Err("boom")
+}
+
+#[test]
+fn assert_helpers() -> void {
+    testing.assert(true, "expected true")
+    testing.assert_equal(42, 42)
+    testing.assert_equal("same", "same")
+    testing.assert_error(fail())
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "running 1 tests\nok app.main.assert_helpers\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }

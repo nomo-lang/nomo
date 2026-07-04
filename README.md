@@ -354,6 +354,11 @@ and `stderr`; non-zero exits stay in `Ok(ProcessOutput)` so callers can inspect
 the captured streams.
 `exec` does not capture stderr in v0.1.
 
+`std.testing` provides helpers for `#[test]` functions: `testing.assert`,
+`testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool
+condition and string message. `assert_equal` compares matching primitive values
+or strings. `assert_error` passes only when a `Result<T, E>` is `Err`.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

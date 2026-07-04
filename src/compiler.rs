@@ -1806,6 +1806,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.time.now_millis"
             | "std.time.monotonic_millis"
             | "std.time.sleep_millis"
+            | "std.testing"
+            | "std.testing.assert"
+            | "std.testing.assert_equal"
+            | "std.testing.assert_error"
             | "std.process"
             | "std.process.ProcessError"
             | "std.process.ProcessOutput"
@@ -8314,6 +8318,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "testing" {
+                    return lower_testing_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "num" {
                     return lower_num_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8659,6 +8668,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_time_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_testing_builtin_call(callee) {
+                require_import(path, imports, span, "std.testing", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "testing builtins do not accept type arguments",
+                    ));
+                }
+                return lower_testing_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10002,6 +10024,207 @@ fn is_process_builtin_call(callee: &[String]) -> bool {
             if module == "process"
                 && matches!(name.as_str(), "exit" | "status" | "exec" | "output")
     )
+}
+
+fn is_testing_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "testing"
+                && matches!(name.as_str(), "assert" | "assert_equal" | "assert_error")
+    )
+}
+
+fn lower_testing_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("testing builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "testing");
+    match name.as_str() {
+        "assert" => {
+            let [condition_arg, message_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`testing.assert` expects a bool condition and string message",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (condition_type, condition) = lower_value_expr(
+                path,
+                condition_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`testing.assert` expects a bool condition",
+                    &ValueType::Bool,
+                    &condition_type,
+                ));
+            }
+            let (message_type, message) = lower_value_expr(
+                path,
+                message_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if message_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`testing.assert` expects a string message",
+                    &ValueType::String,
+                    &message_type,
+                ));
+            }
+            Ok((ValueType::Void, assert_expr(condition, message)))
+        }
+        "assert_equal" => {
+            let [left_arg, right_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`testing.assert_equal` expects two comparable values",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (left_type, left) = lower_value_expr(
+                path, left_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let (right_type, right) = lower_value_expr(
+                path, right_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if left_type != right_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`testing.assert_equal` expects both values to have the same type",
+                    &left_type,
+                    &right_type,
+                ));
+            }
+            let condition = equality_expr(left, right, &left_type).ok_or_else(|| {
+                type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "`testing.assert_equal` does not support values of type `{}`",
+                        left_type.name()
+                    ),
+                )
+            })?;
+            Ok((
+                ValueType::Void,
+                assert_expr(
+                    condition,
+                    ValueExpr::StringLiteral("assert_equal failed".to_string()),
+                ),
+            ))
+        }
+        "assert_error" => {
+            let [result_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`testing.assert_error` expects one Result<T, E> value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (result_type, result) = lower_value_expr(
+                path, result_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let ValueType::Enum(enum_name, enum_args) = result_type.clone() else {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`testing.assert_error` expects a Result<T, E> value",
+                ));
+            };
+            if enum_name != "Result" || enum_args.len() != 2 {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`testing.assert_error` expects a Result<T, E> value",
+                ));
+            }
+            let condition = ValueExpr::ResultIsErr {
+                result: Box::new(result),
+                ok_type: enum_args[0].clone(),
+                err_type: enum_args[1].clone(),
+            };
+            Ok((
+                ValueType::Void,
+                assert_expr(
+                    condition,
+                    ValueExpr::StringLiteral("expected Result.Err".to_string()),
+                ),
+            ))
+        }
+        _ => unreachable!("testing builtin dispatcher only passes known calls"),
+    }
+}
+
+fn assert_expr(condition: ValueExpr, message: ValueExpr) -> ValueExpr {
+    ValueExpr::If {
+        condition: Box::new(condition),
+        then_branch: Box::new(ValueExpr::VoidLiteral),
+        else_branch: Box::new(ValueExpr::Panic {
+            message: Box::new(message),
+            fallback_type: ValueType::Void,
+        }),
+    }
+}
+
+fn equality_expr(left: ValueExpr, right: ValueExpr, value_type: &ValueType) -> Option<ValueExpr> {
+    match value_type {
+        ValueType::String => Some(ValueExpr::StringCompare {
+            left: Box::new(left),
+            op: BinaryOp::Equal,
+            right: Box::new(right),
+        }),
+        ValueType::Char
+        | ValueType::Bool
+        | ValueType::Int
+        | ValueType::I32
+        | ValueType::U64
+        | ValueType::Float => Some(ValueExpr::Binary {
+            left: Box::new(left),
+            op: BinaryOp::Equal,
+            right: Box::new(right),
+            value_type: value_type.clone(),
+        }),
+        _ => None,
+    }
 }
 
 fn is_path_builtin_call(callee: &[String]) -> bool {
@@ -13206,6 +13429,23 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "output" if imports.iter().any(|item| item == "std.process.output") => {
             vec!["process".to_string(), "output".to_string()]
         }
+        "assert" if imports.iter().any(|item| item == "std.testing.assert") => {
+            vec!["testing".to_string(), "assert".to_string()]
+        }
+        "assert_equal"
+            if imports
+                .iter()
+                .any(|item| item == "std.testing.assert_equal") =>
+        {
+            vec!["testing".to_string(), "assert_equal".to_string()]
+        }
+        "assert_error"
+            if imports
+                .iter()
+                .any(|item| item == "std.testing.assert_error") =>
+        {
+            vec!["testing".to_string(), "assert_error".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.path.join") => {
             vec!["path".to_string(), "join".to_string()]
         }
@@ -14459,6 +14699,108 @@ fn main() -> void {
             run.body[1],
             Statement::Return(Some(ValueExpr::ProcessExec { .. }))
         ));
+    }
+
+    #[test]
+    fn accepts_testing_builtins() {
+        let source = r#"package app.main
+
+import std.result
+import std.testing
+
+fn fail() -> Result<i64, string> {
+    return Err("boom")
+}
+
+fn main() -> void {
+    testing.assert(true, "expected true")
+    testing.assert_equal(1, 1)
+    testing.assert_equal("same", "same")
+    testing.assert_error(fail())
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(main.body.len(), 4);
+        assert!(matches!(
+            main.body[0],
+            Statement::Expr(ValueExpr::If { .. })
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Expr(ValueExpr::If { .. })
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Expr(ValueExpr::If { .. })
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Expr(ValueExpr::If { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_testing_builtin_imports() {
+        let source = r#"package app.main
+
+import std.result
+import std.testing.assert
+import std.testing.assert_equal
+import std.testing.assert_error
+
+fn fail() -> Result<i64, string> {
+    return Err("boom")
+}
+
+fn main() -> void {
+    assert(true, "expected true")
+    assert_equal('n', 'n')
+    assert_error(fail())
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(main.body.len(), 3);
+        assert!(
+            main.body
+                .iter()
+                .all(|stmt| matches!(stmt, Statement::Expr(ValueExpr::If { .. })))
+        );
+    }
+
+    #[test]
+    fn rejects_testing_assert_non_bool_condition() {
+        let source = r#"package app.main
+
+import std.testing
+
+fn main() -> void {
+    testing.assert("nope", "expected bool")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("bool condition"));
+    }
+
+    #[test]
+    fn rejects_testing_assert_error_non_result() {
+        let source = r#"package app.main
+
+import std.testing
+
+fn main() -> void {
+    testing.assert_error(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("Result<T, E>"));
     }
 
     #[test]

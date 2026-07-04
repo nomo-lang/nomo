@@ -333,9 +333,11 @@ integer type with wraparound semantics. In v0.1, `to_string` is used through
 the `num` module to avoid colliding with `char.to_string`.
 
 `std.hash` provides stable non-cryptographic FNV-1a helpers:
-`hash.string`, `hash.new`, `hash.write_string`, and `hash.finish`.
+`hash.string`, `hash.bytes`, `hash.new`, `hash.write_string`,
+`hash.write_bytes`, and `hash.finish`.
 `HashState` lets callers build the same hash incrementally from multiple
-strings.
+strings or `Array<u32>` byte chunks. Byte arrays use the same `0..255` element
+convention as `fs.read_bytes`, `fs.write_bytes`, and `crypto.random_bytes`.
 
 `std.crypto` provides cryptographic helpers: `crypto.sha256` and
 `crypto.sha512` take a string and return a lowercase hex digest string.

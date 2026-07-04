@@ -1073,12 +1073,21 @@ fn emit_hash_helpers(out: &mut String) {
     let value_field = c_member_ident("value");
     out.push_str("static const uint64_t NOMO_HASH_OFFSET = UINT64_C(14695981039346656037);\n");
     out.push_str("static const uint64_t NOMO_HASH_PRIME = UINT64_C(1099511628211);\n\n");
-    out.push_str("static uint64_t nomo_hash_write_bytes(uint64_t state, const char *data) {\n");
+    out.push_str("static uint64_t nomo_hash_write_cstr(uint64_t state, const char *data) {\n");
     out.push_str("    const unsigned char *bytes = (const unsigned char *)data;\n");
     out.push_str("    while (*bytes != '\\0') {\n");
     out.push_str("        state ^= (uint64_t)(*bytes);\n");
     out.push_str("        state *= NOMO_HASH_PRIME;\n");
     out.push_str("        bytes += 1;\n");
+    out.push_str("    }\n");
+    out.push_str("    return state;\n");
+    out.push_str("}\n\n");
+    out.push_str(
+        "static uint64_t nomo_hash_write_array_u32(uint64_t state, nomo_array_u32 data) {\n",
+    );
+    out.push_str("    for (size_t i = 0; i < data.len; i += 1) {\n");
+    out.push_str("        state ^= (uint64_t)(data.data[i] & 0xffU);\n");
+    out.push_str("        state *= NOMO_HASH_PRIME;\n");
     out.push_str("    }\n");
     out.push_str("    return state;\n");
     out.push_str("}\n\n");
@@ -1092,7 +1101,10 @@ fn emit_hash_helpers(out: &mut String) {
     out.push_str(" = NOMO_HASH_OFFSET};\n");
     out.push_str("}\n\n");
     out.push_str("static uint64_t nomo_hash_string(nomo_string value) {\n");
-    out.push_str("    return nomo_hash_write_bytes(NOMO_HASH_OFFSET, value.data);\n");
+    out.push_str("    return nomo_hash_write_cstr(NOMO_HASH_OFFSET, value.data);\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_hash_bytes(nomo_array_u32 value) {\n");
+    out.push_str("    return nomo_hash_write_array_u32(NOMO_HASH_OFFSET, value);\n");
     out.push_str("}\n\n");
     out.push_str("static ");
     out.push_str(&hash_state);
@@ -1103,9 +1115,22 @@ fn emit_hash_helpers(out: &mut String) {
     out.push_str(&hash_state);
     out.push_str("){.");
     out.push_str(&value_field);
-    out.push_str(" = nomo_hash_write_bytes(state.");
+    out.push_str(" = nomo_hash_write_cstr(state.");
     out.push_str(&value_field);
     out.push_str(", value.data)};\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&hash_state);
+    out.push_str(" nomo_hash_write_bytes(");
+    out.push_str(&hash_state);
+    out.push_str(" state, nomo_array_u32 value) {\n");
+    out.push_str("    return (");
+    out.push_str(&hash_state);
+    out.push_str("){.");
+    out.push_str(&value_field);
+    out.push_str(" = nomo_hash_write_array_u32(state.");
+    out.push_str(&value_field);
+    out.push_str(", value)};\n");
     out.push_str("}\n\n");
     out.push_str("static uint64_t nomo_hash_finish(");
     out.push_str(&hash_state);
@@ -7203,6 +7228,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: expr }
         | ValueExpr::LogEnabled { level: expr }
         | ValueExpr::HashString { value: expr }
+        | ValueExpr::HashBytes { value: expr }
         | ValueExpr::HashFinish { state: expr }
         | ValueExpr::CryptoSha256 { value: expr }
         | ValueExpr::CryptoSha512 { value: expr }
@@ -7235,6 +7261,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
             bytes: right,
         }
         | ValueExpr::HashWriteString {
+            state: left,
+            value: right,
+        }
+        | ValueExpr::HashWriteBytes {
             state: left,
             value: right,
         }
@@ -8085,8 +8115,20 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, value);
             out.push(')');
         }
+        ValueExpr::HashBytes { value } => {
+            out.push_str("nomo_hash_bytes(");
+            emit_expr(out, value);
+            out.push(')');
+        }
         ValueExpr::HashWriteString { state, value } => {
             out.push_str("nomo_hash_write_string(");
+            emit_expr(out, state);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
+            out.push_str("nomo_hash_write_bytes(");
             emit_expr(out, state);
             out.push_str(", ");
             emit_expr(out, value);
@@ -9253,6 +9295,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -9314,6 +9357,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(value, out);
         }
         ValueExpr::HashWriteString { state, value } => {
+            collect_expr_result_map_err(state, out);
+            collect_expr_result_map_err(value, out);
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             collect_expr_result_map_err(state, out);
             collect_expr_result_map_err(value, out);
         }
@@ -9657,6 +9704,7 @@ where
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -9719,6 +9767,10 @@ where
             walk_expr(value, visit);
         }
         ValueExpr::HashWriteString { state, value } => {
+            walk_expr(state, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             walk_expr(state, visit);
             walk_expr(value, visit);
         }
@@ -10133,6 +10185,7 @@ fn collect_expr_struct(
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
         | ValueExpr::HashString { value }
+        | ValueExpr::HashBytes { value }
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
@@ -10157,6 +10210,11 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "HashState", &[]);
         }
         ValueExpr::HashWriteString { state, value } => {
+            push_struct_instance(seen, out, "HashState", &[]);
+            collect_expr_struct(state, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             push_struct_instance(seen, out, "HashState", &[]);
             collect_expr_struct(state, seen, out);
             collect_expr_struct(value, seen, out);
@@ -10905,6 +10963,7 @@ fn collect_expr_enum(
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
         | ValueExpr::HashString { value }
+        | ValueExpr::HashBytes { value }
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
@@ -10956,7 +11015,8 @@ fn collect_expr_enum(
         ValueExpr::HashNew
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew => {}
-        ValueExpr::HashWriteString { state, value } => {
+        ValueExpr::HashWriteString { state, value }
+        | ValueExpr::HashWriteBytes { state, value } => {
             collect_expr_enum(state, seen, out);
             collect_expr_enum(value, seen, out);
         }
@@ -12428,6 +12488,9 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::HashWriteString { state, value } => {
             expr_contains(state, predicate) || expr_contains(value, predicate)
         }
+        ValueExpr::HashWriteBytes { state, value } => {
+            expr_contains(state, predicate) || expr_contains(value, predicate)
+        }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
             expr_contains(map, predicate)
                 || expr_contains(key, predicate)
@@ -12485,6 +12548,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -12711,7 +12775,9 @@ fn expr_is_hash_builtin(expr: &ValueExpr) -> bool {
         expr,
         ValueExpr::HashNew
             | ValueExpr::HashString { .. }
+            | ValueExpr::HashBytes { .. }
             | ValueExpr::HashWriteString { .. }
+            | ValueExpr::HashWriteBytes { .. }
             | ValueExpr::HashFinish { .. }
     )
 }
@@ -13313,6 +13379,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
         | ValueExpr::HashString { value: name }
+        | ValueExpr::HashBytes { value: name }
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
@@ -13337,6 +13404,9 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_read_to_string(state) || expr_uses_fs_read_to_string(value)
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             expr_uses_fs_read_to_string(state) || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
@@ -13559,6 +13629,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
         | ValueExpr::HashString { value: name }
+        | ValueExpr::HashBytes { value: name }
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
@@ -13583,6 +13654,9 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_write_string(state) || expr_uses_fs_write_string(value)
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             expr_uses_fs_write_string(state) || expr_uses_fs_write_string(value)
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
@@ -13770,6 +13844,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -13827,6 +13902,9 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_open(state) || expr_uses_fs_open(value)
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             expr_uses_fs_open(state) || expr_uses_fs_open(value)
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
@@ -14004,6 +14082,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -14039,6 +14118,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
         ValueExpr::HashWriteString { state, value } => {
+            expr_uses_env_get(state) || expr_uses_env_get(value)
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             expr_uses_env_get(state) || expr_uses_env_get(value)
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
@@ -14244,6 +14326,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
+        | ValueExpr::HashBytes { value: path }
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
@@ -14295,6 +14378,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
         ValueExpr::HashWriteString { state, value } => {
+            expr_uses_env_args(state) || expr_uses_env_args(value)
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
             expr_uses_env_args(state) || expr_uses_env_args(value)
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
@@ -14489,6 +14575,10 @@ fn collect_expr_array_elements(
             push_array_element_type(seen, out, &ValueType::U32);
             collect_expr_array_elements(count, seen, out);
         }
+        ValueExpr::HashBytes { value } => {
+            push_array_element_type(seen, out, &ValueType::U32);
+            collect_expr_array_elements(value, seen, out);
+        }
         ValueExpr::FsReadBytes { path } => {
             push_array_element_type(seen, out, &ValueType::U32);
             collect_expr_array_elements(path, seen, out);
@@ -14560,6 +14650,11 @@ fn collect_expr_array_elements(
         }
         ValueExpr::HashNew => {}
         ValueExpr::HashWriteString { state, value } => {
+            collect_expr_array_elements(state, seen, out);
+            collect_expr_array_elements(value, seen, out);
+        }
+        ValueExpr::HashWriteBytes { state, value } => {
+            push_array_element_type(seen, out, &ValueType::U32);
             collect_expr_array_elements(state, seen, out);
             collect_expr_array_elements(value, seen, out);
         }

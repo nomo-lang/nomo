@@ -4638,17 +4638,24 @@ fn nomo_run_executes_std_hash_helpers() {
         r#"package app.main
 
 import std.hash
+import std.array.Array
 import std.io
 import std.num
 
 fn main() -> void {
+    let mut bytes: Array<u32> = Array.new<u32>()
+    bytes.push(110 as u32)
+    bytes.push(111 as u32)
+    bytes.push(109 as u32)
+    bytes.push(111 as u32)
     let direct: u64 = hash.string("nomo")
+    let direct_bytes: u64 = hash.bytes(bytes)
     let empty: HashState = hash.new()
-    let first: HashState = hash.write_string(empty, "no")
-    let second: HashState = hash.write_string(first, "mo")
-    let incremental: u64 = hash.finish(second)
+    let written: HashState = hash.write_bytes(empty, bytes)
+    let incremental: u64 = hash.finish(written)
     io.println(num.to_string(direct))
-    if direct == incremental {
+    io.println(num.to_string(direct_bytes))
+    if direct == direct_bytes && direct == incremental {
         io.println("same")
     } else {
         io.println("different")
@@ -4672,7 +4679,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "4330230535792317134\nsame\n"
+        "4330230535792317134\n4330230535792317134\nsame\n"
     );
     assert!(
         output.stderr.is_empty(),

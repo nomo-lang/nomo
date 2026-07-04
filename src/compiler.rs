@@ -376,7 +376,14 @@ pub enum ValueExpr {
     HashString {
         value: Box<ValueExpr>,
     },
+    HashBytes {
+        value: Box<ValueExpr>,
+    },
     HashWriteString {
+        state: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    HashWriteBytes {
         state: Box<ValueExpr>,
         value: Box<ValueExpr>,
     },
@@ -1983,8 +1990,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.log.enabled"
             | "std.hash"
             | "std.hash.HashState"
+            | "std.hash.bytes"
             | "std.hash.new"
             | "std.hash.string"
+            | "std.hash.write_bytes"
             | "std.hash.write_string"
             | "std.hash.finish"
             | "std.crypto"
@@ -11289,7 +11298,10 @@ fn is_hash_builtin_call(callee: &[String]) -> bool {
         callee,
         [module, name]
             if module == "hash"
-                && matches!(name.as_str(), "new" | "string" | "write_string" | "finish")
+                && matches!(
+                    name.as_str(),
+                    "new" | "string" | "bytes" | "write_string" | "write_bytes" | "finish"
+                )
     )
 }
 
@@ -11428,6 +11440,38 @@ fn lower_hash_builtin(
                 },
             ))
         }
+        "bytes" => {
+            let [value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.bytes` expects exactly one Array<u32> value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_bytes = ValueType::Array(Box::new(ValueType::U32));
+            if value_type != expected_bytes {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.bytes` expects an Array<u32> value",
+                    &expected_bytes,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::U64,
+                ValueExpr::HashBytes {
+                    value: Box::new(value),
+                },
+            ))
+        }
         "write_string" => {
             let [state_arg, value_arg] = args else {
                 return Err(Diagnostic::new(
@@ -11468,6 +11512,52 @@ fn lower_hash_builtin(
             Ok((
                 ValueType::Struct("HashState".to_string(), Vec::new()),
                 ValueExpr::HashWriteString {
+                    state: Box::new(state),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "write_bytes" => {
+            let [state_arg, value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.write_bytes` expects a HashState and Array<u32> value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (state_type, state) = lower_value_expr(
+                path, state_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_state = ValueType::Struct("HashState".to_string(), Vec::new());
+            if state_type != expected_state {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.write_bytes` expects a HashState value",
+                    &expected_state,
+                    &state_type,
+                ));
+            }
+            let (value_type, value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_bytes = ValueType::Array(Box::new(ValueType::U32));
+            if value_type != expected_bytes {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.write_bytes` expects an Array<u32> value",
+                    &expected_bytes,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::Struct("HashState".to_string(), Vec::new()),
+                ValueExpr::HashWriteBytes {
                     state: Box::new(state),
                     value: Box::new(value),
                 },
@@ -16673,8 +16763,14 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "string" if imports.iter().any(|item| item == "std.hash.string") => {
             vec!["hash".to_string(), "string".to_string()]
         }
+        "bytes" if imports.iter().any(|item| item == "std.hash.bytes") => {
+            vec!["hash".to_string(), "bytes".to_string()]
+        }
         "write_string" if imports.iter().any(|item| item == "std.hash.write_string") => {
             vec!["hash".to_string(), "write_string".to_string()]
+        }
+        "write_bytes" if imports.iter().any(|item| item == "std.hash.write_bytes") => {
+            vec!["hash".to_string(), "write_bytes".to_string()]
         }
         "finish" if imports.iter().any(|item| item == "std.hash.finish") => {
             vec!["hash".to_string(), "finish".to_string()]
@@ -18409,12 +18505,21 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.hash
+import std.array.Array
 
 fn main() -> void {
+    let mut bytes: Array<u32> = Array.new<u32>()
+    bytes.push(110 as u32)
+    bytes.push(111 as u32)
+    bytes.push(109 as u32)
+    bytes.push(111 as u32)
     let direct: u64 = hash.string("nomo")
+    let direct_bytes: u64 = hash.bytes(bytes)
     let state: HashState = hash.new()
     let written: HashState = hash.write_string(state, "nomo")
+    let bytes_state: HashState = hash.write_bytes(state, bytes)
     let finished: u64 = hash.finish(written)
+    let finished_bytes: u64 = hash.finish(bytes_state)
 }
 "#;
 
@@ -18424,13 +18529,28 @@ fn main() -> void {
         assert!(matches!(
             main.body[0],
             Statement::Let {
+                value_type: ValueType::Array(ref item),
+                ..
+            } if item.as_ref() == &ValueType::U32
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
                 value_type: ValueType::U64,
                 initializer: ValueExpr::HashString { .. },
                 ..
             }
         ));
         assert!(matches!(
-            main.body[1],
+            main.body[6],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::HashBytes { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[7],
             Statement::Let {
                 value_type: ValueType::Struct(ref name, ref args),
                 initializer: ValueExpr::HashNew,
@@ -18438,7 +18558,7 @@ fn main() -> void {
             } if name == "HashState" && args.is_empty()
         ));
         assert!(matches!(
-            main.body[2],
+            main.body[8],
             Statement::Let {
                 value_type: ValueType::Struct(ref name, ref args),
                 initializer: ValueExpr::HashWriteString { .. },
@@ -18446,7 +18566,15 @@ fn main() -> void {
             } if name == "HashState" && args.is_empty()
         ));
         assert!(matches!(
-            main.body[3],
+            main.body[9],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::HashWriteBytes { .. },
+                ..
+            } if name == "HashState" && args.is_empty()
+        ));
+        assert!(matches!(
+            main.body[10],
             Statement::Let {
                 value_type: ValueType::U64,
                 initializer: ValueExpr::HashFinish { .. },
@@ -18460,15 +18588,22 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.hash.HashState
+import std.array.Array
+import std.hash.bytes
 import std.hash.finish
 import std.hash.new
 import std.hash.string
+import std.hash.write_bytes
 import std.hash.write_string
 
 fn main() -> void {
+    let mut data: Array<u32> = Array.new<u32>()
+    data.push(1 as u32)
     let direct: u64 = string("nomo")
+    let direct_bytes: u64 = bytes(data)
     let state: HashState = new()
     let written: HashState = write_string(state, "nomo")
+    let written_bytes: HashState = write_bytes(state, data)
     let finished: u64 = finish(written)
 }
 "#;
@@ -18478,26 +18613,47 @@ fn main() -> void {
         assert!(matches!(
             main.body[0],
             Statement::Let {
+                value_type: ValueType::Array(ref item),
+                ..
+            } if item.as_ref() == &ValueType::U32
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
                 initializer: ValueExpr::HashString { .. },
                 ..
             }
         ));
         assert!(matches!(
-            main.body[1],
+            main.body[3],
+            Statement::Let {
+                initializer: ValueExpr::HashBytes { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[4],
             Statement::Let {
                 initializer: ValueExpr::HashNew,
                 ..
             }
         ));
         assert!(matches!(
-            main.body[2],
+            main.body[5],
             Statement::Let {
                 initializer: ValueExpr::HashWriteString { .. },
                 ..
             }
         ));
         assert!(matches!(
-            main.body[3],
+            main.body[6],
+            Statement::Let {
+                initializer: ValueExpr::HashWriteBytes { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[7],
             Statement::Let {
                 initializer: ValueExpr::HashFinish { .. },
                 ..
@@ -18519,6 +18675,22 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("string value"));
+    }
+
+    #[test]
+    fn rejects_hash_bytes_non_array_value() {
+        let source = r#"package app.main
+
+import std.hash
+
+fn main() -> void {
+    let value: u64 = hash.bytes("nomo")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("Array<u32> value"));
     }
 
     #[test]

@@ -88,6 +88,21 @@ the same code.
 - [E0256](E0256.md) - invalid method self parameter
 - [E0257](E0257.md) - invalid method receiver type
 - [E0258](E0258.md) - invalid interface implementation
+- [E0260](E0260.md) - expected for statement
+- [E0261](E0261.md) - missing infinite for body
+- [E0262](E0262.md) - missing for-in separator
+- [E0263](E0263.md) - missing for-in body
+- [E0264](E0264.md) - missing conditional for body
+- [E0265](E0265.md) - expected defer statement
+- [E0266](E0266.md) - unterminated statement block
+- [E0267](E0267.md) - missing let-else else or const declaration
+- [E0268](E0268.md) - missing let-else body or const type separator
+- [E0269](E0269.md) - missing const initializer or if-let statement
+- [E0270](E0270.md) - missing if-let let keyword
+- [E0271](E0271.md) - missing if-let initializer separator
+- [E0272](E0272.md) - missing if-let body
+- [E0273](E0273.md) - missing if-let else body
+- [E0274](E0274.md) - unsupported wildcard import
 - [E0301](E0301.md) - unknown name or missing import
 - [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch

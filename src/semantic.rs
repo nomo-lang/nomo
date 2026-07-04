@@ -1,6 +1,6 @@
 use crate::ast::{
-    ConstDef, EnumDef, EnumVariant, Field, Function, ImplBlock, Param, SourceFile, Span, StructDef,
-    TypeRef,
+    ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, ImplBlock,
+    Param, SourceFile, Span, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
@@ -36,6 +36,7 @@ pub enum SemanticSymbolKind {
     Variant,
     Const,
     Function,
+    ExternFunction,
     Method,
 }
 
@@ -524,6 +525,9 @@ fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<Se
             selection_range: name_selection_range(&item.span, &item.name),
         });
     }
+    for item in &ast.extern_blocks {
+        symbols.extend(extern_function_symbols(path, item, docs));
+    }
     for impl_block in &ast.impls {
         symbols.extend(method_symbols(path, impl_block, docs));
     }
@@ -588,6 +592,31 @@ fn method_symbols(path: &Path, impl_block: &ImplBlock, docs: &DocComments) -> Ve
             line: method.span.line,
             range: line_range(&method.span),
             selection_range: name_selection_range(&method.span, &method.name),
+        })
+        .collect()
+}
+
+fn extern_function_symbols(
+    path: &Path,
+    block: &ExternBlock,
+    docs: &DocComments,
+) -> Vec<SemanticSymbol> {
+    block
+        .functions
+        .iter()
+        .map(|function| SemanticSymbol {
+            source_path: path.to_path_buf(),
+            name: function.name.clone(),
+            kind: SemanticSymbolKind::ExternFunction,
+            signature: extern_function_signature(&block.abi, function),
+            docs: docs
+                .item_docs
+                .get(&function.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            line: function.span.line,
+            range: line_range(&function.span),
+            selection_range: name_selection_range(&function.span, &function.name),
         })
         .collect()
 }
@@ -727,6 +756,23 @@ fn method_signature(receiver: &str, function: &Function) -> String {
     )
 }
 
+fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String {
+    let params = function
+        .params
+        .iter()
+        .map(param)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "extern \"{}\" fn {}{}({}) -> {}",
+        abi,
+        function.name,
+        type_params(&function.type_params),
+        params,
+        type_ref(&function.return_type)
+    )
+}
+
 fn field_signature(owner: &str, field: &Field) -> String {
     format!(
         "{}field {owner}.{}: {}",
@@ -847,7 +893,7 @@ mod tests {
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
-        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
+        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -856,7 +902,9 @@ mod tests {
                 .iter()
                 .map(|symbol| symbol.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["User", "email", "Status", "Ready", "Done", "add", "email"]
+            vec![
+                "User", "email", "Status", "Ready", "Done", "add", "puts", "email"
+            ]
         );
         assert_eq!(symbols[1].kind, SemanticSymbolKind::Field);
         assert_eq!(symbols[1].signature, "pub field User.email: string");
@@ -895,8 +943,27 @@ mod tests {
                 },
             }
         );
+        assert_eq!(symbols[6].kind, SemanticSymbolKind::ExternFunction);
         assert_eq!(
             symbols[6].signature,
+            "extern \"C\" fn puts(message: string) -> i32"
+        );
+        assert_eq!(symbols[6].docs, "Writes a C string.");
+        assert_eq!(
+            symbols[6].selection_range,
+            TextRange {
+                start: TextPosition {
+                    line: 21,
+                    character: 7,
+                },
+                end: TextPosition {
+                    line: 21,
+                    character: 11,
+                },
+            }
+        );
+        assert_eq!(
+            symbols[7].signature,
             "pub fn User.email(self: User) -> string"
         );
     }

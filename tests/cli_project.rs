@@ -1,6 +1,6 @@
 use std::fs;
-use std::io::{Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream};
+use std::io::{ErrorKind, Read, Write};
+use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket as RustUdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
@@ -6728,6 +6728,112 @@ fn main() -> void {
     let mut response = String::new();
     stream.read_to_string(&mut response).unwrap();
     assert_eq!(response, "pong:ping");
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_std_net_udp_socket_helpers_without_std_dependency() {
+    let probe = RustUdpSocket::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let root = temp_test_root("std-net-udp-socket-helpers");
+    reset_dir(&root);
+    let project = root.join("net_udp_socket_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"net_udp_socket_helpers\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+
+fn serve() -> Result<void, NetError> {
+    let socket: UdpSocket = net.udp_bind("127.0.0.1", __PORT__)?
+    let packet: UdpDatagram = socket.recv_from_string(1024)?
+    socket.send_to_string("pong", packet.host, packet.port)?
+    socket.close()
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, NetError> = serve()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let client = RustUdpSocket::bind("127.0.0.1:0").unwrap();
+    client
+        .set_read_timeout(Some(Duration::from_millis(200)))
+        .unwrap();
+    let started = Instant::now();
+    let mut response = [0_u8; 32];
+    loop {
+        client.send_to(b"ping", ("127.0.0.1", port)).unwrap();
+        match client.recv_from(&mut response) {
+            Ok((len, _)) => {
+                assert_eq!(&response[..len], b"pong");
+                break;
+            }
+            Err(err)
+                if matches!(err.kind(), ErrorKind::WouldBlock | ErrorKind::TimedOut)
+                    && started.elapsed() < Duration::from_secs(10) =>
+            {
+                if let Some(status) = child.try_wait().unwrap() {
+                    let output = child.wait_with_output().unwrap();
+                    panic!(
+                        "nomo udp server exited early with {status}\nstdout:\n{}\nstderr:\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "failed to receive UDP response: {err}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    }
 
     let output = child.wait_with_output().unwrap();
     assert!(

@@ -205,9 +205,12 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_net_connect(program)
         || uses_net_listen(program)
+        || uses_net_udp_bind(program)
         || uses_tcp_listener_accept(program)
         || uses_tcp_stream_read_to_string(program)
         || uses_tcp_stream_write_string(program)
+        || uses_udp_socket_recv_from_string(program)
+        || uses_udp_socket_send_to_string(program)
     {
         emit_net_common_helpers(&mut out);
         out.push('\n');
@@ -218,6 +221,10 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_net_listen(program) {
         emit_net_listen_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_net_udp_bind(program) {
+        emit_net_udp_bind_helper(&mut out);
         out.push('\n');
     }
     if uses_tcp_listener_accept(program) {
@@ -238,6 +245,18 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_tcp_stream_close(program) {
         emit_tcp_stream_close_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_udp_socket_recv_from_string(program) {
+        emit_udp_socket_recv_from_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_udp_socket_send_to_string(program) {
+        emit_udp_socket_send_to_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_udp_socket_close(program) {
+        emit_udp_socket_close_helper(&mut out);
         out.push('\n');
     }
     if uses_env_get(program) {
@@ -1612,6 +1631,16 @@ fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[V
         return;
     }
     if struct_type.name == "TcpListener" && struct_args.is_empty() {
+        out.push_str("struct ");
+        out.push_str(&c_struct_ident(&struct_type.name, struct_args));
+        out.push_str(" {\n");
+        out.push_str("    nomo_socket ");
+        out.push_str(&c_member_ident("handle"));
+        out.push_str(";\n");
+        out.push_str("};\n");
+        return;
+    }
+    if struct_type.name == "UdpSocket" && struct_args.is_empty() {
         out.push_str("struct ");
         out.push_str(&c_struct_ident(&struct_type.name, struct_args));
         out.push_str(" {\n");
@@ -3648,6 +3677,378 @@ fn emit_tcp_listener_close_helper(out: &mut String) {
     out.push_str(&c_member_ident("handle"));
     out.push_str(" != NOMO_INVALID_SOCKET) {\n");
     out.push_str("        NOMO_SOCKET_CLOSE(listener.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(");\n");
+    out.push_str("    }\n");
+    out.push_str("}\n");
+}
+
+fn emit_net_udp_bind_helper(out: &mut String) {
+    let udp_socket = c_struct_ident("UdpSocket", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpSocket".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpSocket".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpSocket".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_net_udp_bind(nomo_string host, int64_t port) {\n");
+    out.push_str("    if (!nomo_net_init()) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"network initialization failed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (port < 0 || port > 65535) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"invalid port\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    char port_text[16];\n");
+    out.push_str("    snprintf(port_text, sizeof(port_text), \"%\" PRId64, port);\n");
+    out.push_str("    struct addrinfo hints;\n");
+    out.push_str("    memset(&hints, 0, sizeof(hints));\n");
+    out.push_str("    hints.ai_family = AF_UNSPEC;\n");
+    out.push_str("    hints.ai_socktype = SOCK_DGRAM;\n");
+    out.push_str("    hints.ai_flags = AI_PASSIVE;\n");
+    out.push_str("    struct addrinfo *addresses = NULL;\n");
+    out.push_str("    int rc = getaddrinfo(host.data, port_text, &hints, &addresses);\n");
+    out.push_str("    if (rc != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    nomo_socket handle = NOMO_INVALID_SOCKET;\n");
+    out.push_str("    for (struct addrinfo *address = addresses; address != NULL; address = address->ai_next) {\n");
+    out.push_str("        handle = socket(address->ai_family, address->ai_socktype, address->ai_protocol);\n");
+    out.push_str("        if (handle == NOMO_INVALID_SOCKET) { continue; }\n");
+    out.push_str("        int yes = 1;\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str(
+        "        setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));\n",
+    );
+    out.push_str("#else\n");
+    out.push_str("        setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));\n");
+    out.push_str("#endif\n");
+    out.push_str(
+        "        if (bind(handle, address->ai_addr, address->ai_addrlen) == 0) { break; }\n",
+    );
+    out.push_str("        NOMO_SOCKET_CLOSE(handle);\n");
+    out.push_str("        handle = NOMO_INVALID_SOCKET;\n");
+    out.push_str("    }\n");
+    out.push_str("    freeaddrinfo(addresses);\n");
+    out.push_str("    if (handle == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_net_error_message()}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = (");
+    out.push_str(&udp_socket);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" = handle}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_udp_socket_recv_from_string_helper(out: &mut String) {
+    let udp_socket = c_struct_ident("UdpSocket", &[]);
+    let udp_datagram = c_struct_ident("UdpDatagram", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpDatagram".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpDatagram".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("UdpDatagram".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_udp_socket_recv_from_string(");
+    out.push_str(&udp_socket);
+    out.push_str(" socket, int64_t max_bytes) {\n");
+    out.push_str("    if (socket.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"socket is closed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (max_bytes < 0 || max_bytes > INT32_MAX) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"invalid max byte count\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    char *buffer = (char *)malloc((size_t)max_bytes + 1);\n");
+    out.push_str("    if (buffer == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    struct sockaddr_storage address;\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    int address_len = sizeof(address);\n");
+    out.push_str("#else\n");
+    out.push_str("    socklen_t address_len = sizeof(address);\n");
+    out.push_str("#endif\n");
+    out.push_str("    int received = recvfrom(socket.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(", buffer, (int)max_bytes, 0, (struct sockaddr *)&address, &address_len);\n");
+    out.push_str("    if (received < 0) {\n");
+    out.push_str("        nomo_string message = nomo_net_error_message();\n");
+    out.push_str("        free(buffer);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = message}};\n");
+    out.push_str("    }\n");
+    out.push_str("    buffer[received] = '\\0';\n");
+    out.push_str("    char host[1025];\n");
+    out.push_str("    char service[32];\n");
+    out.push_str("    int rc = getnameinfo((struct sockaddr *)&address, address_len, host, sizeof(host), service, sizeof(service), NI_NUMERICHOST | NI_NUMERICSERV);\n");
+    out.push_str("    if (rc != 0) {\n");
+    out.push_str("        free(buffer);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = (");
+    out.push_str(&udp_datagram);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("data"));
+    out.push_str(" = nomo_string_owned(buffer), .");
+    out.push_str(&c_member_ident("host"));
+    out.push_str(" = nomo_string_from_cstr(host), .");
+    out.push_str(&c_member_ident("port"));
+    out.push_str(" = (int64_t)strtoll(service, NULL, 10)}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_udp_socket_send_to_string_helper(out: &mut String) {
+    let udp_socket = c_struct_ident("UdpSocket", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_udp_socket_send_to_string(");
+    out.push_str(&udp_socket);
+    out.push_str(" socket, nomo_string content, nomo_string host, int64_t port) {\n");
+    out.push_str("    if (socket.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"socket is closed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (port < 0 || port > 65535) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"invalid port\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    char port_text[16];\n");
+    out.push_str("    snprintf(port_text, sizeof(port_text), \"%\" PRId64, port);\n");
+    out.push_str("    struct addrinfo hints;\n");
+    out.push_str("    memset(&hints, 0, sizeof(hints));\n");
+    out.push_str("    hints.ai_family = AF_UNSPEC;\n");
+    out.push_str("    hints.ai_socktype = SOCK_DGRAM;\n");
+    out.push_str("    struct addrinfo *addresses = NULL;\n");
+    out.push_str("    int rc = getaddrinfo(host.data, port_text, &hints, &addresses);\n");
+    out.push_str("    if (rc != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    size_t len = strlen(content.data);\n");
+    out.push_str("    int sent = -1;\n");
+    out.push_str("    for (struct addrinfo *address = addresses; address != NULL; address = address->ai_next) {\n");
+    out.push_str("        sent = sendto(socket.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(", content.data, (int)len, 0, address->ai_addr, address->ai_addrlen);\n");
+    out.push_str("        if (sent == (int)len) { break; }\n");
+    out.push_str("    }\n");
+    out.push_str("    freeaddrinfo(addresses);\n");
+    out.push_str("    if (sent != (int)len) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_net_error_message()}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = 0};\n");
+    out.push_str("}\n");
+}
+
+fn emit_udp_socket_close_helper(out: &mut String) {
+    let udp_socket = c_struct_ident("UdpSocket", &[]);
+    out.push_str("static void nomo_udp_socket_close(");
+    out.push_str(&udp_socket);
+    out.push_str(" socket) {\n");
+    out.push_str("    if (socket.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" != NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        NOMO_SOCKET_CLOSE(socket.");
     out.push_str(&c_member_ident("handle"));
     out.push_str(");\n");
     out.push_str("    }\n");
@@ -6233,6 +6634,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerClose { listener: expr }
         | ValueExpr::TcpStreamClose { stream: expr }
         | ValueExpr::TcpStreamReadToString { stream: expr }
+        | ValueExpr::UdpSocketClose { socket: expr }
         | ValueExpr::EnvGet { name: expr }
         | ValueExpr::TimeDurationMillis { millis: expr }
         | ValueExpr::TimeDurationSeconds { seconds: expr }
@@ -6289,10 +6691,29 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_may_share_array_storage(left) || expr_may_share_array_storage(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_may_share_array_storage(socket)
+                || expr_may_share_array_storage(content)
+                || expr_may_share_array_storage(host)
+                || expr_may_share_array_storage(port)
+        }
         ValueExpr::StringConcat { .. }
         | ValueExpr::StringIsEmpty { .. }
         | ValueExpr::StringContains { .. }
@@ -7435,6 +7856,13 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, port);
             out.push(')');
         }
+        ValueExpr::NetUdpBind { host, port } => {
+            out.push_str("nomo_net_udp_bind(");
+            emit_expr(out, host);
+            out.push_str(", ");
+            emit_expr(out, port);
+            out.push(')');
+        }
         ValueExpr::TcpListenerAccept { listener } => {
             out.push_str("nomo_tcp_listener_accept(");
             emit_expr(out, listener);
@@ -7460,6 +7888,34 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, stream);
             out.push_str(", ");
             emit_expr(out, content);
+            out.push(')');
+        }
+        ValueExpr::UdpSocketClose { socket } => {
+            out.push_str("nomo_udp_socket_close(");
+            emit_expr(out, socket);
+            out.push(')');
+        }
+        ValueExpr::UdpSocketRecvFromString { socket, max_bytes } => {
+            out.push_str("nomo_udp_socket_recv_from_string(");
+            emit_expr(out, socket);
+            out.push_str(", ");
+            emit_expr(out, max_bytes);
+            out.push(')');
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            out.push_str("nomo_udp_socket_send_to_string(");
+            emit_expr(out, socket);
+            out.push_str(", ");
+            emit_expr(out, content);
+            out.push_str(", ");
+            emit_expr(out, host);
+            out.push_str(", ");
+            emit_expr(out, port);
             out.push(')');
         }
         ValueExpr::ResultMapErr {
@@ -8173,12 +8629,31 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => {
             collect_expr_result_map_err(left, out);
             collect_expr_result_map_err(right, out);
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            collect_expr_result_map_err(socket, out);
+            collect_expr_result_map_err(content, out);
+            collect_expr_result_map_err(host, out);
+            collect_expr_result_map_err(port, out);
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
@@ -8194,6 +8669,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -8557,12 +9033,31 @@ where
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => {
             walk_expr(left, visit);
             walk_expr(right, visit);
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            walk_expr(socket, visit);
+            walk_expr(content, visit);
+            walk_expr(host, visit);
+            walk_expr(port, visit);
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
@@ -8578,6 +9073,7 @@ where
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -9115,6 +9611,12 @@ fn collect_expr_struct(
             collect_expr_struct(host, seen, out);
             collect_expr_struct(port, seen, out);
         }
+        ValueExpr::NetUdpBind { host, port } => {
+            push_struct_instance(seen, out, "NetError", &[]);
+            push_struct_instance(seen, out, "UdpSocket", &[]);
+            collect_expr_struct(host, seen, out);
+            collect_expr_struct(port, seen, out);
+        }
         ValueExpr::TcpListenerAccept { listener } => {
             push_struct_instance(seen, out, "NetError", &[]);
             push_struct_instance(seen, out, "TcpStream", &[]);
@@ -9131,6 +9633,25 @@ fn collect_expr_struct(
             collect_expr_struct(stream, seen, out);
         }
         ValueExpr::TcpStreamClose { stream } => collect_expr_struct(stream, seen, out),
+        ValueExpr::UdpSocketRecvFromString { socket, max_bytes } => {
+            push_struct_instance(seen, out, "NetError", &[]);
+            push_struct_instance(seen, out, "UdpDatagram", &[]);
+            collect_expr_struct(socket, seen, out);
+            collect_expr_struct(max_bytes, seen, out);
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            push_struct_instance(seen, out, "NetError", &[]);
+            collect_expr_struct(socket, seen, out);
+            collect_expr_struct(content, seen, out);
+            collect_expr_struct(host, seen, out);
+            collect_expr_struct(port, seen, out);
+        }
+        ValueExpr::UdpSocketClose { socket } => collect_expr_struct(socket, seen, out),
         ValueExpr::FsReadToString { path } => {
             push_struct_instance(seen, out, "FsError", &[]);
             collect_expr_struct(path, seen, out);
@@ -9993,6 +10514,19 @@ fn collect_expr_enum(
             collect_expr_enum(host, seen, out);
             collect_expr_enum(port, seen, out);
         }
+        ValueExpr::NetUdpBind { host, port } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("UdpSocket".to_string(), Vec::new()),
+                    ValueType::Struct("NetError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(host, seen, out);
+            collect_expr_enum(port, seen, out);
+        }
         ValueExpr::TcpListenerAccept { listener } => {
             push_enum_instance(
                 seen,
@@ -10032,6 +10566,40 @@ fn collect_expr_enum(
             collect_expr_enum(content, seen, out);
         }
         ValueExpr::TcpStreamClose { stream } => collect_expr_enum(stream, seen, out),
+        ValueExpr::UdpSocketRecvFromString { socket, max_bytes } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("UdpDatagram".to_string(), Vec::new()),
+                    ValueType::Struct("NetError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(socket, seen, out);
+            collect_expr_enum(max_bytes, seen, out);
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("NetError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(socket, seen, out);
+            collect_expr_enum(content, seen, out);
+            collect_expr_enum(host, seen, out);
+            collect_expr_enum(port, seen, out);
+        }
+        ValueExpr::UdpSocketClose { socket } => collect_expr_enum(socket, seen, out),
         ValueExpr::ResultMapErr {
             result,
             ok_type,
@@ -10443,6 +11011,15 @@ fn uses_net_listen(program: &Program) -> bool {
     })
 }
 
+fn uses_net_udp_bind(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_net_udp_bind))
+    })
+}
+
 fn uses_tcp_listener_accept(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function
@@ -10485,6 +11062,32 @@ fn uses_tcp_stream_close(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_tcp_stream_close))
+    })
+}
+
+fn uses_udp_socket_recv_from_string(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function.body.iter().any(|statement| {
+            statement_contains_expr(statement, expr_is_udp_socket_recv_from_string)
+        })
+    })
+}
+
+fn uses_udp_socket_send_to_string(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_udp_socket_send_to_string))
+    })
+}
+
+fn uses_udp_socket_close(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_udp_socket_close))
     })
 }
 
@@ -11139,10 +11742,29 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_contains(left, predicate) || expr_contains(right, predicate),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_contains(socket, predicate)
+                || expr_contains(content, predicate)
+                || expr_contains(host, predicate)
+                || expr_contains(port, predicate)
+        }
         ValueExpr::FsWriteString { path, content } => {
             expr_contains(path, predicate) || expr_contains(content, predicate)
         }
@@ -11187,6 +11809,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -11328,6 +11951,10 @@ fn expr_is_net_listen(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::NetListen { .. })
 }
 
+fn expr_is_net_udp_bind(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::NetUdpBind { .. })
+}
+
 fn expr_is_tcp_listener_accept(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::TcpListenerAccept { .. })
 }
@@ -11346,6 +11973,18 @@ fn expr_is_tcp_stream_write_string(expr: &ValueExpr) -> bool {
 
 fn expr_is_tcp_stream_close(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::TcpStreamClose { .. })
+}
+
+fn expr_is_udp_socket_recv_from_string(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::UdpSocketRecvFromString { .. })
+}
+
+fn expr_is_udp_socket_send_to_string(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::UdpSocketSendToString { .. })
+}
+
+fn expr_is_udp_socket_close(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::UdpSocketClose { .. })
 }
 
 fn expr_is_fs_exists(expr: &ValueExpr) -> bool {
@@ -11924,10 +12563,29 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_uses_fs_read_to_string(socket)
+                || expr_uses_fs_read_to_string(content)
+                || expr_uses_fs_read_to_string(host)
+                || expr_uses_fs_read_to_string(port)
+        }
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(content)
         }
@@ -11949,7 +12607,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerAccept { listener: path }
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
-        | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_fs_read_to_string(path),
+        | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path } => expr_uses_fs_read_to_string(path),
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_fs_read_to_string(file) || expr_uses_fs_read_to_string(content)
         }
@@ -12151,10 +12810,29 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_uses_fs_write_string(socket)
+                || expr_uses_fs_write_string(content)
+                || expr_uses_fs_write_string(host)
+                || expr_uses_fs_write_string(port)
+        }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
@@ -12166,7 +12844,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerAccept { listener: file }
         | ValueExpr::TcpListenerClose { listener: file }
         | ValueExpr::TcpStreamClose { stream: file }
-        | ValueExpr::TcpStreamReadToString { stream: file } => expr_uses_fs_write_string(file),
+        | ValueExpr::TcpStreamReadToString { stream: file }
+        | ValueExpr::UdpSocketClose { socket: file } => expr_uses_fs_write_string(file),
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_fs_write_string(file) || expr_uses_fs_write_string(content)
         }
@@ -12375,10 +13054,29 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_uses_fs_open(left) || expr_uses_fs_open(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_uses_fs_open(socket)
+                || expr_uses_fs_open(content)
+                || expr_uses_fs_open(host)
+                || expr_uses_fs_open(port)
+        }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
@@ -12424,7 +13122,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerAccept { listener: path }
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
-        | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_fs_open(path),
+        | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -12590,10 +13289,29 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_uses_env_get(left) || expr_uses_env_get(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_uses_env_get(socket)
+                || expr_uses_env_get(content)
+                || expr_uses_env_get(host)
+                || expr_uses_env_get(port)
+        }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
@@ -12637,7 +13355,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerAccept { listener: path }
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
-        | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_env_get(path),
+        | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
         }
@@ -12807,10 +13526,29 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => expr_uses_env_args(left) || expr_uses_env_args(right),
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            expr_uses_env_args(socket)
+                || expr_uses_env_args(content)
+                || expr_uses_env_args(host)
+                || expr_uses_env_args(port)
+        }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsOpen { path }
@@ -12858,7 +13596,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::TcpListenerAccept { listener: path }
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
-        | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_env_args(path),
+        | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -13041,12 +13780,31 @@ fn collect_expr_array_elements(
             host: left,
             port: right,
         }
+        | ValueExpr::NetUdpBind {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::UdpSocketRecvFromString {
+            socket: left,
+            max_bytes: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
         } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
+        }
+        ValueExpr::UdpSocketSendToString {
+            socket,
+            content,
+            host,
+            port,
+        } => {
+            collect_expr_array_elements(socket, seen, out);
+            collect_expr_array_elements(content, seen, out);
+            collect_expr_array_elements(host, seen, out);
+            collect_expr_array_elements(port, seen, out);
         }
         ValueExpr::RegexCaptures { regex, value } => {
             push_array_element_type(seen, out, &ValueType::String);
@@ -13115,7 +13873,8 @@ fn collect_expr_array_elements(
         | ValueExpr::TcpListenerAccept { listener: path }
         | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
-        | ValueExpr::TcpStreamReadToString { stream: path } => {
+        | ValueExpr::TcpStreamReadToString { stream: path }
+        | ValueExpr::UdpSocketClose { socket: path } => {
             collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FileReadToString { file } => {
@@ -15337,6 +16096,149 @@ mod tests {
         );
         assert!(c.contains("nomo_tcp_stream_read_to_string(nomo_stream)"));
         assert!(c.contains("nomo_tcp_stream_close(nomo_stream)"));
+    }
+
+    #[test]
+    fn emits_net_udp_socket_helpers() {
+        let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+        let udp_socket = ValueType::Struct("UdpSocket".to_string(), Vec::new());
+        let udp_datagram = ValueType::Struct("UdpDatagram".to_string(), Vec::new());
+        let result_socket_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![udp_socket.clone(), net_error.clone()],
+        );
+        let result_datagram_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![udp_datagram.clone(), net_error.clone()],
+        );
+        let result_void_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Void, net_error.clone()],
+        );
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.net".to_string()],
+            structs: vec![
+                StructType {
+                    package: "std.net".to_string(),
+                    name: "NetError".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    }],
+                },
+                StructType {
+                    package: "std.net".to_string(),
+                    name: "UdpDatagram".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![
+                        StructField {
+                            name: "data".to_string(),
+                            value_type: ValueType::String,
+                        },
+                        StructField {
+                            name: "host".to_string(),
+                            value_type: ValueType::String,
+                        },
+                        StructField {
+                            name: "port".to_string(),
+                            value_type: ValueType::Int,
+                        },
+                    ],
+                },
+                StructType {
+                    package: "std.net".to_string(),
+                    name: "UdpSocket".to_string(),
+                    type_params: Vec::new(),
+                    fields: Vec::new(),
+                },
+            ],
+            enums: vec![EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "process_socket".to_string(),
+                    params: vec![Parameter {
+                        name: "socket".to_string(),
+                        mutable: false,
+                        value_type: udp_socket,
+                    }],
+                    return_type: ValueType::Void,
+                    body: vec![
+                        Statement::Let {
+                            name: "packet".to_string(),
+                            value_type: result_datagram_error,
+                            initializer: ValueExpr::UdpSocketRecvFromString {
+                                socket: Box::new(ValueExpr::Variable("socket".to_string())),
+                                max_bytes: Box::new(ValueExpr::IntLiteral(1024)),
+                            },
+                        },
+                        Statement::Let {
+                            name: "sent".to_string(),
+                            value_type: result_void_error,
+                            initializer: ValueExpr::UdpSocketSendToString {
+                                socket: Box::new(ValueExpr::Variable("socket".to_string())),
+                                content: Box::new(ValueExpr::StringLiteral("pong".to_string())),
+                                host: Box::new(ValueExpr::StringLiteral("127.0.0.1".to_string())),
+                                port: Box::new(ValueExpr::IntLiteral(7)),
+                            },
+                        },
+                        Statement::Expr(ValueExpr::UdpSocketClose {
+                            socket: Box::new(ValueExpr::Variable("socket".to_string())),
+                        }),
+                    ],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: vec![Statement::Let {
+                        name: "bound".to_string(),
+                        value_type: result_socket_error,
+                        initializer: ValueExpr::NetUdpBind {
+                            host: Box::new(ValueExpr::StringLiteral("127.0.0.1".to_string())),
+                            port: Box::new(ValueExpr::IntLiteral(7)),
+                        },
+                    }],
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_UdpDatagram"));
+        assert!(c.contains("typedef struct nomo_struct_UdpSocket"));
+        assert!(c.contains("nomo_socket nomo_member_handle"));
+        assert!(c.contains("nomo_net_udp_bind(nomo_string host, int64_t port)"));
+        assert!(c.contains(
+            "nomo_udp_socket_recv_from_string(nomo_struct_UdpSocket socket, int64_t max_bytes)"
+        ));
+        assert!(c.contains(
+            "nomo_udp_socket_send_to_string(nomo_struct_UdpSocket socket, nomo_string content, nomo_string host, int64_t port)"
+        ));
+        assert!(c.contains("static void nomo_udp_socket_close(nomo_struct_UdpSocket socket)"));
+        assert!(c.contains("nomo_net_udp_bind(nomo_string_literal(\"127.0.0.1\"), 7)"));
+        assert!(c.contains("nomo_udp_socket_recv_from_string(nomo_socket, 1024)"));
+        assert!(c.contains(
+            "nomo_udp_socket_send_to_string(nomo_socket, nomo_string_literal(\"pong\"), nomo_string_literal(\"127.0.0.1\"), 7)"
+        ));
+        assert!(c.contains("nomo_udp_socket_close(nomo_socket)"));
     }
 
     #[test]

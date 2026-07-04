@@ -100,7 +100,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.crypto", "cryptographic digest helpers"),
         ("std.regex", "regular expression helpers"),
         ("std.json", "JSON parse and stringify helpers"),
-        ("std.net", "blocking TCP stream helpers"),
+        ("std.net", "blocking TCP and UDP helpers"),
         ("std.collections", "string map and string set helpers"),
         ("std.char", "character helpers"),
         ("std.os", "target OS helpers"),

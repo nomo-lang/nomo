@@ -555,6 +555,10 @@ pub enum ValueExpr {
         host: Box<ValueExpr>,
         port: Box<ValueExpr>,
     },
+    NetUdpBind {
+        host: Box<ValueExpr>,
+        port: Box<ValueExpr>,
+    },
     TcpListenerAccept {
         listener: Box<ValueExpr>,
     },
@@ -570,6 +574,19 @@ pub enum ValueExpr {
     TcpStreamWriteString {
         stream: Box<ValueExpr>,
         content: Box<ValueExpr>,
+    },
+    UdpSocketClose {
+        socket: Box<ValueExpr>,
+    },
+    UdpSocketRecvFromString {
+        socket: Box<ValueExpr>,
+        max_bytes: Box<ValueExpr>,
+    },
+    UdpSocketSendToString {
+        socket: Box<ValueExpr>,
+        content: Box<ValueExpr>,
+        host: Box<ValueExpr>,
+        port: Box<ValueExpr>,
     },
     ResultMapErr {
         result: Box<ValueExpr>,
@@ -1879,8 +1896,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.net.NetError"
             | "std.net.TcpListener"
             | "std.net.TcpStream"
+            | "std.net.UdpDatagram"
+            | "std.net.UdpSocket"
             | "std.net.connect"
             | "std.net.listen"
+            | "std.net.udp_bind"
             | "std.env"
             | "std.env.args"
             | "std.env.cwd"
@@ -2286,6 +2306,8 @@ fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "NetError")?;
         reject_user_std_struct(path, structs, "TcpListener")?;
         reject_user_std_struct(path, structs, "TcpStream")?;
+        reject_user_std_struct(path, structs, "UdpDatagram")?;
+        reject_user_std_struct(path, structs, "UdpSocket")?;
     }
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;
@@ -2642,6 +2664,8 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("NetError".to_string(), 0));
         names.push(("TcpListener".to_string(), 0));
         names.push(("TcpStream".to_string(), 0));
+        names.push(("UdpDatagram".to_string(), 0));
+        names.push(("UdpSocket".to_string(), 0));
     }
     if needs.hash {
         names.push(("HashState".to_string(), 0));
@@ -2762,6 +2786,35 @@ fn inject_standard_types(
         structs.push(StructType {
             package: "std.net".to_string(),
             name: "TcpListener".to_string(),
+            type_params: Vec::new(),
+            fields: Vec::new(),
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "UdpDatagram") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "UdpDatagram".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "data".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "host".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "port".to_string(),
+                    value_type: ValueType::Int,
+                },
+            ],
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "UdpSocket") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "UdpSocket".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
         });
@@ -9631,6 +9684,11 @@ fn lower_value_expr_with_expected(
             if type_args.is_empty() && is_tcp_listener_value_method(callee, scope) {
                 return lower_tcp_listener_value_method(path, callee, args, scope, span);
             }
+            if type_args.is_empty() && is_udp_socket_value_method(callee, scope) {
+                return lower_udp_socket_value_method(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if type_args.is_empty() {
                 if let Some(lowered) = lower_option_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
@@ -11141,7 +11199,8 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
 fn is_net_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "net" && matches!(name.as_str(), "connect" | "listen")
+        [module, name]
+            if module == "net" && matches!(name.as_str(), "connect" | "listen" | "udp_bind")
     )
 }
 
@@ -11493,7 +11552,7 @@ fn lower_net_builtin(
     debug_assert_eq!(module, "net");
     let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
     match name.as_str() {
-        "connect" | "listen" => {
+        "connect" | "listen" | "udp_bind" => {
             let [host_arg, port_arg] = args else {
                 return Err(Diagnostic::new(
                     "E0407",
@@ -11547,8 +11606,10 @@ fn lower_net_builtin(
             }
             let ok_type = if name == "connect" {
                 ValueType::Struct("TcpStream".to_string(), Vec::new())
-            } else {
+            } else if name == "listen" {
                 ValueType::Struct("TcpListener".to_string(), Vec::new())
+            } else {
+                ValueType::Struct("UdpSocket".to_string(), Vec::new())
             };
             let result_type = ValueType::Enum("Result".to_string(), vec![ok_type, net_error]);
             let expr = if name == "connect" {
@@ -11556,8 +11617,13 @@ fn lower_net_builtin(
                     host: Box::new(host),
                     port: Box::new(port),
                 }
-            } else {
+            } else if name == "listen" {
                 ValueExpr::NetListen {
+                    host: Box::new(host),
+                    port: Box::new(port),
+                }
+            } else {
+                ValueExpr::NetUdpBind {
                     host: Box::new(host),
                     port: Box::new(port),
                 }
@@ -13803,6 +13869,193 @@ fn lower_tcp_listener_value_method(
     }
 }
 
+fn is_udp_socket_value_method(callee: &[String], scope: &HashMap<String, Binding>) -> bool {
+    if callee.len() != 2 {
+        return false;
+    }
+    scope.get(&callee[0]).is_some_and(|binding| {
+        binding.value_type == ValueType::Struct("UdpSocket".to_string(), Vec::new())
+    })
+}
+
+fn lower_udp_socket_value_method(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let name = &callee[0];
+    let method = &callee[1];
+    let binding = scope
+        .get(name)
+        .expect("udp socket method receiver is in scope");
+    let receiver_expr = binding_value_expr(name, binding);
+    let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+    match method.as_str() {
+        "close" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`UdpSocket.close` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::UdpSocketClose {
+                    socket: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "recv_from_string" => {
+            let [max_bytes_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`UdpSocket.recv_from_string` expects a max byte count",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (max_bytes_type, max_bytes) = lower_value_expr_with_expected(
+                path,
+                max_bytes_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::Int),
+                span,
+            )?;
+            if max_bytes_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`UdpSocket.recv_from_string` expects an i64 max byte count",
+                    &ValueType::Int,
+                    &max_bytes_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("UdpDatagram".to_string(), Vec::new()),
+                        net_error,
+                    ],
+                ),
+                ValueExpr::UdpSocketRecvFromString {
+                    socket: Box::new(receiver_expr),
+                    max_bytes: Box::new(max_bytes),
+                },
+            ))
+        }
+        "send_to_string" => {
+            let [content_arg, host_arg, port_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`UdpSocket.send_to_string` expects content, host, and port arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (content_type, content) = lower_value_expr_with_expected(
+                path,
+                content_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if content_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`UdpSocket.send_to_string` expects string content",
+                    &ValueType::String,
+                    &content_type,
+                ));
+            }
+            let (host_type, host) = lower_value_expr_with_expected(
+                path,
+                host_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if host_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`UdpSocket.send_to_string` expects a string host",
+                    &ValueType::String,
+                    &host_type,
+                ));
+            }
+            let (port_type, port) = lower_value_expr_with_expected(
+                path,
+                port_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::Int),
+                span,
+            )?;
+            if port_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`UdpSocket.send_to_string` expects an i64 port",
+                    &ValueType::Int,
+                    &port_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, net_error]),
+                ValueExpr::UdpSocketSendToString {
+                    socket: Box::new(receiver_expr),
+                    content: Box::new(content),
+                    host: Box::new(host),
+                    port: Box::new(port),
+                },
+            ))
+        }
+        _ => Err(Diagnostic::new(
+            "E0305",
+            format!("unknown UdpSocket method `{method}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+    }
+}
+
 fn is_option_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -15996,6 +16249,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         }
         "listen" if imports.iter().any(|item| item == "std.net.listen") => {
             vec!["net".to_string(), "listen".to_string()]
+        }
+        "udp_bind" if imports.iter().any(|item| item == "std.net.udp_bind") => {
+            vec!["net".to_string(), "udp_bind".to_string()]
         }
         "compile" if imports.iter().any(|item| item == "std.regex.compile") => {
             vec!["regex".to_string(), "compile".to_string()]
@@ -19518,6 +19774,92 @@ fn main() -> void {
         assert!(matches!(
             open.body[0],
             Statement::Return(Some(ValueExpr::NetListen { .. }))
+        ));
+    }
+
+    #[test]
+    fn accepts_net_udp_socket_builtins() {
+        let source = r#"package app.main
+
+import std.net
+
+fn serve(host: string, port: i64) -> Result<void, NetError> {
+    let socket: UdpSocket = net.udp_bind(host, port)?
+    let packet: UdpDatagram = socket.recv_from_string(1024)?
+    socket.send_to_string(packet.data, packet.host, packet.port)?
+    socket.close()
+    return Ok(void)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "UdpSocket"));
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "UdpDatagram")
+        );
+        let serve = program
+            .functions
+            .iter()
+            .find(|f| f.name == "serve")
+            .unwrap();
+        assert!(matches!(
+            serve.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref name, ref args),
+                result_expr: ValueExpr::NetUdpBind { .. },
+                ..
+            } if name == "UdpSocket" && args.is_empty()
+        ));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(name, args),
+                result_expr: ValueExpr::UdpSocketRecvFromString { .. },
+                ..
+            } if name == "UdpDatagram" && args.is_empty()
+        )));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Void,
+                result_expr: ValueExpr::UdpSocketSendToString { .. },
+                ..
+            }
+        )));
+        assert!(
+            serve
+                .body
+                .iter()
+                .any(|stmt| matches!(stmt, Statement::Expr(ValueExpr::UdpSocketClose { .. })))
+        );
+    }
+
+    #[test]
+    fn accepts_specific_net_udp_bind_import() {
+        let source = r#"package app.main
+
+import std.net.udp_bind
+import std.result
+
+fn open(host: string, port: i64) -> Result<UdpSocket, NetError> {
+    return udp_bind(host, port)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let open = program.functions.iter().find(|f| f.name == "open").unwrap();
+        assert!(matches!(
+            open.body[0],
+            Statement::Return(Some(ValueExpr::NetUdpBind { .. }))
         ));
     }
 

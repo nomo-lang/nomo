@@ -5521,6 +5521,9 @@ fn main() -> void {
     items.push("a")
     items.push("c")
     items.insert(1, "b")
+    for item in items.iter() {
+        io.println(item)
+    }
     let removed: Option<string> = items.remove(0)
     let popped: Option<string> = items.pop()
     let first: Option<string> = items.get(0)
@@ -5556,7 +5559,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "a\nc\nb\ncleared\nempty pop\nempty remove\n"
+        "a\nb\nc\na\nc\nb\ncleared\nempty pop\nempty remove\n"
     );
     assert!(
         output.stderr.is_empty(),

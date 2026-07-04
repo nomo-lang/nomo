@@ -336,8 +336,9 @@ durations.
 
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
-`Array.pop`, `Array.remove`, and `Array.clear`. `get`, `pop`, and `remove`
-return `Option<T>`; `set` and `insert` panic when their index is out of bounds.
+`Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,
+and `remove` return `Option<T>`; `set` and `insert` panic when their index is
+out of bounds. `iter` returns a snapshot value accepted by `for ... in`.
 
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,

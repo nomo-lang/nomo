@@ -3755,6 +3755,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
+        | ValueExpr::ArrayIter { .. }
         | ValueExpr::ArrayGet { .. }
         | ValueExpr::EnumVariant { payload: None, .. } => false,
     }
@@ -4744,6 +4745,19 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, array);
             out.push_str(".len)");
         }
+        ValueExpr::ArrayIter {
+            array,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            if expr_may_share_array_storage(array) {
+                out.push_str(&c_array_ident(element_type));
+                out.push_str("_retain(");
+                emit_expr(out, array);
+                out.push(')');
+            } else {
+                emit_expr(out, array);
+            }
+        }
         ValueExpr::ArrayGet {
             array,
             index,
@@ -4829,6 +4843,7 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push(')');
         }
         ValueExpr::ArrayNew { element_type }
+        | ValueExpr::ArrayIter { element_type, .. }
         | ValueExpr::ArrayGet { element_type, .. }
         | ValueExpr::ArrayPop { element_type, .. }
         | ValueExpr::ArrayRemove { element_type, .. }
@@ -5246,6 +5261,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::OptionAndThen { option: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
+        | ValueExpr::ArrayIter { array: path, .. }
         | ValueExpr::ArrayLen { array: path } => collect_expr_result_map_err(path, out),
         ValueExpr::ResultUnwrapOr {
             result, default, ..
@@ -5533,6 +5549,7 @@ where
         | ValueExpr::OptionAndThen { option: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
+        | ValueExpr::ArrayIter { array: path, .. }
         | ValueExpr::ArrayLen { array: path } => walk_expr(path, visit),
         ValueExpr::ResultMapErr { result, .. } => walk_expr(result, visit),
         ValueExpr::ResultUnwrapOr {
@@ -6028,6 +6045,13 @@ fn collect_expr_struct(
         ValueExpr::EnvArgs => {}
         ValueExpr::ArrayNew { element_type } => collect_type_struct(element_type, seen, out),
         ValueExpr::ArrayLen { array } => collect_expr_struct(array, seen, out),
+        ValueExpr::ArrayIter {
+            array,
+            element_type,
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(array, seen, out);
+        }
         ValueExpr::ArrayGet {
             array,
             index,
@@ -6672,6 +6696,13 @@ fn collect_expr_enum(
         ValueExpr::NumToString { value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::ArrayNew { .. } => {}
         ValueExpr::ArrayLen { array } => collect_expr_enum(array, seen, out),
+        ValueExpr::ArrayIter {
+            array,
+            element_type,
+        } => {
+            collect_type_enum(element_type, seen, out);
+            collect_expr_enum(array, seen, out);
+        }
         ValueExpr::ArrayGet {
             array,
             index,
@@ -7361,6 +7392,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::OptionAndThen { option: path, .. }
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
+        | ValueExpr::ArrayIter { array: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_contains(path, predicate),
         ValueExpr::ResultUnwrapOr {
             result, default, ..
@@ -7898,6 +7930,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
+        ValueExpr::ArrayIter { array, .. } => expr_uses_fs_read_to_string(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_read_to_string(array) || expr_uses_fs_read_to_string(index)
         }
@@ -8032,6 +8065,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
+        ValueExpr::ArrayIter { array, .. } => expr_uses_fs_write_string(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_write_string(array) || expr_uses_fs_write_string(index)
         }
@@ -8163,6 +8197,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::EnvArgs => false,
         ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => false,
         ValueExpr::ArrayNew { .. } => false,
+        ValueExpr::ArrayIter { array, .. } => expr_uses_fs_open(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_open(array) || expr_uses_fs_open(index)
         }
@@ -8287,6 +8322,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_env_get(array),
+        ValueExpr::ArrayIter { array, .. } => expr_uses_env_get(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_get(array) || expr_uses_env_get(index)
         }
@@ -8414,6 +8450,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             expr_uses_env_args(path) || expr_uses_env_args(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
+        ValueExpr::ArrayIter { array, .. } => expr_uses_env_args(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_args(array) || expr_uses_env_args(index)
         }
@@ -8489,6 +8526,13 @@ fn collect_expr_array_elements(
 ) {
     match expr {
         ValueExpr::EnvArgs => push_array_element_type(seen, out, &ValueType::String),
+        ValueExpr::ArrayIter {
+            array,
+            element_type,
+        } => {
+            push_array_element_type(seen, out, element_type);
+            collect_expr_array_elements(array, seen, out);
+        }
         ValueExpr::ArrayNew { element_type }
         | ValueExpr::ArrayGet { element_type, .. }
         | ValueExpr::ArrayPop { element_type, .. }
@@ -10563,6 +10607,14 @@ mod tests {
                             element_type: ValueType::I32,
                         },
                     },
+                    Statement::Let {
+                        name: "snapshot".to_string(),
+                        value_type: array_i32.clone(),
+                        initializer: ValueExpr::ArrayIter {
+                            array: Box::new(ValueExpr::Variable("items".to_string())),
+                            element_type: ValueType::I32,
+                        },
+                    },
                     Statement::Assign {
                         name: "items".to_string(),
                         value: ValueExpr::ArrayClear {
@@ -10606,6 +10658,7 @@ mod tests {
         assert!(c.contains("nomo_items = nomo_array_i32_insert(nomo_items, 0, 5);"));
         assert!(c.contains("nomo_array_i32_remove(&nomo_items, 0)"));
         assert!(c.contains("nomo_array_i32_pop(&nomo_items)"));
+        assert!(c.contains("nomo_array_i32 nomo_snapshot = nomo_array_i32_retain(nomo_items);"));
         assert!(c.contains("nomo_items = nomo_array_i32_clear(nomo_items);"));
         assert!(c.contains("nomo_array_i32_get(nomo_items, 0)"));
     }

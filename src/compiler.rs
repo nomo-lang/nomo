@@ -490,6 +490,10 @@ pub enum ValueExpr {
     ArrayLen {
         array: Box<ValueExpr>,
     },
+    ArrayIter {
+        array: Box<ValueExpr>,
+        element_type: ValueType,
+    },
     ArrayGet {
         array: Box<ValueExpr>,
         index: Box<ValueExpr>,
@@ -1736,6 +1740,7 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.array.insert"
             | "std.array.remove"
             | "std.array.clear"
+            | "std.array.iter"
             | "std.string"
             | "std.string.len"
             | "std.string.concat"
@@ -10222,6 +10227,26 @@ fn lower_array_value_method(
                 },
             ))
         }
+        "iter" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Array.iter` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Array(Box::new(element_type.as_ref().clone())),
+                ValueExpr::ArrayIter {
+                    array: Box::new(receiver_expr),
+                    element_type: element_type.as_ref().clone(),
+                },
+            ))
+        }
         "get" => {
             let [index] = args else {
                 return Err(Diagnostic::new(
@@ -15047,6 +15072,52 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_array_iter_method() {
+        let source = r#"package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    let snapshot: Array<i32> = items.iter()
+    for item in items.iter() {
+        io.println("item")
+    }
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Array(ref element),
+                initializer: ValueExpr::ArrayIter {
+                    element_type: ValueType::I32,
+                    ..
+                },
+                ..
+            } if element.as_ref() == &ValueType::I32
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Loop {
+                kind: LoopKind::Iterate {
+                    element_type: ValueType::I32,
+                    iterable: ValueExpr::ArrayIter {
+                        element_type: ValueType::I32,
+                        ..
+                    },
+                    ..
+                },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn rejects_mutating_array_method_on_immutable_variable() {
         let source = r#"package app.main
 
@@ -15390,9 +15461,11 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.env.args
+import std.array.Array
 import std.array.get
 import std.array.clear
 import std.array.insert
+import std.array.iter
 import std.array.len
 import std.array.pop
 import std.array.push
@@ -15407,6 +15480,7 @@ fn main() -> void {
     let removed: Option<string> = values.remove(1)
     let popped: Option<string> = values.pop()
     values.clear()
+    let snapshot: Array<string> = values.iter()
     let size: u64 = values.len()
     let first: Option<string> = values.get(0)
 }
@@ -15476,13 +15550,24 @@ fn main() -> void {
         assert!(matches!(
             main.body[7],
             Statement::Let {
+                value_type: ValueType::Array(ref element),
+                initializer: ValueExpr::ArrayIter {
+                    element_type: ValueType::String,
+                    ..
+                },
+                ..
+            } if element.as_ref() == &ValueType::String
+        ));
+        assert!(matches!(
+            main.body[8],
+            Statement::Let {
                 value_type: ValueType::U64,
                 initializer: ValueExpr::ArrayLen { .. },
                 ..
             }
         ));
         assert!(matches!(
-            main.body[8],
+            main.body[9],
             Statement::Let {
                 value_type: ValueType::Enum(ref name, ref args),
                 initializer: ValueExpr::ArrayGet {

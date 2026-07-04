@@ -341,6 +341,13 @@ strings.
 digest string. Random bytes remain a later slice until byte-array APIs are
 settled.
 
+`std.collections` provides v0.1 string-specialized collection helpers.
+`StringMap` stores string keys and string values; `StringSet` stores unique
+strings. Use `collections.map_new`, `map_len`, `map_get`, `map_contains`,
+`map_set`, and `map_remove` for maps, and `collections.set_new`, `set_len`,
+`set_contains`, `set_insert`, and `set_remove` for sets. Update helpers return
+the updated collection value.
+
 `std.char` provides ASCII character-class helpers: `char.is_digit`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
 `char` scalar to a UTF-8 string.

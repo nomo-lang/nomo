@@ -130,6 +130,10 @@ pub fn emit_c(program: &Program) -> String {
         emit_array_helpers(&mut out, element_type);
         out.push('\n');
     }
+    if uses_collections_builtin(program) {
+        emit_collections_helpers(&mut out);
+        out.push('\n');
+    }
     if array_element_types
         .iter()
         .any(|item| item == &ValueType::String)
@@ -3430,6 +3434,250 @@ fn emit_string_split_helper(out: &mut String) {
     out.push_str("}\n");
 }
 
+fn emit_collections_helpers(out: &mut String) {
+    let string_array = c_array_ident(&ValueType::String);
+    let map_type = ValueType::Struct("StringMap".to_string(), Vec::new());
+    let set_type = ValueType::Struct("StringSet".to_string(), Vec::new());
+    let map = c_type(&map_type);
+    let set = c_type(&set_type);
+    let option_string = c_enum_ident("Option", &[ValueType::String]);
+    let option_some = c_enum_variant_ident("Option", &[ValueType::String], "Some");
+    let option_none = c_enum_variant_ident("Option", &[ValueType::String], "None");
+    let keys = c_member_ident("keys");
+    let values = c_member_ident("values");
+    let payload_some = c_payload_ident("Some");
+
+    out.push_str("static ");
+    out.push_str(&map);
+    out.push_str(" nomo_collections_map_new(void) {\n");
+    out.push_str("    return (");
+    out.push_str(&map);
+    out.push_str("){.");
+    out.push_str(&keys);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_new(), .");
+    out.push_str(&values);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_new()};\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static uint64_t nomo_collections_map_len(");
+    out.push_str(&map);
+    out.push_str(" map) {\n");
+    out.push_str("    return (uint64_t)map.");
+    out.push_str(&keys);
+    out.push_str(".len;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&option_string);
+    out.push_str(" nomo_collections_map_get(");
+    out.push_str(&map);
+    out.push_str(" map, nomo_string key) {\n");
+    out.push_str("    for (size_t i = 0; i < map.");
+    out.push_str(&keys);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(map.");
+    out.push_str(&keys);
+    out.push_str(".data[i], key)) {\n");
+    out.push_str("            return (");
+    out.push_str(&option_string);
+    out.push_str("){.tag = ");
+    out.push_str(&option_some);
+    out.push_str(", .payload.");
+    out.push_str(&payload_some);
+    out.push_str(" = nomo_string_retain(map.");
+    out.push_str(&values);
+    out.push_str(".data[i])};\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&option_string);
+    out.push_str("){.tag = ");
+    out.push_str(&option_none);
+    out.push_str("};\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static int nomo_collections_map_contains(");
+    out.push_str(&map);
+    out.push_str(" map, nomo_string key) {\n");
+    out.push_str("    for (size_t i = 0; i < map.");
+    out.push_str(&keys);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(map.");
+    out.push_str(&keys);
+    out.push_str(".data[i], key)) { return 1; }\n");
+    out.push_str("    }\n");
+    out.push_str("    return 0;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&map);
+    out.push_str(" nomo_collections_map_set(");
+    out.push_str(&map);
+    out.push_str(" map, nomo_string key, nomo_string value) {\n");
+    out.push_str("    map = ");
+    out.push_str(&c_retain_ident(&map_type));
+    out.push_str("(map);\n");
+    out.push_str("    for (size_t i = 0; i < map.");
+    out.push_str(&keys);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(map.");
+    out.push_str(&keys);
+    out.push_str(".data[i], key)) {\n");
+    out.push_str("            map.");
+    out.push_str(&values);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_set(map.");
+    out.push_str(&values);
+    out.push_str(", (uint64_t)i, value);\n");
+    out.push_str("            return map;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    map.");
+    out.push_str(&keys);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_push(map.");
+    out.push_str(&keys);
+    out.push_str(", key);\n");
+    out.push_str("    map.");
+    out.push_str(&values);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_push(map.");
+    out.push_str(&values);
+    out.push_str(", value);\n");
+    out.push_str("    return map;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&map);
+    out.push_str(" nomo_collections_map_remove(");
+    out.push_str(&map);
+    out.push_str(" map, nomo_string key) {\n");
+    out.push_str("    map = ");
+    out.push_str(&c_retain_ident(&map_type));
+    out.push_str("(map);\n");
+    out.push_str("    for (size_t i = 0; i < map.");
+    out.push_str(&keys);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(map.");
+    out.push_str(&keys);
+    out.push_str(".data[i], key)) {\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str(" removed_key = ");
+    out.push_str(&string_array);
+    out.push_str("_remove(&map.");
+    out.push_str(&keys);
+    out.push_str(", (uint64_t)i);\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str(" removed_value = ");
+    out.push_str(&string_array);
+    out.push_str("_remove(&map.");
+    out.push_str(&values);
+    out.push_str(", (uint64_t)i);\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str("_release(removed_key);\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str("_release(removed_value);\n");
+    out.push_str("            return map;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    return map;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&set);
+    out.push_str(" nomo_collections_set_new(void) {\n");
+    out.push_str("    return (");
+    out.push_str(&set);
+    out.push_str("){.");
+    out.push_str(&values);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_new()};\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static uint64_t nomo_collections_set_len(");
+    out.push_str(&set);
+    out.push_str(" set) {\n");
+    out.push_str("    return (uint64_t)set.");
+    out.push_str(&values);
+    out.push_str(".len;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static int nomo_collections_set_contains(");
+    out.push_str(&set);
+    out.push_str(" set, nomo_string value) {\n");
+    out.push_str("    for (size_t i = 0; i < set.");
+    out.push_str(&values);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(set.");
+    out.push_str(&values);
+    out.push_str(".data[i], value)) { return 1; }\n");
+    out.push_str("    }\n");
+    out.push_str("    return 0;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&set);
+    out.push_str(" nomo_collections_set_insert(");
+    out.push_str(&set);
+    out.push_str(" set, nomo_string value) {\n");
+    out.push_str("    set = ");
+    out.push_str(&c_retain_ident(&set_type));
+    out.push_str("(set);\n");
+    out.push_str("    if (!nomo_collections_set_contains(set, value)) {\n");
+    out.push_str("        set.");
+    out.push_str(&values);
+    out.push_str(" = ");
+    out.push_str(&string_array);
+    out.push_str("_push(set.");
+    out.push_str(&values);
+    out.push_str(", value);\n");
+    out.push_str("    }\n");
+    out.push_str("    return set;\n");
+    out.push_str("}\n\n");
+
+    out.push_str("static ");
+    out.push_str(&set);
+    out.push_str(" nomo_collections_set_remove(");
+    out.push_str(&set);
+    out.push_str(" set, nomo_string value) {\n");
+    out.push_str("    set = ");
+    out.push_str(&c_retain_ident(&set_type));
+    out.push_str("(set);\n");
+    out.push_str("    for (size_t i = 0; i < set.");
+    out.push_str(&values);
+    out.push_str(".len; i += 1) {\n");
+    out.push_str("        if (nomo_string_equal(set.");
+    out.push_str(&values);
+    out.push_str(".data[i], value)) {\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str(" removed = ");
+    out.push_str(&string_array);
+    out.push_str("_remove(&set.");
+    out.push_str(&values);
+    out.push_str(", (uint64_t)i);\n");
+    out.push_str("            ");
+    out.push_str(&option_string);
+    out.push_str("_release(removed);\n");
+    out.push_str("            return set;\n");
+    out.push_str("        }\n");
+    out.push_str("    }\n");
+    out.push_str("    return set;\n");
+    out.push_str("}\n");
+}
+
 fn emit_array_element_release_loop(out: &mut String, element_type: &ValueType) {
     if value_type_needs_release(element_type) {
         out.push_str("    for (size_t i = 0; i < array.len; i += 1) { ");
@@ -4930,6 +5178,17 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::Panic { .. }
         | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringMapLen { .. }
+        | ValueExpr::CollectionsStringMapGet { .. }
+        | ValueExpr::CollectionsStringMapContains { .. }
+        | ValueExpr::CollectionsStringMapSet { .. }
+        | ValueExpr::CollectionsStringMapRemove { .. }
+        | ValueExpr::CollectionsStringSetNew
+        | ValueExpr::CollectionsStringSetLen { .. }
+        | ValueExpr::CollectionsStringSetContains { .. }
+        | ValueExpr::CollectionsStringSetInsert { .. }
+        | ValueExpr::CollectionsStringSetRemove { .. }
         | ValueExpr::MutBorrow(_)
         | ValueExpr::Call { .. }
         | ValueExpr::EnvCwd
@@ -5653,6 +5912,73 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         }
         ValueExpr::CryptoSha512 { value } => {
             out.push_str("nomo_crypto_sha512(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringMapNew => {
+            out.push_str("nomo_collections_map_new()");
+        }
+        ValueExpr::CollectionsStringMapLen { map } => {
+            out.push_str("nomo_collections_map_len(");
+            emit_expr(out, map);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringMapGet { map, key } => {
+            out.push_str("nomo_collections_map_get(");
+            emit_expr(out, map);
+            out.push_str(", ");
+            emit_expr(out, key);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringMapContains { map, key } => {
+            out.push_str("nomo_collections_map_contains(");
+            emit_expr(out, map);
+            out.push_str(", ");
+            emit_expr(out, key);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            out.push_str("nomo_collections_map_set(");
+            emit_expr(out, map);
+            out.push_str(", ");
+            emit_expr(out, key);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringMapRemove { map, key } => {
+            out.push_str("nomo_collections_map_remove(");
+            emit_expr(out, map);
+            out.push_str(", ");
+            emit_expr(out, key);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringSetNew => {
+            out.push_str("nomo_collections_set_new()");
+        }
+        ValueExpr::CollectionsStringSetLen { set } => {
+            out.push_str("nomo_collections_set_len(");
+            emit_expr(out, set);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringSetContains { set, value } => {
+            out.push_str("nomo_collections_set_contains(");
+            emit_expr(out, set);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringSetInsert { set, value } => {
+            out.push_str("nomo_collections_set_insert(");
+            emit_expr(out, set);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CollectionsStringSetRemove { set, value } => {
+            out.push_str("nomo_collections_set_remove(");
+            emit_expr(out, set);
+            out.push_str(", ");
             emit_expr(out, value);
             out.push(')');
         }
@@ -6502,7 +6828,31 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => {
             collect_expr_result_map_err(left, out);
             collect_expr_result_map_err(right, out);
         }
@@ -6537,6 +6887,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6585,6 +6937,11 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         }
         ValueExpr::HashWriteString { state, value } => {
             collect_expr_result_map_err(state, out);
+            collect_expr_result_map_err(value, out);
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            collect_expr_result_map_err(map, out);
+            collect_expr_result_map_err(key, out);
             collect_expr_result_map_err(value, out);
         }
         ValueExpr::Call { args, .. } => {
@@ -6642,6 +6999,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
@@ -6814,7 +7173,31 @@ where
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => {
             walk_expr(left, visit);
             walk_expr(right, visit);
         }
@@ -6849,6 +7232,8 @@ where
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6898,6 +7283,11 @@ where
         }
         ValueExpr::HashWriteString { state, value } => {
             walk_expr(state, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            walk_expr(map, visit);
+            walk_expr(key, visit);
             walk_expr(value, visit);
         }
         ValueExpr::Call { args, .. } => {
@@ -6953,6 +7343,8 @@ where
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
@@ -7222,7 +7614,31 @@ fn collect_expr_struct(
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => {
             collect_expr_struct(left, seen, out);
             collect_expr_struct(right, seen, out);
         }
@@ -7252,6 +7668,8 @@ fn collect_expr_struct(
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
+        | ValueExpr::CollectionsStringMapLen { map: value }
+        | ValueExpr::CollectionsStringSetLen { set: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::HashNew => {
@@ -7261,6 +7679,18 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "HashState", &[]);
             collect_expr_struct(state, seen, out);
             collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::CollectionsStringMapNew => {
+            push_struct_instance(seen, out, "StringMap", &[]);
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            push_struct_instance(seen, out, "StringMap", &[]);
+            collect_expr_struct(map, seen, out);
+            collect_expr_struct(key, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::CollectionsStringSetNew => {
+            push_struct_instance(seen, out, "StringSet", &[]);
         }
         ValueExpr::ProcessStatus { command } | ValueExpr::ProcessExec { command } => {
             push_struct_instance(seen, out, "ProcessError", &[]);
@@ -7806,9 +8236,39 @@ fn collect_expr_enum(
             separator: right,
         }
         | ValueExpr::PathJoin { left, right }
-        | ValueExpr::MathBinary { left, right, .. } => {
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => {
             collect_expr_enum(left, seen, out);
             collect_expr_enum(right, seen, out);
+        }
+        ValueExpr::CollectionsStringMapGet { map, key } => {
+            push_enum_instance(seen, out, "Option", &[ValueType::String]);
+            collect_expr_enum(map, seen, out);
+            collect_expr_enum(key, seen, out);
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            collect_expr_enum(map, seen, out);
+            collect_expr_enum(key, seen, out);
+            collect_expr_enum(value, seen, out);
         }
         ValueExpr::NumBinary {
             function,
@@ -7850,9 +8310,13 @@ fn collect_expr_enum(
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
+        | ValueExpr::CollectionsStringMapLen { map: value }
+        | ValueExpr::CollectionsStringSetLen { set: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
-        ValueExpr::HashNew => {}
+        ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew => {}
         ValueExpr::HashWriteString { state, value } => {
             collect_expr_enum(state, seen, out);
             collect_expr_enum(value, seen, out);
@@ -8402,6 +8866,15 @@ fn uses_crypto_builtin(program: &Program) -> bool {
     })
 }
 
+fn uses_collections_builtin(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_collections_builtin))
+    })
+}
+
 fn uses_num_parse_i64(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function
@@ -8942,9 +9415,31 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_contains(left, predicate) || expr_contains(right, predicate)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_contains(left, predicate) || expr_contains(right, predicate),
         ValueExpr::FsWriteString { path, content } => {
             expr_contains(path, predicate) || expr_contains(content, predicate)
         }
@@ -8953,6 +9448,11 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         }
         ValueExpr::HashWriteString { state, value } => {
             expr_contains(state, predicate) || expr_contains(value, predicate)
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_contains(map, predicate)
+                || expr_contains(key, predicate)
+                || expr_contains(value, predicate)
         }
         ValueExpr::Call { args, .. } => args.iter().any(|arg| expr_contains(arg, predicate)),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -8998,6 +9498,8 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9057,6 +9559,8 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvArgs
@@ -9145,6 +9649,23 @@ fn expr_is_crypto_builtin(expr: &ValueExpr) -> bool {
     matches!(
         expr,
         ValueExpr::CryptoSha256 { .. } | ValueExpr::CryptoSha512 { .. }
+    )
+}
+
+fn expr_is_collections_builtin(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::CollectionsStringMapNew
+            | ValueExpr::CollectionsStringMapLen { .. }
+            | ValueExpr::CollectionsStringMapGet { .. }
+            | ValueExpr::CollectionsStringMapContains { .. }
+            | ValueExpr::CollectionsStringMapSet { .. }
+            | ValueExpr::CollectionsStringMapRemove { .. }
+            | ValueExpr::CollectionsStringSetNew
+            | ValueExpr::CollectionsStringSetLen { .. }
+            | ValueExpr::CollectionsStringSetContains { .. }
+            | ValueExpr::CollectionsStringSetInsert { .. }
+            | ValueExpr::CollectionsStringSetRemove { .. }
     )
 }
 
@@ -9583,9 +10104,31 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_uses_fs_read_to_string(left) || expr_uses_fs_read_to_string(right),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(content)
         }
@@ -9631,6 +10174,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
+        | ValueExpr::CollectionsStringMapLen { map: name }
+        | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9640,9 +10185,17 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseF64 { value: name }
         | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_read_to_string(name),
         ValueExpr::EnvArgs => false,
-        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::ArrayNew { .. }
+        | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
             expr_uses_fs_read_to_string(state) || expr_uses_fs_read_to_string(value)
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_uses_fs_read_to_string(map)
+                || expr_uses_fs_read_to_string(key)
+                || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_read_to_string(array),
@@ -9740,9 +10293,31 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
@@ -9787,6 +10362,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
+        | ValueExpr::CollectionsStringMapLen { map: name }
+        | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9796,9 +10373,17 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseF64 { value: name }
         | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_write_string(name),
         ValueExpr::EnvArgs => false,
-        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::ArrayNew { .. }
+        | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
             expr_uses_fs_write_string(state) || expr_uses_fs_write_string(value)
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_uses_fs_write_string(map)
+                || expr_uses_fs_write_string(key)
+                || expr_uses_fs_write_string(value)
         }
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_write_string(array),
@@ -9894,9 +10479,31 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_uses_fs_open(left) || expr_uses_fs_open(right)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_uses_fs_open(left) || expr_uses_fs_open(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
@@ -9916,6 +10523,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9950,9 +10559,15 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::EnvSet { name, value } => expr_uses_fs_open(name) || expr_uses_fs_open(value),
         ValueExpr::EnvArgs => false,
         ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => false,
-        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::ArrayNew { .. }
+        | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::HashWriteString { state, value } => {
             expr_uses_fs_open(state) || expr_uses_fs_open(value)
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_uses_fs_open(map) || expr_uses_fs_open(key) || expr_uses_fs_open(value)
         }
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_open(array),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -10041,9 +10656,31 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_uses_env_get(left) || expr_uses_env_get(right)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_uses_env_get(left) || expr_uses_env_get(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
@@ -10062,6 +10699,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -10081,6 +10720,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::HashWriteString { state, value } => {
             expr_uses_env_get(state) || expr_uses_env_get(value)
         }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_uses_env_get(map) || expr_uses_env_get(key) || expr_uses_env_get(value)
+        }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -10098,7 +10740,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             option, default, ..
         } => expr_uses_env_get(option) || expr_uses_env_get(default),
         ValueExpr::EnvArgs => false,
-        ValueExpr::ArrayNew { .. } => false,
+        ValueExpr::ArrayNew { .. }
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::ArrayLen { array } => expr_uses_env_get(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_get(array),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -10191,9 +10835,31 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
-            expr_uses_env_args(left) || expr_uses_env_args(right)
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
         }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => expr_uses_env_args(left) || expr_uses_env_args(right),
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FsExists { path }
@@ -10215,6 +10881,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -10249,6 +10917,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
         ValueExpr::HashWriteString { state, value } => {
             expr_uses_env_args(state) || expr_uses_env_args(value)
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            expr_uses_env_args(map) || expr_uses_env_args(key) || expr_uses_env_args(value)
         }
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_args(array),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -10298,6 +10969,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         ValueExpr::ArrayNew { .. }
         | ValueExpr::HashNew
+        | ValueExpr::CollectionsStringMapNew
+        | ValueExpr::CollectionsStringSetNew
         | ValueExpr::StringLiteral(_)
         | ValueExpr::IntLiteral(_)
         | ValueExpr::FloatLiteral(_)
@@ -10362,9 +11035,42 @@ fn collect_expr_array_elements(
         }
         | ValueExpr::PathJoin { left, right }
         | ValueExpr::NumBinary { left, right, .. }
-        | ValueExpr::MathBinary { left, right, .. } => {
+        | ValueExpr::MathBinary { left, right, .. }
+        | ValueExpr::CollectionsStringMapGet {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapContains {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringMapRemove {
+            map: left,
+            key: right,
+        }
+        | ValueExpr::CollectionsStringSetContains {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetInsert {
+            set: left,
+            value: right,
+        }
+        | ValueExpr::CollectionsStringSetRemove {
+            set: left,
+            value: right,
+        } => {
             collect_expr_array_elements(left, seen, out);
             collect_expr_array_elements(right, seen, out);
+        }
+        ValueExpr::CollectionsStringMapNew | ValueExpr::CollectionsStringSetNew => {
+            push_array_element_type(seen, out, &ValueType::String);
+        }
+        ValueExpr::CollectionsStringMapSet { map, key, value } => {
+            push_array_element_type(seen, out, &ValueType::String);
+            collect_expr_array_elements(map, seen, out);
+            collect_expr_array_elements(key, seen, out);
+            collect_expr_array_elements(value, seen, out);
         }
         ValueExpr::StringSplit { value, separator } => {
             push_array_element_type(seen, out, &ValueType::String);
@@ -10389,6 +11095,8 @@ fn collect_expr_array_elements(
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CollectionsStringMapLen { map: path }
+        | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }

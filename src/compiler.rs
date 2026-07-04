@@ -367,6 +367,43 @@ pub enum ValueExpr {
     CryptoSha512 {
         value: Box<ValueExpr>,
     },
+    CollectionsStringMapNew,
+    CollectionsStringMapLen {
+        map: Box<ValueExpr>,
+    },
+    CollectionsStringMapGet {
+        map: Box<ValueExpr>,
+        key: Box<ValueExpr>,
+    },
+    CollectionsStringMapContains {
+        map: Box<ValueExpr>,
+        key: Box<ValueExpr>,
+    },
+    CollectionsStringMapSet {
+        map: Box<ValueExpr>,
+        key: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    CollectionsStringMapRemove {
+        map: Box<ValueExpr>,
+        key: Box<ValueExpr>,
+    },
+    CollectionsStringSetNew,
+    CollectionsStringSetLen {
+        set: Box<ValueExpr>,
+    },
+    CollectionsStringSetContains {
+        set: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    CollectionsStringSetInsert {
+        set: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    CollectionsStringSetRemove {
+        set: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
     ProcessExit {
         code: Box<ValueExpr>,
     },
@@ -1837,6 +1874,20 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.crypto"
             | "std.crypto.sha256"
             | "std.crypto.sha512"
+            | "std.collections"
+            | "std.collections.StringMap"
+            | "std.collections.StringSet"
+            | "std.collections.map_new"
+            | "std.collections.map_len"
+            | "std.collections.map_get"
+            | "std.collections.map_contains"
+            | "std.collections.map_set"
+            | "std.collections.map_remove"
+            | "std.collections.set_new"
+            | "std.collections.set_len"
+            | "std.collections.set_contains"
+            | "std.collections.set_insert"
+            | "std.collections.set_remove"
             | "std.os"
             | "std.os.platform"
             | "std.os.arch"
@@ -1988,6 +2039,7 @@ fn missing_standard_type_import(
         "IoError" => Some("std.io"),
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
+        "StringMap" | "StringSet" => Some("std.collections"),
         _ => None,
     }
 }
@@ -2391,6 +2443,7 @@ struct StandardTypeNeeds {
     env: bool,
     process: bool,
     hash: bool,
+    collections: bool,
     num: bool,
     result: bool,
     option: bool,
@@ -2417,6 +2470,9 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.hash" || item.starts_with("std.hash."))
             || source_uses_hash_builtin(ast),
+        collections: imports
+            .iter()
+            .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
         num: imports
             .iter()
             .any(|item| item == "std.num" || item.starts_with("std.num."))
@@ -2429,9 +2485,13 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.option" || item == "std.option.Option")
             || source_uses_option_prelude_variant(ast),
+        // std.collections is backed by Array<string> and Option<string> in v0.1.
         array: imports.iter().any(|item| {
             item == "std.array" || item == "std.array.Array" || item.starts_with("std.array.")
-        }) || source_uses_array_builtin(ast),
+        }) || source_uses_array_builtin(ast)
+            || imports
+                .iter()
+                .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
     }
 }
 
@@ -2455,6 +2515,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.hash {
         names.push(("HashState".to_string(), 0));
     }
+    if needs.collections {
+        names.push(("StringMap".to_string(), 0));
+        names.push(("StringSet".to_string(), 0));
+    }
     names.into_iter()
 }
 
@@ -2463,7 +2527,7 @@ fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String
     if needs.io || needs.fs || needs.num || needs.process || needs.result {
         names.push(("Result".to_string(), 2));
     }
-    if needs.env || needs.num || needs.option || needs.array {
+    if needs.env || needs.num || needs.option || needs.array || needs.collections {
         names.push(("Option".to_string(), 1));
     }
     names.into_iter()
@@ -2576,6 +2640,34 @@ fn inject_standard_types(
             fields: vec![StructField {
                 name: "value".to_string(),
                 value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.collections && !structs.iter().any(|item| item.name == "StringMap") {
+        structs.push(StructType {
+            package: "std.collections".to_string(),
+            name: "StringMap".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "keys".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::String)),
+                },
+                StructField {
+                    name: "values".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::String)),
+                },
+            ],
+        });
+    }
+    if needs.collections && !structs.iter().any(|item| item.name == "StringSet") {
+        structs.push(StructType {
+            package: "std.collections".to_string(),
+            name: "StringSet".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "values".to_string(),
+                value_type: ValueType::Array(Box::new(ValueType::String)),
             }],
         });
     }
@@ -3656,7 +3748,7 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
 fn is_known_std_value_module(name: &str) -> bool {
     matches!(
         name,
-        "io" | "fs" | "env" | "process" | "string" | "path" | "math" | "Array"
+        "io" | "fs" | "env" | "process" | "string" | "path" | "math" | "collections" | "Array"
     )
 }
 
@@ -8453,6 +8545,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "collections" {
+                    return lower_collections_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8799,6 +8896,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_crypto_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_collections_builtin_call(callee) {
+                require_import(path, imports, span, "std.collections", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "collections builtins do not accept type arguments",
+                    ));
+                }
+                return lower_collections_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10372,6 +10482,28 @@ fn is_crypto_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_collections_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "collections"
+                && matches!(
+                    name.as_str(),
+                    "map_new"
+                        | "map_len"
+                        | "map_get"
+                        | "map_contains"
+                        | "map_set"
+                        | "map_remove"
+                        | "set_new"
+                        | "set_len"
+                        | "set_contains"
+                        | "set_insert"
+                        | "set_remove"
+                )
+    )
+}
+
 fn lower_hash_builtin(
     path: &Path,
     callee: &[String],
@@ -10565,6 +10697,422 @@ fn lower_crypto_builtin(
         _ => unreachable!("crypto builtin dispatcher only passes known calls"),
     };
     Ok((ValueType::String, expr))
+}
+
+fn lower_collections_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("collections builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "collections");
+    let map_type = ValueType::Struct("StringMap".to_string(), Vec::new());
+    let set_type = ValueType::Struct("StringSet".to_string(), Vec::new());
+    match name.as_str() {
+        "map_new" => {
+            expect_no_args(path, span, "collections.map_new", args)?;
+            Ok((map_type, ValueExpr::CollectionsStringMapNew))
+        }
+        "map_len" => {
+            let map = lower_collections_unary_arg(
+                path,
+                span,
+                "collections.map_len",
+                args,
+                &map_type,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                ValueType::U64,
+                ValueExpr::CollectionsStringMapLen { map: Box::new(map) },
+            ))
+        }
+        "map_get" => {
+            let (map, key) = lower_collections_map_key_args(
+                path,
+                span,
+                "collections.map_get",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![ValueType::String]),
+                ValueExpr::CollectionsStringMapGet {
+                    map: Box::new(map),
+                    key: Box::new(key),
+                },
+            ))
+        }
+        "map_contains" => {
+            let (map, key) = lower_collections_map_key_args(
+                path,
+                span,
+                "collections.map_contains",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::CollectionsStringMapContains {
+                    map: Box::new(map),
+                    key: Box::new(key),
+                },
+            ))
+        }
+        "map_set" => {
+            let [map_arg, key_arg, value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`collections.map_set` expects a StringMap, string key, and string value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let map = lower_collections_arg(
+                path,
+                span,
+                "collections.map_set",
+                map_arg,
+                &map_type,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            let key = lower_collections_arg(
+                path,
+                span,
+                "collections.map_set",
+                key_arg,
+                &ValueType::String,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            let value = lower_collections_arg(
+                path,
+                span,
+                "collections.map_set",
+                value_arg,
+                &ValueType::String,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                map_type,
+                ValueExpr::CollectionsStringMapSet {
+                    map: Box::new(map),
+                    key: Box::new(key),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "map_remove" => {
+            let (map, key) = lower_collections_map_key_args(
+                path,
+                span,
+                "collections.map_remove",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                map_type,
+                ValueExpr::CollectionsStringMapRemove {
+                    map: Box::new(map),
+                    key: Box::new(key),
+                },
+            ))
+        }
+        "set_new" => {
+            expect_no_args(path, span, "collections.set_new", args)?;
+            Ok((set_type, ValueExpr::CollectionsStringSetNew))
+        }
+        "set_len" => {
+            let set = lower_collections_unary_arg(
+                path,
+                span,
+                "collections.set_len",
+                args,
+                &set_type,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                ValueType::U64,
+                ValueExpr::CollectionsStringSetLen { set: Box::new(set) },
+            ))
+        }
+        "set_contains" => {
+            let (set, value) = lower_collections_set_value_args(
+                path,
+                span,
+                "collections.set_contains",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                ValueType::Bool,
+                ValueExpr::CollectionsStringSetContains {
+                    set: Box::new(set),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "set_insert" => {
+            let (set, value) = lower_collections_set_value_args(
+                path,
+                span,
+                "collections.set_insert",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                set_type,
+                ValueExpr::CollectionsStringSetInsert {
+                    set: Box::new(set),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "set_remove" => {
+            let (set, value) = lower_collections_set_value_args(
+                path,
+                span,
+                "collections.set_remove",
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )?;
+            Ok((
+                set_type,
+                ValueExpr::CollectionsStringSetRemove {
+                    set: Box::new(set),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        _ => unreachable!("collections builtin dispatcher only passes known calls"),
+    }
+}
+
+fn expect_no_args(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    args: &[AstExpr],
+) -> Result<(), Diagnostic> {
+    if args.is_empty() {
+        return Ok(());
+    }
+    Err(Diagnostic::new(
+        "E0407",
+        format!("`{callable}` does not accept arguments"),
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    ))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_collections_unary_arg(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    args: &[AstExpr],
+    expected: &ValueType,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<ValueExpr, Diagnostic> {
+    let [arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`{callable}` expects exactly one argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    lower_collections_arg(
+        path, span, callable, arg, expected, scope, imports, signatures, structs, enums,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_collections_map_key_args(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<(ValueExpr, ValueExpr), Diagnostic> {
+    let [map_arg, key_arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`{callable}` expects a StringMap and string key"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let map_type = ValueType::Struct("StringMap".to_string(), Vec::new());
+    let map = lower_collections_arg(
+        path, span, callable, map_arg, &map_type, scope, imports, signatures, structs, enums,
+    )?;
+    let key = lower_collections_arg(
+        path,
+        span,
+        callable,
+        key_arg,
+        &ValueType::String,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+    )?;
+    Ok((map, key))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_collections_set_value_args(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<(ValueExpr, ValueExpr), Diagnostic> {
+    let [set_arg, value_arg] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`{callable}` expects a StringSet and string value"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let set_type = ValueType::Struct("StringSet".to_string(), Vec::new());
+    let set = lower_collections_arg(
+        path, span, callable, set_arg, &set_type, scope, imports, signatures, structs, enums,
+    )?;
+    let value = lower_collections_arg(
+        path,
+        span,
+        callable,
+        value_arg,
+        &ValueType::String,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+    )?;
+    Ok((set, value))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_collections_arg(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    arg: &AstExpr,
+    expected: &ValueType,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<ValueExpr, Diagnostic> {
+    let (actual, lowered) = lower_value_expr_with_expected(
+        path,
+        arg,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        Some(expected),
+        span,
+    )?;
+    if &actual != expected {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!(
+                "`{callable}` argument is `{}` but expected `{}`",
+                actual.name(),
+                expected.name()
+            ),
+            expected,
+            &actual,
+        ));
+    }
+    Ok(lowered)
 }
 
 fn lower_debug_builtin(
@@ -14079,6 +14627,59 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "sha512" if imports.iter().any(|item| item == "std.crypto.sha512") => {
             vec!["crypto".to_string(), "sha512".to_string()]
         }
+        "map_new" if imports.iter().any(|item| item == "std.collections.map_new") => {
+            vec!["collections".to_string(), "map_new".to_string()]
+        }
+        "map_len" if imports.iter().any(|item| item == "std.collections.map_len") => {
+            vec!["collections".to_string(), "map_len".to_string()]
+        }
+        "map_get" if imports.iter().any(|item| item == "std.collections.map_get") => {
+            vec!["collections".to_string(), "map_get".to_string()]
+        }
+        "map_contains"
+            if imports
+                .iter()
+                .any(|item| item == "std.collections.map_contains") =>
+        {
+            vec!["collections".to_string(), "map_contains".to_string()]
+        }
+        "map_set" if imports.iter().any(|item| item == "std.collections.map_set") => {
+            vec!["collections".to_string(), "map_set".to_string()]
+        }
+        "map_remove"
+            if imports
+                .iter()
+                .any(|item| item == "std.collections.map_remove") =>
+        {
+            vec!["collections".to_string(), "map_remove".to_string()]
+        }
+        "set_new" if imports.iter().any(|item| item == "std.collections.set_new") => {
+            vec!["collections".to_string(), "set_new".to_string()]
+        }
+        "set_len" if imports.iter().any(|item| item == "std.collections.set_len") => {
+            vec!["collections".to_string(), "set_len".to_string()]
+        }
+        "set_contains"
+            if imports
+                .iter()
+                .any(|item| item == "std.collections.set_contains") =>
+        {
+            vec!["collections".to_string(), "set_contains".to_string()]
+        }
+        "set_insert"
+            if imports
+                .iter()
+                .any(|item| item == "std.collections.set_insert") =>
+        {
+            vec!["collections".to_string(), "set_insert".to_string()]
+        }
+        "set_remove"
+            if imports
+                .iter()
+                .any(|item| item == "std.collections.set_remove") =>
+        {
+            vec!["collections".to_string(), "set_remove".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -15839,6 +16440,157 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("string value"));
+    }
+
+    #[test]
+    fn accepts_collections_builtins() {
+        let source = r#"package app.main
+
+import std.collections
+
+fn main() -> void {
+    let map: StringMap = collections.map_new()
+    let updated: StringMap = collections.map_set(map, "lang", "nomo")
+    let found: Option<string> = collections.map_get(updated, "lang")
+    let has_lang: bool = collections.map_contains(updated, "lang")
+    let smaller: StringMap = collections.map_remove(updated, "lang")
+    let set: StringSet = collections.set_new()
+    let inserted: StringSet = collections.set_insert(set, "nomo")
+    let has_nomo: bool = collections.set_contains(inserted, "nomo")
+    let removed: StringSet = collections.set_remove(inserted, "nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "StringMap"));
+        assert!(program.structs.iter().any(|item| item.name == "StringSet"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapNew,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapSet { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::CollectionsStringMapGet { .. },
+                ..
+            } if name == "Option" && args == &[ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::CollectionsStringMapContains { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapRemove { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringSetNew,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringSetInsert { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[7],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::CollectionsStringSetContains { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[8],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringSetRemove { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_collections_builtin_imports() {
+        let source = r#"package app.main
+
+import std.collections.StringMap
+import std.collections.StringSet
+import std.collections.map_get
+import std.collections.map_new
+import std.collections.map_set
+import std.collections.set_insert
+import std.collections.set_new
+
+fn main() -> void {
+    let map: StringMap = map_new()
+    let updated: StringMap = map_set(map, "lang", "nomo")
+    let found: Option<string> = map_get(updated, "lang")
+    let set: StringSet = set_new()
+    let inserted: StringSet = set_insert(set, "nomo")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapNew,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapSet { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringMapGet { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringSetNew,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                initializer: ValueExpr::CollectionsStringSetInsert { .. },
+                ..
+            }
+        ));
     }
 
     #[test]

@@ -4703,6 +4703,88 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_collections_helpers() {
+    let root = temp_test_root("std-collections-helpers");
+    reset_dir(&root);
+    let project = root.join("std_collections_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_collections_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.collections
+import std.io
+import std.num
+import std.option
+
+fn main() -> void {
+    let mut map: StringMap = collections.map_new()
+    map = collections.map_set(map, "lang", "nomo")
+    map = collections.map_set(map, "tool", "compiler")
+    map = collections.map_set(map, "lang", "nomo2")
+    io.println(option.unwrap_or(collections.map_get(map, "lang"), "missing"))
+    io.println(num.to_string(collections.map_len(map)))
+    map = collections.map_remove(map, "tool")
+    io.println(num.to_string(collections.map_len(map)))
+    if collections.map_contains(map, "tool") {
+        io.println("tool-present")
+    } else {
+        io.println("tool-missing")
+    }
+
+    let mut set: StringSet = collections.set_new()
+    set = collections.set_insert(set, "nomo")
+    set = collections.set_insert(set, "nomo")
+    set = collections.set_insert(set, "lang")
+    io.println(num.to_string(collections.set_len(set)))
+    if collections.set_contains(set, "lang") {
+        io.println("lang-present")
+    } else {
+        io.println("lang-missing")
+    }
+    set = collections.set_remove(set, "lang")
+    io.println(num.to_string(collections.set_len(set)))
+    if collections.set_contains(set, "lang") {
+        io.println("lang-present")
+    } else {
+        io.println("lang-missing")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "nomo2\n2\n1\ntool-missing\n2\nlang-present\n1\nlang-missing\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
     let root = temp_test_root("try-identifier-question");
     reset_dir(&root);

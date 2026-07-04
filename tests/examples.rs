@@ -254,6 +254,12 @@ fn assert_cli_doc_basic(example: &Path) {
         stdout.contains("User-facing record documented from a block doc comment."),
         "{stdout}"
     );
+    assert!(stdout.contains("\"kind\":\"field\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"User.name\""), "{stdout}");
+    assert!(
+        stdout.contains("\"docs\":\"User display name.\""),
+        "{stdout}"
+    );
 }
 
 fn assert_cli_deps_vendor(example: &Path) {

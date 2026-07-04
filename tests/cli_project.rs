@@ -292,11 +292,13 @@ pub fn greet(name: string) -> string {
 
 /** User-facing record. */
 pub struct User {
+    /// User display name.
     pub name: string
 }
 
 /// Result status.
 enum Status {
+    /// Ready to run.
     Ready
 }
 "#,
@@ -328,10 +330,21 @@ enum Status {
         "{module_html}"
     );
     assert!(module_html.contains("User-facing record."), "{module_html}");
+    assert!(module_html.contains("field User.name"), "{module_html}");
+    assert!(module_html.contains("User display name."), "{module_html}");
+    assert!(
+        module_html.contains("variant Status.Ready"),
+        "{module_html}"
+    );
+    assert!(module_html.contains("Ready to run."), "{module_html}");
     assert!(module_html.contains("private"), "{module_html}");
     let search = fs::read_to_string(output_dir.join("search-index.json")).unwrap();
     assert!(search.contains("\"name\":\"greet\""), "{search}");
     assert!(search.contains("\"kind\":\"struct\""), "{search}");
+    assert!(search.contains("\"kind\":\"field\""), "{search}");
+    assert!(search.contains("\"name\":\"User.name\""), "{search}");
+    assert!(search.contains("\"kind\":\"variant\""), "{search}");
+    assert!(search.contains("\"name\":\"Status.Ready\""), "{search}");
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -349,7 +362,7 @@ fn nomo_doc_json_reports_project_docs() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n",
     )
     .unwrap();
 
@@ -374,6 +387,15 @@ fn nomo_doc_json_reports_project_docs() {
         stdout.contains("\"signature\":\"pub fn add(a: i64, b: i64) -> i64\""),
         "{stdout}"
     );
+    assert!(stdout.contains("\"kind\":\"field\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"User.name\""), "{stdout}");
+    assert!(
+        stdout.contains("\"docs\":\"User display name.\""),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"kind\":\"variant\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Status.Ready\""), "{stdout}");
+    assert!(stdout.contains("\"docs\":\"Ready to run.\""), "{stdout}");
     assert!(!project.join("build/doc").exists());
 
     fs::remove_dir_all(&root).unwrap();

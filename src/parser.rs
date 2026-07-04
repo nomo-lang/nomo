@@ -194,6 +194,7 @@ impl Parser<'_> {
                     return Err(self.error("E0228", "unterminated enum body; expected `}`", 1));
                 }
                 _ => {
+                    let variant_token = self.peek().clone();
                     let name = self.expect_ident("expected enum variant name")?;
                     let payload = if matches!(self.peek().kind, TokenKind::LParen) {
                         self.advance();
@@ -207,7 +208,11 @@ impl Parser<'_> {
                     } else {
                         None
                     };
-                    variants.push(EnumVariant { name, payload });
+                    variants.push(EnumVariant {
+                        name,
+                        payload,
+                        span: token_span(&variant_token),
+                    });
                     if matches!(self.peek().kind, TokenKind::Comma) {
                         self.advance();
                     }
@@ -292,6 +297,7 @@ impl Parser<'_> {
                     return Err(self.error("E0220", "unterminated struct body; expected `}`", 1));
                 }
                 _ => {
+                    let field_token = self.peek().clone();
                     let public = self.consume_pub();
                     let field_name = self.expect_ident("expected field name")?;
                     self.expect_kind(TokenKind::Colon, "E0221", "expected `:` after field name")?;
@@ -300,6 +306,7 @@ impl Parser<'_> {
                         public,
                         name: field_name,
                         type_ref,
+                        span: token_span(&field_token),
                     });
                     self.expect_newline("expected newline after struct field")?;
                 }
@@ -2868,6 +2875,12 @@ mod tests {
                         ],
                         args: [],
                     },
+                    span: Span {
+                        line: 6,
+                        column: 5,
+                        length: 5,
+                        text: "    value: T",
+                    },
                 },
             ],
             span: Span {
@@ -2891,6 +2904,12 @@ mod tests {
                 EnumVariant {
                     name: "Ready",
                     payload: None,
+                    span: Span {
+                        line: 10,
+                        column: 5,
+                        length: 5,
+                        text: "    Ready",
+                    },
                 },
                 EnumVariant {
                     name: "Done",
@@ -2902,6 +2921,12 @@ mod tests {
                             args: [],
                         },
                     ),
+                    span: Span {
+                        line: 11,
+                        column: 5,
+                        length: 4,
+                        text: "    Done(i32)",
+                    },
                 },
             ],
             span: Span {

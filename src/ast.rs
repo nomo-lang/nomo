@@ -27,6 +27,7 @@ pub struct Field {
     pub public: bool,
     pub name: String,
     pub type_ref: TypeRef,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -43,6 +44,7 @@ pub struct EnumDef {
 pub struct EnumVariant {
     pub name: String,
     pub payload: Option<TypeRef>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

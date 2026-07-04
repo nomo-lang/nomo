@@ -1,4 +1,6 @@
-use crate::ast::{ConstDef, EnumDef, Function, Param, SourceFile, StructDef, TypeRef};
+use crate::ast::{
+    ConstDef, EnumDef, EnumVariant, Field, Function, Param, SourceFile, StructDef, TypeRef,
+};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::lex;
 use crate::parser::parse;
@@ -45,6 +47,7 @@ pub struct DocItem {
     pub docs: String,
     pub source: String,
     pub line: usize,
+    pub children: Vec<DocItem>,
 }
 
 pub fn generate_project_docs(project: &Project, output: &Path) -> Result<DocPackage, DocError> {
@@ -221,6 +224,11 @@ fn struct_doc(item: &StructDef, comments: &DocComments, source: &str) -> DocItem
             .unwrap_or_default(),
         source: source.to_string(),
         line: item.span.line,
+        children: item
+            .fields
+            .iter()
+            .map(|field| field_doc(&item.name, field, comments, source))
+            .collect(),
     }
 }
 
@@ -242,6 +250,11 @@ fn enum_doc(item: &EnumDef, comments: &DocComments, source: &str) -> DocItem {
             .unwrap_or_default(),
         source: source.to_string(),
         line: item.span.line,
+        children: item
+            .variants
+            .iter()
+            .map(|variant| variant_doc(&item.name, variant, comments, source))
+            .collect(),
     }
 }
 
@@ -263,6 +276,7 @@ fn const_doc(item: &ConstDef, comments: &DocComments, source: &str) -> DocItem {
             .unwrap_or_default(),
         source: source.to_string(),
         line: item.span.line,
+        children: Vec::new(),
     }
 }
 
@@ -279,6 +293,55 @@ fn function_doc(kind: &str, item: &Function, comments: &DocComments, source: &st
             .unwrap_or_default(),
         source: source.to_string(),
         line: item.span.line,
+        children: Vec::new(),
+    }
+}
+
+fn field_doc(owner: &str, field: &Field, comments: &DocComments, source: &str) -> DocItem {
+    DocItem {
+        kind: "field".to_string(),
+        name: format!("{owner}.{}", field.name),
+        signature: format!(
+            "{}field {owner}.{}: {}",
+            visibility_prefix(field.public),
+            field.name,
+            type_ref(&field.type_ref)
+        ),
+        visibility: visibility(field.public).to_string(),
+        docs: comments
+            .item_docs
+            .get(&field.span.line)
+            .cloned()
+            .unwrap_or_default(),
+        source: source.to_string(),
+        line: field.span.line,
+        children: Vec::new(),
+    }
+}
+
+fn variant_doc(
+    owner: &str,
+    variant: &EnumVariant,
+    comments: &DocComments,
+    source: &str,
+) -> DocItem {
+    let signature = match &variant.payload {
+        Some(payload) => format!("variant {owner}.{}({})", variant.name, type_ref(payload)),
+        None => format!("variant {owner}.{}", variant.name),
+    };
+    DocItem {
+        kind: "variant".to_string(),
+        name: format!("{owner}.{}", variant.name),
+        signature,
+        visibility: "public".to_string(),
+        docs: comments
+            .item_docs
+            .get(&variant.span.line)
+            .cloned()
+            .unwrap_or_default(),
+        source: source.to_string(),
+        line: variant.span.line,
+        children: Vec::new(),
     }
 }
 
@@ -474,18 +537,30 @@ fn render_module_html(package: &DocPackage, module: &DocModule) -> String {
         html_escape(&module.source)
     ));
     for item in &module.items {
-        body.push_str(&format!(
-            "<section><h3 id=\"{}\">{} {}</h3><code>{}</code><p>{}</p><p>{}:{} · {}</p></section>",
-            html_escape(&item.name),
-            html_escape(&item.kind),
-            html_escape(&item.name),
-            html_escape(&item.signature),
-            html_escape(&item.docs),
-            html_escape(&item.source),
-            item.line,
-            html_escape(&item.visibility)
-        ));
+        body.push_str(&render_item_html(item));
     }
+    body
+}
+
+fn render_item_html(item: &DocItem) -> String {
+    let mut body = format!(
+        "<section><h3 id=\"{}\">{} {}</h3><code>{}</code><p>{}</p><p>{}:{} · {}</p>",
+        html_escape(&item.name),
+        html_escape(&item.kind),
+        html_escape(&item.name),
+        html_escape(&item.signature),
+        html_escape(&item.docs),
+        html_escape(&item.source),
+        item.line,
+        html_escape(&item.visibility)
+    );
+    if !item.children.is_empty() {
+        body.push_str("<h4>Members</h4>");
+        for child in &item.children {
+            body.push_str(&render_item_html(child));
+        }
+    }
+    body.push_str("</section>");
     body
 }
 
@@ -507,23 +582,30 @@ fn render_search_index_json(packages: &[DocPackage]) -> String {
                 json_escape(&safe_file_name(&module.name))
             ));
             for item in &module.items {
-                out.push(',');
-                out.push_str(&format!(
-                    "{{\"kind\":\"{}\",\"package\":\"{}\",\"module\":\"{}\",\"name\":\"{}\",\"signature\":\"{}\",\"url\":\"{}/{}.html#{}\"}}",
-                    json_escape(&item.kind),
-                    json_escape(&package.package),
-                    json_escape(&module.name),
-                    json_escape(&item.name),
-                    json_escape(&item.signature),
-                    json_escape(&package.package),
-                    json_escape(&safe_file_name(&module.name)),
-                    json_escape(&item.name)
-                ));
+                append_search_item(&mut out, package, module, item);
             }
         }
     }
     out.push_str("]}");
     out
+}
+
+fn append_search_item(out: &mut String, package: &DocPackage, module: &DocModule, item: &DocItem) {
+    out.push(',');
+    out.push_str(&format!(
+        "{{\"kind\":\"{}\",\"package\":\"{}\",\"module\":\"{}\",\"name\":\"{}\",\"signature\":\"{}\",\"url\":\"{}/{}.html#{}\"}}",
+        json_escape(&item.kind),
+        json_escape(&package.package),
+        json_escape(&module.name),
+        json_escape(&item.name),
+        json_escape(&item.signature),
+        json_escape(&package.package),
+        json_escape(&safe_file_name(&module.name)),
+        json_escape(&item.name)
+    ));
+    for child in &item.children {
+        append_search_item(out, package, module, child);
+    }
 }
 
 fn package_json(package: &DocPackage) -> String {
@@ -552,16 +634,28 @@ fn module_json(module: &DocModule) -> String {
         if index > 0 {
             out.push(',');
         }
-        out.push_str(&format!(
-            "{{\"kind\":\"{}\",\"name\":\"{}\",\"signature\":\"{}\",\"visibility\":\"{}\",\"docs\":\"{}\",\"source\":\"{}\",\"line\":{}}}",
-            json_escape(&item.kind),
-            json_escape(&item.name),
-            json_escape(&item.signature),
-            json_escape(&item.visibility),
-            json_escape(&item.docs),
-            json_escape(&item.source),
-            item.line
-        ));
+        out.push_str(&item_json(item));
+    }
+    out.push_str("]}");
+    out
+}
+
+fn item_json(item: &DocItem) -> String {
+    let mut out = format!(
+        "{{\"kind\":\"{}\",\"name\":\"{}\",\"signature\":\"{}\",\"visibility\":\"{}\",\"docs\":\"{}\",\"source\":\"{}\",\"line\":{},\"children\":[",
+        json_escape(&item.kind),
+        json_escape(&item.name),
+        json_escape(&item.signature),
+        json_escape(&item.visibility),
+        json_escape(&item.docs),
+        json_escape(&item.source),
+        item.line
+    );
+    for (index, child) in item.children.iter().enumerate() {
+        if index > 0 {
+            out.push(',');
+        }
+        out.push_str(&item_json(child));
     }
     out.push_str("]}");
     out

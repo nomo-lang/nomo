@@ -426,6 +426,13 @@ pub enum ValueExpr {
     FileClose {
         file: Box<ValueExpr>,
     },
+    FileReadToString {
+        file: Box<ValueExpr>,
+    },
+    FileWriteString {
+        file: Box<ValueExpr>,
+        content: Box<ValueExpr>,
+    },
     ResultMapErr {
         result: Box<ValueExpr>,
         ok_type: ValueType,
@@ -8538,7 +8545,9 @@ fn lower_value_expr_with_expected(
                 );
             }
             if type_args.is_empty() && is_file_value_method(callee, scope) {
-                return lower_file_value_method(path, callee, args, scope, span);
+                return lower_file_value_method(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
             }
             if type_args.is_empty() {
                 if let Some(lowered) = lower_option_value_method(
@@ -10655,12 +10664,17 @@ fn lower_file_value_method(
     callee: &[String],
     args: &[AstExpr],
     scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     let name = &callee[0];
     let method = &callee[1];
     let binding = scope.get(name).expect("file method receiver is in scope");
     let receiver_expr = binding_value_expr(name, binding);
+    let fs_error = ValueType::Struct("FsError".to_string(), Vec::new());
     match method.as_str() {
         "close" => {
             if !args.is_empty() {
@@ -10678,6 +10692,63 @@ fn lower_file_value_method(
                 ValueType::Void,
                 ValueExpr::FileClose {
                     file: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "read_to_string" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`File.read_to_string` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::String, fs_error]),
+                ValueExpr::FileReadToString {
+                    file: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "write_string" => {
+            let [content_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`File.write_string` expects exactly one content string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (content_type, lowered_content) = lower_value_expr_with_expected(
+                path,
+                content_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if content_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`File.write_string` expects string content",
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, fs_error]),
+                ValueExpr::FileWriteString {
+                    file: Box::new(receiver_expr),
+                    content: Box::new(lowered_content),
                 },
             ))
         }
@@ -14865,6 +14936,51 @@ fn main() -> void {
             save.body[0],
             Statement::Return(Some(ValueExpr::FsWriteString { .. }))
         ));
+    }
+
+    #[test]
+    fn accepts_file_read_and_write_string_methods() {
+        let source = r#"package app.main
+
+import std.fs
+
+fn rewrite(file: File) -> Result<string, FsError> {
+    file.write_string("file ok")?
+    let text: string = file.read_to_string()?
+    file.close()
+    return Ok(text)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let rewrite = program
+            .functions
+            .iter()
+            .find(|f| f.name == "rewrite")
+            .unwrap();
+        assert!(matches!(
+            rewrite.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FileWriteString { .. },
+                ..
+            }
+        ));
+        assert!(rewrite.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FileReadToString { .. },
+                ..
+            }
+        )));
+        assert!(
+            rewrite
+                .body
+                .iter()
+                .any(|stmt| matches!(stmt, Statement::Expr(ValueExpr::FileClose { .. })))
+        );
     }
 
     #[test]

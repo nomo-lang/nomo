@@ -297,10 +297,13 @@ requires the converter to return the same error type.
 
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
 `fs.write_string`, `fs.exists`, `fs.metadata`, `fs.create_dir`,
-`fs.remove_dir`, `fs.read_dir`, `fs.open`, and `File.close`. Fallible helpers
-return `Result<T, FsError>`. `fs.metadata` returns `FileMetadata` with
-`is_file`, `is_dir`, and byte `size` fields; directory size is
-platform-defined. `fs.read_dir` returns entry names as `Array<string>`,
+`fs.remove_dir`, `fs.read_dir`, `fs.open`, `File.read_to_string`,
+`File.write_string`, and `File.close`. Fallible helpers return
+`Result<T, FsError>`. `fs.metadata` returns `FileMetadata` with `is_file`,
+`is_dir`, and byte `size` fields; directory size is platform-defined.
+`fs.open` opens an existing file for reading and writing. `File.read_to_string`
+reads the whole file from the beginning; `File.write_string` writes at the
+beginning and flushes. `fs.read_dir` returns entry names as `Array<string>`,
 excluding `.` and `..`; `fs.remove_dir` removes an empty directory only.
 
 `std.path` provides pure string path helpers:

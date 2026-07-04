@@ -166,6 +166,16 @@ pub fn emit_c(program: &Program) -> String {
     if uses_fs_open(program) {
         emit_fs_open_helper(&mut out);
         out.push('\n');
+    }
+    if uses_file_read_to_string(program) {
+        emit_file_read_to_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_file_write_string(program) {
+        emit_file_write_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_file_close(program) {
         emit_file_close_helper(&mut out);
         out.push('\n');
     }
@@ -2167,7 +2177,7 @@ fn emit_fs_open_helper(out: &mut String) {
     out.push_str("static ");
     out.push_str(&result);
     out.push_str(" nomo_fs_open(nomo_string path) {\n");
-    out.push_str("    FILE *file = fopen(path.data, \"rb\");\n");
+    out.push_str("    FILE *file = fopen(path.data, \"rb+\");\n");
     out.push_str("    if (file == NULL) {\n");
     out.push_str("        return (");
     out.push_str(&result);
@@ -2192,6 +2202,212 @@ fn emit_fs_open_helper(out: &mut String) {
     out.push_str("){.");
     out.push_str(&c_member_ident("handle"));
     out.push_str(" = file}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_file_read_to_string_helper(out: &mut String) {
+    let file_type = c_struct_ident("File", &[]);
+    let fs_error = c_struct_ident("FsError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::String,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_file_read_to_string(");
+    out.push_str(&file_type);
+    out.push_str(" file) {\n");
+    out.push_str("    if (file.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"file is closed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    FILE *handle = file.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(";\n");
+    out.push_str("    if (fseek(handle, 0, SEEK_END) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    long size = ftell(handle);\n");
+    out.push_str("    if (size < 0 || fseek(handle, 0, SEEK_SET) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    char *buffer = (char *)malloc((size_t)size + 1);\n");
+    out.push_str("    if (buffer == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    size_t read = fread(buffer, 1, (size_t)size, handle);\n");
+    out.push_str("    if (read != (size_t)size) {\n");
+    out.push_str(
+        "        const char *message = ferror(handle) ? strerror(errno) : \"short read\";\n",
+    );
+    out.push_str("        free(buffer);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    buffer[size] = '\\0';\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = nomo_string_owned(buffer)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_file_write_string_helper(out: &mut String) {
+    let file_type = c_struct_ident("File", &[]);
+    let fs_error = c_struct_ident("FsError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_file_write_string(");
+    out.push_str(&file_type);
+    out.push_str(" file, nomo_string content) {\n");
+    out.push_str("    if (file.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"file is closed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    FILE *handle = file.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(";\n");
+    out.push_str("    if (fseek(handle, 0, SEEK_SET) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    size_t len = strlen(content.data);\n");
+    out.push_str("    if (fwrite(content.data, 1, len, handle) != len) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (fflush(handle) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = 0};\n");
     out.push_str("}\n");
 }
 
@@ -3990,6 +4206,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FsReadDir { path: expr }
         | ValueExpr::FsOpen { path: expr }
         | ValueExpr::FileClose { file: expr }
+        | ValueExpr::FileReadToString { file: expr }
         | ValueExpr::EnvGet { name: expr }
         | ValueExpr::TimeSleepMillis { duration: expr }
         | ValueExpr::NumParseI64 { value: expr }
@@ -4006,6 +4223,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::NumBinary { left, right, .. }
         | ValueExpr::FsWriteString {
             path: left,
+            content: right,
+        }
+        | ValueExpr::FileWriteString {
+            file: left,
             content: right,
         } => expr_may_share_array_storage(left) || expr_may_share_array_storage(right),
         ValueExpr::StringConcat { .. }
@@ -4911,6 +5132,18 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, file);
             out.push(')');
         }
+        ValueExpr::FileReadToString { file } => {
+            out.push_str("nomo_file_read_to_string(");
+            emit_expr(out, file);
+            out.push(')');
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            out.push_str("nomo_file_write_string(");
+            emit_expr(out, file);
+            out.push_str(", ");
+            emit_expr(out, content);
+            out.push(')');
+        }
         ValueExpr::ResultMapErr {
             result,
             ok_type,
@@ -5593,6 +5826,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::FsReadDir { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
+        | ValueExpr::FileReadToString { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -5642,6 +5876,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         }
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_result_map_err(path, out);
+            collect_expr_result_map_err(content, out);
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            collect_expr_result_map_err(file, out);
             collect_expr_result_map_err(content, out);
         }
         ValueExpr::EnvSet { name, value } => {
@@ -5886,6 +6124,7 @@ where
         | ValueExpr::FsReadDir { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
+        | ValueExpr::FileReadToString { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -5936,6 +6175,10 @@ where
         }
         ValueExpr::FsWriteString { path, content } => {
             walk_expr(path, visit);
+            walk_expr(content, visit);
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            walk_expr(file, visit);
             walk_expr(content, visit);
         }
         ValueExpr::EnvSet { name, value } => {
@@ -6314,6 +6557,15 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "FsError", &[]);
             push_struct_instance(seen, out, "File", &[]);
             collect_expr_struct(path, seen, out);
+        }
+        ValueExpr::FileReadToString { file } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(file, seen, out);
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(file, seen, out);
+            collect_expr_struct(content, seen, out);
         }
         ValueExpr::IoReadLine => {
             push_struct_instance(seen, out, "IoError", &[]);
@@ -6929,6 +7181,31 @@ fn collect_expr_enum(
             );
             collect_expr_enum(path, seen, out);
         }
+        ValueExpr::FileReadToString { file } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::String,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(file, seen, out);
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(file, seen, out);
+            collect_expr_enum(content, seen, out);
+        }
         ValueExpr::FileClose { file } => collect_expr_enum(file, seen, out),
         ValueExpr::ResultMapErr {
             result,
@@ -7275,6 +7552,33 @@ fn uses_fs_open(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_uses_fs_open(statement))
+    })
+}
+
+fn uses_file_read_to_string(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_file_read_to_string))
+    })
+}
+
+fn uses_file_write_string(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_file_write_string))
+    })
+}
+
+fn uses_file_close(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_file_close))
     })
 }
 
@@ -7828,6 +8132,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
         | ValueExpr::FileClose { file: path }
+        | ValueExpr::FileReadToString { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
         | ValueExpr::StringIsEmpty { value: path }
@@ -7869,6 +8174,9 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_contains(option, predicate) || expr_contains(default, predicate),
+        ValueExpr::FileWriteString { file, content } => {
+            expr_contains(file, predicate) || expr_contains(content, predicate)
+        }
         ValueExpr::StructLiteral { fields, .. } => fields
             .iter()
             .any(|(_, value)| expr_contains(value, predicate)),
@@ -7936,6 +8244,18 @@ fn expr_is_fs_remove_dir(expr: &ValueExpr) -> bool {
 
 fn expr_is_fs_read_dir(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::FsReadDir { .. })
+}
+
+fn expr_is_file_read_to_string(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FileReadToString { .. })
+}
+
+fn expr_is_file_write_string(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FileWriteString { .. })
+}
+
+fn expr_is_file_close(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FileClose { .. })
 }
 
 fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
@@ -8392,7 +8712,11 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
         | ValueExpr::FsOpen { path }
-        | ValueExpr::FileClose { file: path } => expr_uses_fs_read_to_string(path),
+        | ValueExpr::FileClose { file: path }
+        | ValueExpr::FileReadToString { file: path } => expr_uses_fs_read_to_string(path),
+        ValueExpr::FileWriteString { file, content } => {
+            expr_uses_fs_read_to_string(file) || expr_uses_fs_read_to_string(content)
+        }
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -8527,6 +8851,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path } => expr_uses_fs_write_string(path),
+        ValueExpr::FileReadToString { file } => expr_uses_fs_write_string(file),
+        ValueExpr::FileWriteString { file, content } => {
+            expr_uses_fs_write_string(file) || expr_uses_fs_write_string(content)
+        }
         ValueExpr::EnvSet { name, value } => {
             expr_uses_fs_write_string(name) || expr_uses_fs_write_string(value)
         }
@@ -8677,7 +9005,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
         | ValueExpr::NumToString { value: path, .. }
-        | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
+        | ValueExpr::ArrayLen { array: path }
+        | ValueExpr::FileReadToString { file: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -8695,6 +9024,9 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         } => expr_uses_fs_open(option) || expr_uses_fs_open(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_open(path) || expr_uses_fs_open(content)
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            expr_uses_fs_open(file) || expr_uses_fs_open(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_fs_open(name) || expr_uses_fs_open(value),
         ValueExpr::EnvArgs => false,
@@ -8806,9 +9138,13 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseI64 { value: path }
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
-        | ValueExpr::NumToString { value: path, .. } => expr_uses_env_get(path),
+        | ValueExpr::NumToString { value: path, .. }
+        | ValueExpr::FileReadToString { file: path } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            expr_uses_env_get(file) || expr_uses_env_get(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
@@ -8943,7 +9279,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
         | ValueExpr::NumToString { value: path, .. }
-        | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
+        | ValueExpr::ArrayLen { array: path }
+        | ValueExpr::FileReadToString { file: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -8961,6 +9298,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         } => expr_uses_env_args(option) || expr_uses_env_args(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_args(path) || expr_uses_env_args(content)
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            expr_uses_env_args(file) || expr_uses_env_args(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_args(array),
@@ -9102,6 +9442,9 @@ fn collect_expr_array_elements(
         | ValueExpr::NumToString { value: path, .. } => {
             collect_expr_array_elements(path, seen, out);
         }
+        ValueExpr::FileReadToString { file } => {
+            collect_expr_array_elements(file, seen, out);
+        }
         ValueExpr::FsReadDir { path } => {
             push_array_element_type(seen, out, &ValueType::String);
             collect_expr_array_elements(path, seen, out);
@@ -9203,6 +9546,10 @@ fn collect_expr_array_elements(
         }
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_array_elements(path, seen, out);
+            collect_expr_array_elements(content, seen, out);
+        }
+        ValueExpr::FileWriteString { file, content } => {
+            collect_expr_array_elements(file, seen, out);
             collect_expr_array_elements(content, seen, out);
         }
         ValueExpr::EnvSet { name, value } => {
@@ -10762,6 +11109,107 @@ mod tests {
         assert!(c.contains("nomo_fs_create_dir(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_read_dir(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_remove_dir(nomo_string_literal(\"tmp\"))"));
+    }
+
+    #[test]
+    fn emits_file_read_write_close_helpers() {
+        let fs_error = ValueType::Struct("FsError".to_string(), Vec::new());
+        let file_type = ValueType::Struct("File".to_string(), Vec::new());
+        let result_string_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::String, fs_error.clone()],
+        );
+        let result_void_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Void, fs_error.clone()],
+        );
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.fs".to_string()],
+            structs: vec![
+                StructType {
+                    package: "app.main".to_string(),
+                    name: "FsError".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    }],
+                },
+                StructType {
+                    package: "app.main".to_string(),
+                    name: "File".to_string(),
+                    type_params: Vec::new(),
+                    fields: Vec::new(),
+                },
+            ],
+            enums: vec![EnumType {
+                package: "app.main".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "process_file".to_string(),
+                    params: vec![Parameter {
+                        name: "file".to_string(),
+                        mutable: false,
+                        value_type: file_type,
+                    }],
+                    return_type: ValueType::Void,
+                    body: vec![
+                        Statement::Let {
+                            name: "write_result".to_string(),
+                            value_type: result_void_error,
+                            initializer: ValueExpr::FileWriteString {
+                                file: Box::new(ValueExpr::Variable("file".to_string())),
+                                content: Box::new(ValueExpr::StringLiteral("hello".to_string())),
+                            },
+                        },
+                        Statement::Let {
+                            name: "read_result".to_string(),
+                            value_type: result_string_error,
+                            initializer: ValueExpr::FileReadToString {
+                                file: Box::new(ValueExpr::Variable("file".to_string())),
+                            },
+                        },
+                        Statement::Expr(ValueExpr::FileClose {
+                            file: Box::new(ValueExpr::Variable("file".to_string())),
+                        }),
+                    ],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_File"));
+        assert!(
+            c.contains("static nomo_enum_Result_string_struct_FsError nomo_file_read_to_string")
+        );
+        assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_file_write_string"));
+        assert!(c.contains("static void nomo_file_close"));
+        assert!(c.contains("nomo_file_write_string(nomo_file, nomo_string_literal(\"hello\"))"));
+        assert!(c.contains("nomo_file_read_to_string(nomo_file)"));
+        assert!(c.contains("nomo_file_close(nomo_file)"));
     }
 
     #[test]

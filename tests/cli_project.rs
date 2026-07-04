@@ -4956,6 +4956,73 @@ fn main() -> void {{
 }
 
 #[test]
+fn nomo_run_executes_file_read_and_write_string_methods() {
+    let root = temp_test_root("file-read-write-string-methods");
+    reset_dir(&root);
+    let project = root.join("file_methods");
+    let target_file = root.join("target.txt");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(&target_file, "").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"file_methods\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        format!(
+            r#"package app.main
+
+import std.fs
+import std.io
+
+fn checked(path: string) -> Result<string, FsError> {{
+    let file: File = fs.open(path)?
+    file.write_string("via file")?
+    let text: string = file.read_to_string()?
+    file.close()
+    return Ok(text)
+}}
+
+fn main() -> void {{
+    match checked("{}") {{
+        Ok(text) => {{
+            io.println(text)
+        }}
+        Err(err) => {{
+            io.println(err.message)
+        }}
+    }}
+}}
+"#,
+            target_file.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "via file\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_fs_directory_helpers() {
     let root = temp_test_root("fs-directory-helpers");
     reset_dir(&root);

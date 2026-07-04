@@ -335,10 +335,10 @@ the `num` module to avoid colliding with `char.to_string`.
 `HashState` lets callers build the same hash incrementally from multiple
 strings.
 
-`std.crypto` provides deterministic cryptographic digest helpers:
-`crypto.sha256` and `crypto.sha512` take a string and return a lowercase hex
-digest string. Random bytes remain a later slice until byte-array APIs are
-settled.
+`std.crypto` provides cryptographic helpers: `crypto.sha256` and
+`crypto.sha512` take a string and return a lowercase hex digest string.
+`crypto.random_bytes(count: u64) -> Array<u32>` returns OS-generated random
+bytes as `u32` values in the inclusive range `0..255`.
 
 `std.regex` provides regular expression helpers: `regex.compile`,
 `regex.is_match`, and `regex.captures`. `compile` returns

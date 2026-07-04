@@ -75,7 +75,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <regex.h>\n#include <sys/time.h>\n#include <sys/wait.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#ifdef _WIN32\n#define _CRT_RAND_S\n#endif\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <regex.h>\n#include <sys/time.h>\n#include <sys/wait.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -122,12 +122,12 @@ pub fn emit_c(program: &Program) -> String {
         emit_hash_helpers(&mut out);
         out.push('\n');
     }
-    if uses_crypto_builtin(program) {
-        emit_crypto_helpers(&mut out);
-        out.push('\n');
-    }
     for element_type in &array_element_types {
         emit_array_helpers(&mut out, element_type);
+        out.push('\n');
+    }
+    if uses_crypto_builtin(program) {
+        emit_crypto_helpers(&mut out);
         out.push('\n');
     }
     if uses_collections_builtin(program) {
@@ -1197,6 +1197,31 @@ static nomo_string nomo_crypto_sha512(nomo_string value) {
         digest[i * 8 + 7] = (unsigned char)(h[i] & 0xff);
     }
     return nomo_crypto_hex_string(digest, 64);
+}
+
+static nomo_array_u32 nomo_crypto_random_bytes(uint64_t count) {
+    if (count > (uint64_t)SIZE_MAX) { nomo_panic("crypto.random_bytes count is too large"); }
+    nomo_array_u32 out = nomo_array_u32_new();
+#if defined(_WIN32)
+    for (uint64_t i = 0; i < count; i += 1) {
+        unsigned int value = 0;
+        if (rand_s(&value) != 0) { nomo_panic("crypto.random_bytes failed"); }
+        out = nomo_array_u32_push(out, (uint32_t)(value & 0xffU));
+    }
+#else
+    FILE *file = fopen("/dev/urandom", "rb");
+    if (file == NULL) { nomo_panic("crypto.random_bytes failed"); }
+    for (uint64_t i = 0; i < count; i += 1) {
+        unsigned char value = 0;
+        if (fread(&value, 1, 1, file) != 1) {
+            fclose(file);
+            nomo_panic("crypto.random_bytes failed");
+        }
+        out = nomo_array_u32_push(out, (uint32_t)value);
+    }
+    fclose(file);
+#endif
+    return out;
 }
 "#,
     );
@@ -5418,6 +5443,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: expr }
         | ValueExpr::CryptoSha256 { value: expr }
         | ValueExpr::CryptoSha512 { value: expr }
+        | ValueExpr::CryptoRandomBytes { count: expr }
         | ValueExpr::JsonParse { value: expr }
         | ValueExpr::JsonStringify { value: expr }
         | ValueExpr::ProcessExit { code: expr }
@@ -6280,6 +6306,11 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::CryptoSha512 { value } => {
             out.push_str("nomo_crypto_sha512(");
             emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CryptoRandomBytes { count } => {
+            out.push_str("nomo_crypto_random_bytes(");
+            emit_expr(out, count);
             out.push(')');
         }
         ValueExpr::JsonParse { value } => {
@@ -7296,6 +7327,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -7657,6 +7689,7 @@ where
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -8101,6 +8134,7 @@ fn collect_expr_struct(
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
+        | ValueExpr::CryptoRandomBytes { count: value }
         | ValueExpr::JsonParse { value }
         | ValueExpr::JsonStringify { value }
         | ValueExpr::CollectionsStringMapLen { map: value }
@@ -8760,6 +8794,7 @@ fn collect_expr_enum(
         | ValueExpr::HashFinish { state: value }
         | ValueExpr::CryptoSha256 { value }
         | ValueExpr::CryptoSha512 { value }
+        | ValueExpr::CryptoRandomBytes { count: value }
         | ValueExpr::JsonParse { value }
         | ValueExpr::JsonStringify { value }
         | ValueExpr::CollectionsStringMapLen { map: value }
@@ -10007,6 +10042,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -10160,7 +10196,9 @@ fn expr_is_hash_builtin(expr: &ValueExpr) -> bool {
 fn expr_is_crypto_builtin(expr: &ValueExpr) -> bool {
     matches!(
         expr,
-        ValueExpr::CryptoSha256 { .. } | ValueExpr::CryptoSha512 { .. }
+        ValueExpr::CryptoSha256 { .. }
+            | ValueExpr::CryptoSha512 { .. }
+            | ValueExpr::CryptoRandomBytes { .. }
     )
 }
 
@@ -10715,6 +10753,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
+        | ValueExpr::CryptoRandomBytes { count: name }
         | ValueExpr::JsonParse { value: name }
         | ValueExpr::JsonStringify { value: name }
         | ValueExpr::RegexCompile { pattern: name }
@@ -10919,6 +10958,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: name }
         | ValueExpr::CryptoSha256 { value: name }
         | ValueExpr::CryptoSha512 { value: name }
+        | ValueExpr::CryptoRandomBytes { count: name }
         | ValueExpr::JsonParse { value: name }
         | ValueExpr::JsonStringify { value: name }
         | ValueExpr::RegexCompile { pattern: name }
@@ -11096,6 +11136,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -11288,6 +11329,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -11486,6 +11528,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::HashFinish { state: path }
         | ValueExpr::CryptoSha256 { value: path }
         | ValueExpr::CryptoSha512 { value: path }
+        | ValueExpr::CryptoRandomBytes { count: path }
         | ValueExpr::JsonParse { value: path }
         | ValueExpr::JsonStringify { value: path }
         | ValueExpr::RegexCompile { pattern: path }
@@ -11682,6 +11725,10 @@ fn collect_expr_array_elements(
         }
         ValueExpr::CollectionsStringMapNew | ValueExpr::CollectionsStringSetNew => {
             push_array_element_type(seen, out, &ValueType::String);
+        }
+        ValueExpr::CryptoRandomBytes { count } => {
+            push_array_element_type(seen, out, &ValueType::U32);
+            collect_expr_array_elements(count, seen, out);
         }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
             push_array_element_type(seen, out, &ValueType::String);
@@ -13247,6 +13294,59 @@ mod tests {
         assert!(c.contains("int32_t nomo_signed = 1;"));
         assert!(c.contains("uint32_t nomo_word = 2;"));
         assert!(c.contains("uint64_t nomo_wide = 3;"));
+    }
+
+    #[test]
+    fn emits_crypto_random_bytes_helper_after_array_u32_helper() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.crypto".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                package: "std.option".to_string(),
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Some".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Let {
+                    name: "bytes".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::U32)),
+                    initializer: ValueExpr::CryptoRandomBytes {
+                        count: Box::new(ValueExpr::Cast {
+                            expr: Box::new(ValueExpr::IntLiteral(4)),
+                            target_type: ValueType::U64,
+                        }),
+                    },
+                }],
+            }],
+        };
+
+        let c = emit_c(&program);
+        let array_helper = c
+            .find("static nomo_array_u32 nomo_array_u32_new(void)")
+            .unwrap();
+        let crypto_helper = c
+            .find("static nomo_array_u32 nomo_crypto_random_bytes(uint64_t count)")
+            .unwrap();
+        assert!(array_helper < crypto_helper);
+        assert!(c.contains("#define _CRT_RAND_S"));
+        assert!(c.contains("nomo_array_u32_push"));
+        assert!(c.contains("nomo_array_u32 nomo_bytes = nomo_crypto_random_bytes(((uint64_t)4));"));
     }
 
     #[test]

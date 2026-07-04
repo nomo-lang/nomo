@@ -4698,10 +4698,32 @@ fn nomo_run_executes_std_crypto_sha_helpers() {
 
 import std.crypto
 import std.io
+import std.num
+import std.array.Array
+
+fn all_bytes(values: Array<u32>) -> bool {
+    let mut bad_count: i64 = 0
+    for value in values {
+        let value_bad: i64 = if value > 255 as u32 {
+            1
+        } else {
+            0
+        }
+        bad_count = bad_count + value_bad
+    }
+    return bad_count == 0
+}
 
 fn main() -> void {
     io.println(crypto.sha256("nomo"))
     io.println(crypto.sha512("nomo"))
+    let bytes: Array<u32> = crypto.random_bytes(4 as u64)
+    io.println(num.to_string(bytes.len()))
+    if all_bytes(bytes) {
+        io.println("bytes ok")
+    } else {
+        io.println("bytes bad")
+    }
 }
 "#,
     )
@@ -4721,7 +4743,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "b2ef23fca2e63b943302abdf09318c938f43dc167676929643102591b6eeeff0\nf64a797448cbf54b2220274f024a6dfa4bb1c86c8bca1a3eaaf320bbf40c2a09a48385d62b050fc28b9ce85e36e619a8e06e0722baf4ad2c5449c424080f74b3\n"
+        "b2ef23fca2e63b943302abdf09318c938f43dc167676929643102591b6eeeff0\nf64a797448cbf54b2220274f024a6dfa4bb1c86c8bca1a3eaaf320bbf40c2a09a48385d62b050fc28b9ce85e36e619a8e06e0722baf4ad2c5449c424080f74b3\n4\nbytes ok\n"
     );
     assert!(
         output.stderr.is_empty(),

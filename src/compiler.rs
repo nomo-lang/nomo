@@ -382,6 +382,9 @@ pub enum ValueExpr {
     CryptoSha512 {
         value: Box<ValueExpr>,
     },
+    CryptoRandomBytes {
+        count: Box<ValueExpr>,
+    },
     JsonParse {
         value: Box<ValueExpr>,
     },
@@ -1906,6 +1909,7 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.crypto"
             | "std.crypto.sha256"
             | "std.crypto.sha512"
+            | "std.crypto.random_bytes"
             | "std.json"
             | "std.json.JsonValue"
             | "std.json.JsonError"
@@ -10922,7 +10926,8 @@ fn is_hash_builtin_call(callee: &[String]) -> bool {
 fn is_crypto_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "crypto" && matches!(name.as_str(), "sha256" | "sha512")
+        [module, name]
+            if module == "crypto" && matches!(name.as_str(), "sha256" | "sha512" | "random_bytes")
     )
 }
 
@@ -11123,6 +11128,37 @@ fn lower_crypto_builtin(
         unreachable!("crypto builtin dispatcher only passes qualified calls")
     };
     debug_assert_eq!(module, "crypto");
+    if name == "random_bytes" {
+        let [count_arg] = args else {
+            return Err(Diagnostic::new(
+                "E0407",
+                "`crypto.random_bytes` expects exactly one u64 count",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        };
+        let (count_type, count) = lower_value_expr(
+            path, count_arg, scope, imports, signatures, structs, enums, span,
+        )?;
+        if count_type != ValueType::U64 {
+            return Err(type_mismatch_expected_found(
+                path,
+                span,
+                "`crypto.random_bytes` expects a u64 count",
+                &ValueType::U64,
+                &count_type,
+            ));
+        }
+        return Ok((
+            ValueType::Array(Box::new(ValueType::U32)),
+            ValueExpr::CryptoRandomBytes {
+                count: Box::new(count),
+            },
+        ));
+    }
     let [value_arg] = args else {
         return Err(Diagnostic::new(
             "E0407",
@@ -15443,6 +15479,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "sha512" if imports.iter().any(|item| item == "std.crypto.sha512") => {
             vec!["crypto".to_string(), "sha512".to_string()]
         }
+        "random_bytes" if imports.iter().any(|item| item == "std.crypto.random_bytes") => {
+            vec!["crypto".to_string(), "random_bytes".to_string()]
+        }
         "parse" if imports.iter().any(|item| item == "std.json.parse") => {
             vec!["json".to_string(), "parse".to_string()]
         }
@@ -17230,10 +17269,12 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.crypto
+import std.array.Array
 
 fn main() -> void {
     let sha256: string = crypto.sha256("nomo")
     let sha512: string = crypto.sha512("nomo")
+    let bytes: Array<u32> = crypto.random_bytes(4 as u64)
 }
 "#;
 
@@ -17254,6 +17295,14 @@ fn main() -> void {
                 initializer: ValueExpr::CryptoSha512 { .. },
                 ..
             }
+        ));
+        assert!(matches!(
+            &main.body[2],
+            Statement::Let {
+                value_type: ValueType::Array(element_type),
+                initializer: ValueExpr::CryptoRandomBytes { .. },
+                ..
+            } if **element_type == ValueType::U32
         ));
     }
 
@@ -17263,10 +17312,13 @@ fn main() -> void {
 
 import std.crypto.sha256
 import std.crypto.sha512
+import std.crypto.random_bytes
+import std.array.Array
 
 fn main() -> void {
     let left: string = sha256("nomo")
     let right: string = sha512("nomo")
+    let bytes: Array<u32> = random_bytes(4 as u64)
 }
 "#;
 
@@ -17283,6 +17335,13 @@ fn main() -> void {
             main.body[1],
             Statement::Let {
                 initializer: ValueExpr::CryptoSha512 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::CryptoRandomBytes { .. },
                 ..
             }
         ));
@@ -17512,6 +17571,25 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("string value"));
+    }
+
+    #[test]
+    fn rejects_crypto_random_bytes_non_u64_count() {
+        let source = r#"package app.main
+
+import std.crypto
+import std.array.Array
+
+fn main() -> void {
+    let value: Array<u32> = crypto.random_bytes("four")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("crypto.random_bytes"));
+        assert_eq!(err.expected.as_deref(), Some("u64"));
+        assert_eq!(err.found.as_deref(), Some("string"));
     }
 
     #[test]

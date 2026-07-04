@@ -1,0 +1,18 @@
+package app.main
+
+import std.io
+import std.path
+
+fn main() -> void {
+    io.println(path.join("/tmp", "nomo.txt"))
+    io.println(path.basename("/tmp/nomo.txt"))
+    io.println(path.dirname("/tmp/nomo.txt"))
+    io.println(path.extension("archive.tar.gz"))
+    io.println(path.normalize("/tmp//a/../b/./"))
+    io.println(path.normalize("a/../../b"))
+    if path.is_absolute("/tmp") {
+        io.println("absolute")
+    } else {
+        io.println("relative")
+    }
+}

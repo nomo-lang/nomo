@@ -1,0 +1,58 @@
+package app.main
+
+import std.io
+import std.process
+
+fn main() -> void {
+    let spawned: Result<i32, ProcessError> = process.spawn("printf spawn-ok >/dev/null")
+    match spawned {
+        Ok(code) => {
+            if code == 0 {
+                io.println("spawn-ok")
+            } else {
+                io.println("spawn-bad")
+            }
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+    let status: Result<i32, ProcessError> = process.status("printf status-ok >/dev/null")
+    match status {
+        Ok(code) => {
+            if code == 0 {
+                io.println("status-ok")
+            } else {
+                io.println("status-bad")
+            }
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+    let output: Result<string, ProcessError> = process.exec("printf process-ok")
+    match output {
+        Ok(text) => {
+            io.println(text)
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+    let captured: Result<ProcessOutput, ProcessError> = process.output("printf captured-out; printf captured-err 1>&2; exit 7")
+    match captured {
+        Ok(value) => {
+            let marker: string = if value.status == 7 {
+                "status-7"
+            } else {
+                "bad-status"
+            }
+            io.println(marker)
+            io.println(value.stdout)
+            io.println(value.stderr)
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}

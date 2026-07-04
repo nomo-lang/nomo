@@ -1,0 +1,14 @@
+package app.main
+
+import std.io
+import std.num
+import std.time
+
+fn main() -> void {
+    let short: Duration = time.duration_millis(1500)
+    let long: Duration = time.duration_seconds(2)
+    time.sleep(time.duration_millis(0))
+    io.println(num.to_string(time.duration_as_millis(short)))
+    io.println(num.to_string(time.duration_as_millis(long)))
+    io.println(time.format_duration(short))
+}

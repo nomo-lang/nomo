@@ -1,0 +1,25 @@
+package app.main
+
+import std.io
+import std.json
+
+fn main() -> void {
+    let parsed: Result<JsonValue, JsonError> = json.parse("{\"lang\":\"nomo\",\"versions\":[1,true,null]}")
+    match parsed {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+    let broken: Result<JsonValue, JsonError> = json.parse("{\"lang\":")
+    match broken {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}

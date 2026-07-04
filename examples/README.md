@@ -23,6 +23,10 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `env_extended`: `std.env.set()`, `cwd()`, `home_dir()`, and `temp_dir()`
 - `read_file`: `std.fs` and `Result`
 - `file_handle`: `std.fs.open`, `File.close`, and `defer`
+- `std_path`: `std.path` join, component extraction, normalization, and absolute checks
+- `std_process`: `std.process` spawn, status, exec, and captured output helpers
+- `std_time`: `std.time` duration helpers and zero-duration sleep
+- `std_json`: `std.json` parse and stringify helpers
 - `result_chain`: `Result` with `?`
 - `result_helpers`: `Result` predicates, fallback, map, map_err, and and_then helpers with `?`
 - `result_map_err`: `Result.map_err(converter)?` across error types

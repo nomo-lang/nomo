@@ -204,6 +204,8 @@ pub fn emit_c(program: &Program) -> String {
         out.push('\n');
     }
     if uses_net_connect(program)
+        || uses_net_listen(program)
+        || uses_tcp_listener_accept(program)
         || uses_tcp_stream_read_to_string(program)
         || uses_tcp_stream_write_string(program)
     {
@@ -212,6 +214,18 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_net_connect(program) {
         emit_net_connect_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_net_listen(program) {
+        emit_net_listen_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_tcp_listener_accept(program) {
+        emit_tcp_listener_accept_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_tcp_listener_close(program) {
+        emit_tcp_listener_close_helper(&mut out);
         out.push('\n');
     }
     if uses_tcp_stream_read_to_string(program) {
@@ -1588,6 +1602,16 @@ fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[V
         return;
     }
     if struct_type.name == "TcpStream" && struct_args.is_empty() {
+        out.push_str("struct ");
+        out.push_str(&c_struct_ident(&struct_type.name, struct_args));
+        out.push_str(" {\n");
+        out.push_str("    nomo_socket ");
+        out.push_str(&c_member_ident("handle"));
+        out.push_str(";\n");
+        out.push_str("};\n");
+        return;
+    }
+    if struct_type.name == "TcpListener" && struct_args.is_empty() {
         out.push_str("struct ");
         out.push_str(&c_struct_ident(&struct_type.name, struct_args));
         out.push_str(" {\n");
@@ -3414,6 +3438,219 @@ fn emit_net_connect_helper(out: &mut String) {
     out.push_str("){.");
     out.push_str(&c_member_ident("handle"));
     out.push_str(" = handle}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_net_listen_helper(out: &mut String) {
+    let tcp_listener = c_struct_ident("TcpListener", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpListener".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpListener".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpListener".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_net_listen(nomo_string host, int64_t port) {\n");
+    out.push_str("    if (!nomo_net_init()) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"network initialization failed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (port < 0 || port > 65535) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"invalid port\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    char port_text[16];\n");
+    out.push_str("    snprintf(port_text, sizeof(port_text), \"%\" PRId64, port);\n");
+    out.push_str("    struct addrinfo hints;\n");
+    out.push_str("    memset(&hints, 0, sizeof(hints));\n");
+    out.push_str("    hints.ai_family = AF_UNSPEC;\n");
+    out.push_str("    hints.ai_socktype = SOCK_STREAM;\n");
+    out.push_str("    hints.ai_flags = AI_PASSIVE;\n");
+    out.push_str("    struct addrinfo *addresses = NULL;\n");
+    out.push_str("    int rc = getaddrinfo(host.data, port_text, &hints, &addresses);\n");
+    out.push_str("    if (rc != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    nomo_socket handle = NOMO_INVALID_SOCKET;\n");
+    out.push_str("    for (struct addrinfo *address = addresses; address != NULL; address = address->ai_next) {\n");
+    out.push_str("        handle = socket(address->ai_family, address->ai_socktype, address->ai_protocol);\n");
+    out.push_str("        if (handle == NOMO_INVALID_SOCKET) { continue; }\n");
+    out.push_str("        int yes = 1;\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str(
+        "        setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, (const char *)&yes, sizeof(yes));\n",
+    );
+    out.push_str("#else\n");
+    out.push_str("        setsockopt(handle, SOL_SOCKET, SO_REUSEADDR, &yes, sizeof(yes));\n");
+    out.push_str("#endif\n");
+    out.push_str("        if (bind(handle, address->ai_addr, address->ai_addrlen) == 0 && listen(handle, 128) == 0) { break; }\n");
+    out.push_str("        NOMO_SOCKET_CLOSE(handle);\n");
+    out.push_str("        handle = NOMO_INVALID_SOCKET;\n");
+    out.push_str("    }\n");
+    out.push_str("    freeaddrinfo(addresses);\n");
+    out.push_str("    if (handle == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_net_error_message()}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = (");
+    out.push_str(&tcp_listener);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" = handle}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_tcp_listener_accept_helper(out: &mut String) {
+    let tcp_listener = c_struct_ident("TcpListener", &[]);
+    let tcp_stream = c_struct_ident("TcpStream", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpStream".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpStream".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("TcpStream".to_string(), Vec::new()),
+            ValueType::Struct("NetError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_tcp_listener_accept(");
+    out.push_str(&tcp_listener);
+    out.push_str(" listener) {\n");
+    out.push_str("    if (listener.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"listener is closed\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    nomo_socket handle = accept(listener.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(", NULL, NULL);\n");
+    out.push_str("    if (handle == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_net_error_message()}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = (");
+    out.push_str(&tcp_stream);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" = handle}};\n");
+    out.push_str("}\n");
+}
+
+fn emit_tcp_listener_close_helper(out: &mut String) {
+    let tcp_listener = c_struct_ident("TcpListener", &[]);
+    out.push_str("static void nomo_tcp_listener_close(");
+    out.push_str(&tcp_listener);
+    out.push_str(" listener) {\n");
+    out.push_str("    if (listener.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(" != NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        NOMO_SOCKET_CLOSE(listener.");
+    out.push_str(&c_member_ident("handle"));
+    out.push_str(");\n");
+    out.push_str("    }\n");
     out.push_str("}\n");
 }
 
@@ -5992,6 +6229,8 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FsOpen { path: expr }
         | ValueExpr::FileClose { file: expr }
         | ValueExpr::FileReadToString { file: expr }
+        | ValueExpr::TcpListenerAccept { listener: expr }
+        | ValueExpr::TcpListenerClose { listener: expr }
         | ValueExpr::TcpStreamClose { stream: expr }
         | ValueExpr::TcpStreamReadToString { stream: expr }
         | ValueExpr::EnvGet { name: expr }
@@ -6043,6 +6282,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
             content: right,
         }
         | ValueExpr::NetConnect {
+            host: left,
+            port: right,
+        }
+        | ValueExpr::NetListen {
             host: left,
             port: right,
         }
@@ -7185,6 +7428,23 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, port);
             out.push(')');
         }
+        ValueExpr::NetListen { host, port } => {
+            out.push_str("nomo_net_listen(");
+            emit_expr(out, host);
+            out.push_str(", ");
+            emit_expr(out, port);
+            out.push(')');
+        }
+        ValueExpr::TcpListenerAccept { listener } => {
+            out.push_str("nomo_tcp_listener_accept(");
+            emit_expr(out, listener);
+            out.push(')');
+        }
+        ValueExpr::TcpListenerClose { listener } => {
+            out.push_str("nomo_tcp_listener_close(");
+            emit_expr(out, listener);
+            out.push(')');
+        }
         ValueExpr::TcpStreamClose { stream } => {
             out.push_str("nomo_tcp_stream_close(");
             emit_expr(out, stream);
@@ -7909,6 +8169,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -7926,6 +8190,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
         | ValueExpr::EnvGet { name: path }
@@ -8287,6 +8553,10 @@ where
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -8304,6 +8574,8 @@ where
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
         | ValueExpr::EnvGet { name: path }
@@ -8837,6 +9109,18 @@ fn collect_expr_struct(
             collect_expr_struct(host, seen, out);
             collect_expr_struct(port, seen, out);
         }
+        ValueExpr::NetListen { host, port } => {
+            push_struct_instance(seen, out, "NetError", &[]);
+            push_struct_instance(seen, out, "TcpListener", &[]);
+            collect_expr_struct(host, seen, out);
+            collect_expr_struct(port, seen, out);
+        }
+        ValueExpr::TcpListenerAccept { listener } => {
+            push_struct_instance(seen, out, "NetError", &[]);
+            push_struct_instance(seen, out, "TcpStream", &[]);
+            collect_expr_struct(listener, seen, out);
+        }
+        ValueExpr::TcpListenerClose { listener } => collect_expr_struct(listener, seen, out),
         ValueExpr::TcpStreamWriteString { stream, content } => {
             push_struct_instance(seen, out, "NetError", &[]);
             collect_expr_struct(stream, seen, out);
@@ -9696,6 +9980,32 @@ fn collect_expr_enum(
             collect_expr_enum(host, seen, out);
             collect_expr_enum(port, seen, out);
         }
+        ValueExpr::NetListen { host, port } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("TcpListener".to_string(), Vec::new()),
+                    ValueType::Struct("NetError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(host, seen, out);
+            collect_expr_enum(port, seen, out);
+        }
+        ValueExpr::TcpListenerAccept { listener } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("TcpStream".to_string(), Vec::new()),
+                    ValueType::Struct("NetError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(listener, seen, out);
+        }
+        ValueExpr::TcpListenerClose { listener } => collect_expr_enum(listener, seen, out),
         ValueExpr::TcpStreamReadToString { stream } => {
             push_enum_instance(
                 seen,
@@ -10121,6 +10431,33 @@ fn uses_net_connect(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_net_connect))
+    })
+}
+
+fn uses_net_listen(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_net_listen))
+    })
+}
+
+fn uses_tcp_listener_accept(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_tcp_listener_accept))
+    })
+}
+
+fn uses_tcp_listener_close(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_tcp_listener_close))
     })
 }
 
@@ -10798,6 +11135,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -10842,6 +11183,8 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::FsReadDir { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path }
         | ValueExpr::EnvGet { name: path }
@@ -10979,6 +11322,18 @@ fn expr_is_process_output(expr: &ValueExpr) -> bool {
 
 fn expr_is_net_connect(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::NetConnect { .. })
+}
+
+fn expr_is_net_listen(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::NetListen { .. })
+}
+
+fn expr_is_tcp_listener_accept(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::TcpListenerAccept { .. })
+}
+
+fn expr_is_tcp_listener_close(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::TcpListenerClose { .. })
 }
 
 fn expr_is_tcp_stream_read_to_string(expr: &ValueExpr) -> bool {
@@ -11565,6 +11920,10 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -11587,6 +11946,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_fs_read_to_string(path),
         ValueExpr::FileWriteString { file, content } => {
@@ -11786,6 +12147,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -11798,6 +12163,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path } => expr_uses_fs_write_string(path),
         ValueExpr::FileReadToString { file }
+        | ValueExpr::TcpListenerAccept { listener: file }
+        | ValueExpr::TcpListenerClose { listener: file }
         | ValueExpr::TcpStreamClose { stream: file }
         | ValueExpr::TcpStreamReadToString { stream: file } => expr_uses_fs_write_string(file),
         ValueExpr::FileWriteString { file, content } => {
@@ -12004,6 +12371,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -12050,6 +12421,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::ArrayLen { array: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
@@ -12213,6 +12586,10 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -12257,6 +12634,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseF64 { value: path }
         | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
@@ -12424,6 +12803,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -12472,6 +12855,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::ArrayLen { array: path }
         | ValueExpr::FileReadToString { file: path }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
@@ -12652,6 +13037,10 @@ fn collect_expr_array_elements(
             host: left,
             port: right,
         }
+        | ValueExpr::NetListen {
+            host: left,
+            port: right,
+        }
         | ValueExpr::TcpStreamWriteString {
             stream: left,
             content: right,
@@ -12723,6 +13112,8 @@ fn collect_expr_array_elements(
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
         | ValueExpr::NumToString { value: path, .. }
+        | ValueExpr::TcpListenerAccept { listener: path }
+        | ValueExpr::TcpListenerClose { listener: path }
         | ValueExpr::TcpStreamClose { stream: path }
         | ValueExpr::TcpStreamReadToString { stream: path } => {
             collect_expr_array_elements(path, seen, out);
@@ -14783,7 +15174,12 @@ mod tests {
     #[test]
     fn emits_net_tcp_stream_helpers() {
         let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+        let tcp_listener = ValueType::Struct("TcpListener".to_string(), Vec::new());
         let tcp_stream = ValueType::Struct("TcpStream".to_string(), Vec::new());
+        let result_listener_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![tcp_listener.clone(), net_error.clone()],
+        );
         let result_stream_error = ValueType::Enum(
             "Result".to_string(),
             vec![tcp_stream.clone(), net_error.clone()],
@@ -14807,6 +15203,12 @@ mod tests {
                         name: "message".to_string(),
                         value_type: ValueType::String,
                     }],
+                },
+                StructType {
+                    package: "std.net".to_string(),
+                    name: "TcpListener".to_string(),
+                    type_params: Vec::new(),
+                    fields: Vec::new(),
                 },
                 StructType {
                     package: "std.net".to_string(),
@@ -14863,32 +15265,73 @@ mod tests {
                 },
                 Function {
                     package: "app.main".to_string(),
+                    name: "process_listener".to_string(),
+                    params: vec![Parameter {
+                        name: "listener".to_string(),
+                        mutable: false,
+                        value_type: tcp_listener,
+                    }],
+                    return_type: ValueType::Void,
+                    body: vec![
+                        Statement::Let {
+                            name: "accepted".to_string(),
+                            value_type: result_stream_error.clone(),
+                            initializer: ValueExpr::TcpListenerAccept {
+                                listener: Box::new(ValueExpr::Variable("listener".to_string())),
+                            },
+                        },
+                        Statement::Expr(ValueExpr::TcpListenerClose {
+                            listener: Box::new(ValueExpr::Variable("listener".to_string())),
+                        }),
+                    ],
+                },
+                Function {
+                    package: "app.main".to_string(),
                     name: "main".to_string(),
                     params: Vec::new(),
                     return_type: ValueType::Void,
-                    body: vec![Statement::Let {
-                        name: "connected".to_string(),
-                        value_type: result_stream_error,
-                        initializer: ValueExpr::NetConnect {
-                            host: Box::new(ValueExpr::StringLiteral("127.0.0.1".to_string())),
-                            port: Box::new(ValueExpr::IntLiteral(7)),
+                    body: vec![
+                        Statement::Let {
+                            name: "connected".to_string(),
+                            value_type: result_stream_error,
+                            initializer: ValueExpr::NetConnect {
+                                host: Box::new(ValueExpr::StringLiteral("127.0.0.1".to_string())),
+                                port: Box::new(ValueExpr::IntLiteral(7)),
+                            },
                         },
-                    }],
+                        Statement::Let {
+                            name: "listening".to_string(),
+                            value_type: result_listener_error,
+                            initializer: ValueExpr::NetListen {
+                                host: Box::new(ValueExpr::StringLiteral("127.0.0.1".to_string())),
+                                port: Box::new(ValueExpr::IntLiteral(7)),
+                            },
+                        },
+                    ],
                 },
             ],
         };
 
         let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_TcpListener"));
         assert!(c.contains("typedef struct nomo_struct_TcpStream"));
         assert!(c.contains("nomo_socket nomo_member_handle"));
         assert!(c.contains("static nomo_string nomo_net_error_message(void)"));
         assert!(c.contains("nomo_net_connect(nomo_string host, int64_t port)"));
+        assert!(c.contains("nomo_net_listen(nomo_string host, int64_t port)"));
+        assert!(c.contains("nomo_tcp_listener_accept(nomo_struct_TcpListener listener)"));
+        assert!(
+            c.contains("static void nomo_tcp_listener_close(nomo_struct_TcpListener listener)")
+        );
         assert!(c.contains("nomo_tcp_stream_read_to_string(nomo_struct_TcpStream stream)"));
         assert!(c.contains(
             "nomo_tcp_stream_write_string(nomo_struct_TcpStream stream, nomo_string content)"
         ));
         assert!(c.contains("static void nomo_tcp_stream_close(nomo_struct_TcpStream stream)"));
         assert!(c.contains("nomo_net_connect(nomo_string_literal(\"127.0.0.1\"), 7)"));
+        assert!(c.contains("nomo_net_listen(nomo_string_literal(\"127.0.0.1\"), 7)"));
+        assert!(c.contains("nomo_tcp_listener_accept(nomo_listener)"));
+        assert!(c.contains("nomo_tcp_listener_close(nomo_listener)"));
         assert!(
             c.contains("nomo_tcp_stream_write_string(nomo_stream, nomo_string_literal(\"ping\"))")
         );

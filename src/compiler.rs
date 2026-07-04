@@ -551,6 +551,16 @@ pub enum ValueExpr {
         host: Box<ValueExpr>,
         port: Box<ValueExpr>,
     },
+    NetListen {
+        host: Box<ValueExpr>,
+        port: Box<ValueExpr>,
+    },
+    TcpListenerAccept {
+        listener: Box<ValueExpr>,
+    },
+    TcpListenerClose {
+        listener: Box<ValueExpr>,
+    },
     TcpStreamClose {
         stream: Box<ValueExpr>,
     },
@@ -1867,8 +1877,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs.open"
             | "std.net"
             | "std.net.NetError"
+            | "std.net.TcpListener"
             | "std.net.TcpStream"
             | "std.net.connect"
+            | "std.net.listen"
             | "std.env"
             | "std.env.args"
             | "std.env.cwd"
@@ -2272,6 +2284,7 @@ fn validate_standard_type_conflicts(
     }
     if needs.net {
         reject_user_std_struct(path, structs, "NetError")?;
+        reject_user_std_struct(path, structs, "TcpListener")?;
         reject_user_std_struct(path, structs, "TcpStream")?;
     }
     if needs.num {
@@ -2627,6 +2640,7 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     }
     if needs.net {
         names.push(("NetError".to_string(), 0));
+        names.push(("TcpListener".to_string(), 0));
         names.push(("TcpStream".to_string(), 0));
     }
     if needs.hash {
@@ -2740,6 +2754,14 @@ fn inject_standard_types(
         structs.push(StructType {
             package: "std.net".to_string(),
             name: "TcpStream".to_string(),
+            type_params: Vec::new(),
+            fields: Vec::new(),
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "TcpListener") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "TcpListener".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
         });
@@ -9606,6 +9628,9 @@ fn lower_value_expr_with_expected(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if type_args.is_empty() && is_tcp_listener_value_method(callee, scope) {
+                return lower_tcp_listener_value_method(path, callee, args, scope, span);
+            }
             if type_args.is_empty() {
                 if let Some(lowered) = lower_option_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
@@ -11116,7 +11141,7 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
 fn is_net_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "net" && matches!(name.as_str(), "connect")
+        [module, name] if module == "net" && matches!(name.as_str(), "connect" | "listen")
     )
 }
 
@@ -11468,11 +11493,11 @@ fn lower_net_builtin(
     debug_assert_eq!(module, "net");
     let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
     match name.as_str() {
-        "connect" => {
+        "connect" | "listen" => {
             let [host_arg, port_arg] = args else {
                 return Err(Diagnostic::new(
                     "E0407",
-                    "`net.connect` expects host and port arguments",
+                    format!("`net.{name}` expects host and port arguments"),
                     path,
                     span.line,
                     span.column,
@@ -11495,7 +11520,7 @@ fn lower_net_builtin(
                 return Err(type_mismatch_expected_found(
                     path,
                     span,
-                    "`net.connect` expects a string host",
+                    format!("`net.{name}` expects a string host"),
                     &ValueType::String,
                     &host_type,
                 ));
@@ -11515,24 +11540,29 @@ fn lower_net_builtin(
                 return Err(type_mismatch_expected_found(
                     path,
                     span,
-                    "`net.connect` expects an i64 port",
+                    format!("`net.{name}` expects an i64 port"),
                     &ValueType::Int,
                     &port_type,
                 ));
             }
-            Ok((
-                ValueType::Enum(
-                    "Result".to_string(),
-                    vec![
-                        ValueType::Struct("TcpStream".to_string(), Vec::new()),
-                        net_error,
-                    ],
-                ),
+            let ok_type = if name == "connect" {
+                ValueType::Struct("TcpStream".to_string(), Vec::new())
+            } else {
+                ValueType::Struct("TcpListener".to_string(), Vec::new())
+            };
+            let result_type = ValueType::Enum("Result".to_string(), vec![ok_type, net_error]);
+            let expr = if name == "connect" {
                 ValueExpr::NetConnect {
                     host: Box::new(host),
                     port: Box::new(port),
-                },
-            ))
+                }
+            } else {
+                ValueExpr::NetListen {
+                    host: Box::new(host),
+                    port: Box::new(port),
+                }
+            };
+            Ok((result_type, expr))
         }
         _ => unreachable!("net builtin dispatcher only passes known calls"),
     }
@@ -13684,6 +13714,86 @@ fn lower_tcp_stream_value_method(
         _ => Err(Diagnostic::new(
             "E0305",
             format!("unknown TcpStream method `{method}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+    }
+}
+
+fn is_tcp_listener_value_method(callee: &[String], scope: &HashMap<String, Binding>) -> bool {
+    if callee.len() != 2 {
+        return false;
+    }
+    scope.get(&callee[0]).is_some_and(|binding| {
+        binding.value_type == ValueType::Struct("TcpListener".to_string(), Vec::new())
+    })
+}
+
+fn lower_tcp_listener_value_method(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let name = &callee[0];
+    let method = &callee[1];
+    let binding = scope
+        .get(name)
+        .expect("tcp listener method receiver is in scope");
+    let receiver_expr = binding_value_expr(name, binding);
+    let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+    match method.as_str() {
+        "accept" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpListener.accept` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("TcpStream".to_string(), Vec::new()),
+                        net_error,
+                    ],
+                ),
+                ValueExpr::TcpListenerAccept {
+                    listener: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "close" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpListener.close` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::TcpListenerClose {
+                    listener: Box::new(receiver_expr),
+                },
+            ))
+        }
+        _ => Err(Diagnostic::new(
+            "E0305",
+            format!("unknown TcpListener method `{method}`"),
             path,
             span.line,
             span.column,
@@ -15883,6 +15993,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         }
         "connect" if imports.iter().any(|item| item == "std.net.connect") => {
             vec!["net".to_string(), "connect".to_string()]
+        }
+        "listen" if imports.iter().any(|item| item == "std.net.listen") => {
+            vec!["net".to_string(), "listen".to_string()]
         }
         "compile" if imports.iter().any(|item| item == "std.regex.compile") => {
             vec!["regex".to_string(), "compile".to_string()]
@@ -19327,6 +19440,84 @@ fn main() -> void {
         assert!(matches!(
             request.body[0],
             Statement::Return(Some(ValueExpr::NetConnect { .. }))
+        ));
+    }
+
+    #[test]
+    fn accepts_net_tcp_listener_builtins() {
+        let source = r#"package app.main
+
+import std.net
+
+fn serve(host: string, port: i64) -> Result<void, NetError> {
+    let listener: TcpListener = net.listen(host, port)?
+    let stream: TcpStream = listener.accept()?
+    stream.write_string("pong")?
+    stream.close()
+    listener.close()
+    return Ok(void)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "TcpListener")
+        );
+        let serve = program
+            .functions
+            .iter()
+            .find(|f| f.name == "serve")
+            .unwrap();
+        assert!(matches!(
+            serve.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref name, ref args),
+                result_expr: ValueExpr::NetListen { .. },
+                ..
+            } if name == "TcpListener" && args.is_empty()
+        ));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(name, args),
+                result_expr: ValueExpr::TcpListenerAccept { .. },
+                ..
+            } if name == "TcpStream" && args.is_empty()
+        )));
+        assert!(
+            serve
+                .body
+                .iter()
+                .any(|stmt| matches!(stmt, Statement::Expr(ValueExpr::TcpListenerClose { .. })))
+        );
+    }
+
+    #[test]
+    fn accepts_specific_net_listen_import() {
+        let source = r#"package app.main
+
+import std.net.listen
+import std.result
+
+fn open(host: string, port: i64) -> Result<TcpListener, NetError> {
+    return listen(host, port)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let open = program.functions.iter().find(|f| f.name == "open").unwrap();
+        assert!(matches!(
+            open.body[0],
+            Statement::Return(Some(ValueExpr::NetListen { .. }))
         ));
     }
 

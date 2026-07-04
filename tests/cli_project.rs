@@ -1,8 +1,9 @@
 use std::fs;
 use std::io::{Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener, TcpStream};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::time::{Duration, Instant};
 
 const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
@@ -6638,6 +6639,110 @@ fn main() -> void {
     );
 
     server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_std_net_tcp_listener_helpers_without_std_dependency() {
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let root = temp_test_root("std-net-tcp-listener-helpers");
+    reset_dir(&root);
+    let project = root.join("net_tcp_listener_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"net_tcp_listener_helpers\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+
+fn serve() -> Result<void, NetError> {
+    let listener: TcpListener = net.listen("127.0.0.1", __PORT__)?
+    let stream: TcpStream = listener.accept()?
+    let text: string = stream.read_to_string()?
+    stream.write_string("pong:")?
+    stream.write_string(text)?
+    stream.close()
+    listener.close()
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, NetError> = serve()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let started = Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => break stream,
+            Err(err) if started.elapsed() < Duration::from_secs(10) => {
+                if let Some(status) = child.try_wait().unwrap() {
+                    let output = child.wait_with_output().unwrap();
+                    panic!(
+                        "nomo server exited early with {status}\nstdout:\n{}\nstderr:\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                let _ = err;
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "failed to connect to nomo listener: {err}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    };
+
+    stream.write_all(b"ping").unwrap();
+    stream.shutdown(Shutdown::Write).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert_eq!(response, "pong:ping");
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
     fs::remove_dir_all(&root).unwrap();
 }
 

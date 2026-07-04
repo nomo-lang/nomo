@@ -383,12 +383,14 @@ and `stderr`; non-zero exits stay in `Ok(ProcessOutput)` so callers can inspect
 the captured streams.
 `exec` does not capture stderr in v0.1.
 
-`std.net` provides blocking TCP client stream helpers in v0.1. `net.connect`
-opens a TCP connection and returns `Result<TcpStream, NetError>`.
-`TcpStream.write_string` writes a string, `TcpStream.read_to_string` reads until
-the peer closes the connection, and `TcpStream.close` closes the socket. TCP
-listeners, UDP sockets, and nonblocking handles remain separate `std.net`
-slices.
+`std.net` provides blocking TCP stream helpers in v0.1. `net.connect` opens a
+TCP connection and returns `Result<TcpStream, NetError>`. `net.listen` binds a
+blocking `TcpListener`; `TcpListener.accept` returns the next `TcpStream`, and
+`TcpListener.close` closes the listener socket. `TcpStream.write_string` writes
+a string, `TcpStream.read_to_string` reads until the peer closes its write side,
+and `TcpStream.close` closes the stream socket. UDP sockets, listener address
+inspection, backlog configuration, and nonblocking handles remain separate
+`std.net` slices.
 
 `std.testing` provides helpers for `#[test]` functions: `testing.assert`,
 `testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool

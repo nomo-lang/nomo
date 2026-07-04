@@ -296,9 +296,11 @@ named, unqualified, non-generic converter functions in v0.1; `and_then`
 requires the converter to return the same error type.
 
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
-`fs.write_string`, `fs.exists`, `fs.create_dir`, `fs.remove_dir`,
-`fs.read_dir`, `fs.open`, and `File.close`. Fallible helpers return
-`Result<T, FsError>`. `fs.read_dir` returns entry names as `Array<string>`,
+`fs.write_string`, `fs.exists`, `fs.metadata`, `fs.create_dir`,
+`fs.remove_dir`, `fs.read_dir`, `fs.open`, and `File.close`. Fallible helpers
+return `Result<T, FsError>`. `fs.metadata` returns `FileMetadata` with
+`is_file`, `is_dir`, and byte `size` fields; directory size is
+platform-defined. `fs.read_dir` returns entry names as `Array<string>`,
 excluding `.` and `..`; `fs.remove_dir` removes an empty directory only.
 
 `std.path` provides pure string path helpers:

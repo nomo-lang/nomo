@@ -147,6 +147,10 @@ pub fn emit_c(program: &Program) -> String {
         emit_fs_exists_helper(&mut out);
         out.push('\n');
     }
+    if uses_fs_metadata(program) {
+        emit_fs_metadata_helper(&mut out);
+        out.push('\n');
+    }
     if uses_fs_create_dir(program) {
         emit_fs_create_dir_helper(&mut out);
         out.push('\n');
@@ -1833,6 +1837,95 @@ fn emit_fs_exists_helper(out: &mut String) {
     out.push_str("    struct stat info;\n");
     out.push_str("    return stat(path.data, &info) == 0;\n");
     out.push_str("#endif\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_metadata_helper(out: &mut String) {
+    let fs_error = c_struct_ident("FsError", &[]);
+    let metadata = c_struct_ident("FileMetadata", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_fs_metadata(nomo_string path) {\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    WIN32_FILE_ATTRIBUTE_DATA data;\n");
+    out.push_str("    if (!GetFileAttributesExA(path.data, GetFileExInfoStandard, &data)) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"failed to read metadata\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    int is_dir = (data.dwFileAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0;\n");
+    out.push_str("    ");
+    out.push_str(&metadata);
+    out.push_str(" metadata = {.");
+    out.push_str(&c_member_ident("is_file"));
+    out.push_str(" = !is_dir, .");
+    out.push_str(&c_member_ident("is_dir"));
+    out.push_str(" = is_dir, .");
+    out.push_str(&c_member_ident("size"));
+    out.push_str(" = ((uint64_t)data.nFileSizeHigh << 32) | (uint64_t)data.nFileSizeLow};\n");
+    out.push_str("#else\n");
+    out.push_str("    struct stat info;\n");
+    out.push_str("    if (stat(path.data, &info) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    ");
+    out.push_str(&metadata);
+    out.push_str(" metadata = {.");
+    out.push_str(&c_member_ident("is_file"));
+    out.push_str(" = S_ISREG(info.st_mode), .");
+    out.push_str(&c_member_ident("is_dir"));
+    out.push_str(" = S_ISDIR(info.st_mode), .");
+    out.push_str(&c_member_ident("size"));
+    out.push_str(" = (uint64_t)info.st_size};\n");
+    out.push_str("#endif\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = metadata};\n");
     out.push_str("}\n");
 }
 
@@ -3891,6 +3984,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::StringLen { value: expr }
         | ValueExpr::FsReadToString { path: expr }
         | ValueExpr::FsExists { path: expr }
+        | ValueExpr::FsMetadata { path: expr }
         | ValueExpr::FsCreateDir { path: expr }
         | ValueExpr::FsRemoveDir { path: expr }
         | ValueExpr::FsReadDir { path: expr }
@@ -4784,6 +4878,11 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, path);
             out.push(')');
         }
+        ValueExpr::FsMetadata { path } => {
+            out.push_str("nomo_fs_metadata(");
+            emit_expr(out, path);
+            out.push(')');
+        }
         ValueExpr::FsCreateDir { path } => {
             out.push_str("nomo_fs_create_dir(");
             emit_expr(out, path);
@@ -5488,6 +5587,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -5780,6 +5880,7 @@ where
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -6198,6 +6299,11 @@ fn collect_expr_struct(
             collect_expr_struct(content, seen, out);
         }
         ValueExpr::FsExists { path } => collect_expr_struct(path, seen, out),
+        ValueExpr::FsMetadata { path } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            push_struct_instance(seen, out, "FileMetadata", &[]);
+            collect_expr_struct(path, seen, out);
+        }
         ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path } => {
@@ -6775,6 +6881,18 @@ fn collect_expr_enum(
             collect_expr_enum(content, seen, out);
         }
         ValueExpr::FsExists { path } => collect_expr_enum(path, seen, out),
+        ValueExpr::FsMetadata { path } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(path, seen, out);
+        }
         ValueExpr::FsCreateDir { path } | ValueExpr::FsRemoveDir { path } => {
             push_enum_instance(
                 seen,
@@ -7112,6 +7230,15 @@ fn uses_fs_exists(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_fs_exists))
+    })
+}
+
+fn uses_fs_metadata(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_metadata))
     })
 }
 
@@ -7696,6 +7823,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -7792,6 +7920,10 @@ fn expr_is_env_set(expr: &ValueExpr) -> bool {
 
 fn expr_is_fs_exists(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::FsExists { .. })
+}
+
+fn expr_is_fs_metadata(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsMetadata { .. })
 }
 
 fn expr_is_fs_create_dir(expr: &ValueExpr) -> bool {
@@ -8255,6 +8387,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             expr_uses_fs_read_to_string(name) || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -8390,6 +8523,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path } => expr_uses_fs_write_string(path),
@@ -8527,6 +8661,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -8657,6 +8792,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -8790,6 +8926,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::FsReadDir { path }
@@ -8948,6 +9085,7 @@ fn collect_expr_array_elements(
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsExists { path }
+        | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
         | ValueExpr::EnvGet { name: path }
@@ -10461,6 +10599,13 @@ mod tests {
             "Result".to_string(),
             vec![ValueType::Void, fs_error.clone()],
         );
+        let result_metadata_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![
+                ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+                fs_error.clone(),
+            ],
+        );
         let result_array_string_error = ValueType::Enum(
             "Result".to_string(),
             vec![
@@ -10472,15 +10617,36 @@ mod tests {
             consts: Vec::new(),
             package: "app.main".to_string(),
             imports: vec!["std.fs".to_string()],
-            structs: vec![StructType {
-                package: "app.main".to_string(),
-                name: "FsError".to_string(),
-                type_params: Vec::new(),
-                fields: vec![StructField {
-                    name: "message".to_string(),
-                    value_type: ValueType::String,
-                }],
-            }],
+            structs: vec![
+                StructType {
+                    package: "app.main".to_string(),
+                    name: "FsError".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    }],
+                },
+                StructType {
+                    package: "app.main".to_string(),
+                    name: "FileMetadata".to_string(),
+                    type_params: Vec::new(),
+                    fields: vec![
+                        StructField {
+                            name: "is_file".to_string(),
+                            value_type: ValueType::Bool,
+                        },
+                        StructField {
+                            name: "is_dir".to_string(),
+                            value_type: ValueType::Bool,
+                        },
+                        StructField {
+                            name: "size".to_string(),
+                            value_type: ValueType::U64,
+                        },
+                    ],
+                },
+            ],
             enums: vec![
                 EnumType {
                     package: "app.main".to_string(),
@@ -10542,6 +10708,13 @@ mod tests {
                         },
                     },
                     Statement::Let {
+                        name: "metadata_result".to_string(),
+                        value_type: result_metadata_error,
+                        initializer: ValueExpr::FsMetadata {
+                            path: Box::new(ValueExpr::StringLiteral("tmp".to_string())),
+                        },
+                    },
+                    Statement::Let {
                         name: "create_result".to_string(),
                         value_type: result_void_error.clone(),
                         initializer: ValueExpr::FsCreateDir {
@@ -10569,9 +10742,13 @@ mod tests {
         let c = emit_c(&program);
         assert!(c.contains("#include <errno.h>"));
         assert!(c.contains("typedef struct nomo_struct_FsError"));
+        assert!(c.contains("typedef struct nomo_struct_FileMetadata"));
         assert!(c.contains("static nomo_enum_Result_string_struct_FsError nomo_fs_read_to_string"));
         assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_write_string"));
         assert!(c.contains("static int nomo_fs_exists"));
+        assert!(c.contains(
+            "static nomo_enum_Result_struct_FileMetadata_struct_FsError nomo_fs_metadata"
+        ));
         assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_create_dir"));
         assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_remove_dir"));
         assert!(c.contains("static nomo_enum_Result_array_string_struct_FsError nomo_fs_read_dir"));
@@ -10581,6 +10758,7 @@ mod tests {
             "nomo_fs_write_string(nomo_string_literal(\"output.txt\"), nomo_string_literal(\"hello\"))"
         ));
         assert!(c.contains("nomo_fs_exists(nomo_string_literal(\"tmp\"))"));
+        assert!(c.contains("nomo_fs_metadata(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_create_dir(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_read_dir(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_remove_dir(nomo_string_literal(\"tmp\"))"));

@@ -5001,6 +5001,9 @@ fn checked() -> Result<void, FsError> {{
     fs.create_dir("{}")?
     fs.write_string("{}", "a")?
     fs.write_string("{}", "b")?
+    let metadata: FileMetadata = fs.metadata("{}")?
+    let metadata_message: string = if metadata.is_file && !metadata.is_dir && metadata.size == 1 as u64 {{ "metadata ok" }} else {{ "metadata wrong" }}
+    io.println(metadata_message)
     let entries: Array<string> = fs.read_dir("{}")?
     let has_a: bool = has_entry(entries, "a.txt")
     let has_b: bool = has_entry(entries, "b.txt")
@@ -5028,6 +5031,7 @@ fn main() -> void {{
             list_dir.display(),
             list_a.display(),
             list_b.display(),
+            list_a.display(),
             list_dir.display(),
             marker.display()
         ),
@@ -5048,7 +5052,7 @@ fn main() -> void {{
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "empty exists\nempty read\nempty removed\nlist read\nfs dirs ok\n"
+        "empty exists\nempty read\nempty removed\nmetadata ok\nlist read\nfs dirs ok\n"
     );
     assert!(
         output.stderr.is_empty(),

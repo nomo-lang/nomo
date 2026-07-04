@@ -407,6 +407,9 @@ pub enum ValueExpr {
     FsExists {
         path: Box<ValueExpr>,
     },
+    FsMetadata {
+        path: Box<ValueExpr>,
+    },
     FsCreateDir {
         path: Box<ValueExpr>,
     },
@@ -1716,9 +1719,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs"
             | "std.fs.FsError"
             | "std.fs.File"
+            | "std.fs.FileMetadata"
             | "std.fs.read_to_string"
             | "std.fs.write_string"
             | "std.fs.exists"
+            | "std.fs.metadata"
             | "std.fs.create_dir"
             | "std.fs.remove_dir"
             | "std.fs.read_dir"
@@ -1909,7 +1914,7 @@ fn missing_standard_type_import(
         "Result" => Some("std.result"),
         "Option" => Some("std.option"),
         "Array" => Some("std.array"),
-        "FsError" | "File" => Some("std.fs"),
+        "FsError" | "File" | "FileMetadata" => Some("std.fs"),
         "IoError" => Some("std.io"),
         "NumError" => Some("std.num"),
         _ => None,
@@ -2350,6 +2355,7 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.fs {
         names.push(("FsError".to_string(), 0));
         names.push(("File".to_string(), 0));
+        names.push(("FileMetadata".to_string(), 0));
     }
     if needs.num {
         names.push(("NumError".to_string(), 0));
@@ -2401,6 +2407,27 @@ fn inject_standard_types(
             name: "File".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
+        });
+    }
+    if needs.fs && !structs.iter().any(|item| item.name == "FileMetadata") {
+        structs.push(StructType {
+            package: "std.fs".to_string(),
+            name: "FileMetadata".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "is_file".to_string(),
+                    value_type: ValueType::Bool,
+                },
+                StructField {
+                    name: "is_dir".to_string(),
+                    value_type: ValueType::Bool,
+                },
+                StructField {
+                    name: "size".to_string(),
+                    value_type: ValueType::U64,
+                },
+            ],
         });
     }
     if needs.num && !structs.iter().any(|item| item.name == "NumError") {
@@ -3025,6 +3052,11 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
         AstExpr::Call { callee, args, .. } => {
             (callee == &["fs", "read_to_string"]
                 || callee == &["fs", "write_string"]
+                || callee == &["fs", "exists"]
+                || callee == &["fs", "metadata"]
+                || callee == &["fs", "create_dir"]
+                || callee == &["fs", "remove_dir"]
+                || callee == &["fs", "read_dir"]
                 || callee == &["fs", "open"])
                 || args.iter().any(expr_uses_fs_builtin)
         }
@@ -8351,6 +8383,7 @@ fn lower_value_expr_with_expected(
             if callee == &["fs", "read_to_string"]
                 || callee == &["fs", "write_string"]
                 || callee == &["fs", "exists"]
+                || callee == &["fs", "metadata"]
                 || callee == &["fs", "create_dir"]
                 || callee == &["fs", "remove_dir"]
                 || callee == &["fs", "read_dir"]
@@ -9343,6 +9376,41 @@ fn lower_fs_builtin(
             Ok((
                 ValueType::Bool,
                 ValueExpr::FsExists {
+                    path: Box::new(lowered_path),
+                },
+            ))
+        }
+        [module, name] if module == "fs" && name == "metadata" => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`fs.metadata` expects exactly one path string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`fs.metadata` expects a string path",
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("FileMetadata".to_string(), Vec::new()),
+                        fs_error,
+                    ],
+                ),
+                ValueExpr::FsMetadata {
                     path: Box::new(lowered_path),
                 },
             ))
@@ -12735,6 +12803,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "exists" if imports.iter().any(|item| item == "std.fs.exists") => {
             vec!["fs".to_string(), "exists".to_string()]
         }
+        "metadata" if imports.iter().any(|item| item == "std.fs.metadata") => {
+            vec!["fs".to_string(), "metadata".to_string()]
+        }
         "create_dir" if imports.iter().any(|item| item == "std.fs.create_dir") => {
             vec!["fs".to_string(), "create_dir".to_string()]
         }
@@ -14806,6 +14877,7 @@ import std.io
 
 fn prepare(path: string) -> Result<Array<string>, FsError> {
     let present: bool = fs.exists(path)
+    let metadata: FileMetadata = fs.metadata(path)?
     fs.create_dir(path)?
     let entries: Array<string> = fs.read_dir(path)?
     fs.remove_dir(path)?
@@ -14820,6 +14892,12 @@ fn main() -> void {
 
         let program = parse_inline(source).unwrap();
         assert!(program.structs.iter().any(|item| item.name == "FsError"));
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "FileMetadata")
+        );
         assert!(program.enums.iter().any(|item| item.name == "Result"));
         let prepare = program
             .functions
@@ -14837,6 +14915,13 @@ fn main() -> void {
             )
         );
         assert!(matches!(
+            prepare.body[1],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FsMetadata { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
             prepare.body[0],
             Statement::Let {
                 initializer: ValueExpr::FsExists { .. },
@@ -14850,6 +14935,7 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.fs.exists
+import std.fs.metadata
 import std.fs.create_dir
 import std.fs.remove_dir
 import std.fs.read_dir
@@ -14857,6 +14943,7 @@ import std.array
 
 fn prepare(path: string) -> Result<Array<string>, FsError> {
     let present: bool = exists(path)
+    let metadata: FileMetadata = metadata(path)?
     create_dir(path)?
     let entries: Array<string> = read_dir(path)?
     remove_dir(path)?
@@ -14877,6 +14964,13 @@ fn main() -> void {
             prepare.body[0],
             Statement::Let {
                 initializer: ValueExpr::FsExists { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            prepare.body[1],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FsMetadata { .. },
                 ..
             }
         ));

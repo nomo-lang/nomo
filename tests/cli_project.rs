@@ -5464,6 +5464,78 @@ fn main() -> void {{
 }
 
 #[test]
+fn nomo_run_executes_fs_read_and_write_bytes() {
+    let root = temp_test_root("fs-bytes");
+    reset_dir(&root);
+    let project = root.join("fs_bytes");
+    let output_path = project.join("out.bin");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"fs_bytes\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        format!(
+            r#"package app.main
+
+import std.array
+import std.fs
+import std.io
+import std.num
+
+fn label(value: Option<u32>) -> string {{
+    return match value {{
+        Some(byte) => num.to_string(byte)
+        None => "missing"
+    }}
+}}
+
+fn main() -> Result<void, FsError> {{
+    let mut bytes: Array<u32> = Array.new<u32>()
+    bytes.push(65 as u32)
+    bytes.push(66 as u32)
+    bytes.push(255 as u32)
+    fs.write_bytes("{}", bytes)?
+    let read: Array<u32> = fs.read_bytes("{}")?
+    io.println(num.to_string(read.len()))
+    io.println(label(read.get(0 as u64)))
+    io.println(label(read.get(1 as u64)))
+    io.println(label(read.get(2 as u64)))
+    return Result.Ok(void)
+}}
+"#,
+            output_path.display(),
+            output_path.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "3\n65\n66\n255\n");
+    assert_eq!(fs::read(&output_path).unwrap(), vec![65, 66, 255]);
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_handles_fs_open_error_as_result_value() {
     let root = temp_test_root("fs-open-error-result");
     reset_dir(&root);

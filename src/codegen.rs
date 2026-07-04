@@ -159,6 +159,14 @@ pub fn emit_c(program: &Program) -> String {
         emit_fs_write_string_helper(&mut out);
         out.push('\n');
     }
+    if uses_fs_read_bytes(program) {
+        emit_fs_read_bytes_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_fs_write_bytes(program) {
+        emit_fs_write_bytes_helper(&mut out);
+        out.push('\n');
+    }
     if uses_fs_exists(program) {
         emit_fs_exists_helper(&mut out);
         out.push('\n');
@@ -2445,6 +2453,178 @@ fn emit_fs_write_string_helper(out: &mut String) {
     out.push_str("){.");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (fclose(file) != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = 0};\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_read_bytes_helper(out: &mut String) {
+    let fs_error = c_struct_ident("FsError", &[]);
+    let array_u32 = ValueType::Array(Box::new(ValueType::U32));
+    let result = c_enum_ident(
+        "Result",
+        &[
+            array_u32.clone(),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            array_u32.clone(),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            array_u32,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_fs_read_bytes(nomo_string path) {\n");
+    out.push_str("    FILE *file = fopen(path.data, \"rb\");\n");
+    out.push_str("    if (file == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    nomo_array_u32 bytes = nomo_array_u32_new();\n");
+    out.push_str("    int ch = 0;\n");
+    out.push_str("    while ((ch = fgetc(file)) != EOF) {\n");
+    out.push_str("        bytes = nomo_array_u32_push(bytes, (uint32_t)(unsigned char)ch);\n");
+    out.push_str("    }\n");
+    out.push_str("    if (ferror(file)) {\n");
+    out.push_str("        const char *message = strerror(errno);\n");
+    out.push_str("        fclose(file);\n");
+    out.push_str("        nomo_array_u32_release(bytes);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (fclose(file) != 0) {\n");
+    out.push_str("        const char *message = strerror(errno);\n");
+    out.push_str("        nomo_array_u32_release(bytes);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = bytes};\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_write_bytes_helper(out: &mut String) {
+    let fs_error = c_struct_ident("FsError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_fs_write_bytes(nomo_string path, nomo_array_u32 bytes) {\n");
+    out.push_str("    FILE *file = fopen(path.data, \"wb\");\n");
+    out.push_str("    if (file == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    for (size_t i = 0; i < bytes.len; i += 1) {\n");
+    out.push_str("        unsigned char value = (unsigned char)(bytes.data[i] & 0xffU);\n");
+    out.push_str("        if (fwrite(&value, 1, 1, file) != 1) {\n");
+    out.push_str("            const char *message = strerror(errno);\n");
+    out.push_str("            fclose(file);\n");
+    out.push_str("            return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("        }\n");
     out.push_str("    }\n");
     out.push_str("    if (fclose(file) != 0) {\n");
     out.push_str("        return (");
@@ -5423,6 +5603,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::Unary { expr, .. }
         | ValueExpr::StringLen { value: expr }
         | ValueExpr::FsReadToString { path: expr }
+        | ValueExpr::FsReadBytes { path: expr }
         | ValueExpr::FsExists { path: expr }
         | ValueExpr::FsMetadata { path: expr }
         | ValueExpr::FsCreateDir { path: expr }
@@ -5465,6 +5646,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FsWriteString {
             path: left,
             content: right,
+        }
+        | ValueExpr::FsWriteBytes {
+            path: left,
+            bytes: right,
         }
         | ValueExpr::HashWriteString {
             state: left,
@@ -6535,6 +6720,18 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, content);
             out.push(')');
         }
+        ValueExpr::FsReadBytes { path } => {
+            out.push_str("nomo_fs_read_bytes(");
+            emit_expr(out, path);
+            out.push(')');
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            out.push_str("nomo_fs_write_bytes(");
+            emit_expr(out, path);
+            out.push_str(", ");
+            emit_expr(out, bytes);
+            out.push(')');
+        }
         ValueExpr::FsExists { path } => {
             out.push_str("nomo_fs_exists(");
             emit_expr(out, path);
@@ -7292,6 +7489,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(right, out);
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
@@ -7370,6 +7568,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_result_map_err(path, out);
             collect_expr_result_map_err(content, out);
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            collect_expr_result_map_err(path, out);
+            collect_expr_result_map_err(bytes, out);
         }
         ValueExpr::FileWriteString { file, content } => {
             collect_expr_result_map_err(file, out);
@@ -7654,6 +7856,7 @@ where
             walk_expr(right, visit);
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
@@ -7733,6 +7936,10 @@ where
         ValueExpr::FsWriteString { path, content } => {
             walk_expr(path, visit);
             walk_expr(content, visit);
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            walk_expr(path, visit);
+            walk_expr(bytes, visit);
         }
         ValueExpr::FileWriteString { file, content } => {
             walk_expr(file, visit);
@@ -8184,10 +8391,19 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "FsError", &[]);
             collect_expr_struct(path, seen, out);
         }
+        ValueExpr::FsReadBytes { path } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(path, seen, out);
+        }
         ValueExpr::FsWriteString { path, content } => {
             push_struct_instance(seen, out, "FsError", &[]);
             collect_expr_struct(path, seen, out);
             collect_expr_struct(content, seen, out);
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(path, seen, out);
+            collect_expr_struct(bytes, seen, out);
         }
         ValueExpr::FsExists { path } => collect_expr_struct(path, seen, out),
         ValueExpr::FsMetadata { path } => {
@@ -8882,6 +9098,18 @@ fn collect_expr_enum(
             );
             collect_expr_enum(path, seen, out);
         }
+        ValueExpr::FsReadBytes { path } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Array(Box::new(ValueType::U32)),
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(path, seen, out);
+        }
         ValueExpr::FsWriteString { path, content } => {
             push_enum_instance(
                 seen,
@@ -8894,6 +9122,19 @@ fn collect_expr_enum(
             );
             collect_expr_enum(path, seen, out);
             collect_expr_enum(content, seen, out);
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(path, seen, out);
+            collect_expr_enum(bytes, seen, out);
         }
         ValueExpr::FsExists { path } => collect_expr_enum(path, seen, out),
         ValueExpr::FsMetadata { path } => {
@@ -9261,6 +9502,24 @@ fn uses_fs_write_string(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_uses_fs_write_string(statement))
+    })
+}
+
+fn uses_fs_read_bytes(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_read_bytes))
+    })
+}
+
+fn uses_fs_write_bytes(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_write_bytes))
     })
 }
 
@@ -9982,6 +10241,9 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_contains(path, predicate) || expr_contains(content, predicate)
         }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_contains(path, predicate) || expr_contains(bytes, predicate)
+        }
         ValueExpr::EnvSet { name, value } => {
             expr_contains(name, predicate) || expr_contains(value, predicate)
         }
@@ -10007,6 +10269,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
             expr_contains(index, predicate) || expr_contains(value, predicate)
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
@@ -10161,6 +10424,14 @@ fn expr_is_fs_remove_dir(expr: &ValueExpr) -> bool {
 
 fn expr_is_fs_read_dir(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::FsReadDir { .. })
+}
+
+fn expr_is_fs_read_bytes(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsReadBytes { .. })
+}
+
+fn expr_is_fs_write_bytes(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsWriteBytes { .. })
 }
 
 fn expr_is_file_read_to_string(expr: &ValueExpr) -> bool {
@@ -10706,10 +10977,14 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(content)
         }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_uses_fs_read_to_string(path) || expr_uses_fs_read_to_string(bytes)
+        }
         ValueExpr::EnvSet { name, value } => {
             expr_uses_fs_read_to_string(name) || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::FsExists { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
         | ValueExpr::FsRemoveDir { path }
@@ -10910,6 +11185,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             value: right,
         } => expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right),
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
@@ -10918,6 +11194,9 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::FileReadToString { file } => expr_uses_fs_write_string(file),
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_fs_write_string(file) || expr_uses_fs_write_string(content)
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_uses_fs_write_string(path) || expr_uses_fs_write_string(bytes)
         }
         ValueExpr::EnvSet { name, value } => {
             expr_uses_fs_write_string(name) || expr_uses_fs_write_string(value)
@@ -11113,6 +11392,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             value: right,
         } => expr_uses_fs_open(left) || expr_uses_fs_open(right),
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
@@ -11169,6 +11449,9 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         } => expr_uses_fs_open(option) || expr_uses_fs_open(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_fs_open(path) || expr_uses_fs_open(content)
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_uses_fs_open(path) || expr_uses_fs_open(bytes)
         }
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_fs_open(file) || expr_uses_fs_open(content)
@@ -11307,6 +11590,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             value: right,
         } => expr_uses_env_get(left) || expr_uses_env_get(right),
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
         | ValueExpr::FsCreateDir { path }
@@ -11346,6 +11630,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::FileReadToString { file: path } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_uses_env_get(path) || expr_uses_env_get(bytes)
         }
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_env_get(file) || expr_uses_env_get(content)
@@ -11503,6 +11790,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             value: right,
         } => expr_uses_env_args(left) || expr_uses_env_args(right),
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsReadBytes { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FsExists { path }
         | ValueExpr::FsMetadata { path }
@@ -11561,6 +11849,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         } => expr_uses_env_args(option) || expr_uses_env_args(default),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_args(path) || expr_uses_env_args(content)
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            expr_uses_env_args(path) || expr_uses_env_args(bytes)
         }
         ValueExpr::FileWriteString { file, content } => {
             expr_uses_env_args(file) || expr_uses_env_args(content)
@@ -11730,6 +12021,10 @@ fn collect_expr_array_elements(
             push_array_element_type(seen, out, &ValueType::U32);
             collect_expr_array_elements(count, seen, out);
         }
+        ValueExpr::FsReadBytes { path } => {
+            push_array_element_type(seen, out, &ValueType::U32);
+            collect_expr_array_elements(path, seen, out);
+        }
         ValueExpr::CollectionsStringMapSet { map, key, value } => {
             push_array_element_type(seen, out, &ValueType::String);
             collect_expr_array_elements(map, seen, out);
@@ -11889,6 +12184,10 @@ fn collect_expr_array_elements(
         ValueExpr::FsWriteString { path, content } => {
             collect_expr_array_elements(path, seen, out);
             collect_expr_array_elements(content, seen, out);
+        }
+        ValueExpr::FsWriteBytes { path, bytes } => {
+            collect_expr_array_elements(path, seen, out);
+            collect_expr_array_elements(bytes, seen, out);
         }
         ValueExpr::FileWriteString { file, content } => {
             collect_expr_array_elements(file, seen, out);
@@ -13505,6 +13804,10 @@ mod tests {
             "Result".to_string(),
             vec![ValueType::String, fs_error.clone()],
         );
+        let result_array_u32_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Array(Box::new(ValueType::U32)), fs_error.clone()],
+        );
         let result_void_error = ValueType::Enum(
             "Result".to_string(),
             vec![ValueType::Void, fs_error.clone()],
@@ -13611,6 +13914,26 @@ mod tests {
                         },
                     },
                     Statement::Let {
+                        name: "bytes_result".to_string(),
+                        value_type: result_array_u32_error,
+                        initializer: ValueExpr::FsReadBytes {
+                            path: Box::new(ValueExpr::StringLiteral("input.bin".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "write_bytes_result".to_string(),
+                        value_type: result_void_error.clone(),
+                        initializer: ValueExpr::FsWriteBytes {
+                            path: Box::new(ValueExpr::StringLiteral("output.bin".to_string())),
+                            bytes: Box::new(ValueExpr::CryptoRandomBytes {
+                                count: Box::new(ValueExpr::Cast {
+                                    expr: Box::new(ValueExpr::IntLiteral(2)),
+                                    target_type: ValueType::U64,
+                                }),
+                            }),
+                        },
+                    },
+                    Statement::Let {
                         name: "exists".to_string(),
                         value_type: ValueType::Bool,
                         initializer: ValueExpr::FsExists {
@@ -13655,6 +13978,8 @@ mod tests {
         assert!(c.contains("typedef struct nomo_struct_FileMetadata"));
         assert!(c.contains("static nomo_enum_Result_string_struct_FsError nomo_fs_read_to_string"));
         assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_write_string"));
+        assert!(c.contains("static nomo_enum_Result_array_u32_struct_FsError nomo_fs_read_bytes"));
+        assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_write_bytes"));
         assert!(c.contains("static int nomo_fs_exists"));
         assert!(c.contains(
             "static nomo_enum_Result_struct_FileMetadata_struct_FsError nomo_fs_metadata"
@@ -13666,6 +13991,18 @@ mod tests {
         assert!(c.contains("nomo_fs_read_to_string(nomo_string_literal(\"input.txt\"))"));
         assert!(c.contains(
             "nomo_fs_write_string(nomo_string_literal(\"output.txt\"), nomo_string_literal(\"hello\"))"
+        ));
+        assert!(c.contains("nomo_array_u32_new"));
+        let array_helper = c
+            .find("static nomo_array_u32 nomo_array_u32_new(void)")
+            .unwrap();
+        let read_bytes_helper = c
+            .find("static nomo_enum_Result_array_u32_struct_FsError nomo_fs_read_bytes")
+            .unwrap();
+        assert!(array_helper < read_bytes_helper);
+        assert!(c.contains("nomo_fs_read_bytes(nomo_string_literal(\"input.bin\"))"));
+        assert!(c.contains(
+            "nomo_fs_write_bytes(nomo_string_literal(\"output.bin\"), nomo_crypto_random_bytes(((uint64_t)2)))"
         ));
         assert!(c.contains("nomo_fs_exists(nomo_string_literal(\"tmp\"))"));
         assert!(c.contains("nomo_fs_metadata(nomo_string_literal(\"tmp\"))"));

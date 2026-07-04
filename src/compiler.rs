@@ -508,6 +508,13 @@ pub enum ValueExpr {
         path: Box<ValueExpr>,
         content: Box<ValueExpr>,
     },
+    FsReadBytes {
+        path: Box<ValueExpr>,
+    },
+    FsWriteBytes {
+        path: Box<ValueExpr>,
+        bytes: Box<ValueExpr>,
+    },
     FsExists {
         path: Box<ValueExpr>,
     },
@@ -1833,6 +1840,8 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs.FileMetadata"
             | "std.fs.read_to_string"
             | "std.fs.write_string"
+            | "std.fs.read_bytes"
+            | "std.fs.write_bytes"
             | "std.fs.exists"
             | "std.fs.metadata"
             | "std.fs.create_dir"
@@ -3659,6 +3668,8 @@ fn expr_uses_fs_builtin(expr: &AstExpr) -> bool {
         AstExpr::Call { callee, args, .. } => {
             (callee == &["fs", "read_to_string"]
                 || callee == &["fs", "write_string"]
+                || callee == &["fs", "read_bytes"]
+                || callee == &["fs", "write_bytes"]
                 || callee == &["fs", "exists"]
                 || callee == &["fs", "metadata"]
                 || callee == &["fs", "create_dir"]
@@ -9239,6 +9250,8 @@ fn lower_value_expr_with_expected(
             }
             if callee == &["fs", "read_to_string"]
                 || callee == &["fs", "write_string"]
+                || callee == &["fs", "read_bytes"]
+                || callee == &["fs", "write_bytes"]
                 || callee == &["fs", "exists"]
                 || callee == &["fs", "metadata"]
                 || callee == &["fs", "create_dir"]
@@ -10324,6 +10337,83 @@ fn lower_fs_builtin(
                 ValueExpr::FsWriteString {
                     path: Box::new(lowered_path),
                     content: Box::new(lowered_content),
+                },
+            ))
+        }
+        [module, name] if module == "fs" && name == "read_bytes" => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`fs.read_bytes` expects exactly one path string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`fs.read_bytes` expects a string path",
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![ValueType::Array(Box::new(ValueType::U32)), fs_error],
+                ),
+                ValueExpr::FsReadBytes {
+                    path: Box::new(lowered_path),
+                },
+            ))
+        }
+        [module, name] if module == "fs" && name == "write_bytes" => {
+            let [path_arg, bytes_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`fs.write_bytes` expects a path string and Array<u32> bytes",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let (bytes_type, lowered_bytes) = lower_value_expr(
+                path, bytes_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_bytes = ValueType::Array(Box::new(ValueType::U32));
+            if path_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`fs.write_bytes` expects a string path",
+                    &ValueType::String,
+                    &path_type,
+                ));
+            }
+            if bytes_type != expected_bytes {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`fs.write_bytes` expects Array<u32> bytes",
+                    &expected_bytes,
+                    &bytes_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, fs_error]),
+                ValueExpr::FsWriteBytes {
+                    path: Box::new(lowered_path),
+                    bytes: Box::new(lowered_bytes),
                 },
             ))
         }
@@ -15413,6 +15503,12 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "write_string" if imports.iter().any(|item| item == "std.fs.write_string") => {
             vec!["fs".to_string(), "write_string".to_string()]
         }
+        "read_bytes" if imports.iter().any(|item| item == "std.fs.read_bytes") => {
+            vec!["fs".to_string(), "read_bytes".to_string()]
+        }
+        "write_bytes" if imports.iter().any(|item| item == "std.fs.write_bytes") => {
+            vec!["fs".to_string(), "write_bytes".to_string()]
+        }
         "exists" if imports.iter().any(|item| item == "std.fs.exists") => {
             vec!["fs".to_string(), "exists".to_string()]
         }
@@ -18576,19 +18672,30 @@ fn main() -> void {
 
 import std.fs
 import std.io
+import std.array.Array
 
 fn load(path: string) -> Result<string, FsError> {
     let text: string = fs.read_to_string(path)?
     return Result.Ok(text)
 }
 
+fn load_bytes(path: string) -> Result<Array<u32>, FsError> {
+    let bytes: Array<u32> = fs.read_bytes(path)?
+    return Result.Ok(bytes)
+}
+
 fn save(path: string, content: string) -> Result<void, FsError> {
     return fs.write_string(path, content)
+}
+
+fn save_bytes(path: string, bytes: Array<u32>) -> Result<void, FsError> {
+    return fs.write_bytes(path, bytes)
 }
 
 fn main() -> void {
     let write_result: Result<void, FsError> = save("/tmp/nomo-fs-test.txt", "hello")
     let read_result: Result<string, FsError> = load("/tmp/nomo-fs-test.txt")
+    let byte_read_result: Result<Array<u32>, FsError> = load_bytes("/tmp/nomo-fs-test.txt")
     io.println("done")
 }
 "#;
@@ -18614,10 +18721,31 @@ fn main() -> void {
                 ..
             }
         ));
+        let load_bytes = program
+            .functions
+            .iter()
+            .find(|f| f.name == "load_bytes")
+            .unwrap();
+        assert!(matches!(
+            load_bytes.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FsReadBytes { .. },
+                ..
+            }
+        ));
         let save = program.functions.iter().find(|f| f.name == "save").unwrap();
         assert!(matches!(
             save.body[0],
             Statement::Return(Some(ValueExpr::FsWriteString { .. }))
+        ));
+        let save_bytes = program
+            .functions
+            .iter()
+            .find(|f| f.name == "save_bytes")
+            .unwrap();
+        assert!(matches!(
+            save_bytes.body[0],
+            Statement::Return(Some(ValueExpr::FsWriteBytes { .. }))
         ));
     }
 
@@ -18681,20 +18809,33 @@ fn main() -> void {
 
 import std.fs.read_to_string
 import std.fs.write_string
+import std.fs.read_bytes
+import std.fs.write_bytes
 import std.io
+import std.array.Array
 
 fn load(path: string) -> Result<string, FsError> {
     let text: string = read_to_string(path)?
     return Result.Ok(text)
 }
 
+fn load_bytes(path: string) -> Result<Array<u32>, FsError> {
+    let bytes: Array<u32> = read_bytes(path)?
+    return Result.Ok(bytes)
+}
+
 fn save(path: string, content: string) -> Result<void, FsError> {
     return write_string(path, content)
+}
+
+fn save_bytes(path: string, bytes: Array<u32>) -> Result<void, FsError> {
+    return write_bytes(path, bytes)
 }
 
 fn main() -> void {
     let write_result: Result<void, FsError> = save("/tmp/nomo-fs-test.txt", "hello")
     let read_result: Result<string, FsError> = load("/tmp/nomo-fs-test.txt")
+    let byte_read_result: Result<Array<u32>, FsError> = load_bytes("/tmp/nomo-fs-test.txt")
     io.println("done")
 }
 "#;
@@ -18710,10 +18851,31 @@ fn main() -> void {
                 ..
             }
         ));
+        let load_bytes = program
+            .functions
+            .iter()
+            .find(|f| f.name == "load_bytes")
+            .unwrap();
+        assert!(matches!(
+            load_bytes.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::FsReadBytes { .. },
+                ..
+            }
+        ));
         let save = program.functions.iter().find(|f| f.name == "save").unwrap();
         assert!(matches!(
             save.body[0],
             Statement::Return(Some(ValueExpr::FsWriteString { .. }))
+        ));
+        let save_bytes = program
+            .functions
+            .iter()
+            .find(|f| f.name == "save_bytes")
+            .unwrap();
+        assert!(matches!(
+            save_bytes.body[0],
+            Statement::Return(Some(ValueExpr::FsWriteBytes { .. }))
         ));
     }
 

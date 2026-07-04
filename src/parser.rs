@@ -1452,7 +1452,7 @@ impl Parser<'_> {
         let mut parts = vec![self.expect_ident("expected identifier")?];
         while self.consume_dot_path_separator() {
             self.advance();
-            parts.push(self.expect_ident("expected identifier after `.`")?);
+            parts.push(self.expect_path_segment_after_dot()?);
         }
         Ok(parts)
     }
@@ -1468,7 +1468,7 @@ impl Parser<'_> {
                     self.peek().length(),
                 ));
             }
-            parts.push(self.expect_ident("expected identifier after `.`")?);
+            parts.push(self.expect_path_segment_after_dot()?);
         }
         Ok(parts)
     }
@@ -1493,6 +1493,24 @@ impl Parser<'_> {
                 Ok(value)
             }
             _ => Err(self.error("E0300", message, self.peek().length())),
+        }
+    }
+
+    fn expect_path_segment_after_dot(&mut self) -> Result<String, Diagnostic> {
+        match self.peek().kind.clone() {
+            TokenKind::Ident(value) => {
+                self.advance();
+                Ok(value)
+            }
+            TokenKind::Panic => {
+                self.advance();
+                Ok("panic".to_string())
+            }
+            _ => Err(self.error(
+                "E0300",
+                "expected identifier after `.`",
+                self.peek().length(),
+            )),
         }
     }
 
@@ -2166,6 +2184,22 @@ mod tests {
                 value: Expr::Call { ref callee, .. },
                 ..
             } if callee == &vec!["message".to_string(), "len".to_string()]
+        ));
+    }
+
+    #[test]
+    fn parses_keyword_as_dot_path_segment() {
+        let source = "package app.main\n\nimport std.debug.panic\n\nfn main() -> void {\n    debug.panic(\"boom\")\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+        assert_eq!(ast.imports[0], ["std", "debug", "panic"]);
+        assert!(matches!(
+            ast.functions[0].body[0],
+            Stmt::Expr {
+                expr: Expr::Call { ref callee, .. },
+                ..
+            } if callee == &vec!["debug".to_string(), "panic".to_string()]
         ));
     }
 

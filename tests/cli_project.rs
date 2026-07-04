@@ -367,6 +367,8 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("printing and terminal I/O"), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
     assert!(stdout.contains("test assertion helpers"), "{stdout}");
+    assert!(stdout.contains("\"name\":\"std.debug\""), "{stdout}");
+    assert!(stdout.contains("debug print and panic helpers"), "{stdout}");
 }
 
 #[test]
@@ -4657,6 +4659,46 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_reports_debug_panic_status() {
+    let root = temp_test_root("debug-panic");
+    reset_dir(&root);
+    let project = root.join("debug_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"debug_panic\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.debug
+
+fn main() -> void {
+    debug.panic("debug-boom")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(stderr.contains("panic: debug-boom"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_reports_array_set_panic_status() {
     let root = temp_test_root("array-set-panic");
     reset_dir(&root);
@@ -5781,6 +5823,54 @@ fn main() -> void {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_std_debug_helpers() {
+    let root = temp_test_root("std-debug-helpers");
+    reset_dir(&root);
+    let project = root.join("debug_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"debug_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.debug
+import std.io
+
+fn main() -> void {
+    debug.print("debug-")
+    debug.println("ok")
+    io.println(debug.backtrace())
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "backtrace unavailable\n"
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stderr), "debug-ok\n");
 
     fs::remove_dir_all(&root).unwrap();
 }

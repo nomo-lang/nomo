@@ -1797,6 +1797,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.char.is_alpha"
             | "std.char.is_whitespace"
             | "std.char.to_string"
+            | "std.debug"
+            | "std.debug.print"
+            | "std.debug.println"
+            | "std.debug.panic"
+            | "std.debug.backtrace"
             | "std.os"
             | "std.os.platform"
             | "std.os.arch"
@@ -8285,6 +8290,11 @@ fn lower_value_expr_with_expected(
                 if qualified[0] == "io" {
                     return lower_io_builtin(path, &qualified, args, span);
                 }
+                if qualified[0] == "debug" {
+                    return lower_debug_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8581,6 +8591,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_io_builtin(path, callee, args, span);
+            }
+            if is_debug_builtin_call(callee) {
+                require_import(path, imports, span, "std.debug", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "debug builtins do not accept type arguments",
+                    ));
+                }
+                return lower_debug_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
             }
             if is_env_builtin_call(callee) {
                 require_import(path, imports, span, "std.env", &callee.join("."))?;
@@ -10015,6 +10038,100 @@ fn is_io_value_builtin_call(callee: &[String]) -> bool {
         callee,
         [module, name] if module == "io" && matches!(name.as_str(), "read_line")
     )
+}
+
+fn is_debug_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "debug"
+                && matches!(name.as_str(), "print" | "println" | "panic" | "backtrace")
+    )
+}
+
+fn lower_debug_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("debug builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "debug");
+    match name.as_str() {
+        "print" | "println" | "panic" => {
+            let [message_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`debug.{name}` expects exactly one string message"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (message_type, message) = lower_value_expr(
+                path,
+                message_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if message_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`debug.{name}` expects a string message"),
+                    &ValueType::String,
+                    &message_type,
+                ));
+            }
+            let value = match name.as_str() {
+                "print" => ValueExpr::Call {
+                    name: BUILTIN_EPRINT_EXPR.to_string(),
+                    args: vec![message],
+                },
+                "println" => ValueExpr::Call {
+                    name: BUILTIN_EPRINTLN_EXPR.to_string(),
+                    args: vec![message],
+                },
+                "panic" => ValueExpr::Panic {
+                    message: Box::new(message),
+                    fallback_type: ValueType::Void,
+                },
+                _ => unreachable!("debug string helper matched above"),
+            };
+            Ok((ValueType::Void, value))
+        }
+        "backtrace" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`debug.backtrace` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::String,
+                ValueExpr::StringLiteral("backtrace unavailable".to_string()),
+            ))
+        }
+        _ => unreachable!("debug builtin dispatcher only passes known calls"),
+    }
 }
 
 fn is_process_builtin_call(callee: &[String]) -> bool {
@@ -13399,6 +13516,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "read_line" if imports.iter().any(|item| item == "std.io.read_line") => {
             vec!["io".to_string(), "read_line".to_string()]
         }
+        "print" if imports.iter().any(|item| item == "std.debug.print") => {
+            vec!["debug".to_string(), "print".to_string()]
+        }
+        "println" if imports.iter().any(|item| item == "std.debug.println") => {
+            vec!["debug".to_string(), "println".to_string()]
+        }
+        "panic" if imports.iter().any(|item| item == "std.debug.panic") => {
+            vec!["debug".to_string(), "panic".to_string()]
+        }
+        "backtrace" if imports.iter().any(|item| item == "std.debug.backtrace") => {
+            vec!["debug".to_string(), "backtrace".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -14801,6 +14930,90 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("Result<T, E>"));
+    }
+
+    #[test]
+    fn accepts_debug_builtins() {
+        let source = r#"package app.main
+
+import std.debug
+
+fn crash() -> void {
+    debug.panic("boom")
+}
+
+fn main() -> void {
+    debug.print("debug-")
+    debug.println("ok")
+    let trace: string = debug.backtrace()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let crash = program
+            .functions
+            .iter()
+            .find(|f| f.name == "crash")
+            .unwrap();
+        assert!(matches!(
+            crash.body[0],
+            Statement::Expr(ValueExpr::Panic { .. })
+        ));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Expr(ValueExpr::Call { ref name, .. }) if name == BUILTIN_EPRINT_EXPR
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Expr(ValueExpr::Call { ref name, .. }) if name == BUILTIN_EPRINTLN_EXPR
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::StringLiteral(ref value),
+                ..
+            } if value == "backtrace unavailable"
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_debug_backtrace_import() {
+        let source = r#"package app.main
+
+import std.debug.backtrace
+
+fn main() -> void {
+    let trace: string = backtrace()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::StringLiteral(ref value),
+                ..
+            } if value == "backtrace unavailable"
+        ));
+    }
+
+    #[test]
+    fn rejects_debug_print_non_string_message() {
+        let source = r#"package app.main
+
+import std.debug
+
+fn main() -> void {
+    debug.println(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("string message"));
     }
 
     #[test]

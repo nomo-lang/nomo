@@ -101,6 +101,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.time", "clock and sleep helpers"),
         ("std.process", "process helpers"),
         ("std.testing", "test assertion helpers"),
+        ("std.debug", "debug print and panic helpers"),
         ("std.option", "Option carrier helpers"),
         ("std.result", "Result carrier helpers"),
         ("std.array", "Array helpers"),

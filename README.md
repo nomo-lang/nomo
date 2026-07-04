@@ -359,6 +359,11 @@ the captured streams.
 condition and string message. `assert_equal` compares matching primitive values
 or strings. `assert_error` passes only when a `Result<T, E>` is `Err`.
 
+`std.debug` provides `debug.print`, `debug.println`, `debug.panic`, and
+`debug.backtrace`. Debug print helpers write to stderr. `debug.panic` uses the
+same panic path as the language builtin. `debug.backtrace` returns a stable
+placeholder string in v0.1.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

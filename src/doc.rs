@@ -1,5 +1,6 @@
 use crate::ast::{
-    ConstDef, EnumDef, EnumVariant, Field, Function, Param, SourceFile, StructDef, TypeRef,
+    ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, Param,
+    SourceFile, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::lex;
@@ -185,6 +186,9 @@ fn module_docs(ast: &SourceFile, comments: &DocComments, source: String) -> DocM
     for item in &ast.functions {
         items.push(function_doc("function", item, comments, &source));
     }
+    for block in &ast.extern_blocks {
+        items.extend(extern_function_docs(block, comments, &source));
+    }
     for impl_block in &ast.impls {
         let owner = type_ref(&impl_block.type_name);
         for method in &impl_block.methods {
@@ -297,6 +301,27 @@ fn function_doc(kind: &str, item: &Function, comments: &DocComments, source: &st
     }
 }
 
+fn extern_function_docs(block: &ExternBlock, comments: &DocComments, source: &str) -> Vec<DocItem> {
+    block
+        .functions
+        .iter()
+        .map(|function| DocItem {
+            kind: "extern_function".to_string(),
+            name: function.name.clone(),
+            signature: extern_function_signature(&block.abi, function),
+            visibility: "public".to_string(),
+            docs: comments
+                .item_docs
+                .get(&function.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            source: source.to_string(),
+            line: function.span.line,
+            children: Vec::new(),
+        })
+        .collect()
+}
+
 fn field_doc(owner: &str, field: &Field, comments: &DocComments, source: &str) -> DocItem {
     DocItem {
         kind: "field".to_string(),
@@ -355,6 +380,23 @@ fn function_signature(function: &Function) -> String {
     format!(
         "{}fn {}{}({}) -> {}",
         visibility_prefix(function.public),
+        function.name,
+        type_params(&function.type_params),
+        params,
+        type_ref(&function.return_type)
+    )
+}
+
+fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String {
+    let params = function
+        .params
+        .iter()
+        .map(param)
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!(
+        "extern \"{}\" fn {}{}({}) -> {}",
+        abi,
         function.name,
         type_params(&function.type_params),
         params,

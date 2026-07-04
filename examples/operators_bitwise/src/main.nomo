@@ -1,0 +1,13 @@
+package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let masked: i64 = 7 & 3 | 8 ^ 2 << 1
+    let cleared: i64 = masked &^ 3
+    let shifted: i64 = cleared >> 2
+    io.println(num.to_string(masked))
+    io.println(num.to_string(cleared))
+    io.println(num.to_string(shifted))
+}

@@ -1,0 +1,22 @@
+package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let mut value: i64 = 10
+    value += 5
+    value -= 3
+    value *= 2
+    value /= 4
+    value %= 5
+    value <<= 2
+    value >>= 1
+    value |= 1
+    value &= 7
+    value ^= 2
+    value &^= 1
+    value++
+    value--
+    io.println(num.to_string(value))
+}

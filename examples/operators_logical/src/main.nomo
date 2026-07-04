@@ -1,0 +1,14 @@
+package app.main
+
+import std.io
+
+fn main() -> void {
+    let failed: bool = false
+    let ready: bool = true
+    let cached: bool = false
+    if !failed && ready || cached {
+        io.println("logical true")
+    } else {
+        io.println("wrong")
+    }
+}

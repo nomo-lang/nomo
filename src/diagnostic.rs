@@ -4,8 +4,11 @@ use std::path::Path;
 pub const DIAGNOSTIC_DOCS_BASE_URL: &str =
     "https://github.com/nomo-lang/nomo/blob/main/docs/diagnostics";
 
-pub const DOCUMENTED_DIAGNOSTIC_CODES: &[&str] =
-    &["E0102", "E0200", "E0301", "E0404", "E0501", "E0901"];
+pub const DOCUMENTED_DIAGNOSTIC_CODES: &[&str] = &[
+    "E0102", "E0200", "E0301", "E0404", "E0501", "E0901", "E1500", "E1501", "E1502", "E1503",
+    "E1504", "E1505", "E1510", "E1511", "E1512", "E1513", "E1514", "E1515", "E1516", "E1517",
+    "E1518", "E1519",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Suggestion {

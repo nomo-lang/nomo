@@ -32,5 +32,21 @@ the same code.
 - [E0404](E0404.md) - type mismatch
 - [E0501](E0501.md) - immutable value mutation
 - [E0901](E0901.md) - manifest or project configuration error
+- [E1500](E1500.md) - expected interface declaration
+- [E1501](E1501.md) - missing interface body
+- [E1502](E1502.md) - unterminated interface body
+- [E1503](E1503.md) - invalid interface member
+- [E1504](E1504.md) - expected interface method
+- [E1505](E1505.md) - missing interface method parameters
+- [E1510](E1510.md) - expected extern declaration
+- [E1511](E1511.md) - unsupported extern ABI
+- [E1512](E1512.md) - missing extern block body
+- [E1513](E1513.md) - unterminated extern block
+- [E1514](E1514.md) - invalid extern declaration
+- [E1515](E1515.md) - expected extern function
+- [E1516](E1516.md) - missing extern function parameters
+- [E1517](E1517.md) - expected unsafe block
+- [E1518](E1518.md) - missing unsafe block body
+- [E1519](E1519.md) - invalid FFI or unsafe boundary
 
 More codes should be added as implementation slices stabilize their diagnostics.

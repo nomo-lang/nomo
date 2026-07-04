@@ -55,7 +55,7 @@ pub fn symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
     let docs = extract_doc_comments(source);
-    Ok(symbols_from_ast(path, &ast, &tokens, &docs))
+    Ok(symbols_from_ast(path, &ast, &docs))
 }
 
 pub fn symbols_for_project_with_overrides(
@@ -356,6 +356,14 @@ fn previous_significant_token(
         .find(|token| !matches!(token.kind, TokenKind::Newline | TokenKind::Eof))
 }
 
+fn next_significant_index(
+    tokens: &[crate::lexer::Token],
+    index: usize,
+    end: usize,
+) -> Option<usize> {
+    (index + 1..end).find(|next| !matches!(tokens[*next].kind, TokenKind::Newline))
+}
+
 fn range_contains(range: TextRange, position: TextPosition) -> bool {
     if position.line < range.start.line || position.line > range.end.line {
         return false;
@@ -448,12 +456,7 @@ fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String
     Ok(())
 }
 
-fn symbols_from_ast(
-    path: &Path,
-    ast: &SourceFile,
-    tokens: &[crate::lexer::Token],
-    docs: &DocComments,
-) -> Vec<SemanticSymbol> {
+fn symbols_from_ast(path: &Path, ast: &SourceFile, docs: &DocComments) -> Vec<SemanticSymbol> {
     let mut symbols = Vec::new();
     for item in &ast.structs {
         symbols.push(SemanticSymbol {
@@ -470,7 +473,7 @@ fn symbols_from_ast(
             range: line_range(&item.span),
             selection_range: name_selection_range(&item.span, &item.name),
         });
-        symbols.extend(field_symbols(path, item, tokens, docs));
+        symbols.extend(field_symbols(path, item, docs));
     }
     for item in &ast.enums {
         symbols.push(SemanticSymbol {
@@ -487,7 +490,7 @@ fn symbols_from_ast(
             range: line_range(&item.span),
             selection_range: name_selection_range(&item.span, &item.name),
         });
-        symbols.extend(variant_symbols(path, item, tokens, docs));
+        symbols.extend(variant_symbols(path, item, docs));
     }
     for item in &ast.consts {
         symbols.push(SemanticSymbol {
@@ -527,188 +530,44 @@ fn symbols_from_ast(
     symbols
 }
 
-#[derive(Debug, Clone)]
-struct MemberLocation {
-    name: String,
-    line: usize,
-    column: usize,
-    text: String,
-}
-
-fn field_symbols(
-    path: &Path,
-    item: &StructDef,
-    tokens: &[crate::lexer::Token],
-    docs: &DocComments,
-) -> Vec<SemanticSymbol> {
-    let mut locations = struct_field_locations(tokens, item);
+fn field_symbols(path: &Path, item: &StructDef, docs: &DocComments) -> Vec<SemanticSymbol> {
     item.fields
         .iter()
-        .filter_map(|field| {
-            let location_index = locations
-                .iter()
-                .position(|location| location.name == field.name)?;
-            let location = locations.remove(location_index);
-            Some(member_symbol(
-                path,
-                &location,
-                SemanticSymbolKind::Field,
-                field_signature(&item.name, field),
-                docs.item_docs
-                    .get(&location.line)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
+        .map(|field| SemanticSymbol {
+            source_path: path.to_path_buf(),
+            name: field.name.clone(),
+            kind: SemanticSymbolKind::Field,
+            signature: field_signature(&item.name, field),
+            docs: docs
+                .item_docs
+                .get(&field.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            line: field.span.line,
+            range: line_range(&field.span),
+            selection_range: name_selection_range(&field.span, &field.name),
         })
         .collect()
 }
 
-fn variant_symbols(
-    path: &Path,
-    item: &EnumDef,
-    tokens: &[crate::lexer::Token],
-    docs: &DocComments,
-) -> Vec<SemanticSymbol> {
-    let mut locations = enum_variant_locations(tokens, item);
+fn variant_symbols(path: &Path, item: &EnumDef, docs: &DocComments) -> Vec<SemanticSymbol> {
     item.variants
         .iter()
-        .filter_map(|variant| {
-            let location_index = locations
-                .iter()
-                .position(|location| location.name == variant.name)?;
-            let location = locations.remove(location_index);
-            Some(member_symbol(
-                path,
-                &location,
-                SemanticSymbolKind::Variant,
-                variant_signature(&item.name, variant),
-                docs.item_docs
-                    .get(&location.line)
-                    .cloned()
-                    .unwrap_or_default(),
-            ))
+        .map(|variant| SemanticSymbol {
+            source_path: path.to_path_buf(),
+            name: variant.name.clone(),
+            kind: SemanticSymbolKind::Variant,
+            signature: variant_signature(&item.name, variant),
+            docs: docs
+                .item_docs
+                .get(&variant.span.line)
+                .cloned()
+                .unwrap_or_default(),
+            line: variant.span.line,
+            range: line_range(&variant.span),
+            selection_range: name_selection_range(&variant.span, &variant.name),
         })
         .collect()
-}
-
-fn member_symbol(
-    path: &Path,
-    location: &MemberLocation,
-    kind: SemanticSymbolKind,
-    signature: String,
-    docs: String,
-) -> SemanticSymbol {
-    SemanticSymbol {
-        source_path: path.to_path_buf(),
-        name: location.name.clone(),
-        kind,
-        signature,
-        docs,
-        line: location.line,
-        range: source_line_range(location.line, &location.text),
-        selection_range: token_range(location.line, location.column, &location.name),
-    }
-}
-
-fn struct_field_locations(tokens: &[crate::lexer::Token], item: &StructDef) -> Vec<MemberLocation> {
-    let Some((start, end)) = declaration_body_bounds(tokens, item.span.line, |kind| {
-        matches!(kind, TokenKind::Struct)
-    }) else {
-        return Vec::new();
-    };
-    let mut locations = Vec::new();
-    for index in start..end {
-        let crate::lexer::Token {
-            kind: TokenKind::Ident(name),
-            line,
-            column,
-            text,
-        } = &tokens[index]
-        else {
-            continue;
-        };
-        if next_significant_index(tokens, index, end)
-            .is_some_and(|next| matches!(tokens[next].kind, TokenKind::Colon))
-        {
-            locations.push(MemberLocation {
-                name: name.clone(),
-                line: *line,
-                column: *column,
-                text: text.clone(),
-            });
-        }
-    }
-    locations
-}
-
-fn enum_variant_locations(tokens: &[crate::lexer::Token], item: &EnumDef) -> Vec<MemberLocation> {
-    let Some((start, end)) = declaration_body_bounds(tokens, item.span.line, |kind| {
-        matches!(kind, TokenKind::Enum)
-    }) else {
-        return Vec::new();
-    };
-    let mut locations = Vec::new();
-    for index in start..end {
-        let crate::lexer::Token {
-            kind: TokenKind::Ident(name),
-            line,
-            column,
-            text,
-        } = &tokens[index]
-        else {
-            continue;
-        };
-        if matches!(
-            tokens.get(index + 1).map(|token| &token.kind),
-            Some(TokenKind::LParen | TokenKind::Newline | TokenKind::RBrace)
-        ) {
-            locations.push(MemberLocation {
-                name: name.clone(),
-                line: *line,
-                column: *column,
-                text: text.clone(),
-            });
-        }
-    }
-    locations
-}
-
-fn declaration_body_bounds(
-    tokens: &[crate::lexer::Token],
-    line: usize,
-    keyword: impl Fn(&TokenKind) -> bool,
-) -> Option<(usize, usize)> {
-    let keyword_index = tokens
-        .iter()
-        .position(|token| token.line == line && keyword(&token.kind))?;
-    let name_index = next_significant_index(tokens, keyword_index, tokens.len())?;
-    if !matches!(tokens[name_index].kind, TokenKind::Ident(_)) {
-        return None;
-    }
-    let open_index = (name_index + 1..tokens.len())
-        .find(|index| matches!(tokens[*index].kind, TokenKind::LBrace))?;
-    let mut depth = 0usize;
-    for (index, token) in tokens.iter().enumerate().skip(open_index) {
-        match token.kind {
-            TokenKind::LBrace => depth += 1,
-            TokenKind::RBrace => {
-                depth = depth.saturating_sub(1);
-                if depth == 0 {
-                    return Some((open_index + 1, index));
-                }
-            }
-            _ => {}
-        }
-    }
-    None
-}
-
-fn next_significant_index(
-    tokens: &[crate::lexer::Token],
-    index: usize,
-    end: usize,
-) -> Option<usize> {
-    (index + 1..end).find(|next| !matches!(tokens[*next].kind, TokenKind::Newline))
 }
 
 fn method_symbols(path: &Path, impl_block: &ImplBlock, docs: &DocComments) -> Vec<SemanticSymbol> {
@@ -988,7 +847,7 @@ mod tests {
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
-        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    email: string\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
+        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -997,15 +856,34 @@ mod tests {
                 .iter()
                 .map(|symbol| symbol.name.as_str())
                 .collect::<Vec<_>>(),
-            vec!["User", "email", "add", "email"]
+            vec!["User", "email", "Status", "Ready", "Done", "add", "email"]
         );
         assert_eq!(symbols[1].kind, SemanticSymbolKind::Field);
-        assert_eq!(symbols[1].signature, "field User.email: string");
-        assert_eq!(symbols[2].kind, SemanticSymbolKind::Function);
-        assert_eq!(symbols[2].signature, "pub fn add(a: i64, b: i64) -> i64");
-        assert_eq!(symbols[2].docs, "Adds numbers.");
+        assert_eq!(symbols[1].signature, "pub field User.email: string");
+        assert_eq!(symbols[1].docs, "User email address.");
         assert_eq!(
-            symbols[2].selection_range,
+            symbols[1].selection_range,
+            TextRange {
+                start: TextPosition {
+                    line: 9,
+                    character: 8,
+                },
+                end: TextPosition {
+                    line: 9,
+                    character: 13,
+                },
+            }
+        );
+        assert_eq!(symbols[3].kind, SemanticSymbolKind::Variant);
+        assert_eq!(symbols[3].signature, "variant Status.Ready");
+        assert_eq!(symbols[3].docs, "Ready state.");
+        assert_eq!(symbols[4].signature, "variant Status.Done(i32)");
+        assert_eq!(symbols[4].docs, "Done state.");
+        assert_eq!(symbols[5].kind, SemanticSymbolKind::Function);
+        assert_eq!(symbols[5].signature, "pub fn add(a: i64, b: i64) -> i64");
+        assert_eq!(symbols[5].docs, "Adds numbers.");
+        assert_eq!(
+            symbols[5].selection_range,
             TextRange {
                 start: TextPosition {
                     line: 3,
@@ -1018,7 +896,7 @@ mod tests {
             }
         );
         assert_eq!(
-            symbols[3].signature,
+            symbols[6].signature,
             "pub fn User.email(self: User) -> string"
         );
     }

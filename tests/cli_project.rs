@@ -1,5 +1,6 @@
 use std::fs;
-use std::io::Write;
+use std::io::{Read, Write};
+use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
@@ -6565,6 +6566,78 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
 
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_std_net_tcp_stream_helpers() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 4];
+        stream.read_exact(&mut request).unwrap();
+        assert_eq!(&request, b"ping");
+        stream.write_all(b"pong").unwrap();
+    });
+
+    let root = temp_test_root("std-net-tcp-stream-helpers");
+    reset_dir(&root);
+    let project = root.join("net_tcp_stream_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"net_tcp_stream_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+
+fn request() -> Result<string, NetError> {
+    let stream: TcpStream = net.connect("127.0.0.1", __PORT__)?
+    stream.write_string("ping")?
+    let text: string = stream.read_to_string()?
+    stream.close()
+    return Ok(text)
+}
+
+fn main() -> void {
+    let result: Result<string, NetError> = request()
+    match result {
+        Ok(text) => {
+            io.println(text)
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "pong\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 

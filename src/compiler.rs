@@ -547,6 +547,20 @@ pub enum ValueExpr {
         file: Box<ValueExpr>,
         content: Box<ValueExpr>,
     },
+    NetConnect {
+        host: Box<ValueExpr>,
+        port: Box<ValueExpr>,
+    },
+    TcpStreamClose {
+        stream: Box<ValueExpr>,
+    },
+    TcpStreamReadToString {
+        stream: Box<ValueExpr>,
+    },
+    TcpStreamWriteString {
+        stream: Box<ValueExpr>,
+        content: Box<ValueExpr>,
+    },
     ResultMapErr {
         result: Box<ValueExpr>,
         ok_type: ValueType,
@@ -1851,6 +1865,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs.remove_dir"
             | "std.fs.read_dir"
             | "std.fs.open"
+            | "std.net"
+            | "std.net.NetError"
+            | "std.net.TcpStream"
+            | "std.net.connect"
             | "std.env"
             | "std.env.args"
             | "std.env.cwd"
@@ -2252,6 +2270,10 @@ fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "FsError")?;
         reject_user_std_struct(path, structs, "File")?;
     }
+    if needs.net {
+        reject_user_std_struct(path, structs, "NetError")?;
+        reject_user_std_struct(path, structs, "TcpStream")?;
+    }
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;
     }
@@ -2262,7 +2284,7 @@ fn validate_standard_type_conflicts(
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
     }
-    if needs.io || needs.fs || needs.num || needs.process || needs.result {
+    if needs.io || needs.fs || needs.net || needs.num || needs.process || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
     }
     if needs.env || needs.num || needs.option || needs.array {
@@ -2511,6 +2533,7 @@ struct StandardTypeNeeds {
     fs: bool,
     env: bool,
     process: bool,
+    net: bool,
     hash: bool,
     json: bool,
     regex: bool,
@@ -2538,6 +2561,9 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.process" || item.starts_with("std.process."))
             || source_uses_process_builtin(ast),
+        net: imports
+            .iter()
+            .any(|item| item == "std.net" || item.starts_with("std.net.")),
         hash: imports
             .iter()
             .any(|item| item == "std.hash" || item.starts_with("std.hash."))
@@ -2599,6 +2625,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("ProcessError".to_string(), 0));
         names.push(("ProcessOutput".to_string(), 0));
     }
+    if needs.net {
+        names.push(("NetError".to_string(), 0));
+        names.push(("TcpStream".to_string(), 0));
+    }
     if needs.hash {
         names.push(("HashState".to_string(), 0));
     }
@@ -2624,6 +2654,7 @@ fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String
     let mut names = Vec::new();
     if needs.io
         || needs.fs
+        || needs.net
         || needs.num
         || needs.process
         || needs.json
@@ -2692,6 +2723,25 @@ fn inject_standard_types(
                     value_type: ValueType::U64,
                 },
             ],
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "NetError") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "NetError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "TcpStream") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "TcpStream".to_string(),
+            type_params: Vec::new(),
+            fields: Vec::new(),
         });
     }
     if needs.num && !structs.iter().any(|item| item.name == "NumError") {
@@ -8977,6 +9027,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "net" {
+                    return lower_net_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "regex" {
                     return lower_regex_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -9351,6 +9406,19 @@ fn lower_value_expr_with_expected(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_net_builtin_call(callee) {
+                require_import(path, imports, span, "std.net", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "net builtins do not accept type arguments",
+                    ));
+                }
+                return lower_net_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if is_regex_builtin_call(callee) {
                 require_import(path, imports, span, "std.regex", &callee.join("."))?;
                 if !type_args.is_empty() {
@@ -9530,6 +9598,11 @@ fn lower_value_expr_with_expected(
             }
             if type_args.is_empty() && is_file_value_method(callee, scope) {
                 return lower_file_value_method(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if type_args.is_empty() && is_tcp_stream_value_method(callee, scope) {
+                return lower_tcp_stream_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -11040,6 +11113,13 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_net_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "net" && matches!(name.as_str(), "connect")
+    )
+}
+
 fn is_regex_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -11368,6 +11448,93 @@ fn lower_json_builtin(
             ))
         }
         _ => unreachable!("json builtin dispatcher only passes known calls"),
+    }
+}
+
+fn lower_net_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("net builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "net");
+    let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+    match name.as_str() {
+        "connect" => {
+            let [host_arg, port_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`net.connect` expects host and port arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (host_type, host) = lower_value_expr_with_expected(
+                path,
+                host_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if host_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`net.connect` expects a string host",
+                    &ValueType::String,
+                    &host_type,
+                ));
+            }
+            let (port_type, port) = lower_value_expr_with_expected(
+                path,
+                port_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::Int),
+                span,
+            )?;
+            if port_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`net.connect` expects an i64 port",
+                    &ValueType::Int,
+                    &port_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("TcpStream".to_string(), Vec::new()),
+                        net_error,
+                    ],
+                ),
+                ValueExpr::NetConnect {
+                    host: Box::new(host),
+                    port: Box::new(port),
+                },
+            ))
+        }
+        _ => unreachable!("net builtin dispatcher only passes known calls"),
     }
 }
 
@@ -13399,6 +13566,124 @@ fn lower_file_value_method(
         _ => Err(Diagnostic::new(
             "E0305",
             format!("unknown File method `{method}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )),
+    }
+}
+
+fn is_tcp_stream_value_method(callee: &[String], scope: &HashMap<String, Binding>) -> bool {
+    if callee.len() != 2 {
+        return false;
+    }
+    scope.get(&callee[0]).is_some_and(|binding| {
+        binding.value_type == ValueType::Struct("TcpStream".to_string(), Vec::new())
+    })
+}
+
+fn lower_tcp_stream_value_method(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let name = &callee[0];
+    let method = &callee[1];
+    let binding = scope
+        .get(name)
+        .expect("tcp stream method receiver is in scope");
+    let receiver_expr = binding_value_expr(name, binding);
+    let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
+    match method.as_str() {
+        "close" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpStream.close` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::TcpStreamClose {
+                    stream: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "read_to_string" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpStream.read_to_string` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::String, net_error]),
+                ValueExpr::TcpStreamReadToString {
+                    stream: Box::new(receiver_expr),
+                },
+            ))
+        }
+        "write_string" => {
+            let [content_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpStream.write_string` expects exactly one content string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (content_type, lowered_content) = lower_value_expr_with_expected(
+                path,
+                content_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if content_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`TcpStream.write_string` expects string content",
+                    &ValueType::String,
+                    &content_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, net_error]),
+                ValueExpr::TcpStreamWriteString {
+                    stream: Box::new(receiver_expr),
+                    content: Box::new(lowered_content),
+                },
+            ))
+        }
+        _ => Err(Diagnostic::new(
+            "E0305",
+            format!("unknown TcpStream method `{method}`"),
             path,
             span.line,
             span.column,
@@ -15595,6 +15880,9 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         }
         "stringify" if imports.iter().any(|item| item == "std.json.stringify") => {
             vec!["json".to_string(), "stringify".to_string()]
+        }
+        "connect" if imports.iter().any(|item| item == "std.net.connect") => {
+            vec!["net".to_string(), "connect".to_string()]
         }
         "compile" if imports.iter().any(|item| item == "std.regex.compile") => {
             vec!["regex".to_string(), "compile".to_string()]
@@ -18955,6 +19243,91 @@ fn main() -> void {
                 .iter()
                 .any(|stmt| matches!(stmt, Statement::Expr(ValueExpr::FileClose { .. })))
         );
+    }
+
+    #[test]
+    fn accepts_net_tcp_stream_builtins() {
+        let source = r#"package app.main
+
+import std.net
+
+fn request(host: string, port: i64) -> Result<string, NetError> {
+    let stream: TcpStream = net.connect(host, port)?
+    stream.write_string("ping")?
+    let text: string = stream.read_to_string()?
+    stream.close()
+    return Ok(text)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "NetError"));
+        assert!(program.structs.iter().any(|item| item.name == "TcpStream"));
+        let request = program
+            .functions
+            .iter()
+            .find(|f| f.name == "request")
+            .unwrap();
+        assert!(matches!(
+            request.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref name, ref args),
+                result_expr: ValueExpr::NetConnect { .. },
+                ..
+            } if name == "TcpStream" && args.is_empty()
+        ));
+        assert!(request.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Void,
+                result_expr: ValueExpr::TcpStreamWriteString { .. },
+                ..
+            }
+        )));
+        assert!(request.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::String,
+                result_expr: ValueExpr::TcpStreamReadToString { .. },
+                ..
+            }
+        )));
+        assert!(
+            request
+                .body
+                .iter()
+                .any(|stmt| matches!(stmt, Statement::Expr(ValueExpr::TcpStreamClose { .. })))
+        );
+    }
+
+    #[test]
+    fn accepts_specific_net_connect_import() {
+        let source = r#"package app.main
+
+import std.net.connect
+import std.result
+
+fn request(host: string, port: i64) -> Result<TcpStream, NetError> {
+    return connect(host, port)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let request = program
+            .functions
+            .iter()
+            .find(|f| f.name == "request")
+            .unwrap();
+        assert!(matches!(
+            request.body[0],
+            Statement::Return(Some(ValueExpr::NetConnect { .. }))
+        ));
     }
 
     #[test]

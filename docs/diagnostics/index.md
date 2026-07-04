@@ -113,6 +113,21 @@ the same code.
 - [E0307](E0307.md) - duplicate struct field
 - [E0308](E0308.md) - unknown struct field
 - [E0309](E0309.md) - unknown struct or impl target
+- [E0310](E0310.md) - missing struct literal field
+- [E0311](E0311.md) - duplicate struct literal field
+- [E0312](E0312.md) - type namespace or struct field conflict
+- [E0313](E0313.md) - duplicate enum definition
+- [E0314](E0314.md) - duplicate enum variant
+- [E0315](E0315.md) - unknown enum variant
+- [E0316](E0316.md) - invalid match arm variant path
+- [E0317](E0317.md) - duplicate match arm or generic struct literal needs annotation
+- [E0318](E0318.md) - non-exhaustive match
+- [E0319](E0319.md) - match initializer has no value-producing arm
+- [E0320](E0320.md) - enum variant requires payload
+- [E0321](E0321.md) - match arm must bind payload
+- [E0322](E0322.md) - match arm cannot bind unit variant
+- [E0323](E0323.md) - enum variant does not accept payload
+- [E0324](E0324.md) - generic enum constructor needs annotation
 - [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch
 - [E0420](E0420.md) - invalid question operator carrier

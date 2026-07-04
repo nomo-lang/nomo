@@ -347,6 +347,15 @@ pub enum ValueExpr {
     TimeSleepMillis {
         duration: Box<ValueExpr>,
     },
+    ProcessExit {
+        code: Box<ValueExpr>,
+    },
+    ProcessStatus {
+        command: Box<ValueExpr>,
+    },
+    ProcessExec {
+        command: Box<ValueExpr>,
+    },
     NumParseI64 {
         value: Box<ValueExpr>,
     },
@@ -1794,6 +1803,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.time.now_millis"
             | "std.time.monotonic_millis"
             | "std.time.sleep_millis"
+            | "std.process"
+            | "std.process.ProcessError"
+            | "std.process.exit"
+            | "std.process.status"
+            | "std.process.exec"
             | "std.num"
             | "std.num.NumError"
             | "std.num.parse_i64"
@@ -2070,7 +2084,10 @@ fn validate_standard_type_conflicts(
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;
     }
-    if needs.io || needs.fs || needs.num || needs.result {
+    if needs.process {
+        reject_user_std_struct(path, structs, "ProcessError")?;
+    }
+    if needs.io || needs.fs || needs.num || needs.process || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
     }
     if needs.env || needs.num || needs.option || needs.array {
@@ -2318,6 +2335,7 @@ struct StandardTypeNeeds {
     io: bool,
     fs: bool,
     env: bool,
+    process: bool,
     num: bool,
     result: bool,
     option: bool,
@@ -2336,6 +2354,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.env" || item.starts_with("std.env."))
             || source_uses_env_builtin(ast),
+        process: imports
+            .iter()
+            .any(|item| item == "std.process" || item.starts_with("std.process."))
+            || source_uses_process_builtin(ast),
         num: imports
             .iter()
             .any(|item| item == "std.num" || item.starts_with("std.num."))
@@ -2367,12 +2389,15 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.num {
         names.push(("NumError".to_string(), 0));
     }
+    if needs.process {
+        names.push(("ProcessError".to_string(), 0));
+    }
     names.into_iter()
 }
 
 fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
-    if needs.io || needs.fs || needs.num || needs.result {
+    if needs.io || needs.fs || needs.num || needs.process || needs.result {
         names.push(("Result".to_string(), 2));
     }
     if needs.env || needs.num || needs.option || needs.array {
@@ -2448,6 +2473,17 @@ fn inject_standard_types(
             }],
         });
     }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessError") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
     if (needs.io || needs.fs || needs.num || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
@@ -2504,6 +2540,12 @@ fn source_uses_env_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_env_builtin)
+}
+
+fn source_uses_process_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_process_builtin)
 }
 
 fn source_uses_num_builtin(ast: &SourceFile) -> bool {
@@ -2974,6 +3016,46 @@ fn stmt_uses_env_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_process_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_process_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_process_builtin(value) || else_body.iter().any(stmt_uses_process_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_process_builtin(value)
+                || body.iter().any(stmt_uses_process_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_process_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_process_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_process_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_process_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_process_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_process_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_process_builtin(condition) || body.iter().any(stmt_uses_process_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_process_builtin(iterable) || body.iter().any(stmt_uses_process_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_process_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_num_builtin(value),
@@ -3177,6 +3259,45 @@ fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
     }
 }
 
+fn expr_uses_process_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            is_process_builtin_call(callee) || args.iter().any(expr_uses_process_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_process_builtin(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_process_builtin(value)
+                || arms.iter().any(|arm| expr_uses_process_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_process_builtin(condition)
+                || expr_uses_process_builtin(then_branch)
+                || expr_uses_process_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_process_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_process_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_process_builtin(left) || expr_uses_process_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
 fn expr_uses_num_builtin(expr: &AstExpr) -> bool {
     match expr {
         AstExpr::Call { callee, args, .. } => {
@@ -3355,7 +3476,7 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
 fn is_known_std_value_module(name: &str) -> bool {
     matches!(
         name,
-        "io" | "fs" | "env" | "string" | "path" | "math" | "Array"
+        "io" | "fs" | "env" | "process" | "string" | "path" | "math" | "Array"
     )
 }
 
@@ -8137,6 +8258,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "process" {
+                    return lower_process_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "path" {
                     return lower_path_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8429,6 +8555,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_env_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_process_builtin_call(callee) {
+                require_import(path, imports, span, "std.process", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "process builtins do not accept type arguments",
+                    ));
+                }
+                return lower_process_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -9701,6 +9840,99 @@ fn lower_env_builtin(
     }
 }
 
+fn lower_process_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let process_error = ValueType::Struct("ProcessError".to_string(), Vec::new());
+    match callee {
+        [module, name] if module == "process" && name == "exit" => {
+            let [code_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`process.exit` expects exactly one i64 exit code",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (code_type, lowered_code) = lower_value_expr(
+                path, code_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if code_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`process.exit` expects an i64 exit code",
+                    &ValueType::Int,
+                    &code_type,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::ProcessExit {
+                    code: Box::new(lowered_code),
+                },
+            ))
+        }
+        [module, name] if module == "process" && (name == "status" || name == "exec") => {
+            let [command_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`process.{name}` expects exactly one command string"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (command_type, lowered_command) = lower_value_expr(
+                path,
+                command_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if command_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`process.{name}` expects a string command"),
+                ));
+            }
+            if name == "status" {
+                Ok((
+                    ValueType::Enum("Result".to_string(), vec![ValueType::I32, process_error]),
+                    ValueExpr::ProcessStatus {
+                        command: Box::new(lowered_command),
+                    },
+                ))
+            } else {
+                Ok((
+                    ValueType::Enum("Result".to_string(), vec![ValueType::String, process_error]),
+                    ValueExpr::ProcessExec {
+                        command: Box::new(lowered_command),
+                    },
+                ))
+            }
+        }
+        _ => unreachable!("process builtin dispatcher only passes known calls"),
+    }
+}
+
 fn is_env_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -9717,6 +9949,14 @@ fn is_io_value_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
         [module, name] if module == "io" && matches!(name.as_str(), "read_line")
+    )
+}
+
+fn is_process_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "process" && matches!(name.as_str(), "exit" | "status" | "exec")
     )
 }
 
@@ -12910,6 +13150,15 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "args" if imports.iter().any(|item| item == "std.env.args") => {
             vec!["env".to_string(), "args".to_string()]
         }
+        "exit" if imports.iter().any(|item| item == "std.process.exit") => {
+            vec!["process".to_string(), "exit".to_string()]
+        }
+        "status" if imports.iter().any(|item| item == "std.process.status") => {
+            vec!["process".to_string(), "status".to_string()]
+        }
+        "exec" if imports.iter().any(|item| item == "std.process.exec") => {
+            vec!["process".to_string(), "exec".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.path.join") => {
             vec!["path".to_string(), "join".to_string()]
         }
@@ -14045,6 +14294,85 @@ fn main() -> void {
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("path.basename"));
         assert!(err.message.contains("string"));
+    }
+
+    #[test]
+    fn accepts_process_builtins() {
+        let source = r#"package app.main
+
+import std.process
+import std.result
+
+fn run() -> Result<string, ProcessError> {
+    let status: i32 = process.status("printf status-ok >/dev/null")?
+    return process.exec("printf process-ok")
+}
+
+fn quit() -> void {
+    process.exit(0)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "ProcessError")
+        );
+        let run = program.functions.iter().find(|f| f.name == "run").unwrap();
+        assert!(matches!(
+            run.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::I32,
+                result_expr: ValueExpr::ProcessStatus { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            run.body[1],
+            Statement::Return(Some(ValueExpr::ProcessExec { .. }))
+        ));
+        let quit = program.functions.iter().find(|f| f.name == "quit").unwrap();
+        assert!(matches!(
+            quit.body[0],
+            Statement::Expr(ValueExpr::ProcessExit { .. })
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_process_builtin_imports() {
+        let source = r#"package app.main
+
+import std.process.exec
+import std.process.status
+import std.result
+
+fn run() -> Result<string, ProcessError> {
+    let status: i32 = status("printf status-ok >/dev/null")?
+    return exec("printf process-ok")
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let run = program.functions.iter().find(|f| f.name == "run").unwrap();
+        assert!(matches!(
+            run.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::ProcessStatus { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            run.body[1],
+            Statement::Return(Some(ValueExpr::ProcessExec { .. }))
+        ));
     }
 
     #[test]

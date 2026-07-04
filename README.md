@@ -345,6 +345,12 @@ milliseconds, the second returns monotonic milliseconds suitable for measuring
 elapsed time within one process, and `sleep_millis` panics for negative
 durations.
 
+`std.process` provides synchronous process helpers: `process.exit`,
+`process.status`, and `process.exec`. `status` returns a command exit code as
+`Result<i32, ProcessError>`. `exec` captures stdout as
+`Result<string, ProcessError>` and treats a non-zero exit status as an error.
+`exec` does not capture stderr in v0.1.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

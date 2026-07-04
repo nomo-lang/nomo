@@ -5726,6 +5726,77 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_process_helpers() {
+    let root = temp_test_root("std-process-helpers");
+    reset_dir(&root);
+    let project = root.join("process_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"process_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.process
+
+fn main() -> void {
+    let status: Result<i32, ProcessError> = process.status("printf status-ok >/dev/null")
+    match status {
+        Ok(code) => {
+            if code == 0 {
+                io.println("status-ok")
+            } else {
+                io.println("status-bad")
+            }
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+    let output: Result<string, ProcessError> = process.exec("printf process-ok")
+    match output {
+        Ok(text) => {
+            io.println(text)
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "status-ok\nprocess-ok\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_extended_std_array_helpers() {
     let root = temp_test_root("std-array-helpers");
     reset_dir(&root);

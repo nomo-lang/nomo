@@ -71,6 +71,14 @@ the same code.
 - [E0236](E0236.md) - invalid generic type argument separator
 - [E0237](E0237.md) - duplicate generic type parameter
 - [E0238](E0238.md) - unsupported match wildcard
+- [E0240](E0240.md) - expected if expression
+- [E0241](E0241.md) - missing if branch body
+- [E0242](E0242.md) - unterminated expression block
+- [E0244](E0244.md) - missing else branch
+- [E0245](E0245.md) - missing else branch body
+- [E0246](E0246.md) - expected panic expression
+- [E0247](E0247.md) - missing panic argument list
+- [E0248](E0248.md) - missing panic closing parenthesis
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

@@ -21,6 +21,8 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "nomo_doc_basic",
     "workspace_basic",
     "workspace_dependencies",
+    "deps_git",
+    "deps_vendor",
     "operators_arithmetic",
     "operators_logical",
     "operators_bitwise",
@@ -33,10 +35,12 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
 #[test]
 fn examples_check_and_run() {
     for example in example_projects() {
+        clean_example_artifacts(&example);
+        prepare_example(&example);
         clean_example_build_dirs(&example);
         if is_workspace_example(&example) {
             assert_workspace_example(&example);
-            clean_example_build_dirs(&example);
+            clean_example_artifacts(&example);
             continue;
         }
 
@@ -61,7 +65,7 @@ fn examples_check_and_run() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_example_output(&example, &output.stdout, &output.stderr);
-        clean_example_build_dirs(&example);
+        clean_example_artifacts(&example);
     }
 }
 
@@ -181,6 +185,7 @@ fn assert_extra_cli_commands(example: &Path) {
     match example_name(example) {
         "nomo_test_basic" => assert_cli_test_basic(example),
         "nomo_doc_basic" => assert_cli_doc_basic(example),
+        "deps_vendor" => assert_cli_deps_vendor(example),
         _ => {}
     }
 }
@@ -246,6 +251,113 @@ fn assert_cli_doc_basic(example: &Path) {
     assert!(
         stdout.contains("User-facing record documented from a block doc comment."),
         "{stdout}"
+    );
+}
+
+fn assert_cli_deps_vendor(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("vendor")
+        .arg(example)
+        .arg("--sync")
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo deps vendor --sync {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo deps vendor --sync failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("vendored {}\n", example.join("vendor").display())
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lockfile = example.join("nomo.lock");
+    assert!(
+        lockfile.exists(),
+        "missing lockfile: {}",
+        lockfile.display()
+    );
+
+    let vendor_manifest_path = example.join("vendor/nomo-vendor.toml");
+    let vendor_manifest = fs::read_to_string(&vendor_manifest_path)
+        .unwrap_or_else(|err| panic!("failed to read {}: {err}", vendor_manifest_path.display()));
+    assert!(
+        vendor_manifest.contains("source = \"path+fixtures/utils\""),
+        "{vendor_manifest}"
+    );
+    assert!(
+        vendor_manifest.contains("source = \"git+fixtures/remote_label\""),
+        "{vendor_manifest}"
+    );
+    assert!(
+        example
+            .join("vendor/examples/utils/path/nomo.toml")
+            .exists()
+    );
+    assert!(
+        fs::read_dir(example.join("vendor/examples/remote-label"))
+            .unwrap()
+            .any(|entry| entry
+                .unwrap()
+                .file_name()
+                .to_string_lossy()
+                .starts_with("git-"))
+    );
+
+    let clean_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("clean-cache")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo deps clean-cache {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        clean_output.status.success(),
+        "nomo deps clean-cache failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&clean_output.stdout),
+        String::from_utf8_lossy(&clean_output.stderr)
+    );
+
+    let offline_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(example)
+        .arg("--offline")
+        .arg("--emit-c")
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo build --offline --emit-c {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        offline_output.status.success(),
+        "nomo build --offline --emit-c failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&offline_output.stdout),
+        String::from_utf8_lossy(&offline_output.stderr)
+    );
+    assert!(
+        offline_output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&offline_output.stderr)
     );
 }
 
@@ -561,6 +673,44 @@ fn example_name(example: &Path) -> &str {
         .unwrap_or_else(|| panic!("example path has no file name: {}", example.display()))
 }
 
+fn prepare_example(example: &Path) {
+    match example_name(example) {
+        "deps_git" => init_example_git_fixture(&example.join("fixtures/calc")),
+        "deps_vendor" => init_example_git_fixture(&example.join("fixtures/remote_label")),
+        _ => {}
+    }
+}
+
+fn init_example_git_fixture(path: &Path) {
+    let git_dir = path.join(".git");
+    if git_dir.exists() {
+        fs::remove_dir_all(&git_dir)
+            .unwrap_or_else(|err| panic!("failed to remove {}: {err}", git_dir.display()));
+    }
+    run_git(path, &["init", "--quiet"]);
+    run_git(path, &["config", "user.email", "nomo@example.invalid"]);
+    run_git(path, &["config", "user.name", "Nomo Example"]);
+    run_git(path, &["add", "nomo.toml", "src"]);
+    run_git(path, &["commit", "--quiet", "-m", "initial"]);
+}
+
+fn run_git(path: &Path, args: &[&str]) {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(path)
+        .args(args)
+        .output()
+        .unwrap_or_else(|err| panic!("failed to run git in {}: {err}", path.display()));
+    assert!(
+        output.status.success(),
+        "git -C {} {} failed\nstdout:\n{}\nstderr:\n{}",
+        path.display(),
+        args.join(" "),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn is_workspace_example(example: &Path) -> bool {
     matches!(
         example_name(example),
@@ -615,6 +765,25 @@ fn clean_example_build_dirs(example: &Path) {
     clean_build_dirs_recursive(example);
 }
 
+fn clean_example_artifacts(example: &Path) {
+    clean_example_build_dirs(example);
+    for path in [
+        example.join("nomo.lock"),
+        example.join("vendor"),
+        example.join(".nomo"),
+        example.join("fixtures/calc/.git"),
+        example.join("fixtures/remote_label/.git"),
+    ] {
+        if path.is_dir() {
+            fs::remove_dir_all(&path)
+                .unwrap_or_else(|err| panic!("failed to clean {}: {err}", path.display()));
+        } else if path.is_file() {
+            fs::remove_file(&path)
+                .unwrap_or_else(|err| panic!("failed to clean {}: {err}", path.display()));
+        }
+    }
+}
+
 fn clean_build_dirs_recursive(dir: &Path) {
     for entry in
         fs::read_dir(dir).unwrap_or_else(|err| panic!("failed to read {}: {err}", dir.display()))
@@ -654,6 +823,8 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
             "working\ncontinue cleanup\nbreak cleanup\nblock\ninner\nafter block\ninner early\nouter early\nclose\nflush\nlog\n"
         }
         "defer_question" => "defer before ? error\nfail\n",
+        "deps_git" => "deps git ok\n",
+        "deps_vendor" => "deps vendor ok\n",
         "enum_struct_payload" => "a@nomo.dev\n",
         "env_extended" => "set ok\ncwd ok\nhome ok\ntemp ok\n",
         "env_get" => "env get ok\n",

@@ -1,0 +1,4 @@
+package remote_label.main
+
+fn main() -> void {
+}

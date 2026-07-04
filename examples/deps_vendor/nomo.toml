@@ -1,0 +1,7 @@
+[package]
+name = "deps_vendor"
+version = "0.1.0"
+
+[dependencies]
+local_utils = { package = "examples/utils", path = "fixtures/utils" }
+remote_label = { package = "examples/remote-label", git = "fixtures/remote_label" }

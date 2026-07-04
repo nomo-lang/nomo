@@ -1,0 +1,5 @@
+package remote_label.text
+
+pub fn vendor_label() -> string {
+    return "deps vendor ok"
+}

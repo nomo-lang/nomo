@@ -32,6 +32,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `nomo_doc_basic`: Rust-style doc comments consumed by `nomo doc`
 - `workspace_basic`: workspace members, inherited package metadata, local path dependencies, workspace tests, and workspace docs
 - `workspace_dependencies`: inherited `[workspace.dependencies]` entries across workspace members
+- `deps_git`: local git dependency resolution through `nomo` project commands
+- `deps_vendor`: path plus git dependency vendoring and offline build fallback
 - `result_chain`: `Result` with `?`
 - `result_helpers`: `Result` predicates, fallback, map, map_err, and and_then helpers with `?`
 - `result_map_err`: `Result.map_err(converter)?` across error types

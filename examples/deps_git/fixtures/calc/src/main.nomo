@@ -1,0 +1,4 @@
+package calc.main
+
+fn main() -> void {
+}

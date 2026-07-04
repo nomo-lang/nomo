@@ -2110,10 +2110,11 @@ fn resolve_git_source(
     if checkout.exists() {
         run_git_fetch(&checkout, alias)?;
     } else {
+        let clone_source = git_clone_source(base_root, git);
         let output = Command::new("git")
             .arg("clone")
             .arg("--quiet")
-            .arg(git)
+            .arg(&clone_source)
             .arg(&checkout)
             .output()
             .map_err(|err| format!("failed to run git clone for dependency `{alias}`: {err}"))?;
@@ -2138,6 +2139,15 @@ fn resolve_git_source(
     }
 
     fs::canonicalize(&checkout).map_err(|err| err.to_string())
+}
+
+fn git_clone_source(base_root: &Path, git: &str) -> PathBuf {
+    let path = Path::new(git);
+    if path.is_absolute() || git.contains("://") || git.contains(':') {
+        path.to_path_buf()
+    } else {
+        base_root.join(path)
+    }
 }
 
 fn resolve_git_source_offline(
@@ -2647,7 +2657,13 @@ fn locked_git_root(
     if actual_id != dependency.package {
         return Ok(None);
     }
-    if git_remote_url(&path).as_deref() != Some(git) {
+    let Some(remote_url) = git_remote_url(&path) else {
+        return Ok(None);
+    };
+    let clone_source = git_clone_source(base_root, git)
+        .to_string_lossy()
+        .replace('\\', "/");
+    if remote_url != git && remote_url.replace('\\', "/") != clone_source {
         return Ok(None);
     }
     fs::canonicalize(&path)

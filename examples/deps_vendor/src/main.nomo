@@ -1,0 +1,14 @@
+package app.main
+
+import local_utils.math
+import remote_label.text
+import std.io
+
+fn main() -> void {
+    let total: i64 = add(40, 2)
+    if total == 42 {
+        io.println(vendor_label())
+    } else {
+        io.println("wrong")
+    }
+}

@@ -1,0 +1,4 @@
+package local_utils.main
+
+fn main() -> void {
+}

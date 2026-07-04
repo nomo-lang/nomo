@@ -1,0 +1,6 @@
+[package]
+name = "deps_git"
+version = "0.1.0"
+
+[dependencies]
+calc = { package = "examples/calc", git = "fixtures/calc" }

@@ -1,0 +1,13 @@
+package app.main
+
+import calc.math
+import std.io
+
+fn main() -> void {
+    let total: i64 = add(20, 22)
+    if total == 42 {
+        io.println(git_label())
+    } else {
+        io.println("wrong")
+    }
+}

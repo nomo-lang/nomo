@@ -4901,6 +4901,7 @@ fn nomo_run_executes_fs_directory_helpers() {
     let list_dir = root.join("list");
     let list_a = list_dir.join("a.txt");
     let list_b = list_dir.join("b.txt");
+    let marker = root.join("marker.txt");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("nomo.toml"),
@@ -4924,32 +4925,25 @@ fn has_entry(entries: Array<string>, needle: string) -> bool {{
     return found
 }}
 
-fn require_ok(result: Result<void, FsError>) -> Result<bool, FsError> {{
-    return match result {{
-        Ok(value) => Ok(true)
-        Err(err) => Err(err)
-    }}
-}}
-
 fn checked() -> Result<void, FsError> {{
-    let created_empty: bool = require_ok(fs.create_dir("{}"))?
+    fs.create_dir("{}")?
     let exists_message: string = if fs.exists("{}") {{ "empty exists" }} else {{ "empty missing" }}
     io.println(exists_message)
     let empty_entries: Array<string> = fs.read_dir("{}")?
     let empty_message: string = if empty_entries.len() == 0 {{ "empty read" }} else {{ "empty unexpected" }}
     io.println(empty_message)
-    let removed_empty: bool = require_ok(fs.remove_dir("{}"))?
+    fs.remove_dir("{}")?
     let remove_message: string = if fs.exists("{}") {{ "remove failed" }} else {{ "empty removed" }}
     io.println(remove_message)
-    let created_list: bool = require_ok(fs.create_dir("{}"))?
-    let wrote_a: bool = require_ok(fs.write_string("{}", "a"))?
-    let wrote_b: bool = require_ok(fs.write_string("{}", "b"))?
+    fs.create_dir("{}")?
+    fs.write_string("{}", "a")?
+    fs.write_string("{}", "b")?
     let entries: Array<string> = fs.read_dir("{}")?
     let has_a: bool = has_entry(entries, "a.txt")
     let has_b: bool = has_entry(entries, "b.txt")
     let list_message: string = if has_a && has_b {{ "list read" }} else {{ "list missing" }}
     io.println(list_message)
-    return Ok(void)
+    return fs.write_string("{}", "ok")?
 }}
 
 fn main() -> void {{
@@ -4971,7 +4965,8 @@ fn main() -> void {{
             list_dir.display(),
             list_a.display(),
             list_b.display(),
-            list_dir.display()
+            list_dir.display(),
+            marker.display()
         ),
     )
     .unwrap();

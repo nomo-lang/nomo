@@ -5332,7 +5332,9 @@ fn lower_question_exprs_in_stmt_into(
         Stmt::Return {
             value: Some(value),
             span,
-        } if question_expr_from_result_ok_return(value, signatures).is_none() => {
+        } if !matches!(value, AstExpr::Question { .. })
+            && question_expr_from_result_ok_return(value, signatures).is_none() =>
+        {
             let (value, changed) = extract_question_exprs(
                 path,
                 value,
@@ -7007,6 +7009,76 @@ fn lower_return_stmt(
             format!("function must return `{}`", return_type.name()),
         )),
         (expected, Some(value)) => {
+            if let AstExpr::Question {
+                expr: question_expr,
+            } = value
+            {
+                let (return_ok_type, return_err_type) =
+                    result_parts(expected).ok_or_else(|| {
+                        Diagnostic::new(
+                            "E0421",
+                            "`?` requires the current function to return `Result<T, E>`",
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        )
+                    })?;
+                let (result_type, result_expr) = lower_value_expr(
+                    path,
+                    question_expr,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    span,
+                )?;
+                let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
+                    Diagnostic::new(
+                        "E0420",
+                        "`?` can only be used with `Result<T, E>`",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    )
+                })?;
+                if ok_type != return_ok_type {
+                    return Err(type_mismatch_expected_found(
+                        path,
+                        span,
+                        format!(
+                            "`?` unwraps `{}` but function returns `Result<{}, E>`",
+                            ok_type.name(),
+                            return_ok_type.name()
+                        ),
+                        &return_ok_type,
+                        &ok_type,
+                    ));
+                }
+                if err_type != return_err_type {
+                    return Err(type_mismatch_expected_found(
+                        path,
+                        span,
+                        format!(
+                            "`?` error type is `{}` but function returns `{}`",
+                            err_type.name(),
+                            return_err_type.name()
+                        ),
+                        &return_err_type,
+                        &err_type,
+                    ));
+                }
+                return Ok(Statement::QuestionReturnOk {
+                    ok_type,
+                    result_type,
+                    return_type: expected.clone(),
+                    result_expr,
+                });
+            }
             if let Some(question_expr) = question_expr_from_result_ok_return(value, signatures) {
                 let (return_ok_type, return_err_type) =
                     result_parts(expected).ok_or_else(|| {

@@ -4075,7 +4075,7 @@ fn emit_question_let(
     write_indent(out, indent);
     out.push_str("}\n");
     write_indent(out, indent);
-    out.push_str(&c_type(value_type));
+    out.push_str(&c_payload_type(value_type));
     out.push(' ');
     out.push_str(&c_var_ident(name));
     out.push_str(" = ");
@@ -4139,7 +4139,7 @@ fn emit_question_return_ok(
     write_indent(out, indent + 1);
     out.push_str("}\n");
     write_indent(out, indent + 1);
-    out.push_str(&c_type(ok_type));
+    out.push_str(&c_payload_type(ok_type));
     out.push_str(" nomo__question_ok = nomo__question_result.payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(";\n");
@@ -13767,5 +13767,156 @@ mod tests {
         ));
         assert!(c.contains("return nomo__question_return;"));
         assert!(c.contains("long long nomo_value = nomo_value_result.payload.nomo_payload_Ok;"));
+    }
+
+    #[test]
+    fn emits_result_void_question_let_without_void_temp() {
+        let result_void_string = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Void, ValueType::String],
+        );
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                package: "app.main".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "write".to_string(),
+                    params: Vec::new(),
+                    return_type: result_void_string.clone(),
+                    body: vec![Statement::Return(Some(ValueExpr::EnumVariant {
+                        enum_name: "Result".to_string(),
+                        enum_args: vec![ValueType::Void, ValueType::String],
+                        variant: "Ok".to_string(),
+                        payload: Some(Box::new(ValueExpr::VoidLiteral)),
+                    }))],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "compute".to_string(),
+                    params: Vec::new(),
+                    return_type: result_void_string.clone(),
+                    body: vec![
+                        Statement::QuestionLet {
+                            carrier: QuestionCarrier::Result,
+                            name: "ignored".to_string(),
+                            value_type: ValueType::Void,
+                            result_type: result_void_string.clone(),
+                            return_type: result_void_string.clone(),
+                            result_expr: ValueExpr::Call {
+                                name: "write".to_string(),
+                                args: Vec::new(),
+                            },
+                        },
+                        Statement::Return(Some(ValueExpr::EnumVariant {
+                            enum_name: "Result".to_string(),
+                            enum_args: vec![ValueType::Void, ValueType::String],
+                            variant: "Ok".to_string(),
+                            payload: Some(Box::new(ValueExpr::VoidLiteral)),
+                        })),
+                    ],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("char nomo_ignored = nomo_ignored_result.payload.nomo_payload_Ok;"));
+        assert!(!c.contains("void nomo_ignored ="));
+    }
+
+    #[test]
+    fn emits_result_void_question_return_ok_without_void_temp() {
+        let result_void_string = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Void, ValueType::String],
+        );
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.io".to_string()],
+            structs: Vec::new(),
+            enums: vec![EnumType {
+                package: "app.main".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![
+                Function {
+                    package: "app.main".to_string(),
+                    name: "write".to_string(),
+                    params: Vec::new(),
+                    return_type: result_void_string.clone(),
+                    body: vec![Statement::Return(Some(ValueExpr::EnumVariant {
+                        enum_name: "Result".to_string(),
+                        enum_args: vec![ValueType::Void, ValueType::String],
+                        variant: "Ok".to_string(),
+                        payload: Some(Box::new(ValueExpr::VoidLiteral)),
+                    }))],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "compute".to_string(),
+                    params: Vec::new(),
+                    return_type: result_void_string.clone(),
+                    body: vec![Statement::QuestionReturnOk {
+                        ok_type: ValueType::Void,
+                        result_type: result_void_string.clone(),
+                        return_type: result_void_string,
+                        result_expr: ValueExpr::Call {
+                            name: "write".to_string(),
+                            args: Vec::new(),
+                        },
+                    }],
+                },
+                Function {
+                    package: "app.main".to_string(),
+                    name: "main".to_string(),
+                    params: Vec::new(),
+                    return_type: ValueType::Void,
+                    body: Vec::new(),
+                },
+            ],
+        };
+
+        let c = emit_c(&program);
+        assert!(
+            c.contains("char nomo__question_ok = nomo__question_result.payload.nomo_payload_Ok;")
+        );
+        assert!(c.contains(".payload.nomo_payload_Ok = nomo__question_ok"));
+        assert!(!c.contains("void nomo__question_ok ="));
     }
 }

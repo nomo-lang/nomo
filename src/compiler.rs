@@ -364,6 +364,36 @@ pub enum ValueExpr {
         target_err_type: ValueType,
         converter: String,
     },
+    ResultIsOk {
+        result: Box<ValueExpr>,
+        ok_type: ValueType,
+        err_type: ValueType,
+    },
+    ResultIsErr {
+        result: Box<ValueExpr>,
+        ok_type: ValueType,
+        err_type: ValueType,
+    },
+    ResultUnwrapOr {
+        result: Box<ValueExpr>,
+        default: Box<ValueExpr>,
+        ok_type: ValueType,
+        err_type: ValueType,
+    },
+    ResultMap {
+        result: Box<ValueExpr>,
+        source_ok_type: ValueType,
+        target_ok_type: ValueType,
+        err_type: ValueType,
+        converter: String,
+    },
+    ResultAndThen {
+        result: Box<ValueExpr>,
+        source_ok_type: ValueType,
+        target_ok_type: ValueType,
+        err_type: ValueType,
+        converter: String,
+    },
     OptionIsSome {
         option: Box<ValueExpr>,
         payload_type: ValueType,
@@ -1606,7 +1636,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.env.temp_dir"
             | "std.result"
             | "std.result.Result"
+            | "std.result.is_ok"
+            | "std.result.is_err"
+            | "std.result.unwrap_or"
+            | "std.result.map"
             | "std.result.map_err"
+            | "std.result.and_then"
             | "std.option"
             | "std.option.Option"
             | "std.option.is_some"
@@ -7654,6 +7689,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "result" {
+                    return lower_result_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
             }
             let Some(template_signature) = signatures.get(name) else {
                 if scope.contains_key(name) {
@@ -7938,6 +7978,19 @@ fn lower_value_expr_with_expected(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_result_builtin_call(callee) {
+                require_result_method_import(path, imports, span, &callee[1])?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "result builtins do not accept type arguments",
+                    ));
+                }
+                return lower_result_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if type_args.is_empty() && is_array_value_method(callee, scope) {
                 return lower_array_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
@@ -7957,9 +8010,9 @@ fn lower_value_expr_with_expected(
                 )? {
                     return Ok(lowered);
                 }
-                if let Some(lowered) =
-                    lower_result_value_method(path, callee, args, scope, imports, signatures, span)?
-                {
+                if let Some(lowered) = lower_result_value_method(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                )? {
                     return Ok(lowered);
                 }
             }
@@ -9447,6 +9500,18 @@ fn is_option_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_result_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "result"
+                && matches!(
+                    name.as_str(),
+                    "is_ok" | "is_err" | "unwrap_or" | "map" | "map_err" | "and_then"
+                )
+    )
+}
+
 fn lower_option_builtin(
     path: &Path,
     callee: &[String],
@@ -9617,14 +9682,19 @@ fn lower_option_value_method(
     let Some(binding) = scope.get(receiver_name) else {
         return Ok(None);
     };
-    require_option_method_import(path, imports, span, method)?;
     let Some(payload_type) = option_payload(&binding.value_type) else {
+        if matches!(method.as_str(), "unwrap_or" | "map" | "and_then")
+            && result_parts(&binding.value_type).is_some()
+        {
+            return Ok(None);
+        }
         return Err(type_mismatch(
             path,
             span,
             format!("`{receiver_name}.{method}` expects an Option value"),
         ));
     };
+    require_option_method_import(path, imports, span, method)?;
     let option = binding_value_expr(receiver_name, binding);
     match method.as_str() {
         "is_some" => Ok(Some((
@@ -9861,6 +9931,105 @@ fn option_converter_signature<'a>(
     Ok(converter_signature)
 }
 
+fn lower_result_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, method] = callee else {
+        unreachable!("result builtin dispatcher only passes qualified calls");
+    };
+    debug_assert_eq!(module, "result");
+    match method.as_str() {
+        "is_ok" | "is_err" => {
+            let [result] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`result.{method}` expects exactly one Result argument"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (result_type, lowered_result) = lower_value_expr(
+                path, result, scope, imports, signatures, structs, enums, span,
+            )?;
+            lower_result_predicate(path, span, method, lowered_result, &result_type)
+        }
+        "unwrap_or" => {
+            let [result, default] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`result.unwrap_or` expects a Result value and a default value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (result_type, lowered_result) = lower_value_expr(
+                path, result, scope, imports, signatures, structs, enums, span,
+            )?;
+            lower_result_unwrap_or(
+                path,
+                span,
+                "result.unwrap_or",
+                lowered_result,
+                &result_type,
+                default,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )
+        }
+        "map" | "map_err" | "and_then" => {
+            let [result, converter] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`result.{method}` expects a Result value and a converter function"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (result_type, lowered_result) = lower_value_expr(
+                path, result, scope, imports, signatures, structs, enums, span,
+            )?;
+            let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
+                type_mismatch(
+                    path,
+                    span,
+                    format!("`result.{method}` expects a Result value"),
+                )
+            })?;
+            lower_result_converter_call(
+                path,
+                span,
+                method,
+                lowered_result,
+                ok_type,
+                err_type,
+                converter,
+                signatures,
+            )
+        }
+        _ => unreachable!("result builtin dispatcher only passes known calls"),
+    }
+}
+
 fn lower_result_value_method(
     path: &Path,
     callee: &[String],
@@ -9868,38 +10037,201 @@ fn lower_result_value_method(
     scope: &HashMap<String, Binding>,
     imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
     span: &Span,
 ) -> Result<Option<(ValueType, ValueExpr)>, Diagnostic> {
     if callee.len() != 2 {
         return Ok(None);
     }
     let receiver_name = &callee[0];
-    let method_name = &callee[1];
+    let method = &callee[1];
+    if !matches!(
+        method.as_str(),
+        "is_ok" | "is_err" | "unwrap_or" | "map" | "map_err" | "and_then"
+    ) {
+        return Ok(None);
+    }
     let Some(binding) = scope.get(receiver_name) else {
         return Ok(None);
     };
-    if method_name != "map_err" {
-        return Ok(None);
-    }
-    require_result_method_import(path, imports, span, method_name)?;
-    let ValueType::Enum(result_name, result_args) = &binding.value_type else {
-        return Err(type_mismatch(
+    require_result_method_import(path, imports, span, method)?;
+    let result = binding_value_expr(receiver_name, binding);
+    let (ok_type, err_type) = result_parts(&binding.value_type).ok_or_else(|| {
+        type_mismatch(
             path,
             span,
-            format!("`{receiver_name}.map_err` expects a `Result` value"),
-        ));
+            format!("`{receiver_name}.{method}` expects a Result value"),
+        )
+    })?;
+    match method.as_str() {
+        "is_ok" | "is_err" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`Result.{method}` expects no arguments"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            lower_result_predicate(path, span, method, result, &binding.value_type).map(Some)
+        }
+        "unwrap_or" => {
+            let [default] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Result.unwrap_or` expects exactly one default value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            lower_result_unwrap_or(
+                path,
+                span,
+                "Result.unwrap_or",
+                result,
+                &binding.value_type,
+                default,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+            )
+            .map(Some)
+        }
+        "map" | "map_err" | "and_then" => {
+            let [converter] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`Result.{method}` expects exactly one converter function"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            lower_result_converter_call(
+                path, span, method, result, ok_type, err_type, converter, signatures,
+            )
+            .map(Some)
+        }
+        _ => unreachable!("result method dispatcher only passes known calls"),
+    }
+}
+
+fn lower_result_predicate(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    result: ValueExpr,
+    result_type: &ValueType,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let (ok_type, err_type) = result_parts(result_type).ok_or_else(|| {
+        type_mismatch(
+            path,
+            span,
+            format!("`Result.{method}` expects a Result value"),
+        )
+    })?;
+    let value = if method == "is_ok" {
+        ValueExpr::ResultIsOk {
+            result: Box::new(result),
+            ok_type,
+            err_type,
+        }
+    } else {
+        ValueExpr::ResultIsErr {
+            result: Box::new(result),
+            ok_type,
+            err_type,
+        }
     };
-    if result_name != "Result" || result_args.len() != 2 {
+    Ok((ValueType::Bool, value))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_result_unwrap_or(
+    path: &Path,
+    span: &Span,
+    label: &str,
+    result: ValueExpr,
+    result_type: &ValueType,
+    default: &AstExpr,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let (ok_type, err_type) = result_parts(result_type)
+        .ok_or_else(|| type_mismatch(path, span, format!("`{label}` expects a Result value")))?;
+    if ok_type == ValueType::Void {
         return Err(type_mismatch(
             path,
             span,
-            format!("`{receiver_name}.map_err` expects a `Result` value"),
+            format!("`{label}` does not support Result<void, E>"),
         ));
     }
-    let [converter] = args else {
+    let (default_type, lowered_default) = lower_value_expr_with_expected(
+        path,
+        default,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        Some(&ok_type),
+        span,
+    )?;
+    if default_type != ok_type {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!(
+                "`{label}` default is `{}` but ok type is `{}`",
+                default_type.name(),
+                ok_type.name()
+            ),
+            &ok_type,
+            &default_type,
+        ));
+    }
+    Ok((
+        ok_type.clone(),
+        ValueExpr::ResultUnwrapOr {
+            result: Box::new(result),
+            default: Box::new(lowered_default),
+            ok_type,
+            err_type,
+        },
+    ))
+}
+
+fn lower_result_converter_call(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    result: ValueExpr,
+    ok_type: ValueType,
+    err_type: ValueType,
+    converter: &AstExpr,
+    signatures: &HashMap<String, FunctionSignature>,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let converter_name = result_converter_name(path, span, method, converter)?;
+    let converter_signature =
+        result_converter_signature(path, span, method, &converter_name, signatures)?;
+    let [converter_param] = converter_signature.params.as_slice() else {
         return Err(Diagnostic::new(
             "E0407",
-            "`Result.map_err` expects exactly one converter function",
+            format!("converter function `{converter_name}` must take exactly one argument"),
             path,
             span.line,
             span.column,
@@ -9907,10 +10239,157 @@ fn lower_result_value_method(
             &span.text,
         ));
     };
+    match method {
+        "map" => {
+            if ok_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`Result.map` does not support Result<void, E>",
+                ));
+            }
+            if converter_param.value_type != ok_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`Result.map` converter `{converter_name}` takes `{}` but ok type is `{}`",
+                        converter_param.value_type.name(),
+                        ok_type.name()
+                    ),
+                    &ok_type,
+                    &converter_param.value_type,
+                ));
+            }
+            if converter_signature.return_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("converter function `{converter_name}` must return a mapped value"),
+                ));
+            }
+            let target_ok_type = converter_signature.return_type.clone();
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![target_ok_type.clone(), err_type.clone()],
+                ),
+                ValueExpr::ResultMap {
+                    result: Box::new(result),
+                    source_ok_type: ok_type,
+                    target_ok_type,
+                    err_type,
+                    converter: converter_name,
+                },
+            ))
+        }
+        "map_err" => {
+            if converter_param.value_type != err_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`Result.map_err` converter `{converter_name}` takes `{}` but error type is `{}`",
+                        converter_param.value_type.name(),
+                        err_type.name()
+                    ),
+                    &err_type,
+                    &converter_param.value_type,
+                ));
+            }
+            if converter_signature.return_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("converter function `{converter_name}` must return an error value"),
+                ));
+            }
+            let target_err_type = converter_signature.return_type.clone();
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![ok_type.clone(), target_err_type.clone()],
+                ),
+                ValueExpr::ResultMapErr {
+                    result: Box::new(result),
+                    ok_type,
+                    source_err_type: err_type,
+                    target_err_type,
+                    converter: converter_name,
+                },
+            ))
+        }
+        "and_then" => {
+            if ok_type == ValueType::Void {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`Result.and_then` does not support Result<void, E>",
+                ));
+            }
+            if converter_param.value_type != ok_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`Result.and_then` converter `{converter_name}` takes `{}` but ok type is `{}`",
+                        converter_param.value_type.name(),
+                        ok_type.name()
+                    ),
+                    &ok_type,
+                    &converter_param.value_type,
+                ));
+            }
+            let Some((target_ok_type, target_err_type)) =
+                result_parts(&converter_signature.return_type)
+            else {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("converter function `{converter_name}` must return a Result value"),
+                ));
+            };
+            if target_err_type != err_type {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!(
+                        "`Result.and_then` converter `{converter_name}` returns error `{}` but source error is `{}`",
+                        target_err_type.name(),
+                        err_type.name()
+                    ),
+                    &err_type,
+                    &target_err_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![target_ok_type.clone(), err_type.clone()],
+                ),
+                ValueExpr::ResultAndThen {
+                    result: Box::new(result),
+                    source_ok_type: ok_type,
+                    target_ok_type,
+                    err_type,
+                    converter: converter_name,
+                },
+            ))
+        }
+        _ => unreachable!("result converter helper only supports map/map_err/and_then"),
+    }
+}
+
+fn result_converter_name(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    converter: &AstExpr,
+) -> Result<String, Diagnostic> {
     let AstExpr::Name(converter_path) = converter else {
         return Err(Diagnostic::new(
             "E0407",
-            "`Result.map_err` expects a converter function name",
+            format!("`Result.{method}` expects a converter function name"),
             path,
             span.line,
             span.column,
@@ -9921,7 +10400,7 @@ fn lower_result_value_method(
     let [converter_name] = converter_path.as_slice() else {
         return Err(Diagnostic::new(
             "E0407",
-            "`Result.map_err` expects an unqualified converter function name",
+            format!("`Result.{method}` expects an unqualified converter function name"),
             path,
             span.line,
             span.column,
@@ -9929,6 +10408,16 @@ fn lower_result_value_method(
             &span.text,
         ));
     };
+    Ok(converter_name.clone())
+}
+
+fn result_converter_signature<'a>(
+    path: &Path,
+    span: &Span,
+    method: &str,
+    converter_name: &str,
+    signatures: &'a HashMap<String, FunctionSignature>,
+) -> Result<&'a FunctionSignature, Diagnostic> {
     let Some(converter_signature) = signatures.get(converter_name) else {
         return Err(Diagnostic::new(
             "E0305",
@@ -9943,7 +10432,7 @@ fn lower_result_value_method(
     if !converter_signature.type_params.is_empty() {
         return Err(Diagnostic::new(
             "E0407",
-            format!("converter function `{converter_name}` must not be generic"),
+            format!("`Result.{method}` converter `{converter_name}` must not be generic"),
             path,
             span.line,
             span.column,
@@ -9951,53 +10440,7 @@ fn lower_result_value_method(
             &span.text,
         ));
     }
-    let [converter_param] = converter_signature.params.as_slice() else {
-        return Err(Diagnostic::new(
-            "E0407",
-            format!("converter function `{converter_name}` must take exactly one argument"),
-            path,
-            span.line,
-            span.column,
-            span.length,
-            &span.text,
-        ));
-    };
-    let ok_type = result_args[0].clone();
-    let source_err_type = result_args[1].clone();
-    if converter_param.value_type != source_err_type {
-        return Err(type_mismatch_expected_found(
-            path,
-            span,
-            format!(
-                "`Result.map_err` converter `{converter_name}` takes `{}` but error type is `{}`",
-                converter_param.value_type.name(),
-                source_err_type.name()
-            ),
-            &source_err_type,
-            &converter_param.value_type,
-        ));
-    }
-    if converter_signature.return_type == ValueType::Void {
-        return Err(type_mismatch(
-            path,
-            span,
-            format!("converter function `{converter_name}` must return an error value"),
-        ));
-    }
-    let target_err_type = converter_signature.return_type.clone();
-    Ok(Some((
-        ValueType::Enum(
-            "Result".to_string(),
-            vec![ok_type.clone(), target_err_type.clone()],
-        ),
-        ValueExpr::ResultMapErr {
-            result: Box::new(binding_value_expr(receiver_name, binding)),
-            ok_type,
-            source_err_type,
-            target_err_type,
-            converter: converter_name.clone(),
-        },
-    )))
+    Ok(converter_signature)
 }
 
 fn lower_struct_value_method(
@@ -11110,6 +11553,15 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "cos" if imports.iter().any(|item| item == "std.math.cos") => {
             vec!["math".to_string(), "cos".to_string()]
         }
+        "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
+            vec!["result".to_string(), "is_ok".to_string()]
+        }
+        "is_err" if imports.iter().any(|item| item == "std.result.is_err") => {
+            vec!["result".to_string(), "is_err".to_string()]
+        }
+        "map_err" if imports.iter().any(|item| item == "std.result.map_err") => {
+            vec!["result".to_string(), "map_err".to_string()]
+        }
         "is_some" if imports.iter().any(|item| item == "std.option.is_some") => {
             vec!["option".to_string(), "is_some".to_string()]
         }
@@ -11124,6 +11576,15 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         }
         "and_then" if imports.iter().any(|item| item == "std.option.and_then") => {
             vec!["option".to_string(), "and_then".to_string()]
+        }
+        "unwrap_or" if imports.iter().any(|item| item == "std.result.unwrap_or") => {
+            vec!["result".to_string(), "unwrap_or".to_string()]
+        }
+        "map" if imports.iter().any(|item| item == "std.result.map") => {
+            vec!["result".to_string(), "map".to_string()]
+        }
+        "and_then" if imports.iter().any(|item| item == "std.result.and_then") => {
+            vec!["result".to_string(), "and_then".to_string()]
         }
         "new" if imports.iter().any(|item| item == "std.array.new") => {
             vec!["Array".to_string(), "new".to_string()]
@@ -16121,6 +16582,160 @@ fn main() -> void {
                 ..
             } if converter == "app_error_from_string"
         ));
+    }
+
+    #[test]
+    fn accepts_result_value_methods() {
+        let source = r#"package app.main
+
+import std.result
+import std.string
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Result<string, string> {
+    return Ok(text.concat(" ok"))
+}
+
+fn main() -> void {
+    let ok: Result<string, string> = Ok("seed")
+    let err: Result<string, string> = Err("bad")
+    let present: bool = ok.is_ok()
+    let absent: bool = err.is_err()
+    let fallback: string = err.unwrap_or("fallback")
+    let mapped: Result<string, string> = ok.map(exclaim)
+    let chained: Result<string, string> = ok.and_then(decorate)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program
+            .functions
+            .iter()
+            .find(|function| function.name == "main")
+            .unwrap();
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::ResultIsOk { .. },
+                ..
+            } if value_type == &ValueType::Bool
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::ResultUnwrapOr { .. },
+                ..
+            } if value_type == &ValueType::String
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::ResultMap { .. },
+                ..
+            } if value_type == &ValueType::Enum(
+                "Result".to_string(),
+                vec![ValueType::String, ValueType::String]
+            )
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Let {
+                ref value_type,
+                initializer: ValueExpr::ResultAndThen { .. },
+                ..
+            } if value_type == &ValueType::Enum(
+                "Result".to_string(),
+                vec![ValueType::String, ValueType::String]
+            )
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_result_helper_imports() {
+        let source = r#"package app.main
+
+import std.result.Result
+import std.result.is_ok
+import std.result.is_err
+import std.result.unwrap_or
+import std.result.map
+import std.result.map_err
+import std.result.and_then
+import std.string
+
+struct AppError {
+    message: string
+}
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Result<string, string> {
+    return Ok(text.concat(" ok"))
+}
+
+fn app_error_from_string(message: string) -> AppError {
+    return AppError { message: message }
+}
+
+fn main() -> void {
+    let ok: Result<string, string> = Ok("seed")
+    let err: Result<string, string> = Err("bad")
+    let present: bool = is_ok(ok)
+    let absent: bool = is_err(err)
+    let fallback: string = unwrap_or(err, "fallback")
+    let mapped: Result<string, string> = map(ok, exclaim)
+    let converted: Result<string, AppError> = map_err(err, app_error_from_string)
+    let chained: Result<string, string> = and_then(ok, decorate)
+}
+"#;
+
+        parse_inline(source).unwrap();
+    }
+
+    #[test]
+    fn accepts_result_module_helpers() {
+        let source = r#"package app.main
+
+import std.result
+import std.string
+
+struct AppError {
+    message: string
+}
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Result<string, string> {
+    return Ok(text.concat(" ok"))
+}
+
+fn app_error_from_string(message: string) -> AppError {
+    return AppError { message: message }
+}
+
+fn main() -> void {
+    let ok: Result<string, string> = Ok("seed")
+    let err: Result<string, string> = Err("bad")
+    let present: bool = result.is_ok(ok)
+    let absent: bool = result.is_err(err)
+    let fallback: string = result.unwrap_or(err, "fallback")
+    let mapped: Result<string, string> = result.map(ok, exclaim)
+    let converted: Result<string, AppError> = result.map_err(err, app_error_from_string)
+    let chained: Result<string, string> = result.and_then(ok, decorate)
+}
+"#;
+
+        parse_inline(source).unwrap();
     }
 
     #[test]

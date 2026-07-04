@@ -1,0 +1,6 @@
+[package]
+name = "result_helpers"
+version = "0.1.0"
+
+[dependencies]
+std = "0.1.0"

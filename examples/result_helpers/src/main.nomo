@@ -1,0 +1,66 @@
+package app.main
+
+import std.io
+import std.result
+import std.string
+
+struct AppError {
+    message: string
+}
+
+fn parse_label(flag: bool) -> Result<string, string> {
+    return if flag {
+        Ok("seed")
+    } else {
+        Err("err")
+    }
+}
+
+fn exclaim(text: string) -> string {
+    return text.concat("!")
+}
+
+fn decorate(text: string) -> Result<string, string> {
+    return Ok(text.concat(" ok"))
+}
+
+fn app_error_from_string(message: string) -> AppError {
+    return AppError { message: message }
+}
+
+fn resolve_chain() -> Result<string, string> {
+    let source: Result<string, string> = parse_label(true)
+    let mapped: Result<string, string> = source.map(exclaim)
+    let text: string = mapped.and_then(decorate)?
+    return Ok(text)
+}
+
+fn main() -> void {
+    let pred_ok: Result<string, string> = parse_label(true)
+    let pred_err: Result<string, string> = parse_label(false)
+    if pred_ok.is_ok() && pred_err.is_err() {
+        io.println("predicates")
+    } else {
+        io.println("wrong")
+    }
+
+    let unwrap_ok: Result<string, string> = parse_label(true)
+    let unwrap_err: Result<string, string> = parse_label(false)
+    io.println(unwrap_ok.unwrap_or("fallback"))
+    io.println(unwrap_err.unwrap_or("fallback"))
+
+    let chained: Result<string, string> = resolve_chain()
+    let chained_text: string = match chained {
+        Ok(text) => text
+        Err(err) => err
+    }
+    io.println(chained_text)
+
+    let raw_err: Result<string, string> = parse_label(false)
+    let converted: Result<string, AppError> = result.map_err(raw_err, app_error_from_string)
+    let message: string = match converted {
+        Ok(text) => text
+        Err(err) => err.message
+    }
+    io.println(message)
+}

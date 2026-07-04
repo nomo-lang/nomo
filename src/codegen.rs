@@ -17,6 +17,28 @@ struct ResultMapErrInstance {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+struct ResultUnwrapOrInstance {
+    ok_type: ValueType,
+    err_type: ValueType,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResultMapInstance {
+    source_ok_type: ValueType,
+    target_ok_type: ValueType,
+    err_type: ValueType,
+    converter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct ResultAndThenInstance {
+    source_ok_type: ValueType,
+    target_ok_type: ValueType,
+    err_type: ValueType,
+    converter: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 struct OptionUnwrapOrInstance {
     payload_type: ValueType,
 }
@@ -161,6 +183,21 @@ pub fn emit_c(program: &Program) -> String {
     let result_map_err_instances = collect_result_map_err_instances(program);
     for instance in &result_map_err_instances {
         emit_result_map_err_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let result_unwrap_or_instances = collect_result_unwrap_or_instances(program);
+    for instance in &result_unwrap_or_instances {
+        emit_result_unwrap_or_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let result_map_instances = collect_result_map_instances(program);
+    for instance in &result_map_instances {
+        emit_result_map_helper(&mut out, instance);
+        out.push('\n');
+    }
+    let result_and_then_instances = collect_result_and_then_instances(program);
+    for instance in &result_and_then_instances {
+        emit_result_and_then_helper(&mut out, instance);
         out.push('\n');
     }
     let option_unwrap_or_instances = collect_option_unwrap_or_instances(program);
@@ -3080,10 +3117,17 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         }
         ValueExpr::EnvSet { .. } => false,
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. } => expr_may_share_array_storage(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_may_share_array_storage(result) || expr_may_share_array_storage(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_may_share_array_storage(option) || expr_may_share_array_storage(default),
@@ -3319,6 +3363,106 @@ fn emit_result_map_err_helper(out: &mut String, instance: &ResultMapErrInstance)
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = input.payload.");
     out.push_str(&c_payload_ident("Ok"));
+    out.push_str("};\n");
+    out.push_str("}\n");
+}
+
+fn emit_result_unwrap_or_helper(out: &mut String, instance: &ResultUnwrapOrInstance) {
+    let result_args = vec![instance.ok_type.clone(), instance.err_type.clone()];
+    let helper_name = c_result_unwrap_or_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_type(&instance.ok_type));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Result", &result_args));
+    out.push_str(" input, ");
+    out.push_str(&c_type(&instance.ok_type));
+    out.push_str(" default_value) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Result", &result_args, "Ok"));
+    out.push_str(") {\n");
+    if value_type_needs_release(&instance.ok_type) {
+        emit_value_release_in_place(out, &instance.ok_type, "default_value", 2);
+    }
+    out.push_str("        return input.payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(";\n");
+    out.push_str("    }\n");
+    if value_type_needs_release(&instance.err_type) {
+        let value = format!("input.payload.{}", c_payload_ident("Err"));
+        emit_value_release_in_place(out, &instance.err_type, &value, 1);
+    }
+    out.push_str("    return default_value;\n");
+    out.push_str("}\n");
+}
+
+fn emit_result_map_helper(out: &mut String, instance: &ResultMapInstance) {
+    let source_args = vec![instance.source_ok_type.clone(), instance.err_type.clone()];
+    let target_args = vec![instance.target_ok_type.clone(), instance.err_type.clone()];
+    let helper_name = c_result_map_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_enum_ident("Result", &target_args));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Result", &source_args));
+    out.push_str(" input) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Result", &source_args, "Ok"));
+    out.push_str(") {\n");
+    out.push_str("        return (");
+    out.push_str(&c_enum_ident("Result", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Result", &target_args, "Ok"));
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = ");
+    out.push_str(&c_fn_ident(&instance.converter));
+    out.push_str("(input.payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(")};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&c_enum_ident("Result", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Result", &target_args, "Err"));
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = input.payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str("};\n");
+    out.push_str("}\n");
+}
+
+fn emit_result_and_then_helper(out: &mut String, instance: &ResultAndThenInstance) {
+    let source_args = vec![instance.source_ok_type.clone(), instance.err_type.clone()];
+    let target_args = vec![instance.target_ok_type.clone(), instance.err_type.clone()];
+    let helper_name = c_result_and_then_helper_ident(instance);
+    out.push_str("static ");
+    out.push_str(&c_enum_ident("Result", &target_args));
+    out.push(' ');
+    out.push_str(&helper_name);
+    out.push('(');
+    out.push_str(&c_enum_ident("Result", &source_args));
+    out.push_str(" input) {\n");
+    out.push_str("    if (input.tag == ");
+    out.push_str(&c_enum_variant_ident("Result", &source_args, "Ok"));
+    out.push_str(") {\n");
+    out.push_str("        return ");
+    out.push_str(&c_fn_ident(&instance.converter));
+    out.push_str("(input.payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(");\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&c_enum_ident("Result", &target_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("Result", &target_args, "Err"));
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = input.payload.");
+    out.push_str(&c_payload_ident("Err"));
     out.push_str("};\n");
     out.push_str("}\n");
 }
@@ -3738,6 +3882,86 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, result);
             out.push(')');
         }
+        ValueExpr::ResultIsOk {
+            result,
+            ok_type,
+            err_type,
+        } => {
+            out.push('(');
+            emit_expr(out, result);
+            out.push_str(".tag == ");
+            out.push_str(&c_enum_variant_ident(
+                "Result",
+                &[ok_type.clone(), err_type.clone()],
+                "Ok",
+            ));
+            out.push(')');
+        }
+        ValueExpr::ResultIsErr {
+            result,
+            ok_type,
+            err_type,
+        } => {
+            out.push('(');
+            emit_expr(out, result);
+            out.push_str(".tag == ");
+            out.push_str(&c_enum_variant_ident(
+                "Result",
+                &[ok_type.clone(), err_type.clone()],
+                "Err",
+            ));
+            out.push(')');
+        }
+        ValueExpr::ResultUnwrapOr {
+            result,
+            default,
+            ok_type,
+            err_type,
+        } => {
+            out.push_str(&c_result_unwrap_or_helper_ident(&ResultUnwrapOrInstance {
+                ok_type: ok_type.clone(),
+                err_type: err_type.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, result);
+            out.push_str(", ");
+            emit_expr(out, default);
+            out.push(')');
+        }
+        ValueExpr::ResultMap {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            converter,
+        } => {
+            out.push_str(&c_result_map_helper_ident(&ResultMapInstance {
+                source_ok_type: source_ok_type.clone(),
+                target_ok_type: target_ok_type.clone(),
+                err_type: err_type.clone(),
+                converter: converter.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, result);
+            out.push(')');
+        }
+        ValueExpr::ResultAndThen {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            converter,
+        } => {
+            out.push_str(&c_result_and_then_helper_ident(&ResultAndThenInstance {
+                source_ok_type: source_ok_type.clone(),
+                target_ok_type: target_ok_type.clone(),
+                err_type: err_type.clone(),
+                converter: converter.clone(),
+            }));
+            out.push('(');
+            emit_expr(out, result);
+            out.push(')');
+        }
         ValueExpr::OptionIsSome {
             option,
             payload_type,
@@ -3934,6 +4158,75 @@ fn collect_result_map_err_instances(program: &Program) -> Vec<ResultMapErrInstan
             collect_stmt_result_map_err(statement, &mut out);
         }
     }
+    out
+}
+
+fn collect_result_unwrap_or_instances(program: &Program) -> Vec<ResultUnwrapOrInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::ResultUnwrapOr {
+            ok_type, err_type, ..
+        } = expr
+        {
+            let instance = ResultUnwrapOrInstance {
+                ok_type: ok_type.clone(),
+                err_type: err_type.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
+    out
+}
+
+fn collect_result_map_instances(program: &Program) -> Vec<ResultMapInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::ResultMap {
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            converter,
+            ..
+        } = expr
+        {
+            let instance = ResultMapInstance {
+                source_ok_type: source_ok_type.clone(),
+                target_ok_type: target_ok_type.clone(),
+                err_type: err_type.clone(),
+                converter: converter.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
+    out
+}
+
+fn collect_result_and_then_instances(program: &Program) -> Vec<ResultAndThenInstance> {
+    let mut out = Vec::new();
+    walk_program_exprs(program, &mut |expr| {
+        if let ValueExpr::ResultAndThen {
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            converter,
+            ..
+        } = expr
+        {
+            let instance = ResultAndThenInstance {
+                source_ok_type: source_ok_type.clone(),
+                target_ok_type: target_ok_type.clone(),
+                err_type: err_type.clone(),
+                converter: converter.clone(),
+            };
+            if !out.contains(&instance) {
+                out.push(instance);
+            }
+        }
+    });
     out
 }
 
@@ -4171,6 +4464,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::ResultIsOk { result: path, .. }
+        | ValueExpr::ResultIsErr { result: path, .. }
+        | ValueExpr::ResultMap { result: path, .. }
+        | ValueExpr::ResultAndThen { result: path, .. }
         | ValueExpr::OptionIsSome { option: path, .. }
         | ValueExpr::OptionIsNone { option: path, .. }
         | ValueExpr::OptionMap { option: path, .. }
@@ -4178,6 +4475,12 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => collect_expr_result_map_err(path, out),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => {
+            collect_expr_result_map_err(result, out);
+            collect_expr_result_map_err(default, out);
+        }
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => {
@@ -4417,6 +4720,10 @@ where
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::ResultIsOk { result: path, .. }
+        | ValueExpr::ResultIsErr { result: path, .. }
+        | ValueExpr::ResultMap { result: path, .. }
+        | ValueExpr::ResultAndThen { result: path, .. }
         | ValueExpr::OptionIsSome { option: path, .. }
         | ValueExpr::OptionIsNone { option: path, .. }
         | ValueExpr::OptionMap { option: path, .. }
@@ -4425,6 +4732,12 @@ where
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => walk_expr(path, visit),
         ValueExpr::ResultMapErr { result, .. } => walk_expr(result, visit),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => {
+            walk_expr(result, visit);
+            walk_expr(default, visit);
+        }
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => {
@@ -4786,6 +5099,50 @@ fn collect_expr_struct(
             collect_type_struct(ok_type, seen, out);
             collect_type_struct(source_err_type, seen, out);
             collect_type_struct(target_err_type, seen, out);
+            collect_expr_struct(result, seen, out);
+        }
+        ValueExpr::ResultIsOk {
+            result,
+            ok_type,
+            err_type,
+        }
+        | ValueExpr::ResultIsErr {
+            result,
+            ok_type,
+            err_type,
+        } => {
+            collect_type_struct(ok_type, seen, out);
+            collect_type_struct(err_type, seen, out);
+            collect_expr_struct(result, seen, out);
+        }
+        ValueExpr::ResultUnwrapOr {
+            result,
+            default,
+            ok_type,
+            err_type,
+        } => {
+            collect_type_struct(ok_type, seen, out);
+            collect_type_struct(err_type, seen, out);
+            collect_expr_struct(result, seen, out);
+            collect_expr_struct(default, seen, out);
+        }
+        ValueExpr::ResultMap {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        }
+        | ValueExpr::ResultAndThen {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        } => {
+            collect_type_struct(source_ok_type, seen, out);
+            collect_type_struct(target_ok_type, seen, out);
+            collect_type_struct(err_type, seen, out);
             collect_expr_struct(result, seen, out);
         }
         ValueExpr::OptionIsSome {
@@ -5262,6 +5619,64 @@ fn collect_expr_enum(
             collect_type_enum(ok_type, seen, out);
             collect_type_enum(source_err_type, seen, out);
             collect_type_enum(target_err_type, seen, out);
+            collect_expr_enum(result, seen, out);
+        }
+        ValueExpr::ResultIsOk {
+            result,
+            ok_type,
+            err_type,
+        }
+        | ValueExpr::ResultIsErr {
+            result,
+            ok_type,
+            err_type,
+        } => {
+            push_enum_instance(seen, out, "Result", &[ok_type.clone(), err_type.clone()]);
+            collect_type_enum(ok_type, seen, out);
+            collect_type_enum(err_type, seen, out);
+            collect_expr_enum(result, seen, out);
+        }
+        ValueExpr::ResultUnwrapOr {
+            result,
+            default,
+            ok_type,
+            err_type,
+        } => {
+            push_enum_instance(seen, out, "Result", &[ok_type.clone(), err_type.clone()]);
+            collect_type_enum(ok_type, seen, out);
+            collect_type_enum(err_type, seen, out);
+            collect_expr_enum(result, seen, out);
+            collect_expr_enum(default, seen, out);
+        }
+        ValueExpr::ResultMap {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        }
+        | ValueExpr::ResultAndThen {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[source_ok_type.clone(), err_type.clone()],
+            );
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[target_ok_type.clone(), err_type.clone()],
+            );
+            collect_type_enum(source_ok_type, seen, out);
+            collect_type_enum(target_ok_type, seen, out);
+            collect_type_enum(err_type, seen, out);
             collect_expr_enum(result, seen, out);
         }
         ValueExpr::OptionIsSome {
@@ -5913,6 +6328,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
+        | ValueExpr::ResultIsOk { result: path, .. }
+        | ValueExpr::ResultIsErr { result: path, .. }
+        | ValueExpr::ResultMap { result: path, .. }
+        | ValueExpr::ResultAndThen { result: path, .. }
         | ValueExpr::OptionIsSome { option: path, .. }
         | ValueExpr::OptionIsNone { option: path, .. }
         | ValueExpr::OptionMap { option: path, .. }
@@ -5920,6 +6339,9 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::EnumPayload { value: path, .. }
         | ValueExpr::EnumPayloadFieldAccess { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_contains(path, predicate),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_contains(result, predicate) || expr_contains(default, predicate),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_contains(option, predicate) || expr_contains(default, predicate),
@@ -6380,10 +6802,17 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             expr_uses_fs_read_to_string(path)
         }
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_read_to_string(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_uses_fs_read_to_string(result) || expr_uses_fs_read_to_string(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_uses_fs_read_to_string(option) || expr_uses_fs_read_to_string(default),
@@ -6485,10 +6914,17 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
             expr_uses_fs_write_string(path)
         }
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_write_string(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_uses_fs_write_string(result) || expr_uses_fs_write_string(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_uses_fs_write_string(option) || expr_uses_fs_write_string(default),
@@ -6590,10 +7026,17 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_fs_open(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_uses_fs_open(result) || expr_uses_fs_open(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_uses_fs_open(option) || expr_uses_fs_open(default),
@@ -6689,10 +7132,17 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_env_get(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_uses_env_get(result) || expr_uses_env_get(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_uses_env_get(option) || expr_uses_env_get(default),
@@ -6786,10 +7236,17 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
+        | ValueExpr::ResultIsOk { result, .. }
+        | ValueExpr::ResultIsErr { result, .. }
+        | ValueExpr::ResultMap { result, .. }
+        | ValueExpr::ResultAndThen { result, .. }
         | ValueExpr::OptionIsSome { option: result, .. }
         | ValueExpr::OptionIsNone { option: result, .. }
         | ValueExpr::OptionMap { option: result, .. }
         | ValueExpr::OptionAndThen { option: result, .. } => expr_uses_env_args(result),
+        ValueExpr::ResultUnwrapOr {
+            result, default, ..
+        } => expr_uses_env_args(result) || expr_uses_env_args(default),
         ValueExpr::OptionUnwrapOr {
             option, default, ..
         } => expr_uses_env_args(option) || expr_uses_env_args(default),
@@ -6911,6 +7368,50 @@ fn collect_expr_array_elements(
             collect_type_array_elements(ok_type, seen, out);
             collect_type_array_elements(source_err_type, seen, out);
             collect_type_array_elements(target_err_type, seen, out);
+            collect_expr_array_elements(result, seen, out);
+        }
+        ValueExpr::ResultIsOk {
+            result,
+            ok_type,
+            err_type,
+        }
+        | ValueExpr::ResultIsErr {
+            result,
+            ok_type,
+            err_type,
+        } => {
+            collect_type_array_elements(ok_type, seen, out);
+            collect_type_array_elements(err_type, seen, out);
+            collect_expr_array_elements(result, seen, out);
+        }
+        ValueExpr::ResultUnwrapOr {
+            result,
+            default,
+            ok_type,
+            err_type,
+        } => {
+            collect_type_array_elements(ok_type, seen, out);
+            collect_type_array_elements(err_type, seen, out);
+            collect_expr_array_elements(result, seen, out);
+            collect_expr_array_elements(default, seen, out);
+        }
+        ValueExpr::ResultMap {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        }
+        | ValueExpr::ResultAndThen {
+            result,
+            source_ok_type,
+            target_ok_type,
+            err_type,
+            ..
+        } => {
+            collect_type_array_elements(source_ok_type, seen, out);
+            collect_type_array_elements(target_ok_type, seen, out);
+            collect_type_array_elements(err_type, seen, out);
             collect_expr_array_elements(result, seen, out);
         }
         ValueExpr::OptionIsSome {
@@ -7304,6 +7805,34 @@ fn c_result_map_err_helper_ident(instance: &ResultMapErrInstance) -> String {
         c_type_name_part(&instance.ok_type),
         c_type_name_part(&instance.source_err_type),
         c_type_name_part(&instance.target_err_type),
+        instance.converter
+    )
+}
+
+fn c_result_unwrap_or_helper_ident(instance: &ResultUnwrapOrInstance) -> String {
+    format!(
+        "nomo_result_unwrap_or_{}_{}",
+        c_type_name_part(&instance.ok_type),
+        c_type_name_part(&instance.err_type)
+    )
+}
+
+fn c_result_map_helper_ident(instance: &ResultMapInstance) -> String {
+    format!(
+        "nomo_result_map_{}_{}_{}_{}",
+        c_type_name_part(&instance.source_ok_type),
+        c_type_name_part(&instance.target_ok_type),
+        c_type_name_part(&instance.err_type),
+        instance.converter
+    )
+}
+
+fn c_result_and_then_helper_ident(instance: &ResultAndThenInstance) -> String {
+    format!(
+        "nomo_result_and_then_{}_{}_{}_{}",
+        c_type_name_part(&instance.source_ok_type),
+        c_type_name_part(&instance.target_ok_type),
+        c_type_name_part(&instance.err_type),
         instance.converter
     )
 }

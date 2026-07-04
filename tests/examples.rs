@@ -229,6 +229,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "pub_visibility" => "pub visibility ok\n",
         "read_file" => "file ok\n",
         "result_chain" => "result ok\n",
+        "result_helpers" => "predicates\nseed\nfallback\nseed! ok\nerr\n",
         "result_main" => "result main ok\n",
         "result_map_err" => "mapped err ok\n",
         "specific_array_new" => "specific array new ok\n",

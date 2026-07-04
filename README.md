@@ -289,6 +289,12 @@ value methods: `is_some`, `is_none`, `unwrap_or`, `map`, and `and_then`.
 `Option.map` and `Option.and_then` accept named, unqualified, non-generic
 converter functions in v0.1.
 
+`std.result` provides matching carrier helpers as module functions, specific
+imports, and value methods: `is_ok`, `is_err`, `unwrap_or`, `map`, `map_err`,
+and `and_then`. `Result.map`, `Result.map_err`, and `Result.and_then` accept
+named, unqualified, non-generic converter functions in v0.1; `and_then`
+requires the converter to return the same error type.
+
 `std.path` provides pure string path helpers:
 `path.join`, `path.basename`, `path.dirname`, `path.extension`,
 `path.normalize`, and `path.is_absolute`. The v0.1 behavior uses POSIX-style

@@ -539,7 +539,11 @@ fn emit_operator_runtime(out: &mut String) {
     out.push_str(
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
-    out.push_str("    return left >> right;\n");
+    out.push_str("    uint64_t bits = (uint64_t)left;\n");
+    out.push_str("    if (right == 0) { return left; }\n");
+    out.push_str("    if (left >= 0) { return (long long)(bits >> right); }\n");
+    out.push_str("    uint64_t shifted = (bits >> right) | (~UINT64_C(0) << (64U - right));\n");
+    out.push_str("    return -1 - (long long)(UINT64_MAX - shifted);\n");
     out.push_str("}\n\n");
     out.push_str("static int32_t nomo_shl_i32(int32_t left, uint64_t right) {\n");
     out.push_str(
@@ -551,7 +555,11 @@ fn emit_operator_runtime(out: &mut String) {
     out.push_str(
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
-    out.push_str("    return left >> right;\n");
+    out.push_str("    uint32_t bits = (uint32_t)left;\n");
+    out.push_str("    if (right == 0) { return left; }\n");
+    out.push_str("    if (left >= 0) { return (int32_t)(bits >> right); }\n");
+    out.push_str("    uint32_t shifted = (bits >> right) | (~UINT32_C(0) << (32U - right));\n");
+    out.push_str("    return -1 - (int32_t)(UINT32_MAX - shifted);\n");
     out.push_str("}\n\n");
     out.push_str("static uint32_t nomo_shl_u32(uint32_t left, uint64_t right) {\n");
     out.push_str(
@@ -19230,6 +19238,12 @@ mod tests {
         assert!(c.contains(" ^ "));
         assert!(c.contains("nomo_shl_i64("));
         assert!(c.contains("nomo_shr_i64("));
+        assert!(
+            c.contains("uint64_t shifted = (bits >> right) | (~UINT64_C(0) << (64U - right));")
+        );
+        assert!(
+            c.contains("uint32_t shifted = (bits >> right) | (~UINT32_C(0) << (32U - right));")
+        );
         assert!(c.contains(" & ~("));
     }
 

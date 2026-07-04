@@ -103,7 +103,8 @@ postfix `++`/`--` and compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`,
 fields; they are not expressions and do not produce values. `%` and bitwise
 operators are restricted to integer operands; `/` works for integer and `f64`
 operands. Runtime divide-by-zero, signed `i32`/`i64` arithmetic overflow, and
-invalid shift amounts panic.
+invalid shift amounts panic. Signed right shift is arithmetic: negative values
+shift in `1` bits, and non-negative values shift in `0` bits.
 
 ```bash
 nomo new hello

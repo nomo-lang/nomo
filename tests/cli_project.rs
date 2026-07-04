@@ -897,6 +897,50 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_signed_right_shift_portably() {
+    let root = temp_test_root("run-signed-right-shift");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let negative: i64 = 0 - 8
+    let minus_one: i64 = 0 - 1
+    let negative32: i32 = negative as i32
+    let first: i64 = negative >> 1
+    let second: i64 = minus_one >> 63
+    let third: i32 = negative32 >> 2
+    io.println(num.to_string(first))
+    io.println(num.to_string(second))
+    io.println(num.to_string(third))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "-4\n-1\n-2\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomoc_still_rejects_top_level_script_statements() {
     let root = temp_test_root("nomoc-script-reject");
     reset_dir(&root);

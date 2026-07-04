@@ -5277,6 +5277,68 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_treats_try_as_identifier_and_uses_question_for_option_propagation() {
+    let root = temp_test_root("try-identifier-option-question");
+    reset_dir(&root);
+    let project = root.join("try_identifier_option_question");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"try_identifier_option_question\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+fn try() -> Option<string> {
+    return Some("question")
+}
+
+fn compute() -> Option<string> {
+    return try()?
+}
+
+fn main() -> void {
+    let result: Option<string> = compute()
+    match result {
+        Some(value) => {
+            io.println(value)
+        }
+        None => {
+            io.println("none")
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "question\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_reports_result_main_error_status() {
     let root = temp_test_root("result-main-error");
     reset_dir(&root);

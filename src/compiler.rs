@@ -128,7 +128,8 @@ pub enum Statement {
         return_type: ValueType,
         result_expr: ValueExpr,
     },
-    QuestionReturnOk {
+    QuestionReturn {
+        carrier: QuestionCarrier,
         ok_type: ValueType,
         result_type: ValueType,
         return_type: ValueType,
@@ -6778,7 +6779,7 @@ fn lower_question_exprs_in_stmt_into(
             value: Some(value),
             span,
         } if !matches!(value, AstExpr::Question { .. })
-            && question_expr_from_result_ok_return(value, signatures).is_none() =>
+            && question_expr_from_success_return(value, signatures).is_none() =>
         {
             let (value, changed) = extract_question_exprs(
                 path,
@@ -7651,7 +7652,7 @@ fn statements_diverge(statements: &[Statement]) -> bool {
 fn statement_diverges(statement: &Statement) -> bool {
     match statement {
         Statement::Return(_)
-        | Statement::QuestionReturnOk { .. }
+        | Statement::QuestionReturn { .. }
         | Statement::Panic(_)
         | Statement::Break
         | Statement::Continue => true,
@@ -7677,9 +7678,7 @@ fn statements_satisfy_function_return(statements: &[Statement]) -> bool {
 
 fn statement_satisfies_function_return(statement: &Statement) -> bool {
     match statement {
-        Statement::Return(Some(_)) | Statement::QuestionReturnOk { .. } | Statement::Panic(_) => {
-            true
-        }
+        Statement::Return(Some(_)) | Statement::QuestionReturn { .. } | Statement::Panic(_) => true,
         Statement::Match { arms, .. } => arms
             .iter()
             .all(|arm| statements_satisfy_function_return(&arm.body)),
@@ -8458,18 +8457,6 @@ fn lower_return_stmt(
                 expr: question_expr,
             } = value
             {
-                let (return_ok_type, return_err_type) =
-                    result_parts(expected).ok_or_else(|| {
-                        Diagnostic::new(
-                            "E0421",
-                            "`?` requires the current function to return `Result<T, E>`",
-                            path,
-                            span.line,
-                            span.column,
-                            span.length,
-                            &span.text,
-                        )
-                    })?;
                 let (result_type, result_expr) = lower_value_expr(
                     path,
                     question_expr,
@@ -8480,63 +8467,32 @@ fn lower_return_stmt(
                     enums,
                     span,
                 )?;
-                let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
-                    Diagnostic::new(
-                        "E0420",
-                        "`?` can only be used with `Result<T, E>`",
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    )
-                })?;
-                if ok_type != return_ok_type {
+                let (carrier, ok_type) = question_payload(path, span, &result_type, expected)?;
+                let return_payload_type = question_return_payload(expected, carrier);
+                if ok_type != return_payload_type {
                     return Err(type_mismatch_expected_found(
                         path,
                         span,
                         format!(
-                            "`?` unwraps `{}` but function returns `Result<{}, E>`",
+                            "`?` unwraps `{}` but function returns `{}`",
                             ok_type.name(),
-                            return_ok_type.name()
+                            expected.name()
                         ),
-                        &return_ok_type,
+                        &return_payload_type,
                         &ok_type,
                     ));
                 }
-                if err_type != return_err_type {
-                    return Err(type_mismatch_expected_found(
-                        path,
-                        span,
-                        format!(
-                            "`?` error type is `{}` but function returns `{}`",
-                            err_type.name(),
-                            return_err_type.name()
-                        ),
-                        &return_err_type,
-                        &err_type,
-                    ));
-                }
-                return Ok(Statement::QuestionReturnOk {
+                return Ok(Statement::QuestionReturn {
+                    carrier,
                     ok_type,
                     result_type,
                     return_type: expected.clone(),
                     result_expr,
                 });
             }
-            if let Some(question_expr) = question_expr_from_result_ok_return(value, signatures) {
-                let (return_ok_type, return_err_type) =
-                    result_parts(expected).ok_or_else(|| {
-                        Diagnostic::new(
-                            "E0421",
-                            "`?` requires the current function to return `Result<T, E>`",
-                            path,
-                            span.line,
-                            span.column,
-                            span.length,
-                            &span.text,
-                        )
-                    })?;
+            if let Some((carrier, question_expr)) =
+                question_expr_from_success_return(value, signatures)
+            {
                 let (result_type, result_expr) = lower_value_expr(
                     path,
                     question_expr,
@@ -8547,44 +8503,35 @@ fn lower_return_stmt(
                     enums,
                     span,
                 )?;
-                let (ok_type, err_type) = result_parts(&result_type).ok_or_else(|| {
-                    Diagnostic::new(
-                        "E0420",
-                        "`?` can only be used with `Result<T, E>`",
+                let (actual_carrier, ok_type) =
+                    question_payload(path, span, &result_type, expected)?;
+                if actual_carrier != carrier {
+                    return Err(Diagnostic::new(
+                        "E0421",
+                        "`?` carrier does not match the returned success variant",
                         path,
                         span.line,
                         span.column,
                         span.length,
                         &span.text,
-                    )
-                })?;
-                if ok_type != return_ok_type {
+                    ));
+                }
+                let return_payload_type = question_return_payload(expected, carrier);
+                if ok_type != return_payload_type {
                     return Err(type_mismatch_expected_found(
                         path,
                         span,
                         format!(
-                            "`?` unwraps `{}` but returned `Ok` expects `{}`",
+                            "`?` unwraps `{}` but returned success variant expects `{}`",
                             ok_type.name(),
-                            return_ok_type.name()
+                            return_payload_type.name()
                         ),
-                        &return_ok_type,
+                        &return_payload_type,
                         &ok_type,
                     ));
                 }
-                if err_type != return_err_type {
-                    return Err(type_mismatch_expected_found(
-                        path,
-                        span,
-                        format!(
-                            "`?` error type is `{}` but function returns `{}`",
-                            err_type.name(),
-                            return_err_type.name()
-                        ),
-                        &return_err_type,
-                        &err_type,
-                    ));
-                }
-                return Ok(Statement::QuestionReturnOk {
+                return Ok(Statement::QuestionReturn {
+                    carrier,
                     ok_type,
                     result_type,
                     return_type: expected.clone(),
@@ -8620,26 +8567,40 @@ fn lower_return_stmt(
     }
 }
 
-fn question_expr_from_result_ok_return<'a>(
+fn question_expr_from_success_return<'a>(
     value: &'a AstExpr,
     signatures: &HashMap<String, FunctionSignature>,
-) -> Option<&'a AstExpr> {
+) -> Option<(QuestionCarrier, &'a AstExpr)> {
     let AstExpr::Call { callee, args, .. } = value else {
         return None;
     };
-    if !is_result_ok_callee(callee, signatures) {
-        return None;
-    }
     let [AstExpr::Question { expr }] = args.as_slice() else {
         return None;
     };
-    Some(expr)
+    if is_result_ok_callee(callee, signatures) {
+        return Some((QuestionCarrier::Result, expr));
+    }
+    if is_option_some_callee(callee, signatures) {
+        return Some((QuestionCarrier::Option, expr));
+    }
+    None
 }
 
 fn is_result_ok_callee(callee: &[String], signatures: &HashMap<String, FunctionSignature>) -> bool {
     match callee {
         [name] => name == "Ok" && !signatures.contains_key("Ok"),
         [enum_name, variant] => enum_name == "Result" && variant == "Ok",
+        _ => false,
+    }
+}
+
+fn is_option_some_callee(
+    callee: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+) -> bool {
+    match callee {
+        [name] => name == "Some" && !signatures.contains_key("Some"),
+        [enum_name, variant] => enum_name == "Option" && variant == "Some",
         _ => false,
     }
 }
@@ -16949,6 +16910,17 @@ fn question_payload(
     ))
 }
 
+fn question_return_payload(return_type: &ValueType, carrier: QuestionCarrier) -> ValueType {
+    match carrier {
+        QuestionCarrier::Result => result_parts(return_type)
+            .map(|(ok_type, _)| ok_type)
+            .unwrap_or_else(|| return_type.clone()),
+        QuestionCarrier::Option => {
+            option_payload(return_type).unwrap_or_else(|| return_type.clone())
+        }
+    }
+}
+
 fn core_prelude_variant(name: &str) -> Option<(&'static str, &'static str)> {
     match name {
         "Some" => Some(("Option", "Some")),
@@ -18649,7 +18621,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             capture.body[0],
-            Statement::QuestionReturnOk {
+            Statement::QuestionReturn {
                 result_expr: ValueExpr::ProcessOutput { .. },
                 ..
             }
@@ -18714,7 +18686,7 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             capture.body[0],
-            Statement::QuestionReturnOk {
+            Statement::QuestionReturn {
                 result_expr: ValueExpr::ProcessOutput { .. },
                 ..
             }
@@ -26034,7 +26006,7 @@ fn main() -> void {
             }] if condition == "flag"
                 && matches!(
                     body.as_slice(),
-                    [Statement::QuestionReturnOk {
+                    [Statement::QuestionReturn {
                         result_expr: ValueExpr::Call { name: call_name, .. },
                         ..
                     }] if call_name == "parse_label"
@@ -26141,7 +26113,7 @@ fn main() -> void {
                 && condition_name == condition_temp
                 && matches!(
                     body.as_slice(),
-                    [Statement::QuestionReturnOk {
+                    [Statement::QuestionReturn {
                         result_expr: ValueExpr::Call { name: branch_call, .. },
                         ..
                     }] if branch_call == "parse_label"
@@ -26204,7 +26176,7 @@ fn main() -> void {
                 && condition_name == condition_temp
                 && matches!(
                     body.as_slice(),
-                    [Statement::QuestionReturnOk {
+                    [Statement::QuestionReturn {
                         result_expr: ValueExpr::Call { name: branch_call, .. },
                         ..
                     }] if branch_call == "parse_label"
@@ -26293,7 +26265,7 @@ fn main() -> void {
                         && none_variant == "None"
                         && matches!(
                             none_body.as_slice(),
-                            [Statement::QuestionReturnOk {
+                            [Statement::QuestionReturn {
                                 result_expr: ValueExpr::Call { name: branch_call, .. },
                                 ..
                             }] if branch_call == "parse_label"
@@ -26367,7 +26339,7 @@ fn main() -> void {
                         && none_variant == "None"
                         && matches!(
                             none_body.as_slice(),
-                            [Statement::QuestionReturnOk {
+                            [Statement::QuestionReturn {
                                 result_expr: ValueExpr::Call { name: call_name, .. },
                                 ..
                             }] if call_name == "parse_label"
@@ -26674,6 +26646,44 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_option_question_return_payload() {
+        let source = r#"package app.main
+
+fn load() -> Option<string> {
+    return Some("value")
+}
+
+fn compute() -> Option<string> {
+    return Some(load()?)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let compute = program
+            .functions
+            .iter()
+            .find(|function| function.name == "compute")
+            .unwrap();
+        assert!(matches!(
+            compute.body[0],
+            Statement::QuestionReturn {
+                carrier: QuestionCarrier::Option,
+                ok_type: ValueType::String,
+                result_type: ValueType::Enum(ref result_name, ref result_args),
+                return_type: ValueType::Enum(ref return_name, ref return_args),
+                result_expr: ValueExpr::Call { ref name, .. },
+            } if result_name == "Option"
+                && result_args == &vec![ValueType::String]
+                && return_name == "Option"
+                && return_args == &vec![ValueType::String]
+                && name == "load"
+        ));
+    }
+
+    #[test]
     fn accepts_question_in_result_ok_return_payload() {
         let source = r#"package app.main
 
@@ -26697,7 +26707,8 @@ fn main() -> void {
             .unwrap();
         assert!(matches!(
             compute.body[0],
-            Statement::QuestionReturnOk {
+            Statement::QuestionReturn {
+                carrier: QuestionCarrier::Result,
                 ok_type: ValueType::Int,
                 result_type: ValueType::Enum(ref result_name, ref result_args),
                 return_type: ValueType::Enum(ref return_name, ref return_args),

@@ -103,7 +103,16 @@ the same code.
 - [E0272](E0272.md) - missing if-let body
 - [E0273](E0273.md) - missing if-let else body
 - [E0274](E0274.md) - unsupported wildcard import
+- [E0300](E0300.md) - expected identifier
 - [E0301](E0301.md) - unknown name or missing import
+- [E0302](E0302.md) - duplicate local binding
+- [E0303](E0303.md) - unknown variable
+- [E0304](E0304.md) - duplicate callable or constant definition
+- [E0305](E0305.md) - unknown function or non-callable local
+- [E0306](E0306.md) - duplicate struct definition
+- [E0307](E0307.md) - duplicate struct field
+- [E0308](E0308.md) - unknown struct field
+- [E0309](E0309.md) - unknown struct or impl target
 - [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch
 - [E0420](E0420.md) - invalid question operator carrier

@@ -15,6 +15,8 @@ const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
 const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
+const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
+const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -1901,6 +1903,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.net.connect"
             | "std.net.listen"
             | "std.net.udp_bind"
+            | "std.http"
+            | "std.http.HttpError"
+            | "std.http.HttpResponse"
+            | "std.http.get"
+            | "std.http.post"
             | "std.env"
             | "std.env.args"
             | "std.env.cwd"
@@ -2309,6 +2316,10 @@ fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "UdpDatagram")?;
         reject_user_std_struct(path, structs, "UdpSocket")?;
     }
+    if needs.http {
+        reject_user_std_struct(path, structs, "HttpError")?;
+        reject_user_std_struct(path, structs, "HttpResponse")?;
+    }
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;
     }
@@ -2319,7 +2330,8 @@ fn validate_standard_type_conflicts(
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
     }
-    if needs.io || needs.fs || needs.net || needs.num || needs.process || needs.result {
+    if needs.io || needs.fs || needs.net || needs.http || needs.num || needs.process || needs.result
+    {
         reject_user_std_enum(path, enums, "Result")?;
     }
     if needs.env || needs.num || needs.option || needs.array {
@@ -2569,6 +2581,7 @@ struct StandardTypeNeeds {
     env: bool,
     process: bool,
     net: bool,
+    http: bool,
     hash: bool,
     json: bool,
     regex: bool,
@@ -2599,6 +2612,9 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
         net: imports
             .iter()
             .any(|item| item == "std.net" || item.starts_with("std.net.")),
+        http: imports
+            .iter()
+            .any(|item| item == "std.http" || item.starts_with("std.http.")),
         hash: imports
             .iter()
             .any(|item| item == "std.hash" || item.starts_with("std.hash."))
@@ -2667,6 +2683,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("UdpDatagram".to_string(), 0));
         names.push(("UdpSocket".to_string(), 0));
     }
+    if needs.http {
+        names.push(("HttpError".to_string(), 0));
+        names.push(("HttpResponse".to_string(), 0));
+    }
     if needs.hash {
         names.push(("HashState".to_string(), 0));
     }
@@ -2693,6 +2713,7 @@ fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String
     if needs.io
         || needs.fs
         || needs.net
+        || needs.http
         || needs.num
         || needs.process
         || needs.json
@@ -2817,6 +2838,34 @@ fn inject_standard_types(
             name: "UdpSocket".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpError") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpResponse") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpResponse".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "status".to_string(),
+                    value_type: ValueType::Int,
+                },
+                StructField {
+                    name: "body".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
         });
     }
     if needs.num && !structs.iter().any(|item| item.name == "NumError") {
@@ -9102,6 +9151,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "http" {
+                    return lower_http_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "net" {
                     return lower_net_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -9478,6 +9532,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_json_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_http_builtin_call(callee) {
+                require_import(path, imports, span, "std.http", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "http builtins do not accept type arguments",
+                    ));
+                }
+                return lower_http_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -11196,6 +11263,13 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_http_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name] if module == "http" && matches!(name.as_str(), "get" | "post")
+    )
+}
+
 fn is_net_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
@@ -11532,6 +11606,105 @@ fn lower_json_builtin(
             ))
         }
         _ => unreachable!("json builtin dispatcher only passes known calls"),
+    }
+}
+
+fn lower_http_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("http builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "http");
+    let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
+    let http_response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
+    let result_type = ValueType::Enum("Result".to_string(), vec![http_response, http_error]);
+    match name.as_str() {
+        "get" => {
+            let [url_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.get` expects exactly one URL string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (url_type, url) = lower_value_expr(
+                path, url_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if url_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.get` expects a string URL",
+                    &ValueType::String,
+                    &url_type,
+                ));
+            }
+            Ok((
+                result_type,
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_GET_EXPR.to_string(),
+                    args: vec![url],
+                },
+            ))
+        }
+        "post" => {
+            let [url_arg, body_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.post` expects URL and body strings",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (url_type, url) = lower_value_expr(
+                path, url_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if url_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.post` expects a string URL",
+                    &ValueType::String,
+                    &url_type,
+                ));
+            }
+            let (body_type, body) = lower_value_expr(
+                path, body_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if body_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.post` expects a string body",
+                    &ValueType::String,
+                    &body_type,
+                ));
+            }
+            Ok((
+                result_type,
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_POST_EXPR.to_string(),
+                    args: vec![url, body],
+                },
+            ))
+        }
+        _ => unreachable!("http builtin dispatcher only passes known calls"),
     }
 }
 
@@ -16244,6 +16417,12 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "stringify" if imports.iter().any(|item| item == "std.json.stringify") => {
             vec!["json".to_string(), "stringify".to_string()]
         }
+        "get" if imports.iter().any(|item| item == "std.http.get") => {
+            vec!["http".to_string(), "get".to_string()]
+        }
+        "post" if imports.iter().any(|item| item == "std.http.post") => {
+            vec!["http".to_string(), "post".to_string()]
+        }
         "connect" if imports.iter().any(|item| item == "std.net.connect") => {
             vec!["net".to_string(), "connect".to_string()]
         }
@@ -18200,6 +18379,80 @@ fn main() -> Result<void, JsonError> {
                 initializer: ValueExpr::JsonStringify { .. },
                 ..
             }
+        ));
+    }
+
+    #[test]
+    fn accepts_http_client_builtins() {
+        let source = r#"package app.main
+
+import std.http
+
+fn main() -> Result<void, HttpError> {
+    let first: HttpResponse = http.get("http://127.0.0.1/hello")?
+    let second: HttpResponse = http.post("http://127.0.0.1/echo", "body")?
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "HttpError"));
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "HttpResponse")
+        );
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref value_name, ref args),
+                result_expr: ValueExpr::Call { name: ref call_name, .. },
+                ..
+            } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_GET_EXPR
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref value_name, ref args),
+                result_expr: ValueExpr::Call { name: ref call_name, .. },
+                ..
+            } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_POST_EXPR
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_http_builtin_imports() {
+        let source = r#"package app.main
+
+import std.http.HttpError
+import std.http.HttpResponse
+import std.http.get
+import std.http.post
+
+fn main() -> Result<void, HttpError> {
+    let first: HttpResponse = get("http://127.0.0.1/hello")?
+    let second: HttpResponse = post("http://127.0.0.1/echo", "body")?
+    return Ok(void)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { ref name, .. },
+                ..
+            } if name == BUILTIN_HTTP_GET_EXPR
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { ref name, .. },
+                ..
+            } if name == BUILTIN_HTTP_POST_EXPR
         ));
     }
 

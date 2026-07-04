@@ -6853,6 +6853,131 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_http_client_helpers_without_std_dependency() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut handled = 0;
+        while handled < 2 {
+            match listener.accept() {
+                Ok((mut stream, _)) => {
+                    stream
+                        .set_read_timeout(Some(Duration::from_secs(2)))
+                        .unwrap();
+                    let mut request = Vec::new();
+                    let mut buffer = [0_u8; 512];
+                    loop {
+                        let read = stream.read(&mut buffer).unwrap();
+                        if read == 0 {
+                            break;
+                        }
+                        request.extend_from_slice(&buffer[..read]);
+                        let text = String::from_utf8_lossy(&request);
+                        let header_end = text.find("\r\n\r\n");
+                        if let Some(header_end) = header_end {
+                            let content_length = text
+                                .lines()
+                                .find_map(|line| {
+                                    line.strip_prefix("Content-Length: ")
+                                        .and_then(|value| value.parse::<usize>().ok())
+                                })
+                                .unwrap_or(0);
+                            if request.len() >= header_end + 4 + content_length {
+                                break;
+                            }
+                        }
+                    }
+                    let text = String::from_utf8(request).unwrap();
+                    let body_start = text.find("\r\n\r\n").map(|index| index + 4).unwrap();
+                    let body = &text[body_start..];
+                    let (expected_line, expected_body, response_body) = if handled == 0 {
+                        ("GET /hello HTTP/1.0", "", "get-ok")
+                    } else {
+                        ("POST /echo HTTP/1.0", "post-body", "post-ok")
+                    };
+                    assert!(text.starts_with(expected_line), "request was:\n{text}");
+                    assert_eq!(body, expected_body);
+                    let response = format!(
+                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        response_body.len(),
+                        response_body
+                    );
+                    stream.write_all(response.as_bytes()).unwrap();
+                    handled += 1;
+                }
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) => panic!("failed to accept HTTP client connection: {err}"),
+            }
+        }
+    });
+
+    let root = temp_test_root("std-http-client-helpers");
+    reset_dir(&root);
+    let project = root.join("http_client_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"http_client_helpers\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.http
+import std.io
+
+fn request() -> Result<void, HttpError> {
+    let first: HttpResponse = http.get("http://127.0.0.1:__PORT__/hello")?
+    io.println(first.body)
+    let second: HttpResponse = http.post("http://127.0.0.1:__PORT__/echo", "post-body")?
+    io.println(second.body)
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, HttpError> = request()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "get-ok\npost-ok\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.join().unwrap();
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_extended_std_array_helpers() {
     let root = temp_test_root("std-array-helpers");
     reset_dir(&root);

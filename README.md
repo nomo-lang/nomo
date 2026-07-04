@@ -394,11 +394,15 @@ and `TcpStream.close` closes the stream socket. `net.udp_bind` binds a blocking
 `UdpSocket.close` closes the socket. Listener address inspection, backlog
 configuration, and nonblocking handles remain separate `std.net` slices.
 
-`std.http` provides blocking plain-HTTP client helpers in v0.1. `http.get`
-requests an `http://` URL and returns `Result<HttpResponse, HttpError>`.
-`http.post` sends a string body to an `http://` URL. `HttpResponse` exposes the
-numeric `status` and response `body`; TLS, custom headers, redirects, chunked
-transfer decoding, and server helpers remain separate `std.http` slices.
+`std.http` provides blocking plain-HTTP helpers in v0.1. `http.get` requests an
+`http://` URL and returns `Result<HttpResponse, HttpError>`. `http.post` sends a
+string body to an `http://` URL. `HttpResponse` exposes the numeric `status` and
+response `body`. `http.listen` creates an `HttpServer`, `http.accept` returns one
+`HttpExchange` with `method`, `path`, and `body`, and `http.respond_string`
+writes a string response. Use `defer http.close_exchange(exchange)` and
+`defer http.close_server(server)` to close handles on both normal returns and
+`?` early returns. TLS, custom headers, redirects, chunked transfer decoding,
+streaming bodies, and multi-connection server helpers remain later slices.
 
 `std.testing` provides helpers for `#[test]` functions: `testing.assert`,
 `testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool

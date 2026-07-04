@@ -6978,6 +6978,116 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_http_server_helpers_without_std_dependency() {
+    let probe = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = probe.local_addr().unwrap().port();
+    drop(probe);
+
+    let root = temp_test_root("std-http-server-helpers");
+    reset_dir(&root);
+    let project = root.join("http_server_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"http_server_helpers\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.http
+import std.io
+
+fn serve() -> Result<void, HttpError> {
+    let server: HttpServer = http.listen("127.0.0.1", __PORT__)?
+    defer http.close_server(server)
+    let exchange: HttpExchange = http.accept(server)?
+    defer http.close_exchange(exchange)
+    http.respond_string(exchange, 200, exchange.body)?
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, HttpError> = serve()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let mut child = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+
+    let started = Instant::now();
+    let mut stream = loop {
+        match TcpStream::connect(("127.0.0.1", port)) {
+            Ok(stream) => break stream,
+            Err(err) if started.elapsed() < Duration::from_secs(10) => {
+                if let Some(status) = child.try_wait().unwrap() {
+                    let output = child.wait_with_output().unwrap();
+                    panic!(
+                        "nomo http server exited early with {status}\nstdout:\n{}\nstderr:\n{}",
+                        String::from_utf8_lossy(&output.stdout),
+                        String::from_utf8_lossy(&output.stderr)
+                    );
+                }
+                std::thread::sleep(Duration::from_millis(50));
+                let _ = err;
+            }
+            Err(err) => {
+                let _ = child.kill();
+                let output = child.wait_with_output().unwrap();
+                panic!(
+                    "failed to connect to nomo http server: {err}\nstdout:\n{}\nstderr:\n{}",
+                    String::from_utf8_lossy(&output.stdout),
+                    String::from_utf8_lossy(&output.stderr)
+                );
+            }
+        }
+    };
+
+    let request = "POST /echo HTTP/1.0\r\nHost: 127.0.0.1\r\nContent-Length: 11\r\nConnection: close\r\n\r\nserver-body";
+    stream.write_all(request.as_bytes()).unwrap();
+    stream.shutdown(Shutdown::Write).unwrap();
+    let mut response = String::new();
+    stream.read_to_string(&mut response).unwrap();
+    assert!(
+        response.starts_with("HTTP/1.0 200 OK\r\n"),
+        "response was:\n{response}"
+    );
+    assert!(
+        response.ends_with("\r\n\r\nserver-body"),
+        "response was:\n{response}"
+    );
+
+    let output = child.wait_with_output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_extended_std_array_helpers() {
     let root = temp_test_root("std-array-helpers");
     reset_dir(&root);

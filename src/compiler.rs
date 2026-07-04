@@ -17,6 +17,11 @@ const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
+const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
+const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
+const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";
+const BUILTIN_HTTP_CLOSE_SERVER_EXPR: &str = "__nomo_http_close_server";
+const BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR: &str = "__nomo_http_close_exchange";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Program {
@@ -1904,10 +1909,17 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.net.listen"
             | "std.net.udp_bind"
             | "std.http"
+            | "std.http.HttpExchange"
             | "std.http.HttpError"
             | "std.http.HttpResponse"
+            | "std.http.HttpServer"
+            | "std.http.accept"
+            | "std.http.close_exchange"
+            | "std.http.close_server"
             | "std.http.get"
+            | "std.http.listen"
             | "std.http.post"
+            | "std.http.respond_string"
             | "std.env"
             | "std.env.args"
             | "std.env.cwd"
@@ -2317,8 +2329,10 @@ fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "UdpSocket")?;
     }
     if needs.http {
+        reject_user_std_struct(path, structs, "HttpExchange")?;
         reject_user_std_struct(path, structs, "HttpError")?;
         reject_user_std_struct(path, structs, "HttpResponse")?;
+        reject_user_std_struct(path, structs, "HttpServer")?;
     }
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;
@@ -2684,8 +2698,10 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("UdpSocket".to_string(), 0));
     }
     if needs.http {
+        names.push(("HttpExchange".to_string(), 0));
         names.push(("HttpError".to_string(), 0));
         names.push(("HttpResponse".to_string(), 0));
+        names.push(("HttpServer".to_string(), 0));
     }
     if needs.hash {
         names.push(("HashState".to_string(), 0));
@@ -2849,6 +2865,35 @@ fn inject_standard_types(
                 name: "message".to_string(),
                 value_type: ValueType::String,
             }],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpServer") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpServer".to_string(),
+            type_params: Vec::new(),
+            fields: Vec::new(),
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpExchange") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpExchange".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "method".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "path".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "body".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
         });
     }
     if needs.http && !structs.iter().any(|item| item.name == "HttpResponse") {
@@ -11266,7 +11311,18 @@ fn is_json_builtin_call(callee: &[String]) -> bool {
 fn is_http_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "http" && matches!(name.as_str(), "get" | "post")
+        [module, name]
+            if module == "http"
+                && matches!(
+                    name.as_str(),
+                    "get"
+                        | "post"
+                        | "listen"
+                        | "accept"
+                        | "respond_string"
+                        | "close_server"
+                        | "close_exchange"
+                )
     )
 }
 
@@ -11626,7 +11682,12 @@ fn lower_http_builtin(
     debug_assert_eq!(module, "http");
     let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
     let http_response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
-    let result_type = ValueType::Enum("Result".to_string(), vec![http_response, http_error]);
+    let http_server = ValueType::Struct("HttpServer".to_string(), Vec::new());
+    let http_exchange = ValueType::Struct("HttpExchange".to_string(), Vec::new());
+    let response_result_type = ValueType::Enum(
+        "Result".to_string(),
+        vec![http_response, http_error.clone()],
+    );
     match name.as_str() {
         "get" => {
             let [url_arg] = args else {
@@ -11653,7 +11714,7 @@ fn lower_http_builtin(
                 ));
             }
             Ok((
-                result_type,
+                response_result_type,
                 ValueExpr::Call {
                     name: BUILTIN_HTTP_GET_EXPR.to_string(),
                     args: vec![url],
@@ -11697,10 +11758,226 @@ fn lower_http_builtin(
                 ));
             }
             Ok((
-                result_type,
+                response_result_type,
                 ValueExpr::Call {
                     name: BUILTIN_HTTP_POST_EXPR.to_string(),
                     args: vec![url, body],
+                },
+            ))
+        }
+        "listen" => {
+            let [host_arg, port_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.listen` expects host and port arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (host_type, host) = lower_value_expr(
+                path, host_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if host_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.listen` expects a string host",
+                    &ValueType::String,
+                    &host_type,
+                ));
+            }
+            let (port_type, port) = lower_value_expr(
+                path, port_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if port_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.listen` expects an i64 port",
+                    &ValueType::Int,
+                    &port_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![http_server, http_error.clone()]),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_LISTEN_EXPR.to_string(),
+                    args: vec![host, port],
+                },
+            ))
+        }
+        "accept" => {
+            let [server_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.accept` expects exactly one HttpServer",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (server_type, server) = lower_value_expr(
+                path, server_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if server_type != http_server {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.accept` expects an HttpServer value",
+                    &http_server,
+                    &server_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![http_exchange, http_error.clone()],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_ACCEPT_EXPR.to_string(),
+                    args: vec![server],
+                },
+            ))
+        }
+        "respond_string" => {
+            let [exchange_arg, status_arg, body_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.respond_string` expects exchange, status, and body arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (exchange_type, exchange) = lower_value_expr(
+                path,
+                exchange_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if exchange_type != http_exchange {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.respond_string` expects an HttpExchange value",
+                    &http_exchange,
+                    &exchange_type,
+                ));
+            }
+            let (status_type, status) = lower_value_expr(
+                path, status_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if status_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.respond_string` expects an i64 status",
+                    &ValueType::Int,
+                    &status_type,
+                ));
+            }
+            let (body_type, body) = lower_value_expr(
+                path, body_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if body_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.respond_string` expects a string body",
+                    &ValueType::String,
+                    &body_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![ValueType::Void, http_error.clone()],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_RESPOND_STRING_EXPR.to_string(),
+                    args: vec![exchange, status, body],
+                },
+            ))
+        }
+        "close_server" => {
+            let [server_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.close_server` expects exactly one HttpServer",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (server_type, server) = lower_value_expr(
+                path, server_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if server_type != http_server {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.close_server` expects an HttpServer value",
+                    &http_server,
+                    &server_type,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_CLOSE_SERVER_EXPR.to_string(),
+                    args: vec![server],
+                },
+            ))
+        }
+        "close_exchange" => {
+            let [exchange_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.close_exchange` expects exactly one HttpExchange",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (exchange_type, exchange) = lower_value_expr(
+                path,
+                exchange_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if exchange_type != http_exchange {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.close_exchange` expects an HttpExchange value",
+                    &http_exchange,
+                    &exchange_type,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR.to_string(),
+                    args: vec![exchange],
                 },
             ))
         }
@@ -16423,6 +16700,21 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "post" if imports.iter().any(|item| item == "std.http.post") => {
             vec!["http".to_string(), "post".to_string()]
         }
+        "listen" if imports.iter().any(|item| item == "std.http.listen") => {
+            vec!["http".to_string(), "listen".to_string()]
+        }
+        "accept" if imports.iter().any(|item| item == "std.http.accept") => {
+            vec!["http".to_string(), "accept".to_string()]
+        }
+        "respond_string" if imports.iter().any(|item| item == "std.http.respond_string") => {
+            vec!["http".to_string(), "respond_string".to_string()]
+        }
+        "close_server" if imports.iter().any(|item| item == "std.http.close_server") => {
+            vec!["http".to_string(), "close_server".to_string()]
+        }
+        "close_exchange" if imports.iter().any(|item| item == "std.http.close_exchange") => {
+            vec!["http".to_string(), "close_exchange".to_string()]
+        }
         "connect" if imports.iter().any(|item| item == "std.net.connect") => {
             vec!["net".to_string(), "connect".to_string()]
         }
@@ -18454,6 +18746,136 @@ fn main() -> Result<void, HttpError> {
                 ..
             } if name == BUILTIN_HTTP_POST_EXPR
         ));
+    }
+
+    #[test]
+    fn accepts_http_server_builtins() {
+        let source = r#"package app.main
+
+import std.http
+
+fn serve(host: string, port: i64) -> Result<void, HttpError> {
+    let server: HttpServer = http.listen(host, port)?
+    defer http.close_server(server)
+    let exchange: HttpExchange = http.accept(server)?
+    defer http.close_exchange(exchange)
+    let method: string = exchange.method
+    let path: string = exchange.path
+    let body: string = exchange.body
+    http.respond_string(exchange, 200, body)?
+    return Ok(void)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "HttpServer"));
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|item| item.name == "HttpExchange")
+        );
+        let serve = program
+            .functions
+            .iter()
+            .find(|f| f.name == "serve")
+            .unwrap();
+        assert!(matches!(
+            serve.body[0],
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(ref value_name, ref args),
+                result_expr: ValueExpr::Call { name: ref call_name, .. },
+                ..
+            } if value_name == "HttpServer" && args.is_empty() && call_name == BUILTIN_HTTP_LISTEN_EXPR
+        ));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Struct(value_name, args),
+                result_expr: ValueExpr::Call { name: call_name, .. },
+                ..
+            } if value_name == "HttpExchange"
+                && args.is_empty()
+                && call_name == BUILTIN_HTTP_ACCEPT_EXPR
+        )));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                value_type: ValueType::Void,
+                result_expr: ValueExpr::Call { name: call_name, .. },
+                ..
+            } if call_name == BUILTIN_HTTP_RESPOND_STRING_EXPR
+        )));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::Defer {
+                call: DeferredCall::Expr(ValueExpr::Call { name, .. })
+            } if name == BUILTIN_HTTP_CLOSE_SERVER_EXPR
+        )));
+    }
+
+    #[test]
+    fn accepts_specific_http_server_builtin_imports() {
+        let source = r#"package app.main
+
+import std.http.HttpError
+import std.http.HttpExchange
+import std.http.HttpServer
+import std.http.accept
+import std.http.close_exchange
+import std.http.close_server
+import std.http.listen
+import std.http.respond_string
+
+fn serve(host: string, port: i64) -> Result<void, HttpError> {
+    let server: HttpServer = listen(host, port)?
+    defer close_server(server)
+    let exchange: HttpExchange = accept(server)?
+    defer close_exchange(exchange)
+    respond_string(exchange, 204, "")?
+    return Ok(void)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let serve = program
+            .functions
+            .iter()
+            .find(|f| f.name == "serve")
+            .unwrap();
+        assert!(matches!(
+            serve.body[0],
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { ref name, .. },
+                ..
+            } if name == BUILTIN_HTTP_LISTEN_EXPR
+        ));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { name, .. },
+                ..
+            } if name == BUILTIN_HTTP_ACCEPT_EXPR
+        )));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { name, .. },
+                ..
+            } if name == BUILTIN_HTTP_RESPOND_STRING_EXPR
+        )));
+        assert!(serve.body.iter().any(|stmt| matches!(
+            stmt,
+            Statement::Defer {
+                call: DeferredCall::Expr(ValueExpr::Call { name, .. })
+            } if name == BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR
+        )));
     }
 
     #[test]

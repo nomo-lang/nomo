@@ -101,7 +101,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.regex", "regular expression helpers"),
         ("std.json", "JSON parse and stringify helpers"),
         ("std.net", "blocking TCP and UDP helpers"),
-        ("std.http", "blocking plain-HTTP client helpers"),
+        ("std.http", "blocking plain-HTTP client and server helpers"),
         ("std.collections", "string map and string set helpers"),
         ("std.char", "character helpers"),
         ("std.os", "target OS helpers"),

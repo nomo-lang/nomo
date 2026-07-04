@@ -10,10 +10,8 @@ fn id(values: Array<i32>) -> Array<i32> {
 fn main() -> void {
     let mut original: Array<i32> = Array.new<i32>()
     original.push(5)
-
     let copy: Array<i32> = id(original)
     original.set(0, 8)
-
     let copied_value: Option<i32> = copy.get(0)
     let original_value: Option<i32> = original.get(0)
     let message: string = match copied_value {
@@ -31,6 +29,5 @@ fn main() -> void {
         }
         None => "copy missing"
     }
-
     io.println(message)
 }

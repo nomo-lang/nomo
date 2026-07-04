@@ -914,8 +914,38 @@ fn format_targets(path: &Path) -> Result<Vec<PathBuf>, FormatError> {
         return Ok(vec![path.to_path_buf()]);
     }
 
-    let project = discover_project(path).map_err(FormatError::Message)?;
-    let src = project.root.join("src");
+    match discover_project(path) {
+        Ok(project) => return format_project_targets(&project.root),
+        Err(project_err) => {
+            if let Ok(workspace) = discover_workspace(path) {
+                let mut files = Vec::new();
+                for project in workspace.members {
+                    files.extend(format_project_targets(&project.root)?);
+                }
+                files.sort();
+                files.dedup();
+                return Ok(files);
+            }
+            if !is_missing_manifest_error(&project_err) || !path.is_dir() {
+                return Err(FormatError::Message(project_err));
+            }
+        }
+    }
+
+    let mut files = Vec::new();
+    collect_nomo_files(path, &mut files)?;
+    files.sort();
+    if files.is_empty() {
+        return Err(FormatError::Message(format!(
+            "no .nomo files found under {}",
+            path.display()
+        )));
+    }
+    Ok(files)
+}
+
+fn format_project_targets(root: &Path) -> Result<Vec<PathBuf>, FormatError> {
+    let src = root.join("src");
     if !src.is_dir() {
         return Err(FormatError::Message(format!(
             "source directory not found: {}",

@@ -1,0 +1,19 @@
+package app.main
+
+import core.math
+import std.io
+import std.testing
+
+/// Runs the workspace CLI example.
+pub fn run_cli() -> void {
+    io.println(workspace_label())
+}
+
+#[test]
+fn cli_uses_core_math() -> void {
+    testing.assert_equal(add(20, 22), 42)
+}
+
+fn main() -> void {
+    run_cli()
+}

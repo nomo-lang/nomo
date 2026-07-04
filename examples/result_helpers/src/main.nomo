@@ -43,19 +43,16 @@ fn main() -> void {
     } else {
         io.println("wrong")
     }
-
     let unwrap_ok: Result<string, string> = parse_label(true)
     let unwrap_err: Result<string, string> = parse_label(false)
     io.println(unwrap_ok.unwrap_or("fallback"))
     io.println(unwrap_err.unwrap_or("fallback"))
-
     let chained: Result<string, string> = resolve_chain()
     let chained_text: string = match chained {
         Ok(text) => text
         Err(err) => err
     }
     io.println(chained_text)
-
     let raw_err: Result<string, string> = parse_label(false)
     let converted: Result<string, AppError> = result.map_err(raw_err, app_error_from_string)
     let message: string = match converted {

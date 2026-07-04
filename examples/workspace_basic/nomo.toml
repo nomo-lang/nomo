@@ -1,0 +1,10 @@
+[workspace]
+members = ["apps/*", "packages/*"]
+default-members = ["apps/cli"]
+
+[workspace.package]
+namespace = "examples"
+edition = "2026"
+
+[workspace.dependencies]
+core = { package = "examples/core", path = "packages/core" }

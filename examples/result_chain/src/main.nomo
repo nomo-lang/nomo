@@ -131,10 +131,8 @@ fn decorate_label(flag: bool) -> Result<string, string> {
 fn main() -> void {
     let result: Result<string, string> = decorate_label(false)
     let message: string = match result {
-        Ok(text) =>
-            text
-        Err(err) =>
-            err
+        Ok(text) => text
+        Err(err) => err
     }
     io.println(message)
 }

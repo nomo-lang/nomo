@@ -5,15 +5,12 @@ import std.string
 
 fn make_message() -> string {
     let prefix: string = "newline"
-    let with_dot: string = prefix
-        .concat(" dot")
-    return with_dot
-        .concat(" ok")
+    let with_dot: string = prefix.concat(" dot")
+    return with_dot.concat(" ok")
 }
 
 fn parse() -> Result<string, string> {
-    return Result
-        .Ok(make_message())
+    return Result.Ok(make_message())
 }
 
 fn main() -> void {

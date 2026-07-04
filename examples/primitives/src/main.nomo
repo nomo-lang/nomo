@@ -3,8 +3,7 @@ package app.main
 import std.io
 
 fn ratio(age: i32) -> f64 {
-    return age as
-        f64
+    return age as f64
 }
 
 fn initial() -> char {
@@ -15,8 +14,7 @@ fn main() -> void {
     let age: i32 = 18
     let value: f64 = ratio(age)
     let letter: char = initial()
-    let numeric_ok: bool = value >=
-        18.0
+    let numeric_ok: bool = value >= 18.0
     let ok: bool = if numeric_ok {
         letter == '語'
     } else {
@@ -27,7 +25,5 @@ fn main() -> void {
     } else {
         "wrong"
     }
-    io.println(
-        message
-    )
+    io.println(message)
 }

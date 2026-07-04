@@ -69,8 +69,10 @@ imports and declarations, and may omit `fn main`; in that case, top-level
 statements after all declarations are compiled as a synthesized `main() -> void`.
 Explicit `main` functions and top-level script statements cannot be mixed.
 
-`nomo fmt` is an AST-based v0.1 formatter. With no path or a directory path, it
-discovers the project manifest and formats `src/**/*.nomo` in stable path order.
+`nomo fmt` is an AST-based v0.1 formatter. With no path or a project directory
+path, it discovers the project manifest and formats `src/**/*.nomo` in stable
+path order. Workspace roots format each member's `src/**/*.nomo`; loose source
+directories without a `nomo.toml` format contained `.nomo` files recursively.
 With a direct `.nomo` file path, it formats only that file and does not require a
 manifest. `--check` prints `would format <path>` without writing and exits with
 failure if any target differs. The formatter emits canonical whitespace and

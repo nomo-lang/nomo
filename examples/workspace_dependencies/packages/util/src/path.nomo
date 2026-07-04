@@ -1,0 +1,8 @@
+package util.path
+
+import std.string.concat
+
+/// Joins two label parts for the workspace dependency example.
+pub fn join_label(left: string, right: string) -> string {
+    return concat(concat(left, " "), concat(right, " ok"))
+}

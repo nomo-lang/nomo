@@ -778,8 +778,50 @@ fn nomo_test_rejects_parameters() {
 }
 
 #[test]
-fn nomo_fmt_directory_without_manifest_reports_project_error() {
-    let root = temp_test_root("fmt-no-manifest");
+fn nomo_fmt_formats_loose_source_directory_recursively() {
+    let root = temp_test_root("fmt-loose-directory");
+    reset_dir(&root);
+    let dir = root.join("loose");
+    fs::create_dir_all(dir.join("nested")).unwrap();
+    fs::write(dir.join("main.nomo"), "package app . main\nfn main(){\n}\n").unwrap();
+    fs::write(
+        dir.join("nested/helper.nomo"),
+        "package app . helper\npub fn ok()->bool{\nreturn true\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg(&dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains(&format!("formatted {}\n", dir.join("main.nomo").display())));
+    assert!(stdout.contains(&format!(
+        "formatted {}\n",
+        dir.join("nested/helper.nomo").display()
+    )));
+    assert_eq!(
+        fs::read_to_string(dir.join("main.nomo")).unwrap(),
+        "package app.main\n\nfn main() -> void {\n}\n"
+    );
+    assert_eq!(
+        fs::read_to_string(dir.join("nested/helper.nomo")).unwrap(),
+        "package app.helper\n\npub fn ok() -> bool {\n    return true\n}\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_fmt_empty_directory_without_manifest_reports_no_sources() {
+    let root = temp_test_root("fmt-empty-directory");
     reset_dir(&root);
     let dir = root.join("loose");
     fs::create_dir_all(&dir).unwrap();
@@ -793,7 +835,7 @@ fn nomo_fmt_directory_without_manifest_reports_project_error() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("could not find nomo.toml"), "{stderr}");
+    assert!(stderr.contains("no .nomo files found under"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();
 }

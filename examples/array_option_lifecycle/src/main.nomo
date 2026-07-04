@@ -18,20 +18,15 @@ fn label(values: Array<i32>) -> string {
 fn main() -> void {
     let mut inner: Array<i32> = Array.new<i32>()
     inner.push(4)
-
     let mut outer: Array<Array<i32>> = Array.new<Array<i32>>()
     outer.push(inner)
-
     let mut maybe: Option<Array<i32>> = outer.get(0)
     let snapshot: Option<Array<i32>> = maybe
     maybe = maybe
-
     inner.set(0, 9)
-
     let message: string = match snapshot {
         Some(values) => label(values)
         None => "snapshot missing"
     }
-
     io.println(message)
 }

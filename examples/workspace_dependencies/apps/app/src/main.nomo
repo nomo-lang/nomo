@@ -1,0 +1,8 @@
+package app.main
+
+import std.io
+import util.path
+
+fn main() -> void {
+    io.println(join_label("workspace", "dependency"))
+}

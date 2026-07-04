@@ -1,0 +1,4 @@
+package util.main
+
+fn main() -> void {
+}

@@ -3,13 +3,21 @@ package app.main
 import std.io
 
 const GREETING: string = "hello"
+
 const TIMES: i32 = 3
+
 const ENABLED: bool = true
+
 const LIMIT: i64 = 41
+
 const SMALL: u32 = 1
+
 const LARGE: u64 = 2
+
 const RATIO: f64 = 3.5
+
 const INITIAL: char = 'N'
+
 const STATUS: string = "const primitives ok"
 
 fn check_primitives() -> void {

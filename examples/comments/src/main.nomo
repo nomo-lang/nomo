@@ -1,5 +1,4 @@
 //! Example module documentation.
-
 package app.main
 
 import std.io
@@ -14,9 +13,9 @@ fn main() -> void {
     // Line comments can trail ordinary code.
     let text: string = marker_text() // trailing comment
     /*
-       Outer block comment.
-       /* Nested block comment. */
-       Back in the outer block.
+    Outer block comment.
+    /* Nested block comment. */
+    Back in the outer block.
     */
     io.println("comments ok")
     io.println(text)

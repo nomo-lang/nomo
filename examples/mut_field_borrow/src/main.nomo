@@ -26,7 +26,6 @@ fn main() -> void {
     let mut point: Point = Point { x: 1, y: 7 }
     bump_twice(mut point.x)
     swap_values(mut point.x, mut point.y)
-
     let message: string = if point.x == 7 {
         if point.y == 3 {
             "mut field borrow ok"

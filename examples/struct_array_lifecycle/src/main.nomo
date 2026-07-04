@@ -28,23 +28,18 @@ fn label_seven(bag: Bag) -> string {
 fn main() -> void {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(5)
-
     let mut bag: Bag = Bag { items: items }
     let mut replacement: Array<i32> = Array.new<i32>()
     replacement.push(7)
     bag.items = replacement
     replacement.set(0, 9)
-
     let snapshot: Bag = bag
     let mut slot: Slot = Slot.Full(snapshot)
     slot = slot
-
     items.set(0, 9)
-
     let message: string = match slot {
         Slot.Full(value) => label_seven(value)
         Slot.Empty => "empty"
     }
-
     io.println(message)
 }

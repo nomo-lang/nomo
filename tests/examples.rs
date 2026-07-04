@@ -19,6 +19,8 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_http",
     "nomo_test_basic",
     "nomo_doc_basic",
+    "workspace_basic",
+    "workspace_dependencies",
     "operators_arithmetic",
     "operators_logical",
     "operators_bitwise",
@@ -31,7 +33,13 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
 #[test]
 fn examples_check_and_run() {
     for example in example_projects() {
-        clean_example_build_dir(&example);
+        clean_example_build_dirs(&example);
+        if is_workspace_example(&example) {
+            assert_workspace_example(&example);
+            clean_example_build_dirs(&example);
+            continue;
+        }
+
         assert_cli_check(&example);
         assert_cli_build_emit_c(&example);
         assert_cli_run(&example);
@@ -53,7 +61,7 @@ fn examples_check_and_run() {
             String::from_utf8_lossy(&output.stderr)
         );
         assert_example_output(&example, &output.stdout, &output.stderr);
-        clean_example_build_dir(&example);
+        clean_example_build_dirs(&example);
     }
 }
 
@@ -241,6 +249,213 @@ fn assert_cli_doc_basic(example: &Path) {
     );
 }
 
+fn assert_workspace_example(example: &Path) {
+    assert_cli_workspace_check(example);
+    assert_cli_workspace_build_emit_c(example);
+    match example_name(example) {
+        "workspace_basic" => {
+            assert_cli_workspace_test_basic(example);
+            assert_cli_workspace_doc_basic(example);
+            assert_cli_workspace_deps_tree(
+                example,
+                &[
+                    "examples/cli 0.1.0",
+                    "examples/core 0.1.0",
+                    "+-- core -> examples/core",
+                ],
+            );
+        }
+        "workspace_dependencies" => {
+            assert_cli_workspace_deps_tree(
+                example,
+                &[
+                    "examples/app 0.1.0",
+                    "examples/util 0.1.0",
+                    "+-- util -> examples/util",
+                ],
+            );
+        }
+        name => panic!("missing workspace example assertions for `{name}`"),
+    }
+}
+
+fn assert_cli_workspace_check(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg("--workspace")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo check --workspace {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo check --workspace failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for member in workspace_members(example) {
+        let main = member.join("src/main.nomo");
+        assert!(
+            stdout.contains(&format!("checked {}\n", main.display())),
+            "{stdout}"
+        );
+    }
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_cli_workspace_build_emit_c(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--workspace")
+        .arg("--emit-c")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo build --workspace --emit-c {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo build --workspace --emit-c failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for member in workspace_members(example) {
+        let c_path = member.join("build/c/main.c");
+        assert!(
+            stdout.contains(&format!("built {}\n", c_path.display())),
+            "{stdout}"
+        );
+        assert!(c_path.exists(), "missing generated C: {}", c_path.display());
+    }
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_cli_workspace_test_basic(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg("--workspace")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo test --workspace {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo test --workspace failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("running 2 tests\n"), "{stdout}");
+    assert!(
+        stdout.contains("ok app.main.cli_uses_core_math\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("ok core.main.core_adds_numbers\n"),
+        "{stdout}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_cli_workspace_doc_basic(example: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("doc")
+        .arg("--workspace")
+        .arg("--json")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo doc --workspace --json {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo doc --workspace --json failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(stdout.contains("\"package\":\"examples/cli\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"run_cli\""), "{stdout}");
+    assert!(
+        stdout.contains("Runs the workspace CLI example."),
+        "{stdout}"
+    );
+    assert!(stdout.contains("\"package\":\"examples/core\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"add\""), "{stdout}");
+    assert!(
+        stdout.contains("Adds two numbers from the core package."),
+        "{stdout}"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
+fn assert_cli_workspace_deps_tree(example: &Path, expected: &[&str]) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--workspace")
+        .arg(example)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo deps tree --workspace {}: {err}",
+                example.display()
+            )
+        });
+    assert!(
+        output.status.success(),
+        "nomo deps tree --workspace failed for {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for item in expected {
+        assert!(stdout.contains(item), "{stdout}");
+    }
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output {
     if example_name(example) == "std_http" {
         run_with_http_example_server(|port| {
@@ -346,6 +561,21 @@ fn example_name(example: &Path) -> &str {
         .unwrap_or_else(|| panic!("example path has no file name: {}", example.display()))
 }
 
+fn is_workspace_example(example: &Path) -> bool {
+    matches!(
+        example_name(example),
+        "workspace_basic" | "workspace_dependencies"
+    )
+}
+
+fn workspace_members(example: &Path) -> Vec<PathBuf> {
+    match example_name(example) {
+        "workspace_basic" => vec![example.join("apps/cli"), example.join("packages/core")],
+        "workspace_dependencies" => vec![example.join("apps/app"), example.join("packages/util")],
+        name => panic!("missing workspace member list for `{name}`"),
+    }
+}
+
 fn assert_example_output(example: &Path, stdout: &[u8], stderr: &[u8]) {
     let stdout = String::from_utf8_lossy(stdout);
     let stderr = String::from_utf8_lossy(stderr);
@@ -378,11 +608,29 @@ fn assert_example_output(example: &Path, stdout: &[u8], stderr: &[u8]) {
     );
 }
 
-fn clean_example_build_dir(example: &Path) {
-    let build_dir = example.join("build");
-    if build_dir.exists() {
-        fs::remove_dir_all(&build_dir)
-            .unwrap_or_else(|err| panic!("failed to clean {}: {err}", build_dir.display()));
+fn clean_example_build_dirs(example: &Path) {
+    if !example.exists() {
+        return;
+    }
+    clean_build_dirs_recursive(example);
+}
+
+fn clean_build_dirs_recursive(dir: &Path) {
+    for entry in
+        fs::read_dir(dir).unwrap_or_else(|err| panic!("failed to read {}: {err}", dir.display()))
+    {
+        let path = entry
+            .unwrap_or_else(|err| panic!("failed to read entry in {}: {err}", dir.display()))
+            .path();
+        if !path.is_dir() {
+            continue;
+        }
+        if path.file_name().and_then(|name| name.to_str()) == Some("build") {
+            fs::remove_dir_all(&path)
+                .unwrap_or_else(|err| panic!("failed to clean {}: {err}", path.display()));
+        } else {
+            clean_build_dirs_recursive(&path);
+        }
     }
 }
 

@@ -1,0 +1,11 @@
+package core.math
+
+/// Adds two numbers from the core package.
+pub fn add(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+/// Returns the workspace example label.
+pub fn workspace_label() -> string {
+    return "workspace basic ok"
+}

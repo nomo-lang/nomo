@@ -13,14 +13,12 @@ fn main() -> void {
         None => "wrong missing env"
     }
     io.println(label)
-
     let cwd_path: string = env.cwd()
     if cwd_path.contains("env_extended") {
         io.println("cwd ok")
     } else {
         io.println("wrong cwd")
     }
-
     env.set("HOME", "/nomo/example/home")
     let home: Option<string> = env.home_dir()
     let home_label: string = match home {
@@ -32,7 +30,6 @@ fn main() -> void {
     } else {
         io.println("wrong home")
     }
-
     env.set("TMPDIR", "/nomo/example/tmp")
     if env.temp_dir() == "/nomo/example/tmp" {
         io.println("temp ok")

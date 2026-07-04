@@ -6,8 +6,7 @@ import std.string
 fn main() -> void {
     let prefix: string = "string "
     let message: string = prefix.concat("methods ok")
-    let output: string = if message
-        .len() == 17 {
+    let output: string = if message.len() == 17 {
         if message == "string methods ok" {
             if message != "wrong" {
                 message

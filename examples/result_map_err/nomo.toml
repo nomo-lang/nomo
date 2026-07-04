@@ -1,6 +1,3 @@
 [package]
 name = "result_map_err"
 version = "0.1.0"
-
-[dependencies]
-std = "0.1.0"

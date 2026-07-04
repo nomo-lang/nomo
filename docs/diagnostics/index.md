@@ -26,7 +26,14 @@ the same code.
 
 ## Documented Codes
 
+- [E0101](E0101.md) - unterminated string literal
 - [E0102](E0102.md) - unexpected character
+- [E0103](E0103.md) - integer literal too large
+- [E0104](E0104.md) - invalid character literal or reserved word
+- [E0105](E0105.md) - unknown character escape
+- [E0106](E0106.md) - empty character literal
+- [E0107](E0107.md) - character literal has too many characters
+- [E0108](E0108.md) - unterminated block comment
 - [E0200](E0200.md) - missing package declaration
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import

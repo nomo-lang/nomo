@@ -69,7 +69,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -161,6 +161,18 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_env_temp_dir(program) {
         emit_env_temp_dir_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_num_parse_i64(program) {
+        emit_num_parse_i64_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_num_parse_u64(program) {
+        emit_num_parse_u64_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_num_parse_f64(program) {
+        emit_num_parse_f64_helper(&mut out);
         out.push('\n');
     }
 
@@ -663,6 +675,31 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("        if (errno != EINTR) { nomo_panic(\"time.sleep_millis failed\"); }\n");
     out.push_str("    }\n");
     out.push_str("#endif\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_num_i64_to_string(int64_t value) {\n");
+    out.push_str("    char buffer[64];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRId64, value);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_num_i32_to_string(int32_t value) {\n");
+    out.push_str("    char buffer[32];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRId32, value);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_num_u32_to_string(uint32_t value) {\n");
+    out.push_str("    char buffer[32];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRIu32, value);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_num_u64_to_string(uint64_t value) {\n");
+    out.push_str("    char buffer[64];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRIu64, value);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_num_f64_to_string(double value) {\n");
+    out.push_str("    char buffer[128];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%.17g\", value);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
     out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
     out.push_str("    return nomo_string_from_slice(data, start, len);\n");
@@ -1371,6 +1408,82 @@ fn emit_io_read_line_helper(out: &mut String) {
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = nomo_string_owned(buffer)};\n");
     out.push_str("}\n");
+}
+
+fn emit_num_parse_i64_helper(out: &mut String) {
+    emit_num_parse_helper(out, "i64", &ValueType::Int, "strtoll", "int64_t");
+}
+
+fn emit_num_parse_u64_helper(out: &mut String) {
+    emit_num_parse_helper(out, "u64", &ValueType::U64, "strtoull", "uint64_t");
+}
+
+fn emit_num_parse_f64_helper(out: &mut String) {
+    emit_num_parse_helper(out, "f64", &ValueType::Float, "strtod", "double");
+}
+
+fn emit_num_parse_helper(
+    out: &mut String,
+    suffix: &str,
+    ok_type: &ValueType,
+    c_parse_fn: &str,
+    c_value_type: &str,
+) {
+    let num_error = ValueType::Struct("NumError".to_string(), Vec::new());
+    let result = c_enum_ident("Result", &[ok_type.clone(), num_error.clone()]);
+    let ok = c_enum_variant_ident("Result", &[ok_type.clone(), num_error.clone()], "Ok");
+    let err = c_enum_variant_ident("Result", &[ok_type.clone(), num_error], "Err");
+    let num_error_struct = c_struct_ident("NumError", &[]);
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_num_parse_");
+    out.push_str(suffix);
+    out.push_str("(nomo_string text) {\n");
+    out.push_str("    errno = 0;\n");
+    out.push_str("    char *end = NULL;\n");
+    if suffix == "u64" {
+        out.push_str("    if (text.data[0] == '-') {\n");
+        emit_num_parse_error(out, &result, &err, &num_error_struct, suffix);
+        out.push_str("    }\n");
+    }
+    out.push_str("    ");
+    out.push_str(c_value_type);
+    out.push_str(" parsed = (");
+    out.push_str(c_value_type);
+    out.push(')');
+    out.push_str(c_parse_fn);
+    if suffix == "f64" {
+        out.push_str("(text.data, &end);\n");
+    } else {
+        out.push_str("(text.data, &end, 10);\n");
+    }
+    out.push_str("    if (text.data[0] == '\\0' || *end != '\\0' || errno == ERANGE) {\n");
+    emit_num_parse_error(out, &result, &err, &num_error_struct, suffix);
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = parsed};\n");
+    out.push_str("}\n");
+}
+
+fn emit_num_parse_error(out: &mut String, result: &str, err: &str, num_error: &str, suffix: &str) {
+    out.push_str("        return (");
+    out.push_str(result);
+    out.push_str("){.tag = ");
+    out.push_str(err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(num_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_literal(\"invalid ");
+    out.push_str(suffix);
+    out.push_str("\")}};\n");
 }
 
 fn emit_fs_read_to_string_helper(out: &mut String) {
@@ -3305,6 +3418,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FileClose { file: expr }
         | ValueExpr::EnvGet { name: expr }
         | ValueExpr::TimeSleepMillis { duration: expr }
+        | ValueExpr::NumParseI64 { value: expr }
+        | ValueExpr::NumParseU64 { value: expr }
+        | ValueExpr::NumParseF64 { value: expr }
+        | ValueExpr::NumToString { value: expr, .. }
         | ValueExpr::ArrayLen { array: expr }
         | ValueExpr::EnumVariant {
             payload: Some(expr),
@@ -4071,6 +4188,27 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, duration);
             out.push(')');
         }
+        ValueExpr::NumParseI64 { value } => {
+            out.push_str("nomo_num_parse_i64(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::NumParseU64 { value } => {
+            out.push_str("nomo_num_parse_u64(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::NumParseF64 { value } => {
+            out.push_str("nomo_num_parse_f64(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::NumToString { value, value_type } => {
+            out.push_str(num_to_string_helper_name(value_type));
+            out.push('(');
+            emit_expr(out, value);
+            out.push(')');
+        }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
             emit_expr(out, left);
@@ -4759,6 +4897,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -5033,6 +5175,10 @@ where
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -5424,6 +5570,13 @@ fn collect_expr_struct(
         ValueExpr::IoReadLine => {
             push_struct_instance(seen, out, "IoError", &[]);
         }
+        ValueExpr::NumParseI64 { value }
+        | ValueExpr::NumParseU64 { value }
+        | ValueExpr::NumParseF64 { value } => {
+            push_struct_instance(seen, out, "NumError", &[]);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::NumToString { value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::FileClose { file } => collect_expr_struct(file, seen, out),
         ValueExpr::ResultMapErr {
             result,
@@ -6096,6 +6249,43 @@ fn collect_expr_enum(
                 ],
             );
         }
+        ValueExpr::NumParseI64 { value } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Int,
+                    ValueType::Struct("NumError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::NumParseU64 { value } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::U64,
+                    ValueType::Struct("NumError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::NumParseF64 { value } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Float,
+                    ValueType::Struct("NumError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::NumToString { value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::ArrayNew { .. } => {}
         ValueExpr::ArrayLen { array } => collect_expr_enum(array, seen, out),
         ValueExpr::ArrayGet {
@@ -6198,6 +6388,33 @@ fn uses_io_read_line(program: &Program) -> bool {
         .functions
         .iter()
         .any(|function| function.body.iter().any(statement_uses_io_read_line))
+}
+
+fn uses_num_parse_i64(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_num_parse_i64))
+    })
+}
+
+fn uses_num_parse_u64(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_num_parse_u64))
+    })
+}
+
+fn uses_num_parse_f64(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_num_parse_f64))
+    })
 }
 
 fn uses_env_get(program: &Program) -> bool {
@@ -6722,6 +6939,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::Unary { expr: path, .. }
         | ValueExpr::Cast { expr: path, .. }
         | ValueExpr::ResultIsOk { result: path, .. }
@@ -6792,6 +7013,18 @@ fn expr_is_env_set(expr: &ValueExpr) -> bool {
 
 fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::IoReadLine)
+}
+
+fn expr_is_num_parse_i64(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::NumParseI64 { .. })
+}
+
+fn expr_is_num_parse_u64(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::NumParseU64 { .. })
+}
+
+fn expr_is_num_parse_f64(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::NumParseF64 { .. })
 }
 
 fn expr_is_env_cwd(expr: &ValueExpr) -> bool {
@@ -7250,7 +7483,11 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
-        | ValueExpr::TimeSleepMillis { duration: name } => expr_uses_fs_read_to_string(name),
+        | ValueExpr::TimeSleepMillis { duration: name }
+        | ValueExpr::NumParseI64 { value: name }
+        | ValueExpr::NumParseU64 { value: name }
+        | ValueExpr::NumParseF64 { value: name }
+        | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_read_to_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
@@ -7374,7 +7611,11 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
-        | ValueExpr::TimeSleepMillis { duration: name } => expr_uses_fs_write_string(name),
+        | ValueExpr::TimeSleepMillis { duration: name }
+        | ValueExpr::NumParseI64 { value: name }
+        | ValueExpr::NumParseU64 { value: name }
+        | ValueExpr::NumParseF64 { value: name }
+        | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_write_string(name),
         ValueExpr::EnvArgs => false,
         ValueExpr::ArrayNew { .. } => false,
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
@@ -7476,6 +7717,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_fs_open(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -7589,7 +7834,11 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
-        | ValueExpr::TimeSleepMillis { duration: path } => expr_uses_env_get(path),
+        | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. } => expr_uses_env_get(path),
         ValueExpr::FsWriteString { path, content } => {
             expr_uses_env_get(path) || expr_uses_env_get(content)
         }
@@ -7710,6 +7959,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. }
         | ValueExpr::ArrayLen { array: path } => expr_uses_env_args(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -7840,7 +8093,11 @@ fn collect_expr_array_elements(
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
-        | ValueExpr::TimeSleepMillis { duration: path } => {
+        | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::NumParseI64 { value: path }
+        | ValueExpr::NumParseU64 { value: path }
+        | ValueExpr::NumParseF64 { value: path }
+        | ValueExpr::NumToString { value: path, .. } => {
             collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
@@ -8162,6 +8419,17 @@ fn checked_binary_helper(op: &BinaryOp, value_type: &ValueType) -> Option<&'stat
 fn c_unary_op(op: &UnaryOp) -> &'static str {
     match op {
         UnaryOp::Not => "!",
+    }
+}
+
+fn num_to_string_helper_name(value_type: &ValueType) -> &'static str {
+    match value_type {
+        ValueType::Int => "nomo_num_i64_to_string",
+        ValueType::I32 => "nomo_num_i32_to_string",
+        ValueType::U32 => "nomo_num_u32_to_string",
+        ValueType::U64 => "nomo_num_u64_to_string",
+        ValueType::Float => "nomo_num_f64_to_string",
+        _ => unreachable!("num.to_string only lowers supported numeric types"),
     }
 }
 
@@ -9401,6 +9669,95 @@ mod tests {
         assert!(c.contains("typedef struct nomo_struct_IoError"));
         assert!(c.contains("static nomo_enum_Result_string_struct_IoError nomo_io_read_line"));
         assert!(c.contains("nomo_io_read_line()"));
+    }
+
+    #[test]
+    fn emits_num_helpers() {
+        let num_error = ValueType::Struct("NumError".to_string(), Vec::new());
+        let result_i64_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Int, num_error.clone()],
+        );
+        let result_u64_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::U64, num_error.clone()],
+        );
+        let result_f64_error =
+            ValueType::Enum("Result".to_string(), vec![ValueType::Float, num_error]);
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.num".to_string()],
+            structs: vec![StructType {
+                package: "std.num".to_string(),
+                name: "NumError".to_string(),
+                type_params: Vec::new(),
+                fields: vec![StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                }],
+            }],
+            enums: vec![EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            }],
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "integer".to_string(),
+                        value_type: result_i64_error,
+                        initializer: ValueExpr::NumParseI64 {
+                            value: Box::new(ValueExpr::StringLiteral("42".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "unsigned".to_string(),
+                        value_type: result_u64_error,
+                        initializer: ValueExpr::NumParseU64 {
+                            value: Box::new(ValueExpr::StringLiteral("7".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "decimal".to_string(),
+                        value_type: result_f64_error,
+                        initializer: ValueExpr::NumParseF64 {
+                            value: Box::new(ValueExpr::StringLiteral("3.5".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "text".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::NumToString {
+                            value: Box::new(ValueExpr::IntLiteral(42)),
+                            value_type: ValueType::Int,
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("typedef struct nomo_struct_NumError"));
+        assert!(c.contains("static nomo_enum_Result_i64_struct_NumError nomo_num_parse_i64"));
+        assert!(c.contains("static nomo_enum_Result_u64_struct_NumError nomo_num_parse_u64"));
+        assert!(c.contains("static nomo_enum_Result_f64_struct_NumError nomo_num_parse_f64"));
+        assert!(c.contains("nomo_num_parse_i64(nomo_string_literal(\"42\"))"));
+        assert!(c.contains("nomo_num_i64_to_string(42)"));
     }
 
     #[test]

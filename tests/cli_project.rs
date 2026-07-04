@@ -5488,6 +5488,66 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_num_helpers_with_question() {
+    let root = temp_test_root("std-num-helpers");
+    reset_dir(&root);
+    let project = root.join("num_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"num_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.num
+import std.result
+
+fn main() -> Result<void, NumError> {
+    let integer: i64 = num.parse_i64("42")?
+    let unsigned: u64 = num.parse_u64("7")?
+    let decimal: f64 = num.parse_f64("3.5")?
+    io.println(num.to_string(integer))
+    io.println(num.to_string(unsigned))
+    io.println(num.to_string(decimal))
+    let bad: Result<i64, NumError> = num.parse_i64("oops")
+    if result.is_err(bad) {
+        io.println("bad")
+    } else {
+        io.println("unexpected")
+    }
+    return Ok(void)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "42\n7\n3.5\nbad\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_io_read_line() {
     let root = temp_test_root("std-io-read-line");
     reset_dir(&root);

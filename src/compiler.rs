@@ -341,6 +341,19 @@ pub enum ValueExpr {
     TimeSleepMillis {
         duration: Box<ValueExpr>,
     },
+    NumParseI64 {
+        value: Box<ValueExpr>,
+    },
+    NumParseU64 {
+        value: Box<ValueExpr>,
+    },
+    NumParseF64 {
+        value: Box<ValueExpr>,
+    },
+    NumToString {
+        value: Box<ValueExpr>,
+        value_type: ValueType,
+    },
     PathJoin {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
@@ -1712,6 +1725,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.time.now_millis"
             | "std.time.monotonic_millis"
             | "std.time.sleep_millis"
+            | "std.num"
+            | "std.num.NumError"
+            | "std.num.parse_i64"
+            | "std.num.parse_u64"
+            | "std.num.parse_f64"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -1830,6 +1848,7 @@ fn missing_standard_type_import(
         "Array" => Some("std.array"),
         "FsError" | "File" => Some("std.fs"),
         "IoError" => Some("std.io"),
+        "NumError" => Some("std.num"),
         _ => None,
     }
 }
@@ -1973,7 +1992,10 @@ fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "FsError")?;
         reject_user_std_struct(path, structs, "File")?;
     }
-    if needs.io || needs.fs || needs.result {
+    if needs.num {
+        reject_user_std_struct(path, structs, "NumError")?;
+    }
+    if needs.io || needs.fs || needs.num || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
     }
     if needs.env || needs.option || needs.array {
@@ -2221,6 +2243,7 @@ struct StandardTypeNeeds {
     io: bool,
     fs: bool,
     env: bool,
+    num: bool,
     result: bool,
     option: bool,
     array: bool,
@@ -2238,6 +2261,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.env" || item.starts_with("std.env."))
             || source_uses_env_builtin(ast),
+        num: imports
+            .iter()
+            .any(|item| item == "std.num" || item.starts_with("std.num."))
+            || source_uses_num_builtin(ast),
         result: imports
             .iter()
             .any(|item| item == "std.result" || item.starts_with("std.result."))
@@ -2261,12 +2288,15 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
         names.push(("FsError".to_string(), 0));
         names.push(("File".to_string(), 0));
     }
+    if needs.num {
+        names.push(("NumError".to_string(), 0));
+    }
     names.into_iter()
 }
 
 fn standard_enum_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
-    if needs.io || needs.fs || needs.result {
+    if needs.io || needs.fs || needs.num || needs.result {
         names.push(("Result".to_string(), 2));
     }
     if needs.env || needs.option || needs.array {
@@ -2310,7 +2340,20 @@ fn inject_standard_types(
             fields: Vec::new(),
         });
     }
-    if (needs.io || needs.fs || needs.result) && !enums.iter().any(|item| item.name == "Result") {
+    if needs.num && !structs.iter().any(|item| item.name == "NumError") {
+        structs.push(StructType {
+            package: "std.num".to_string(),
+            name: "NumError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "message".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if (needs.io || needs.fs || needs.num || needs.result)
+        && !enums.iter().any(|item| item.name == "Result")
+    {
         enums.push(EnumType {
             package: "std.result".to_string(),
             name: "Result".to_string(),
@@ -2363,6 +2406,12 @@ fn source_uses_env_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_env_builtin)
+}
+
+fn source_uses_num_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_num_builtin)
 }
 
 fn source_uses_array_builtin(ast: &SourceFile) -> bool {
@@ -2827,6 +2876,46 @@ fn stmt_uses_env_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_num_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_num_builtin(value) || else_body.iter().any(stmt_uses_num_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_num_builtin(value)
+                || body.iter().any(stmt_uses_num_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_num_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_num_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_num_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_num_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_num_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_num_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_num_builtin(condition) || body.iter().any(stmt_uses_num_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_num_builtin(iterable) || body.iter().any(stmt_uses_num_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_num_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_array_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_array_builtin(value),
@@ -2974,6 +3063,50 @@ fn expr_uses_env_builtin(expr: &AstExpr) -> bool {
         AstExpr::Cast { expr, .. } => expr_uses_env_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_env_builtin(left) || expr_uses_env_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_num_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            (callee.len() == 2
+                && callee[0] == "num"
+                && matches!(
+                    callee[1].as_str(),
+                    "parse_i64" | "parse_u64" | "parse_f64" | "to_string"
+                ))
+                || args.iter().any(expr_uses_num_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => {
+            fields.iter().any(|(_, value)| expr_uses_num_builtin(value))
+        }
+        AstExpr::Match { value, arms } => {
+            expr_uses_num_builtin(value) || arms.iter().any(|arm| expr_uses_num_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_num_builtin(condition)
+                || expr_uses_num_builtin(then_branch)
+                || expr_uses_num_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_num_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_num_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_num_builtin(left) || expr_uses_num_builtin(right)
         }
         AstExpr::Name(_)
         | AstExpr::String(_)
@@ -7843,6 +7976,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "num" {
+                    return lower_num_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "option" {
                     return lower_option_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8165,6 +8303,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_time_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_num_builtin_call(callee) {
+                require_import(path, imports, span, "std.num", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "num builtins do not accept type arguments",
+                    ));
+                }
+                return lower_num_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -9407,6 +9558,18 @@ fn is_time_builtin_call(callee: &[String]) -> bool {
     )
 }
 
+fn is_num_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "num"
+                && matches!(
+                    name.as_str(),
+                    "parse_i64" | "parse_u64" | "parse_f64" | "to_string"
+                )
+    )
+}
+
 fn lower_os_builtin(
     path: &Path,
     callee: &[String],
@@ -9514,6 +9677,100 @@ fn lower_time_builtin(
             ))
         }
         _ => unreachable!("time builtin dispatcher only passes known calls"),
+    }
+}
+
+fn lower_num_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("num builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "num");
+    let [value] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`num.{name}` expects exactly one argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (value_type, lowered_value) = lower_value_expr(
+        path, value, scope, imports, signatures, structs, enums, span,
+    )?;
+    let num_error = ValueType::Struct("NumError".to_string(), Vec::new());
+    match name.as_str() {
+        "parse_i64" | "parse_u64" | "parse_f64" => {
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`num.{name}` expects a string argument"),
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            let (ok_type, expr) = match name.as_str() {
+                "parse_i64" => (
+                    ValueType::Int,
+                    ValueExpr::NumParseI64 {
+                        value: Box::new(lowered_value),
+                    },
+                ),
+                "parse_u64" => (
+                    ValueType::U64,
+                    ValueExpr::NumParseU64 {
+                        value: Box::new(lowered_value),
+                    },
+                ),
+                "parse_f64" => (
+                    ValueType::Float,
+                    ValueExpr::NumParseF64 {
+                        value: Box::new(lowered_value),
+                    },
+                ),
+                _ => unreachable!("num parse dispatcher only passes known calls"),
+            };
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ok_type, num_error]),
+                expr,
+            ))
+        }
+        "to_string" => {
+            if !matches!(
+                value_type,
+                ValueType::Int
+                    | ValueType::I32
+                    | ValueType::U32
+                    | ValueType::U64
+                    | ValueType::Float
+            ) {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`num.to_string` expects an i64, i32, u32, u64, or f64 value",
+                ));
+            }
+            Ok((
+                ValueType::String,
+                ValueExpr::NumToString {
+                    value: Box::new(lowered_value),
+                    value_type,
+                },
+            ))
+        }
+        _ => unreachable!("num builtin dispatcher only passes known calls"),
     }
 }
 
@@ -12079,6 +12336,15 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "sleep_millis" if imports.iter().any(|item| item == "std.time.sleep_millis") => {
             vec!["time".to_string(), "sleep_millis".to_string()]
         }
+        "parse_i64" if imports.iter().any(|item| item == "std.num.parse_i64") => {
+            vec!["num".to_string(), "parse_i64".to_string()]
+        }
+        "parse_u64" if imports.iter().any(|item| item == "std.num.parse_u64") => {
+            vec!["num".to_string(), "parse_u64".to_string()]
+        }
+        "parse_f64" if imports.iter().any(|item| item == "std.num.parse_f64") => {
+            vec!["num".to_string(), "parse_f64".to_string()]
+        }
         "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
             vec!["result".to_string(), "is_ok".to_string()]
         }
@@ -13380,6 +13646,153 @@ fn main() -> void {
         assert!(err.message.contains("time.sleep_millis"));
         assert_eq!(err.expected.as_deref(), Some("i64"));
         assert_eq!(err.found.as_deref(), Some("string"));
+    }
+
+    #[test]
+    fn accepts_num_builtins() {
+        let source = r#"package app.main
+
+import std.num
+
+fn main() -> void {
+    let integer: Result<i64, NumError> = num.parse_i64("42")
+    let unsigned: Result<u64, NumError> = num.parse_u64("7")
+    let decimal: Result<f64, NumError> = num.parse_f64("3.5")
+    let text: string = num.to_string(42)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(
+            program
+                .structs
+                .iter()
+                .any(|struct_type| struct_type.name == "NumError")
+        );
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::NumParseI64 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::NumParseU64 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::NumParseF64 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                initializer: ValueExpr::NumToString { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_num_parse_imports() {
+        let source = r#"package app.main
+
+import std.num.parse_i64
+import std.num.parse_u64
+import std.num.parse_f64
+
+fn main() -> void {
+    let integer: Result<i64, NumError> = parse_i64("42")
+    let unsigned: Result<u64, NumError> = parse_u64("7")
+    let decimal: Result<f64, NumError> = parse_f64("3.5")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::NumParseI64 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::NumParseU64 { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::NumParseF64 { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_num_parse_non_string_argument() {
+        let source = r#"package app.main
+
+import std.num
+
+fn main() -> void {
+    let parsed: Result<i64, NumError> = num.parse_i64(42)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("num.parse_i64"));
+        assert_eq!(err.expected.as_deref(), Some("string"));
+        assert_eq!(err.found.as_deref(), Some("i64"));
+    }
+
+    #[test]
+    fn rejects_num_to_string_non_numeric_argument() {
+        let source = r#"package app.main
+
+import std.num
+
+fn main() -> void {
+    let text: string = num.to_string(true)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("num.to_string"));
+    }
+
+    #[test]
+    fn rejects_user_num_error_when_std_num_is_needed() {
+        let source = r#"package app.main
+
+import std.num
+
+struct NumError {
+    message: string
+}
+
+fn main() -> void {
+    let parsed: Result<i64, NumError> = num.parse_i64("42")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0312");
+        assert!(err.message.contains("NumError"));
+        assert!(err.message.contains("standard library"));
     }
 
     #[test]

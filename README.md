@@ -311,6 +311,12 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on
 `f64` values.
 
+`std.num` provides numeric conversion helpers: `num.parse_i64`,
+`num.parse_u64`, and `num.parse_f64` parse strings and return
+`Result<T, NumError>`. `num.to_string` converts `i64`, `i32`, `u32`, `u64`, and
+`f64` values to strings. In v0.1, `to_string` is used through the `num` module
+to avoid colliding with `char.to_string`.
+
 `std.char` provides ASCII character-class helpers: `char.is_digit`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
 `char` scalar to a UTF-8 string.

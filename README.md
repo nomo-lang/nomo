@@ -334,6 +334,11 @@ milliseconds, the second returns monotonic milliseconds suitable for measuring
 elapsed time within one process, and `sleep_millis` panics for negative
 durations.
 
+`std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
+`Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
+`Array.pop`, `Array.remove`, and `Array.clear`. `get`, `pop`, and `remove`
+return `Option<T>`; `set` and `insert` panic when their index is out of bounds.
+
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
 `string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.

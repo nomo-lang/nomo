@@ -5488,6 +5488,86 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_extended_std_array_helpers() {
+    let root = temp_test_root("std-array-helpers");
+    reset_dir(&root);
+    let project = root.join("array_demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"array_demo\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.array
+import std.io
+
+fn print_option(value: Option<string>, missing: string) -> void {
+    match value {
+        Some(text) => {
+            io.println(text)
+        }
+        None => {
+            io.println(missing)
+        }
+    }
+}
+
+fn main() -> void {
+    let mut items: Array<string> = Array.new<string>()
+    items.push("a")
+    items.push("c")
+    items.insert(1, "b")
+    let removed: Option<string> = items.remove(0)
+    let popped: Option<string> = items.pop()
+    let first: Option<string> = items.get(0)
+    print_option(removed, "missing remove")
+    print_option(popped, "missing pop")
+    print_option(first, "missing first")
+    items.clear()
+    if items.len() == 0 {
+        io.println("cleared")
+    } else {
+        io.println("not cleared")
+    }
+    let empty_pop: Option<string> = items.pop()
+    let empty_remove: Option<string> = items.remove(0)
+    print_option(empty_pop, "empty pop")
+    print_option(empty_remove, "empty remove")
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "a\nc\nb\ncleared\nempty pop\nempty remove\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_num_helpers_with_question() {
     let root = temp_test_root("std-num-helpers");
     reset_dir(&root);

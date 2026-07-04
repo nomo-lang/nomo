@@ -495,6 +495,15 @@ pub enum ValueExpr {
         index: Box<ValueExpr>,
         element_type: ValueType,
     },
+    ArrayPop {
+        array: String,
+        element_type: ValueType,
+    },
+    ArrayRemove {
+        array: String,
+        index: Box<ValueExpr>,
+        element_type: ValueType,
+    },
     ArrayPush {
         array: String,
         value: Box<ValueExpr>,
@@ -504,6 +513,16 @@ pub enum ValueExpr {
         array: String,
         index: Box<ValueExpr>,
         value: Box<ValueExpr>,
+        element_type: ValueType,
+    },
+    ArrayInsert {
+        array: String,
+        index: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+        element_type: ValueType,
+    },
+    ArrayClear {
+        array: String,
         element_type: ValueType,
     },
     StructLiteral {
@@ -1713,6 +1732,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.array.push"
             | "std.array.get"
             | "std.array.set"
+            | "std.array.pop"
+            | "std.array.insert"
+            | "std.array.remove"
+            | "std.array.clear"
             | "std.string"
             | "std.string.len"
             | "std.string.concat"
@@ -3867,7 +3890,7 @@ fn lower_stmt(
                 },
             span,
         } if callee.len() == 2
-            && (callee[1] == "push" || callee[1] == "set")
+            && matches!(callee[1].as_str(), "push" | "set" | "insert" | "clear")
             && !is_env_builtin_call(callee)
             && type_args.is_empty() =>
         {
@@ -10234,6 +10257,93 @@ fn lower_array_value_method(
                 },
             ))
         }
+        "pop" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Array.pop` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            if !binding.mutable {
+                return Err(Diagnostic::new(
+                    "E0501",
+                    format!(
+                        "cannot call mutating Array method on immutable {} `{name}`",
+                        binding_source_noun(binding)
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![element_type.as_ref().clone()]),
+                ValueExpr::ArrayPop {
+                    array: name.clone(),
+                    element_type: element_type.as_ref().clone(),
+                },
+            ))
+        }
+        "remove" => {
+            let [index] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Array.remove` expects exactly one index",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            if !binding.mutable {
+                return Err(Diagnostic::new(
+                    "E0501",
+                    format!(
+                        "cannot call mutating Array method on immutable {} `{name}`",
+                        binding_source_noun(binding)
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let (index_type, lowered_index) = lower_value_expr_with_expected(
+                path,
+                index,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if index_type != ValueType::U64 {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`Array.remove` index must be `u64`",
+                ));
+            }
+            Ok((
+                ValueType::Enum("Option".to_string(), vec![element_type.as_ref().clone()]),
+                ValueExpr::ArrayRemove {
+                    array: name.clone(),
+                    index: Box::new(lowered_index),
+                    element_type: element_type.as_ref().clone(),
+                },
+            ))
+        }
         _ => Err(Diagnostic::new(
             "E0305",
             format!("unknown Array method `{method}`"),
@@ -11743,6 +11853,82 @@ fn lower_array_mutation(
                 array: name.clone(),
                 index: Box::new(lowered_index),
                 value: Box::new(lowered_value),
+                element_type: element_type.as_ref().clone(),
+            })
+        }
+        "insert" => {
+            let [index, value] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Array.insert` expects index and value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (index_type, lowered_index) = lower_value_expr_with_expected(
+                path,
+                index,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if index_type != ValueType::U64 {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`Array.insert` index must be `u64`",
+                ));
+            }
+            let (value_type, lowered_value) = lower_value_expr_with_expected(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(element_type),
+                span,
+            )?;
+            if &value_type != element_type.as_ref() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "`Array.insert` value is `{}` but expected `{}`",
+                        value_type.name(),
+                        element_type.name()
+                    ),
+                ));
+            }
+            Ok(ValueExpr::ArrayInsert {
+                array: name.clone(),
+                index: Box::new(lowered_index),
+                value: Box::new(lowered_value),
+                element_type: element_type.as_ref().clone(),
+            })
+        }
+        "clear" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`Array.clear` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok(ValueExpr::ArrayClear {
+                array: name.clone(),
                 element_type: element_type.as_ref().clone(),
             })
         }
@@ -14789,6 +14975,78 @@ fn main() -> void {
     }
 
     #[test]
+    fn accepts_extended_array_methods() {
+        let source = r#"package app.main
+
+import std.array
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    items.insert(1, 2)
+    let removed: Option<i32> = items.remove(0)
+    let popped: Option<i32> = items.pop()
+    items.clear()
+    let size: u64 = items.len()
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.enums.iter().any(|item| item.name == "Option"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[2],
+            Statement::Assign {
+                ref name,
+                value: ValueExpr::ArrayInsert {
+                    element_type: ValueType::I32,
+                    ..
+                },
+            } if name == "items"
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::ArrayRemove {
+                    element_type: ValueType::I32,
+                    ..
+                },
+                ..
+            } if name == "Option" && args == &vec![ValueType::I32]
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::ArrayPop {
+                    element_type: ValueType::I32,
+                    ..
+                },
+                ..
+            } if name == "Option" && args == &vec![ValueType::I32]
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Assign {
+                ref name,
+                value: ValueExpr::ArrayClear {
+                    element_type: ValueType::I32,
+                    ..
+                },
+            } if name == "items"
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::ArrayLen { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
     fn rejects_mutating_array_method_on_immutable_variable() {
         let source = r#"package app.main
 
@@ -15133,14 +15391,22 @@ fn main() -> void {
 
 import std.env.args
 import std.array.get
+import std.array.clear
+import std.array.insert
 import std.array.len
+import std.array.pop
 import std.array.push
+import std.array.remove
 import std.array.set
 
 fn main() -> void {
     let mut values = args()
     values.push("extra")
+    values.insert(1, "middle")
     values.set(0, "program")
+    let removed: Option<string> = values.remove(1)
+    let popped: Option<string> = values.pop()
+    values.clear()
     let size: u64 = values.len()
     let first: Option<string> = values.get(0)
 }
@@ -15168,11 +15434,47 @@ fn main() -> void {
             main.body[2],
             Statement::Assign {
                 ref name,
-                value: ValueExpr::ArraySet { .. },
+                value: ValueExpr::ArrayInsert { .. },
             } if name == "values"
         ));
         assert!(matches!(
             main.body[3],
+            Statement::Assign {
+                ref name,
+                value: ValueExpr::ArraySet { .. },
+            } if name == "values"
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::ArrayRemove {
+                    element_type: ValueType::String,
+                    ..
+                },
+                ..
+            } if name == "Option" && args == &vec![ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                value_type: ValueType::Enum(ref name, ref args),
+                initializer: ValueExpr::ArrayPop {
+                    element_type: ValueType::String,
+                    ..
+                },
+                ..
+            } if name == "Option" && args == &vec![ValueType::String]
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Assign {
+                ref name,
+                value: ValueExpr::ArrayClear { .. },
+            } if name == "values"
+        ));
+        assert!(matches!(
+            main.body[7],
             Statement::Let {
                 value_type: ValueType::U64,
                 initializer: ValueExpr::ArrayLen { .. },
@@ -15180,7 +15482,7 @@ fn main() -> void {
             }
         ));
         assert!(matches!(
-            main.body[4],
+            main.body[8],
             Statement::Let {
                 value_type: ValueType::Enum(ref name, ref args),
                 initializer: ValueExpr::ArrayGet {

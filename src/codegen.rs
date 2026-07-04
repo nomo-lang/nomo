@@ -2083,6 +2083,110 @@ fn emit_array_helpers(out: &mut String, element_type: &ValueType) {
     out.push_str("    return array;\n");
     out.push_str("}\n\n");
     out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_insert(");
+    out.push_str(&array);
+    out.push_str(" array, uint64_t index, ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value) {\n");
+    out.push_str(
+        "    if (index > array.len) { nomo_panic(\"Array.insert index out of bounds\"); }\n",
+    );
+    out.push_str("    array = ");
+    out.push_str(&array);
+    out.push_str("_make_unique(array, array.len + 1);\n");
+    out.push_str("    size_t insert_index = (size_t)index;\n");
+    out.push_str("    for (size_t i = array.len; i > insert_index; i -= 1) { array.data[i] = array.data[i - 1]; }\n");
+    out.push_str("    array.data[insert_index] = ");
+    emit_array_element_retain_expr(out, element_type, "value");
+    out.push_str(";\n");
+    out.push_str("    array.len += 1;\n");
+    out.push_str("    return array;\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_clear(");
+    out.push_str(&array);
+    out.push_str(" array) {\n");
+    out.push_str("    array = ");
+    out.push_str(&array);
+    out.push_str("_make_unique(array, array.len);\n");
+    emit_array_element_release_loop(out, element_type);
+    out.push_str("    array.len = 0;\n");
+    out.push_str("    return array;\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&option);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_pop(");
+    out.push_str(&array);
+    out.push_str(" *array) {\n");
+    out.push_str("    if (array->len == 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&option);
+    out.push_str("){.tag = ");
+    out.push_str(&none);
+    out.push_str("};\n");
+    out.push_str("    }\n");
+    out.push_str("    *array = ");
+    out.push_str(&array);
+    out.push_str("_make_unique(*array, array->len);\n");
+    out.push_str("    size_t index = array->len - 1;\n");
+    out.push_str("    ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value = ");
+    emit_array_element_retain_expr(out, element_type, "array->data[index]");
+    out.push_str(";\n");
+    emit_array_element_release_stmt(out, element_type, "array->data[index]");
+    out.push_str("    array->len -= 1;\n");
+    out.push_str("    return (");
+    out.push_str(&option);
+    out.push_str("){.tag = ");
+    out.push_str(&some);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = value};\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&option);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_remove(");
+    out.push_str(&array);
+    out.push_str(" *array, uint64_t index) {\n");
+    out.push_str("    if (index >= array->len) {\n");
+    out.push_str("        return (");
+    out.push_str(&option);
+    out.push_str("){.tag = ");
+    out.push_str(&none);
+    out.push_str("};\n");
+    out.push_str("    }\n");
+    out.push_str("    *array = ");
+    out.push_str(&array);
+    out.push_str("_make_unique(*array, array->len);\n");
+    out.push_str("    size_t remove_index = (size_t)index;\n");
+    out.push_str("    ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value = ");
+    emit_array_element_retain_expr(out, element_type, "array->data[remove_index]");
+    out.push_str(";\n");
+    emit_array_element_release_stmt(out, element_type, "array->data[remove_index]");
+    out.push_str("    for (size_t i = remove_index; i + 1 < array->len; i += 1) { array->data[i] = array->data[i + 1]; }\n");
+    out.push_str("    array->len -= 1;\n");
+    out.push_str("    return (");
+    out.push_str(&option);
+    out.push_str("){.tag = ");
+    out.push_str(&some);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Some"));
+    out.push_str(" = value};\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
     out.push_str(&option);
     out.push(' ');
     out.push_str(&array);
@@ -3253,7 +3357,10 @@ fn emit_assign_field(
 fn is_array_mutating_assignment(value: &ValueExpr) -> bool {
     matches!(
         value,
-        ValueExpr::ArrayPush { .. } | ValueExpr::ArraySet { .. }
+        ValueExpr::ArrayPush { .. }
+            | ValueExpr::ArraySet { .. }
+            | ValueExpr::ArrayInsert { .. }
+            | ValueExpr::ArrayClear { .. }
     )
 }
 
@@ -3587,9 +3694,12 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { .. }
         | ValueExpr::MathUnary { .. }
         | ValueExpr::MathBinary { .. } => false,
-        ValueExpr::ArrayPush { value, .. } | ValueExpr::ArraySet { value, .. } => {
-            expr_may_share_array_storage(value)
-        }
+        ValueExpr::ArrayPush { value, .. }
+        | ValueExpr::ArraySet { value, .. }
+        | ValueExpr::ArrayInsert { value, .. } => expr_may_share_array_storage(value),
+        ValueExpr::ArrayPop { .. }
+        | ValueExpr::ArrayRemove { .. }
+        | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::EnvSet { .. } => false,
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultMap { result, .. }
@@ -4646,6 +4756,27 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, index);
             out.push(')');
         }
+        ValueExpr::ArrayPop {
+            array,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_pop(&");
+            out.push_str(&c_var_ident(array));
+            out.push(')');
+        }
+        ValueExpr::ArrayRemove {
+            array,
+            index,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_remove(&");
+            out.push_str(&c_var_ident(array));
+            out.push_str(", ");
+            emit_expr(out, index);
+            out.push(')');
+        }
         ValueExpr::ArrayPush {
             array,
             value,
@@ -4673,10 +4804,38 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, value);
             out.push(')');
         }
+        ValueExpr::ArrayInsert {
+            array,
+            index,
+            value,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_insert(");
+            out.push_str(&c_var_ident(array));
+            out.push_str(", ");
+            emit_expr(out, index);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::ArrayClear {
+            array,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_clear(");
+            out.push_str(&c_var_ident(array));
+            out.push(')');
+        }
         ValueExpr::ArrayNew { element_type }
         | ValueExpr::ArrayGet { element_type, .. }
+        | ValueExpr::ArrayPop { element_type, .. }
+        | ValueExpr::ArrayRemove { element_type, .. }
         | ValueExpr::ArrayPush { element_type, .. }
-        | ValueExpr::ArraySet { element_type, .. } => {
+        | ValueExpr::ArraySet { element_type, .. }
+        | ValueExpr::ArrayInsert { element_type, .. }
+        | ValueExpr::ArrayClear { element_type, .. } => {
             panic!(
                 "unsupported Array element type reached C codegen: {}",
                 element_type.name()
@@ -5117,8 +5276,16 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(array, out);
             collect_expr_result_map_err(index, out);
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => {}
+        ValueExpr::ArrayRemove { index, .. } => {
+            collect_expr_result_map_err(index, out);
+        }
         ValueExpr::ArrayPush { value, .. } => collect_expr_result_map_err(value, out),
         ValueExpr::ArraySet { index, value, .. } => {
+            collect_expr_result_map_err(index, out);
+            collect_expr_result_map_err(value, out);
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             collect_expr_result_map_err(index, out);
             collect_expr_result_map_err(value, out);
         }
@@ -5397,8 +5564,14 @@ where
             walk_expr(array, visit);
             walk_expr(index, visit);
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => {}
+        ValueExpr::ArrayRemove { index, .. } => walk_expr(index, visit),
         ValueExpr::ArrayPush { value, .. } => walk_expr(value, visit),
         ValueExpr::ArraySet { index, value, .. } => {
+            walk_expr(index, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             walk_expr(index, visit);
             walk_expr(value, visit);
         }
@@ -5864,6 +6037,17 @@ fn collect_expr_struct(
             collect_expr_struct(array, seen, out);
             collect_expr_struct(index, seen, out);
         }
+        ValueExpr::ArrayPop { element_type, .. } | ValueExpr::ArrayClear { element_type, .. } => {
+            collect_type_struct(element_type, seen, out)
+        }
+        ValueExpr::ArrayRemove {
+            index,
+            element_type,
+            ..
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(index, seen, out);
+        }
         ValueExpr::ArrayPush {
             value,
             element_type,
@@ -5873,6 +6057,16 @@ fn collect_expr_struct(
             collect_expr_struct(value, seen, out);
         }
         ValueExpr::ArraySet {
+            index,
+            value,
+            element_type,
+            ..
+        } => {
+            collect_type_struct(element_type, seen, out);
+            collect_expr_struct(index, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
+        ValueExpr::ArrayInsert {
             index,
             value,
             element_type,
@@ -6487,8 +6681,24 @@ fn collect_expr_enum(
             collect_expr_enum(array, seen, out);
             collect_expr_enum(index, seen, out);
         }
+        ValueExpr::ArrayPop { element_type, .. } => {
+            push_enum_instance(seen, out, "Option", &[element_type.clone()]);
+        }
+        ValueExpr::ArrayRemove {
+            index,
+            element_type,
+            ..
+        } => {
+            push_enum_instance(seen, out, "Option", &[element_type.clone()]);
+            collect_expr_enum(index, seen, out);
+        }
+        ValueExpr::ArrayClear { .. } => {}
         ValueExpr::ArrayPush { value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::ArraySet { index, value, .. } => {
+            collect_expr_enum(index, seen, out);
+            collect_expr_enum(value, seen, out);
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             collect_expr_enum(index, seen, out);
             collect_expr_enum(value, seen, out);
         }
@@ -7106,10 +7316,15 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_contains(array, predicate) || expr_contains(index, predicate)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_contains(index, predicate),
         ValueExpr::ArraySet { index, value, .. } => {
             expr_contains(index, predicate) || expr_contains(value, predicate)
         }
         ValueExpr::ArrayPush { value, .. } => expr_contains(value, predicate),
+        ValueExpr::ArrayInsert { index, value, .. } => {
+            expr_contains(index, predicate) || expr_contains(value, predicate)
+        }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
@@ -7686,8 +7901,13 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_read_to_string(array) || expr_uses_fs_read_to_string(index)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_read_to_string(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_fs_read_to_string(value),
         ValueExpr::ArraySet { index, value, .. } => {
+            expr_uses_fs_read_to_string(index) || expr_uses_fs_read_to_string(value)
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             expr_uses_fs_read_to_string(index) || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_read_to_string),
@@ -7815,8 +8035,13 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_write_string(array) || expr_uses_fs_write_string(index)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_write_string(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_fs_write_string(value),
         ValueExpr::ArraySet { index, value, .. } => {
+            expr_uses_fs_write_string(index) || expr_uses_fs_write_string(value)
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             expr_uses_fs_write_string(index) || expr_uses_fs_write_string(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_write_string),
@@ -7941,8 +8166,13 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_open(array) || expr_uses_fs_open(index)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_open(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_fs_open(value),
         ValueExpr::ArraySet { index, value, .. } => {
+            expr_uses_fs_open(index) || expr_uses_fs_open(value)
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             expr_uses_fs_open(index) || expr_uses_fs_open(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_open),
@@ -8060,8 +8290,13 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_get(array) || expr_uses_env_get(index)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_uses_env_get(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_env_get(value),
         ValueExpr::ArraySet { index, value, .. } => {
+            expr_uses_env_get(index) || expr_uses_env_get(value)
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             expr_uses_env_get(index) || expr_uses_env_get(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_get),
@@ -8182,8 +8417,13 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_args(array) || expr_uses_env_args(index)
         }
+        ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
+        ValueExpr::ArrayRemove { index, .. } => expr_uses_env_args(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_env_args(value),
         ValueExpr::ArraySet { index, value, .. } => {
+            expr_uses_env_args(index) || expr_uses_env_args(value)
+        }
+        ValueExpr::ArrayInsert { index, value, .. } => {
             expr_uses_env_args(index) || expr_uses_env_args(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_args),
@@ -8251,8 +8491,12 @@ fn collect_expr_array_elements(
         ValueExpr::EnvArgs => push_array_element_type(seen, out, &ValueType::String),
         ValueExpr::ArrayNew { element_type }
         | ValueExpr::ArrayGet { element_type, .. }
+        | ValueExpr::ArrayPop { element_type, .. }
+        | ValueExpr::ArrayRemove { element_type, .. }
         | ValueExpr::ArrayPush { element_type, .. }
-        | ValueExpr::ArraySet { element_type, .. } => {
+        | ValueExpr::ArraySet { element_type, .. }
+        | ValueExpr::ArrayInsert { element_type, .. }
+        | ValueExpr::ArrayClear { element_type, .. } => {
             push_array_element_type(seen, out, element_type);
         }
         ValueExpr::ArrayLen { array } => collect_expr_array_elements(array, seen, out),
@@ -10293,6 +10537,39 @@ mod tests {
                             element_type: ValueType::I32,
                         },
                     },
+                    Statement::Assign {
+                        name: "items".to_string(),
+                        value: ValueExpr::ArrayInsert {
+                            array: "items".to_string(),
+                            index: Box::new(ValueExpr::IntLiteral(0)),
+                            value: Box::new(ValueExpr::IntLiteral(5)),
+                            element_type: ValueType::I32,
+                        },
+                    },
+                    Statement::Let {
+                        name: "removed".to_string(),
+                        value_type: option_i32.clone(),
+                        initializer: ValueExpr::ArrayRemove {
+                            array: "items".to_string(),
+                            index: Box::new(ValueExpr::IntLiteral(0)),
+                            element_type: ValueType::I32,
+                        },
+                    },
+                    Statement::Let {
+                        name: "popped".to_string(),
+                        value_type: option_i32.clone(),
+                        initializer: ValueExpr::ArrayPop {
+                            array: "items".to_string(),
+                            element_type: ValueType::I32,
+                        },
+                    },
+                    Statement::Assign {
+                        name: "items".to_string(),
+                        value: ValueExpr::ArrayClear {
+                            array: "items".to_string(),
+                            element_type: ValueType::I32,
+                        },
+                    },
                     Statement::Let {
                         name: "first".to_string(),
                         value_type: option_i32,
@@ -10320,8 +10597,16 @@ mod tests {
         ));
         assert!(c.contains("array = nomo_array_i32_make_unique(array, array.len + 1);"));
         assert!(c.contains("array = nomo_array_i32_make_unique(array, array.len);"));
+        assert!(c.contains("static nomo_array_i32 nomo_array_i32_insert("));
+        assert!(c.contains("static nomo_array_i32 nomo_array_i32_clear("));
+        assert!(c.contains("static nomo_enum_Option_i32 nomo_array_i32_pop("));
+        assert!(c.contains("static nomo_enum_Option_i32 nomo_array_i32_remove("));
         assert!(c.contains("nomo_array_i32 nomo_items = nomo_array_i32_new();"));
         assert!(c.contains("nomo_items = nomo_array_i32_push(nomo_items, 7);"));
+        assert!(c.contains("nomo_items = nomo_array_i32_insert(nomo_items, 0, 5);"));
+        assert!(c.contains("nomo_array_i32_remove(&nomo_items, 0)"));
+        assert!(c.contains("nomo_array_i32_pop(&nomo_items)"));
+        assert!(c.contains("nomo_items = nomo_array_i32_clear(nomo_items);"));
         assert!(c.contains("nomo_array_i32_get(nomo_items, 0)"));
     }
 

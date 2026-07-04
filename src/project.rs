@@ -506,6 +506,58 @@ pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext,
     project_module_context_with_options(project, DependencyResolutionOptions::default())
 }
 
+pub fn resolve_module_source_path(
+    context: &ProjectModuleContext,
+    local_import_root: &str,
+    import: &[String],
+) -> Option<PathBuf> {
+    let (source_root, module_path) =
+        resolve_module_source_root(context, local_import_root, import)?;
+    module_source_path(source_root, module_path)
+}
+
+fn resolve_module_source_root<'a>(
+    context: &'a ProjectModuleContext,
+    local_import_root: &str,
+    import: &'a [String],
+) -> Option<(&'a Path, &'a [String])> {
+    let first = import.first()?;
+    if first == "std" {
+        return None;
+    }
+    if first == local_import_root {
+        return Some((context.local_source_root.as_path(), &import[1..]));
+    }
+    context
+        .external_modules
+        .iter()
+        .find(|module| module.import_root == *first)
+        .map(|module| (module.source_root.as_path(), &import[1..]))
+}
+
+fn module_source_path(source_root: &Path, module_path: &[String]) -> Option<PathBuf> {
+    if module_path.is_empty() || (module_path.len() == 1 && module_path[0] == "main") {
+        let main = source_root.join("main.nomo");
+        return main.is_file().then_some(main);
+    }
+
+    let mut flat = source_root.to_path_buf();
+    for segment in module_path {
+        flat.push(segment);
+    }
+    flat.set_extension("nomo");
+    if flat.is_file() {
+        return Some(flat);
+    }
+
+    let mut dir_main = source_root.to_path_buf();
+    for segment in module_path {
+        dir_main.push(segment);
+    }
+    dir_main.push("main.nomo");
+    dir_main.is_file().then_some(dir_main)
+}
+
 pub fn project_module_context_with_options(
     project: &Project,
     options: DependencyResolutionOptions,
@@ -3772,6 +3824,61 @@ fn main() -> void {
 
         let status = run_project_with_args(&project, &["hello".to_string()]).unwrap();
         assert_eq!(status, 0);
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn resolves_module_source_paths_for_local_and_dependency_imports() {
+        let root = temp_test_root("module-source-resolution");
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(&root).unwrap();
+        let project = create_project(&root, "module-demo").unwrap();
+        fs::write(
+            project.root.join("src/math.nomo"),
+            "package app.math\n\npub fn add() -> i64 {\n    return 1\n}\n",
+        )
+        .unwrap();
+
+        let dependency = root.join("local-utils");
+        fs::create_dir_all(dependency.join("src/path")).unwrap();
+        fs::write(
+            dependency.join("nomo.toml"),
+            "[package]\nnamespace = \"local\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        fs::write(
+            dependency.join("src/path/main.nomo"),
+            "package local_utils.path\n\npub fn join() -> i64 {\n    return 1\n}\n",
+        )
+        .unwrap();
+
+        let context = ProjectModuleContext {
+            local_source_root: project.root.join("src"),
+            external_import_roots: vec!["local_utils".to_string()],
+            external_modules: vec![ExternalModule {
+                import_root: "local_utils".to_string(),
+                source_root: dependency.join("src"),
+            }],
+        };
+
+        assert_eq!(
+            resolve_module_source_path(&context, "app", &["app".to_string(), "math".to_string()]),
+            Some(project.root.join("src/math.nomo"))
+        );
+        assert_eq!(
+            resolve_module_source_path(
+                &context,
+                "app",
+                &["local_utils".to_string(), "path".to_string()]
+            ),
+            Some(dependency.join("src/path/main.nomo"))
+        );
+        assert_eq!(
+            resolve_module_source_path(&context, "app", &["std".to_string(), "io".to_string()]),
+            None
+        );
         fs::remove_dir_all(&root).unwrap();
     }
 

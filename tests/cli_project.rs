@@ -4517,6 +4517,80 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_log_helpers() {
+    let root = temp_test_root("std-log-helpers");
+    reset_dir(&root);
+    let project = root.join("std_log_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_log_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.log
+
+fn main() -> void {
+    log.debug("debug")
+    log.info("info")
+    log.warn("warn")
+    log.error("error")
+    if log.enabled("debug") {
+        io.println("debug-enabled")
+    } else {
+        io.println("debug-disabled")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env_remove("NOMO_LOG")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "debug-disabled\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[info] info\n[warn] warn\n[error] error\n"
+    );
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_LOG", "debug")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "debug-enabled\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "[debug] debug\n[info] info\n[warn] warn\n[error] error\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
     let root = temp_test_root("try-identifier-question");
     reset_dir(&root);

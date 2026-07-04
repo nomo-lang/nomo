@@ -347,6 +347,9 @@ pub enum ValueExpr {
     TimeSleepMillis {
         duration: Box<ValueExpr>,
     },
+    LogEnabled {
+        level: Box<ValueExpr>,
+    },
     ProcessExit {
         code: Box<ValueExpr>,
     },
@@ -1802,6 +1805,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.debug.println"
             | "std.debug.panic"
             | "std.debug.backtrace"
+            | "std.log"
+            | "std.log.debug"
+            | "std.log.info"
+            | "std.log.warn"
+            | "std.log.error"
+            | "std.log.enabled"
             | "std.os"
             | "std.os.platform"
             | "std.os.arch"
@@ -8295,6 +8304,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "log" {
+                    return lower_log_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8602,6 +8616,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_debug_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_log_builtin_call(callee) {
+                require_import(path, imports, span, "std.log", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "log builtins do not accept type arguments",
+                    ));
+                }
+                return lower_log_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10047,6 +10074,116 @@ fn is_debug_builtin_call(callee: &[String]) -> bool {
             if module == "debug"
                 && matches!(name.as_str(), "print" | "println" | "panic" | "backtrace")
     )
+}
+
+fn is_log_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "log"
+                && matches!(name.as_str(), "debug" | "info" | "warn" | "error" | "enabled")
+    )
+}
+
+fn lower_log_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("log builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "log");
+    match name.as_str() {
+        "enabled" => {
+            let [level_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`log.enabled` expects exactly one string level",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (level_type, level) = lower_value_expr(
+                path, level_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if level_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`log.enabled` expects a string level",
+                    &ValueType::String,
+                    &level_type,
+                ));
+            }
+            Ok((
+                ValueType::Bool,
+                ValueExpr::LogEnabled {
+                    level: Box::new(level),
+                },
+            ))
+        }
+        "debug" | "info" | "warn" | "error" => {
+            let [message_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`log.{name}` expects exactly one string message"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (message_type, message) = lower_value_expr(
+                path,
+                message_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if message_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`log.{name}` expects a string message"),
+                    &ValueType::String,
+                    &message_type,
+                ));
+            }
+            Ok((ValueType::Void, log_statement_expr(name, message)))
+        }
+        _ => unreachable!("log builtin dispatcher only passes known calls"),
+    }
+}
+
+fn log_statement_expr(level: &str, message: ValueExpr) -> ValueExpr {
+    let prefix = ValueExpr::StringLiteral(format!("[{level}] "));
+    ValueExpr::If {
+        condition: Box::new(ValueExpr::LogEnabled {
+            level: Box::new(ValueExpr::StringLiteral(level.to_string())),
+        }),
+        then_branch: Box::new(ValueExpr::Call {
+            name: BUILTIN_EPRINTLN_EXPR.to_string(),
+            args: vec![ValueExpr::StringConcat {
+                left: Box::new(prefix),
+                right: Box::new(message),
+            }],
+        }),
+        else_branch: Box::new(ValueExpr::VoidLiteral),
+    }
 }
 
 fn lower_debug_builtin(
@@ -13528,6 +13665,21 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "backtrace" if imports.iter().any(|item| item == "std.debug.backtrace") => {
             vec!["debug".to_string(), "backtrace".to_string()]
         }
+        "debug" if imports.iter().any(|item| item == "std.log.debug") => {
+            vec!["log".to_string(), "debug".to_string()]
+        }
+        "info" if imports.iter().any(|item| item == "std.log.info") => {
+            vec!["log".to_string(), "info".to_string()]
+        }
+        "warn" if imports.iter().any(|item| item == "std.log.warn") => {
+            vec!["log".to_string(), "warn".to_string()]
+        }
+        "error" if imports.iter().any(|item| item == "std.log.error") => {
+            vec!["log".to_string(), "error".to_string()]
+        }
+        "enabled" if imports.iter().any(|item| item == "std.log.enabled") => {
+            vec!["log".to_string(), "enabled".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -15008,6 +15160,84 @@ import std.debug
 
 fn main() -> void {
     debug.println(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("string message"));
+    }
+
+    #[test]
+    fn accepts_log_builtins() {
+        let source = r#"package app.main
+
+import std.log
+
+fn main() -> void {
+    log.debug("hidden")
+    log.info("hello")
+    log.warn("careful")
+    log.error("bad")
+    let enabled: bool = log.enabled("debug")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert_eq!(main.body.len(), 5);
+        assert!(
+            main.body[..4]
+                .iter()
+                .all(|stmt| matches!(stmt, Statement::Expr(ValueExpr::If { .. })))
+        );
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::LogEnabled { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_log_builtin_imports() {
+        let source = r#"package app.main
+
+import std.log.enabled
+import std.log.info
+
+fn main() -> void {
+    info("hello")
+    let enabled: bool = enabled("info")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Expr(ValueExpr::If { .. })
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::LogEnabled { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_log_non_string_message() {
+        let source = r#"package app.main
+
+import std.log
+
+fn main() -> void {
+    log.info(1)
 }
 "#;
 

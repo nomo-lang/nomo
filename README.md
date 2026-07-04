@@ -364,6 +364,11 @@ or strings. `assert_error` passes only when a `Result<T, E>` is `Err`.
 same panic path as the language builtin. `debug.backtrace` returns a stable
 placeholder string in v0.1.
 
+`std.log` provides `log.debug`, `log.info`, `log.warn`, `log.error`, and
+`log.enabled`. Log helpers write `[level] message` lines to stderr and are
+filtered by `NOMO_LOG`; accepted levels are `debug`, `info`, `warn`, `error`,
+and `off`. The default threshold is `info`.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

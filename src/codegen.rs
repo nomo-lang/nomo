@@ -89,6 +89,10 @@ pub fn emit_c(program: &Program) -> String {
     out.push('\n');
     emit_string_runtime(&mut out);
     out.push('\n');
+    if uses_log_enabled(program) {
+        emit_log_enabled_helper(&mut out);
+        out.push('\n');
+    }
 
     for const_def in &program.consts {
         out.push_str("#define ");
@@ -924,6 +928,25 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    out[out_len] = '\\0';\n");
     out.push_str("    free(starts); free(lens);\n");
     out.push_str("    return nomo_string_owned(out);\n");
+    out.push_str("}\n");
+}
+
+fn emit_log_enabled_helper(out: &mut String) {
+    out.push_str("static int32_t nomo_log_level_value(const char *level) {\n");
+    out.push_str("    if (strcmp(level, \"debug\") == 0) { return 0; }\n");
+    out.push_str("    if (strcmp(level, \"info\") == 0) { return 1; }\n");
+    out.push_str(
+        "    if (strcmp(level, \"warn\") == 0 || strcmp(level, \"warning\") == 0) { return 2; }\n",
+    );
+    out.push_str("    if (strcmp(level, \"error\") == 0) { return 3; }\n");
+    out.push_str("    if (strcmp(level, \"off\") == 0) { return 4; }\n");
+    out.push_str("    return 1;\n");
+    out.push_str("}\n\n");
+    out.push_str("static int32_t nomo_log_enabled(nomo_string level) {\n");
+    out.push_str("    const char *filter = getenv(\"NOMO_LOG\");\n");
+    out.push_str("    int32_t threshold = filter == NULL ? 1 : nomo_log_level_value(filter);\n");
+    out.push_str("    int32_t current = nomo_log_level_value(level.data);\n");
+    out.push_str("    return threshold < 4 && current >= threshold;\n");
     out.push_str("}\n");
 }
 
@@ -4574,6 +4597,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FileReadToString { file: expr }
         | ValueExpr::EnvGet { name: expr }
         | ValueExpr::TimeSleepMillis { duration: expr }
+        | ValueExpr::LogEnabled { level: expr }
         | ValueExpr::ProcessExit { code: expr }
         | ValueExpr::ProcessStatus { command: expr }
         | ValueExpr::ProcessExec { command: expr }
@@ -5355,6 +5379,11 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::TimeSleepMillis { duration } => {
             out.push_str("nomo_time_sleep_millis(");
             emit_expr(out, duration);
+            out.push(')');
+        }
+        ValueExpr::LogEnabled { level } => {
+            out.push_str("nomo_log_enabled(");
+            emit_expr(out, level);
             out.push(')');
         }
         ValueExpr::ProcessExit { code } => {
@@ -6233,6 +6262,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6535,6 +6565,7 @@ where
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6928,6 +6959,7 @@ fn collect_expr_struct(
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::TimeSleepMillis { duration: value }
+        | ValueExpr::LogEnabled { level: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
         ValueExpr::ProcessStatus { command } | ValueExpr::ProcessExec { command } => {
@@ -7513,6 +7545,7 @@ fn collect_expr_enum(
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::TimeSleepMillis { duration: value }
+        | ValueExpr::LogEnabled { level: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::ProcessStatus { command } => {
@@ -8031,6 +8064,15 @@ fn uses_io_read_line(program: &Program) -> bool {
         .functions
         .iter()
         .any(|function| function.body.iter().any(statement_uses_io_read_line))
+}
+
+fn uses_log_enabled(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_log_enabled))
+    })
 }
 
 fn uses_num_parse_i64(program: &Program) -> bool {
@@ -8621,6 +8663,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -8747,6 +8790,10 @@ fn expr_is_file_close(expr: &ValueExpr) -> bool {
 
 fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::IoReadLine)
+}
+
+fn expr_is_log_enabled(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::LogEnabled { .. })
 }
 
 fn expr_is_num_parse_i64(expr: &ValueExpr) -> bool {
@@ -9227,6 +9274,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
         | ValueExpr::TimeSleepMillis { duration: name }
+        | ValueExpr::LogEnabled { level: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9375,6 +9423,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
         | ValueExpr::TimeSleepMillis { duration: name }
+        | ValueExpr::LogEnabled { level: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9496,6 +9545,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9634,6 +9684,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9778,6 +9829,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9943,6 +9995,7 @@ fn collect_expr_array_elements(
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
+        | ValueExpr::LogEnabled { level: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }

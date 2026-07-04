@@ -361,11 +361,13 @@ the updated collection value.
 `os.path_separator`, and `os.line_ending`. The values are determined by the C
 compiler target used for the generated program.
 
-`std.time` provides basic clock helpers: `time.now_millis`,
-`time.monotonic_millis`, and `time.sleep_millis`. The first returns Unix epoch
-milliseconds, the second returns monotonic milliseconds suitable for measuring
-elapsed time within one process, and `sleep_millis` panics for negative
-durations.
+`std.time` provides basic clock helpers and a small `Duration` value type:
+`time.now_millis`, `time.monotonic_millis`, `time.duration_millis`,
+`time.duration_seconds`, `time.duration_as_millis`, `time.format_duration`,
+`time.sleep`, and `time.sleep_millis`. The clock helpers return Unix epoch or
+monotonic milliseconds. `Duration` stores millisecond precision, `format_duration`
+prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
+negative durations.
 
 `std.process` provides synchronous process helpers: `process.exit`,
 `process.status`, `process.exec`, and `process.output`. `status` returns a

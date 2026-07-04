@@ -344,6 +344,21 @@ pub enum ValueExpr {
     OsLineEnding,
     TimeNowMillis,
     TimeMonotonicMillis,
+    TimeDurationMillis {
+        millis: Box<ValueExpr>,
+    },
+    TimeDurationSeconds {
+        seconds: Box<ValueExpr>,
+    },
+    TimeDurationAsMillis {
+        duration: Box<ValueExpr>,
+    },
+    TimeFormatDuration {
+        duration: Box<ValueExpr>,
+    },
+    TimeSleep {
+        duration: Box<ValueExpr>,
+    },
     TimeSleepMillis {
         duration: Box<ValueExpr>,
     },
@@ -1922,6 +1937,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.os.path_separator"
             | "std.os.line_ending"
             | "std.time"
+            | "std.time.Duration"
+            | "std.time.duration_millis"
+            | "std.time.duration_seconds"
+            | "std.time.duration_as_millis"
+            | "std.time.format_duration"
+            | "std.time.sleep"
             | "std.time.now_millis"
             | "std.time.monotonic_millis"
             | "std.time.sleep_millis"
@@ -2070,6 +2091,7 @@ fn missing_standard_type_import(
         "JsonValue" | "JsonError" => Some("std.json"),
         "Regex" | "RegexError" => Some("std.regex"),
         "StringMap" | "StringSet" => Some("std.collections"),
+        "Duration" => Some("std.time"),
         _ => None,
     }
 }
@@ -2476,6 +2498,7 @@ struct StandardTypeNeeds {
     json: bool,
     regex: bool,
     collections: bool,
+    time: bool,
     num: bool,
     result: bool,
     option: bool,
@@ -2513,6 +2536,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
         collections: imports
             .iter()
             .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
+        time: imports
+            .iter()
+            .any(|item| item == "std.time" || item.starts_with("std.time."))
+            || source_uses_time_builtin(ast),
         num: imports
             .iter()
             .any(|item| item == "std.num" || item.starts_with("std.num."))
@@ -2569,6 +2596,9 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.collections {
         names.push(("StringMap".to_string(), 0));
         names.push(("StringSet".to_string(), 0));
+    }
+    if needs.time {
+        names.push(("Duration".to_string(), 0));
     }
     names.into_iter()
 }
@@ -2773,6 +2803,17 @@ fn inject_standard_types(
             }],
         });
     }
+    if needs.time && !structs.iter().any(|item| item.name == "Duration") {
+        structs.push(StructType {
+            package: "std.time".to_string(),
+            name: "Duration".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "millis".to_string(),
+                value_type: ValueType::Int,
+            }],
+        });
+    }
     if (needs.io || needs.fs || needs.num || needs.json || needs.regex || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
@@ -2859,6 +2900,12 @@ fn source_uses_num_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_num_builtin)
+}
+
+fn source_uses_time_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_time_builtin)
 }
 
 fn source_uses_array_builtin(ast: &SourceFile) -> bool {
@@ -3523,6 +3570,46 @@ fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_time_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_time_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_time_builtin(value) || else_body.iter().any(stmt_uses_time_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_time_builtin(value)
+                || body.iter().any(stmt_uses_time_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_time_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_time_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_time_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_time_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_time_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_time_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_time_builtin(condition) || body.iter().any(stmt_uses_time_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_time_builtin(iterable) || body.iter().any(stmt_uses_time_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_time_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_array_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_array_builtin(value),
@@ -3884,6 +3971,55 @@ fn expr_uses_num_builtin(expr: &AstExpr) -> bool {
         AstExpr::Cast { expr, .. } => expr_uses_num_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_num_builtin(left) || expr_uses_num_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_time_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            (callee.len() == 2
+                && callee[0] == "time"
+                && matches!(
+                    callee[1].as_str(),
+                    "duration_millis"
+                        | "duration_seconds"
+                        | "duration_as_millis"
+                        | "format_duration"
+                        | "sleep"
+                ))
+                || args.iter().any(expr_uses_time_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_time_builtin(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_time_builtin(value)
+                || arms.iter().any(|arm| expr_uses_time_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_time_builtin(condition)
+                || expr_uses_time_builtin(then_branch)
+                || expr_uses_time_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_time_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_time_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_time_builtin(left) || expr_uses_time_builtin(right)
         }
         AstExpr::Name(_)
         | AstExpr::String(_)
@@ -12084,7 +12220,14 @@ fn is_time_builtin_call(callee: &[String]) -> bool {
             if module == "time"
                 && matches!(
                     name.as_str(),
-                    "now_millis" | "monotonic_millis" | "sleep_millis"
+                    "now_millis"
+                        | "monotonic_millis"
+                        | "duration_millis"
+                        | "duration_seconds"
+                        | "duration_as_millis"
+                        | "format_duration"
+                        | "sleep"
+                        | "sleep_millis"
                 )
     )
 }
@@ -12184,6 +12327,164 @@ fn lower_time_builtin(
                 ));
             }
             Ok((ValueType::Int, ValueExpr::TimeMonotonicMillis))
+        }
+        "duration_millis" => {
+            let [millis] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.duration_millis` expects exactly one i64 millisecond value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (millis_type, lowered_millis) = lower_value_expr(
+                path, millis, scope, imports, signatures, structs, enums, span,
+            )?;
+            if millis_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.duration_millis` expects an i64 millisecond value",
+                    &ValueType::Int,
+                    &millis_type,
+                ));
+            }
+            Ok((
+                ValueType::Struct("Duration".to_string(), Vec::new()),
+                ValueExpr::TimeDurationMillis {
+                    millis: Box::new(lowered_millis),
+                },
+            ))
+        }
+        "duration_seconds" => {
+            let [seconds] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.duration_seconds` expects exactly one i64 second value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (seconds_type, lowered_seconds) = lower_value_expr(
+                path, seconds, scope, imports, signatures, structs, enums, span,
+            )?;
+            if seconds_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.duration_seconds` expects an i64 second value",
+                    &ValueType::Int,
+                    &seconds_type,
+                ));
+            }
+            Ok((
+                ValueType::Struct("Duration".to_string(), Vec::new()),
+                ValueExpr::TimeDurationSeconds {
+                    seconds: Box::new(lowered_seconds),
+                },
+            ))
+        }
+        "duration_as_millis" => {
+            let [duration] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.duration_as_millis` expects exactly one Duration value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (duration_type, lowered_duration) = lower_value_expr(
+                path, duration, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected = ValueType::Struct("Duration".to_string(), Vec::new());
+            if duration_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.duration_as_millis` expects a Duration value",
+                    &expected,
+                    &duration_type,
+                ));
+            }
+            Ok((
+                ValueType::Int,
+                ValueExpr::TimeDurationAsMillis {
+                    duration: Box::new(lowered_duration),
+                },
+            ))
+        }
+        "format_duration" => {
+            let [duration] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.format_duration` expects exactly one Duration value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (duration_type, lowered_duration) = lower_value_expr(
+                path, duration, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected = ValueType::Struct("Duration".to_string(), Vec::new());
+            if duration_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.format_duration` expects a Duration value",
+                    &expected,
+                    &duration_type,
+                ));
+            }
+            Ok((
+                ValueType::String,
+                ValueExpr::TimeFormatDuration {
+                    duration: Box::new(lowered_duration),
+                },
+            ))
+        }
+        "sleep" => {
+            let [duration] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`time.sleep` expects exactly one Duration value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (duration_type, lowered_duration) = lower_value_expr(
+                path, duration, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected = ValueType::Struct("Duration".to_string(), Vec::new());
+            if duration_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`time.sleep` expects a Duration value",
+                    &expected,
+                    &duration_type,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::TimeSleep {
+                    duration: Box::new(lowered_duration),
+                },
+            ))
         }
         "sleep_millis" => {
             let [duration] = args else {
@@ -15339,6 +15640,37 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         {
             vec!["time".to_string(), "monotonic_millis".to_string()]
         }
+        "duration_millis"
+            if imports
+                .iter()
+                .any(|item| item == "std.time.duration_millis") =>
+        {
+            vec!["time".to_string(), "duration_millis".to_string()]
+        }
+        "duration_seconds"
+            if imports
+                .iter()
+                .any(|item| item == "std.time.duration_seconds") =>
+        {
+            vec!["time".to_string(), "duration_seconds".to_string()]
+        }
+        "duration_as_millis"
+            if imports
+                .iter()
+                .any(|item| item == "std.time.duration_as_millis") =>
+        {
+            vec!["time".to_string(), "duration_as_millis".to_string()]
+        }
+        "format_duration"
+            if imports
+                .iter()
+                .any(|item| item == "std.time.format_duration") =>
+        {
+            vec!["time".to_string(), "format_duration".to_string()]
+        }
+        "sleep" if imports.iter().any(|item| item == "std.time.sleep") => {
+            vec!["time".to_string(), "sleep".to_string()]
+        }
         "sleep_millis" if imports.iter().any(|item| item == "std.time.sleep_millis") => {
             vec!["time".to_string(), "sleep_millis".to_string()]
         }
@@ -17537,6 +17869,11 @@ import std.time
 fn main() -> void {
     let now: i64 = time.now_millis()
     let monotonic: i64 = time.monotonic_millis()
+    let short: Duration = time.duration_millis(1500)
+    let long: Duration = time.duration_seconds(2)
+    let short_millis: i64 = time.duration_as_millis(short)
+    let label: string = time.format_duration(short)
+    time.sleep(time.duration_millis(0))
     time.sleep_millis(0)
 }
 "#;
@@ -17561,6 +17898,42 @@ fn main() -> void {
         ));
         assert!(matches!(
             main.body[2],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::TimeDurationMillis { .. },
+                ..
+            } if name == "Duration" && args.is_empty()
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::TimeDurationSeconds { .. },
+                ..
+            } if name == "Duration" && args.is_empty()
+        ));
+        assert!(matches!(
+            main.body[4],
+            Statement::Let {
+                value_type: ValueType::Int,
+                initializer: ValueExpr::TimeDurationAsMillis { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[5],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::TimeFormatDuration { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[6],
+            Statement::Expr(ValueExpr::TimeSleep { .. })
+        ));
+        assert!(matches!(
+            main.body[7],
             Statement::Expr(ValueExpr::TimeSleepMillis { .. })
         ));
     }
@@ -17570,10 +17943,16 @@ fn main() -> void {
         let source = r#"package app.main
 
 import std.time.now_millis
+import std.time.duration_millis
+import std.time.duration_as_millis
+import std.time.sleep
 import std.time.sleep_millis
 
 fn main() -> void {
     let now: i64 = now_millis()
+    let duration: Duration = duration_millis(5)
+    let millis: i64 = duration_as_millis(duration)
+    sleep(duration_millis(0))
     sleep_millis(0)
 }
 "#;
@@ -17589,6 +17968,24 @@ fn main() -> void {
         ));
         assert!(matches!(
             main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::TimeDurationMillis { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::TimeDurationAsMillis { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Expr(ValueExpr::TimeSleep { .. })
+        ));
+        assert!(matches!(
+            main.body[4],
             Statement::Expr(ValueExpr::TimeSleepMillis { .. })
         ));
     }
@@ -17609,6 +18006,24 @@ fn main() -> void {
         assert!(err.message.contains("time.sleep_millis"));
         assert_eq!(err.expected.as_deref(), Some("i64"));
         assert_eq!(err.found.as_deref(), Some("string"));
+    }
+
+    #[test]
+    fn rejects_time_sleep_non_duration_argument() {
+        let source = r#"package app.main
+
+import std.time
+
+fn main() -> void {
+    time.sleep(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("time.sleep"));
+        assert_eq!(err.expected.as_deref(), Some("Duration"));
+        assert_eq!(err.found.as_deref(), Some("i64"));
     }
 
     #[test]

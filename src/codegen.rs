@@ -801,6 +801,15 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    }\n");
     out.push_str("#endif\n");
     out.push_str("}\n");
+    out.push_str("\nstatic int64_t nomo_time_duration_seconds_to_millis(int64_t seconds) {\n");
+    out.push_str("    if (seconds > INT64_MAX / 1000 || seconds < INT64_MIN / 1000) { nomo_panic(\"time.duration_seconds overflow\"); }\n");
+    out.push_str("    return seconds * 1000;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_time_format_duration_millis(int64_t millis) {\n");
+    out.push_str("    char buffer[64];\n");
+    out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRId64 \"ms\", millis);\n");
+    out.push_str("    return nomo_string_from_cstr(buffer);\n");
+    out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_num_i64_to_string(int64_t value) {\n");
     out.push_str("    char buffer[64];\n");
     out.push_str("    snprintf(buffer, sizeof(buffer), \"%\" PRId64, value);\n");
@@ -5398,6 +5407,11 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FileClose { file: expr }
         | ValueExpr::FileReadToString { file: expr }
         | ValueExpr::EnvGet { name: expr }
+        | ValueExpr::TimeDurationMillis { millis: expr }
+        | ValueExpr::TimeDurationSeconds { seconds: expr }
+        | ValueExpr::TimeDurationAsMillis { duration: expr }
+        | ValueExpr::TimeFormatDuration { duration: expr }
+        | ValueExpr::TimeSleep { duration: expr }
         | ValueExpr::TimeSleepMillis { duration: expr }
         | ValueExpr::LogEnabled { level: expr }
         | ValueExpr::HashString { value: expr }
@@ -6202,6 +6216,31 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         }
         ValueExpr::TimeMonotonicMillis => {
             out.push_str("nomo_time_monotonic_millis()");
+        }
+        ValueExpr::TimeDurationMillis { millis } => {
+            out.push_str("(nomo_struct_Duration){ .nomo_member_millis = ");
+            emit_expr(out, millis);
+            out.push_str(" }");
+        }
+        ValueExpr::TimeDurationSeconds { seconds } => {
+            out.push_str("(nomo_struct_Duration){ .nomo_member_millis = nomo_time_duration_seconds_to_millis(");
+            emit_expr(out, seconds);
+            out.push_str(") }");
+        }
+        ValueExpr::TimeDurationAsMillis { duration } => {
+            out.push('(');
+            emit_expr(out, duration);
+            out.push_str(").nomo_member_millis");
+        }
+        ValueExpr::TimeFormatDuration { duration } => {
+            out.push_str("nomo_time_format_duration_millis((");
+            emit_expr(out, duration);
+            out.push_str(").nomo_member_millis)");
+        }
+        ValueExpr::TimeSleep { duration } => {
+            out.push_str("nomo_time_sleep_millis((");
+            emit_expr(out, duration);
+            out.push_str(").nomo_member_millis)");
         }
         ValueExpr::TimeSleepMillis { duration } => {
             out.push_str("nomo_time_sleep_millis(");
@@ -7246,6 +7285,11 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -7602,6 +7646,11 @@ where
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -8041,6 +8090,11 @@ fn collect_expr_struct(
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
+        | ValueExpr::TimeDurationMillis { millis: value }
+        | ValueExpr::TimeDurationSeconds { seconds: value }
+        | ValueExpr::TimeDurationAsMillis { duration: value }
+        | ValueExpr::TimeFormatDuration { duration: value }
+        | ValueExpr::TimeSleep { duration: value }
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
         | ValueExpr::HashString { value }
@@ -8695,6 +8749,11 @@ fn collect_expr_enum(
         | ValueExpr::PathNormalize { path: value }
         | ValueExpr::PathIsAbsolute { path: value }
         | ValueExpr::MathUnary { value, .. }
+        | ValueExpr::TimeDurationMillis { millis: value }
+        | ValueExpr::TimeDurationSeconds { seconds: value }
+        | ValueExpr::TimeDurationAsMillis { duration: value }
+        | ValueExpr::TimeFormatDuration { duration: value }
+        | ValueExpr::TimeSleep { duration: value }
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
         | ValueExpr::HashString { value }
@@ -9937,6 +9996,11 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -10640,6 +10704,11 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
+        | ValueExpr::TimeDurationMillis { millis: name }
+        | ValueExpr::TimeDurationSeconds { seconds: name }
+        | ValueExpr::TimeDurationAsMillis { duration: name }
+        | ValueExpr::TimeFormatDuration { duration: name }
+        | ValueExpr::TimeSleep { duration: name }
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
         | ValueExpr::HashString { value: name }
@@ -10839,6 +10908,11 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path: name }
         | ValueExpr::PathIsAbsolute { path: name }
         | ValueExpr::MathUnary { value: name, .. }
+        | ValueExpr::TimeDurationMillis { millis: name }
+        | ValueExpr::TimeDurationSeconds { seconds: name }
+        | ValueExpr::TimeDurationAsMillis { duration: name }
+        | ValueExpr::TimeFormatDuration { duration: name }
+        | ValueExpr::TimeSleep { duration: name }
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
         | ValueExpr::HashString { value: name }
@@ -11011,6 +11085,11 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -11198,6 +11277,11 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -11391,6 +11475,11 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -11617,6 +11706,11 @@ fn collect_expr_array_elements(
         | ValueExpr::PathNormalize { path }
         | ValueExpr::PathIsAbsolute { path }
         | ValueExpr::MathUnary { value: path, .. }
+        | ValueExpr::TimeDurationMillis { millis: path }
+        | ValueExpr::TimeDurationSeconds { seconds: path }
+        | ValueExpr::TimeDurationAsMillis { duration: path }
+        | ValueExpr::TimeFormatDuration { duration: path }
+        | ValueExpr::TimeSleep { duration: path }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
         | ValueExpr::HashString { value: path }
@@ -12887,7 +12981,15 @@ mod tests {
             consts: Vec::new(),
             package: "app.main".to_string(),
             imports: vec!["std.time".to_string()],
-            structs: Vec::new(),
+            structs: vec![StructType {
+                package: "std.time".to_string(),
+                name: "Duration".to_string(),
+                type_params: Vec::new(),
+                fields: vec![StructField {
+                    name: "millis".to_string(),
+                    value_type: ValueType::Int,
+                }],
+            }],
             enums: Vec::new(),
             functions: vec![Function {
                 package: "app.main".to_string(),
@@ -12908,16 +13010,61 @@ mod tests {
                     Statement::Expr(ValueExpr::TimeSleepMillis {
                         duration: Box::new(ValueExpr::IntLiteral(0)),
                     }),
+                    Statement::Let {
+                        name: "duration".to_string(),
+                        value_type: ValueType::Struct("Duration".to_string(), Vec::new()),
+                        initializer: ValueExpr::TimeDurationMillis {
+                            millis: Box::new(ValueExpr::IntLiteral(1500)),
+                        },
+                    },
+                    Statement::Let {
+                        name: "seconds".to_string(),
+                        value_type: ValueType::Struct("Duration".to_string(), Vec::new()),
+                        initializer: ValueExpr::TimeDurationSeconds {
+                            seconds: Box::new(ValueExpr::IntLiteral(2)),
+                        },
+                    },
+                    Statement::Let {
+                        name: "millis".to_string(),
+                        value_type: ValueType::Int,
+                        initializer: ValueExpr::TimeDurationAsMillis {
+                            duration: Box::new(ValueExpr::Variable("duration".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "label".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::TimeFormatDuration {
+                            duration: Box::new(ValueExpr::Variable("duration".to_string())),
+                        },
+                    },
+                    Statement::Expr(ValueExpr::TimeSleep {
+                        duration: Box::new(ValueExpr::Variable("duration".to_string())),
+                    }),
                 ],
             }],
         };
 
         let c = emit_c(&program);
+        assert!(c.contains("#define nomo_struct_Duration nomo_pkg_std_time_struct_Duration"));
         assert!(c.contains("static int64_t nomo_time_now_millis(void)"));
         assert!(c.contains("static int64_t nomo_time_monotonic_millis(void)"));
         assert!(c.contains("static void nomo_time_sleep_millis(int64_t duration)"));
+        assert!(c.contains("static int64_t nomo_time_duration_seconds_to_millis(int64_t seconds)"));
+        assert!(c.contains("static nomo_string nomo_time_format_duration_millis(int64_t millis)"));
         assert!(c.contains("nomo_now = nomo_time_now_millis();"));
         assert!(c.contains("nomo_time_sleep_millis(0);"));
+        assert!(c.contains(
+            "nomo_struct_Duration nomo_duration = (nomo_struct_Duration){ .nomo_member_millis = 1500 };"
+        ));
+        assert!(c.contains(
+            "nomo_struct_Duration nomo_seconds = (nomo_struct_Duration){ .nomo_member_millis = nomo_time_duration_seconds_to_millis(2) };"
+        ));
+        assert!(c.contains("long long nomo_millis = (nomo_duration).nomo_member_millis;"));
+        assert!(c.contains(
+            "nomo_string nomo_label = nomo_time_format_duration_millis((nomo_duration).nomo_member_millis);"
+        ));
+        assert!(c.contains("nomo_time_sleep_millis((nomo_duration).nomo_member_millis);"));
     }
 
     #[test]

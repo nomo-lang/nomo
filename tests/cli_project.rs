@@ -6227,7 +6227,7 @@ fn nomo_run_executes_std_time_helpers() {
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("nomo.toml"),
-        "[package]\nname = \"time_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+        "[package]\nname = \"time_helpers\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
     fs::write(
@@ -6318,6 +6318,62 @@ fn main() -> void {
         "backtrace unavailable\n"
     );
     assert_eq!(String::from_utf8_lossy(&output.stderr), "debug-ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_std_time_duration_helpers() {
+    let root = temp_test_root("std-time-duration-helpers");
+    reset_dir(&root);
+    let project = root.join("time_duration_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"time_duration_helpers\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.num
+import std.time
+
+fn main() -> void {
+    let short: Duration = time.duration_millis(1500)
+    let long: Duration = time.duration_seconds(2)
+    time.sleep(time.duration_millis(0))
+    io.println(num.to_string(time.duration_as_millis(short)))
+    io.println(num.to_string(time.duration_as_millis(long)))
+    io.println(time.format_duration(short))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "1500\n2000\n1500ms\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }

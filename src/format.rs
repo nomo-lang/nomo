@@ -5,83 +5,193 @@ use crate::ast::{
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind, lex};
 use crate::parser::parse;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 
 pub fn format_source(path: &Path, source: &str) -> Result<String, Diagnostic> {
-    if let Some(comment) = first_comment_span(source) {
-        return Err(Diagnostic::new(
-            "E0109",
-            "nomo fmt does not preserve comments yet",
-            path,
-            comment.line,
-            comment.column,
-            comment.length,
-            &comment.text,
-        ));
-    }
     let tokens = lex(path, source)?;
     let ast = parse(path, &tokens)?;
     validate_format_ast(path, &ast)?;
-    Ok(Formatter::new(&ast, &tokens).format())
+    Ok(Formatter::new(&ast, &tokens, collect_trivia(source)).format())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
-struct CommentSpan {
-    line: usize,
-    column: usize,
-    length: usize,
-    text: String,
+struct FormatTrivia {
+    leading: BTreeMap<usize, Vec<String>>,
+    trailing: BTreeMap<usize, String>,
 }
 
-fn first_comment_span(source: &str) -> Option<CommentSpan> {
-    for (line_index, line_text) in source.lines().enumerate() {
-        let line = line_index + 1;
-        let mut chars = line_text.char_indices().peekable();
-        while let Some((index, ch)) = chars.next() {
-            match ch {
-                '"' => skip_string(&mut chars),
-                '\'' => skip_char(&mut chars),
-                '/' => match chars.peek() {
-                    Some((_, '/')) => {
-                        return Some(CommentSpan {
-                            line,
-                            column: index + 1,
-                            length: 2,
-                            text: line_text.to_string(),
-                        });
-                    }
-                    Some((_, '*')) => {
-                        return Some(CommentSpan {
-                            line,
-                            column: index + 1,
-                            length: 2,
-                            text: line_text.to_string(),
-                        });
-                    }
-                    _ => {}
-                },
-                _ => {}
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct RawComment {
+    end_line: usize,
+    lines: Vec<String>,
+}
+
+fn collect_trivia(source: &str) -> FormatTrivia {
+    let mut full_line_comments = Vec::new();
+    let mut trailing = BTreeMap::new();
+    let mut code_lines = BTreeSet::new();
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut index = 0usize;
+
+    while index < lines.len() {
+        let line_no = index + 1;
+        let line = lines[index];
+        let Some(comment) = find_comment_start(line) else {
+            if !line.trim().is_empty() {
+                code_lines.insert(line_no);
             }
+            index += 1;
+            continue;
+        };
+
+        let before = &line[..comment.index];
+        if comment.kind == CommentKind::Line {
+            if before.trim().is_empty() {
+                full_line_comments.push(RawComment {
+                    end_line: line_no,
+                    lines: vec![line[comment.index..].trim_end().to_string()],
+                });
+            } else {
+                code_lines.insert(line_no);
+                trailing.insert(line_no, line[comment.index..].trim().to_string());
+            }
+            index += 1;
+            continue;
+        }
+
+        if let Some(end) = find_block_comment_end(line, comment.index) {
+            let after = &line[end..];
+            if before.trim().is_empty() && after.trim().is_empty() {
+                full_line_comments.push(RawComment {
+                    end_line: line_no,
+                    lines: vec![line[comment.index..end].trim_end().to_string()],
+                });
+            } else {
+                code_lines.insert(line_no);
+                trailing.insert(line_no, line[comment.index..end].trim().to_string());
+            }
+            index += 1;
+            continue;
+        }
+
+        let mut comment_lines = vec![line[comment.index..].trim_end().to_string()];
+        let full_line = before.trim().is_empty();
+        if !full_line {
+            code_lines.insert(line_no);
+        }
+        index += 1;
+        while index < lines.len() {
+            let current_line_no = index + 1;
+            let current = lines[index];
+            if let Some(end) = find_block_comment_end_in_comment(current) {
+                comment_lines.push(current[..end].trim_end().to_string());
+                if !current[end..].trim().is_empty() {
+                    code_lines.insert(current_line_no);
+                }
+                break;
+            }
+            comment_lines.push(current.trim_end().to_string());
+            index += 1;
+        }
+        full_line_comments.push(RawComment {
+            end_line: index.saturating_add(1),
+            lines: comment_lines,
+        });
+        index += 1;
+    }
+
+    let mut leading = BTreeMap::<usize, Vec<String>>::new();
+    for comment in full_line_comments {
+        let target = code_lines
+            .range((comment.end_line + 1)..)
+            .next()
+            .copied()
+            .unwrap_or(usize::MAX);
+        leading.entry(target).or_default().extend(comment.lines);
+    }
+
+    FormatTrivia { leading, trailing }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+struct CommentStart {
+    index: usize,
+    kind: CommentKind,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum CommentKind {
+    Line,
+    Block,
+}
+
+fn find_comment_start(line: &str) -> Option<CommentStart> {
+    let mut chars = line.char_indices().peekable();
+    while let Some((index, ch)) = chars.next() {
+        match ch {
+            '"' => skip_quoted(&mut chars, '"'),
+            '\'' => skip_quoted(&mut chars, '\''),
+            '/' => match chars.peek() {
+                Some((_, '/')) => {
+                    return Some(CommentStart {
+                        index,
+                        kind: CommentKind::Line,
+                    });
+                }
+                Some((_, '*')) => {
+                    return Some(CommentStart {
+                        index,
+                        kind: CommentKind::Block,
+                    });
+                }
+                _ => {}
+            },
+            _ => {}
         }
     }
     None
 }
 
-fn skip_string(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) {
-    while let Some((_, ch)) = chars.next() {
-        if ch == '\\' {
-            chars.next();
-        } else if ch == '"' {
-            break;
-        }
-    }
+fn find_block_comment_end(line: &str, start: usize) -> Option<usize> {
+    find_block_comment_end_with_depth(line, start, 0)
 }
 
-fn skip_char(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>) {
+fn find_block_comment_end_in_comment(line: &str) -> Option<usize> {
+    find_block_comment_end_with_depth(line, 0, 1)
+}
+
+fn find_block_comment_end_with_depth(
+    line: &str,
+    start: usize,
+    initial_depth: usize,
+) -> Option<usize> {
+    let mut depth = initial_depth;
+    let mut chars = line[start..].char_indices().peekable();
+    while let Some((offset, ch)) = chars.next() {
+        match ch {
+            '/' if matches!(chars.peek(), Some((_, '*'))) => {
+                chars.next();
+                depth += 1;
+            }
+            '*' if depth > 0 && matches!(chars.peek(), Some((_, '/'))) => {
+                let (_, slash) = chars.next().expect("peeked slash");
+                depth -= 1;
+                if depth == 0 {
+                    return Some(start + offset + ch.len_utf8() + slash.len_utf8());
+                }
+            }
+            _ => {}
+        }
+    }
+    None
+}
+
+fn skip_quoted(chars: &mut std::iter::Peekable<std::str::CharIndices<'_>>, quote: char) {
     while let Some((_, ch)) = chars.next() {
         if ch == '\\' {
             chars.next();
-        } else if ch == '\'' {
+        } else if ch == quote {
             break;
         }
     }
@@ -99,26 +209,52 @@ enum TopLevelItem {
 struct Formatter<'a> {
     ast: &'a SourceFile,
     tokens: &'a [Token],
+    trivia: FormatTrivia,
+    package_line: usize,
+    import_lines: Vec<usize>,
+    impl_lines: Vec<usize>,
+    struct_field_lines: Vec<Vec<usize>>,
+    enum_variant_lines: Vec<Vec<usize>>,
+    emitted_leading: BTreeSet<usize>,
     out: String,
 }
 
 impl<'a> Formatter<'a> {
-    fn new(ast: &'a SourceFile, tokens: &'a [Token]) -> Self {
+    fn new(ast: &'a SourceFile, tokens: &'a [Token], trivia: FormatTrivia) -> Self {
+        let layout = TokenLayout::from_tokens(tokens);
         Self {
             ast,
             tokens,
+            trivia,
+            package_line: layout.package_line,
+            import_lines: layout.import_lines,
+            impl_lines: layout.impl_lines,
+            struct_field_lines: layout.struct_field_lines,
+            enum_variant_lines: layout.enum_variant_lines,
+            emitted_leading: BTreeSet::new(),
             out: String::new(),
         }
     }
 
     fn format(mut self) -> String {
-        self.line(0, &format!("package {}", path(&self.ast.package)));
+        self.line_at(
+            0,
+            &format!("package {}", path(&self.ast.package)),
+            self.package_line,
+        );
         if !self.ast.imports.is_empty() || self.has_top_level_items() {
             self.blank();
         }
 
-        for import in &self.ast.imports {
-            self.line(0, &format!("import {}", path(import)));
+        for (index, import) in self.ast.imports.iter().enumerate() {
+            self.line_at(
+                0,
+                &format!("import {}", path(import)),
+                self.import_lines
+                    .get(index)
+                    .copied()
+                    .unwrap_or(self.package_line),
+            );
         }
         if !self.ast.imports.is_empty() && self.has_top_level_items() {
             self.blank();
@@ -135,6 +271,7 @@ impl<'a> Formatter<'a> {
             self.blank();
         }
         self.stmt_block(&self.ast.script_body, 0);
+        self.emit_remaining_comments(0);
 
         if !self.out.ends_with('\n') {
             self.out.push('\n');
@@ -153,59 +290,85 @@ impl<'a> Formatter<'a> {
 
     fn item(&mut self, item: TopLevelItem) {
         match item {
-            TopLevelItem::Struct(index) => self.struct_def(&self.ast.structs[index]),
-            TopLevelItem::Enum(index) => self.enum_def(&self.ast.enums[index]),
-            TopLevelItem::Impl(index) => self.impl_block(&self.ast.impls[index]),
+            TopLevelItem::Struct(index) => self.struct_def(index, &self.ast.structs[index]),
+            TopLevelItem::Enum(index) => self.enum_def(index, &self.ast.enums[index]),
+            TopLevelItem::Impl(index) => self.impl_block(index, &self.ast.impls[index]),
             TopLevelItem::Const(index) => self.const_def(&self.ast.consts[index]),
             TopLevelItem::Function(index) => self.function(&self.ast.functions[index], 0, false),
         }
     }
 
-    fn struct_def(&mut self, def: &StructDef) {
+    fn struct_def(&mut self, index: usize, def: &StructDef) {
         let prefix = if def.public { "pub " } else { "" };
-        self.line(
+        self.line_at(
             0,
             &format!(
                 "{prefix}struct {}{} {{",
                 def.name,
                 type_params(&def.type_params)
             ),
+            def.span.line,
         );
-        for field in &def.fields {
-            self.field(field, 1);
+        for (field_index, field) in def.fields.iter().enumerate() {
+            let source_line = self
+                .struct_field_lines
+                .get(index)
+                .and_then(|lines| lines.get(field_index))
+                .copied()
+                .unwrap_or(def.span.line);
+            self.field(field, 1, source_line);
         }
         self.line(0, "}");
     }
 
-    fn field(&mut self, field: &Field, indent: usize) {
+    fn field(&mut self, field: &Field, indent: usize, source_line: usize) {
         let prefix = if field.public { "pub " } else { "" };
-        self.line(
+        self.line_at(
             indent,
             &format!("{prefix}{}: {}", field.name, type_ref(&field.type_ref)),
+            source_line,
         );
     }
 
-    fn enum_def(&mut self, def: &EnumDef) {
+    fn enum_def(&mut self, index: usize, def: &EnumDef) {
         let prefix = if def.public { "pub " } else { "" };
-        self.line(
+        self.line_at(
             0,
             &format!(
                 "{prefix}enum {}{} {{",
                 def.name,
                 type_params(&def.type_params)
             ),
+            def.span.line,
         );
-        for variant in &def.variants {
+        for (variant_index, variant) in def.variants.iter().enumerate() {
+            let source_line = self
+                .enum_variant_lines
+                .get(index)
+                .and_then(|lines| lines.get(variant_index))
+                .copied()
+                .unwrap_or(def.span.line);
             match &variant.payload {
-                Some(payload) => self.line(1, &format!("{}({})", variant.name, type_ref(payload))),
-                None => self.line(1, &variant.name),
+                Some(payload) => self.line_at(
+                    1,
+                    &format!("{}({})", variant.name, type_ref(payload)),
+                    source_line,
+                ),
+                None => self.line_at(1, &variant.name, source_line),
             }
         }
         self.line(0, "}");
     }
 
-    fn impl_block(&mut self, block: &ImplBlock) {
-        self.line(0, &format!("impl {} {{", type_ref(&block.type_name)));
+    fn impl_block(&mut self, index: usize, block: &ImplBlock) {
+        self.line_at(
+            0,
+            &format!("impl {} {{", type_ref(&block.type_name)),
+            self.impl_lines
+                .get(index)
+                .copied()
+                .unwrap_or(self.package_line),
+        );
         for (index, method) in block.methods.iter().enumerate() {
             if index > 0 {
                 self.blank();
@@ -216,7 +379,7 @@ impl<'a> Formatter<'a> {
     }
 
     fn const_def(&mut self, def: &ConstDef) {
-        self.line(
+        self.line_at(
             0,
             &format!(
                 "{}const {}: {} = {}",
@@ -225,12 +388,13 @@ impl<'a> Formatter<'a> {
                 type_ref(&def.type_ref),
                 expr(&def.value, 0, 0)
             ),
+            def.span.line,
         );
     }
 
     fn function(&mut self, function: &Function, indent: usize, in_impl: bool) {
         let prefix = if function.public { "pub " } else { "" };
-        self.line(
+        self.line_at(
             indent,
             &format!(
                 "{prefix}fn {}{}({}) -> {} {{",
@@ -239,6 +403,7 @@ impl<'a> Formatter<'a> {
                 params(&function.params, in_impl),
                 type_ref(&function.return_type)
             ),
+            function.span.line,
         );
         self.stmt_block(&function.body, indent + 1);
         self.line(indent, "}");
@@ -264,12 +429,13 @@ impl<'a> Formatter<'a> {
                     .as_ref()
                     .map(|ty| format!(": {}", type_ref(ty)))
                     .unwrap_or_default();
-                self.line(
+                self.line_at(
                     indent,
                     &format!(
                         "let {mutable}{name}{annotation} = {}",
                         expr(value, indent, 0)
                     ),
+                    stmt_line(stmt),
                 );
             }
             Stmt::LetElse {
@@ -279,7 +445,7 @@ impl<'a> Formatter<'a> {
                 else_body,
                 ..
             } => {
-                self.line(
+                self.line_at(
                     indent,
                     &format!(
                         "let {}({}) = {} else {{",
@@ -287,6 +453,7 @@ impl<'a> Formatter<'a> {
                         binding,
                         expr(value, indent, 0)
                     ),
+                    stmt_line(stmt),
                 );
                 self.stmt_block(else_body, indent + 1);
                 self.line(indent, "}");
@@ -299,13 +466,14 @@ impl<'a> Formatter<'a> {
                 else_body,
                 ..
             } => {
-                self.line(
+                self.line_at(
                     indent,
                     &format!(
                         "if let {} = {} {{",
                         pattern_with_binding(pattern, binding.as_deref()),
                         expr(value, indent, 0)
                     ),
+                    stmt_line(stmt),
                 );
                 self.stmt_block(body, indent + 1);
                 if let Some(else_body) = else_body {
@@ -319,7 +487,7 @@ impl<'a> Formatter<'a> {
             Stmt::Assign {
                 target, op, value, ..
             } => {
-                self.line(
+                self.line_at(
                     indent,
                     &format!(
                         "{} {} {}",
@@ -327,44 +495,67 @@ impl<'a> Formatter<'a> {
                         assign_op(op),
                         expr(value, indent, 0)
                     ),
+                    stmt_line(stmt),
                 );
             }
             Stmt::Postfix { target, op, .. } => {
-                self.line(indent, &format!("{}{}", path(target), postfix_op(op)));
+                self.line_at(
+                    indent,
+                    &format!("{}{}", path(target), postfix_op(op)),
+                    stmt_line(stmt),
+                );
             }
             Stmt::Return { value, .. } => match value {
-                Some(value) => self.line(indent, &format!("return {}", expr(value, indent, 0))),
-                None => self.line(indent, "return"),
+                Some(value) => self.line_at(
+                    indent,
+                    &format!("return {}", expr(value, indent, 0)),
+                    stmt_line(stmt),
+                ),
+                None => self.line_at(indent, "return", stmt_line(stmt)),
             },
             Stmt::Match { value, arms, .. } => {
-                self.line(indent, &format!("match {} {{", expr(value, indent, 0)));
+                self.line_at(
+                    indent,
+                    &format!("match {} {{", expr(value, indent, 0)),
+                    stmt_line(stmt),
+                );
                 for arm in arms {
                     self.match_stmt_arm(arm, indent + 1);
                 }
                 self.line(indent, "}");
             }
-            Stmt::Expr { expr: value, .. } => self.line(indent, &expr(value, indent, 0)),
-            Stmt::For { variant, .. } => self.for_stmt(variant, indent),
-            Stmt::Break { .. } => self.line(indent, "break"),
-            Stmt::Continue { .. } => self.line(indent, "continue"),
+            Stmt::Expr { expr: value, .. } => {
+                self.line_at(indent, &expr(value, indent, 0), stmt_line(stmt));
+            }
+            Stmt::For { variant, .. } => self.for_stmt(variant, indent, stmt_line(stmt)),
+            Stmt::Break { .. } => self.line_at(indent, "break", stmt_line(stmt)),
+            Stmt::Continue { .. } => self.line_at(indent, "continue", stmt_line(stmt)),
             Stmt::Defer { stmt, .. } => match stmt.as_ref() {
                 Stmt::Expr { expr: value, .. } => {
-                    self.line(indent, &format!("defer {}", expr(value, indent, 0)));
+                    self.line_at(
+                        indent,
+                        &format!("defer {}", expr(value, indent, 0)),
+                        stmt_line(stmt),
+                    );
                 }
                 _ => unreachable!("formatter validates defer statements before printing"),
             },
         }
     }
 
-    fn for_stmt(&mut self, variant: &ForVariant, indent: usize) {
+    fn for_stmt(&mut self, variant: &ForVariant, indent: usize, source_line: usize) {
         match variant {
             ForVariant::Infinite { body } => {
-                self.line(indent, "for {");
+                self.line_at(indent, "for {", source_line);
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
             }
             ForVariant::While { condition, body } => {
-                self.line(indent, &format!("for {} {{", expr(condition, indent, 0)));
+                self.line_at(
+                    indent,
+                    &format!("for {} {{", expr(condition, indent, 0)),
+                    source_line,
+                );
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
             }
@@ -373,9 +564,10 @@ impl<'a> Formatter<'a> {
                 iterable,
                 body,
             } => {
-                self.line(
+                self.line_at(
                     indent,
                     &format!("for {binding} in {} {{", expr(iterable, indent, 0)),
+                    source_line,
                 );
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
@@ -399,6 +591,56 @@ impl<'a> Formatter<'a> {
         self.out.push_str(&"    ".repeat(indent));
         self.out.push_str(text);
         self.out.push('\n');
+    }
+
+    fn line_at(&mut self, indent: usize, text: &str, source_line: usize) {
+        self.emit_leading_comments(source_line, indent);
+        self.out.push_str(&"    ".repeat(indent));
+        self.out.push_str(text);
+        if let Some(comment) = self.trivia.trailing.get(&source_line) {
+            self.out.push(' ');
+            self.out.push_str(comment);
+        }
+        self.out.push('\n');
+    }
+
+    fn emit_leading_comments(&mut self, source_line: usize, indent: usize) {
+        let keys = self
+            .trivia
+            .leading
+            .range(..=source_line)
+            .map(|(line, _)| *line)
+            .collect::<Vec<_>>();
+        for key in keys {
+            if !self.emitted_leading.insert(key) {
+                continue;
+            }
+            let Some(lines) = self.trivia.leading.get(&key) else {
+                continue;
+            };
+            for comment in lines.clone() {
+                self.out.push_str(&"    ".repeat(indent));
+                self.out.push_str(comment.trim_start());
+                self.out.push('\n');
+            }
+        }
+    }
+
+    fn emit_remaining_comments(&mut self, indent: usize) {
+        let keys = self.trivia.leading.keys().copied().collect::<Vec<_>>();
+        for key in keys {
+            if !self.emitted_leading.insert(key) {
+                continue;
+            }
+            let Some(lines) = self.trivia.leading.get(&key) else {
+                continue;
+            };
+            for comment in lines.clone() {
+                self.out.push_str(&"    ".repeat(indent));
+                self.out.push_str(comment.trim_start());
+                self.out.push('\n');
+            }
+        }
     }
 
     fn blank(&mut self) {
@@ -528,6 +770,162 @@ fn top_level_item(
     }
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct TokenLayout {
+    package_line: usize,
+    import_lines: Vec<usize>,
+    impl_lines: Vec<usize>,
+    struct_field_lines: Vec<Vec<usize>>,
+    enum_variant_lines: Vec<Vec<usize>>,
+}
+
+impl TokenLayout {
+    fn from_tokens(tokens: &[Token]) -> Self {
+        let package_line = tokens
+            .iter()
+            .find(|token| matches!(token.kind, TokenKind::Package))
+            .map(|token| token.line)
+            .unwrap_or(1);
+        let import_lines = tokens
+            .iter()
+            .filter(|token| matches!(token.kind, TokenKind::Import))
+            .map(|token| token.line)
+            .collect::<Vec<_>>();
+        let impl_lines = tokens
+            .iter()
+            .filter(|token| matches!(token.kind, TokenKind::Impl))
+            .map(|token| token.line)
+            .collect::<Vec<_>>();
+
+        let mut layout = Self {
+            package_line,
+            import_lines,
+            impl_lines,
+            struct_field_lines: Vec::new(),
+            enum_variant_lines: Vec::new(),
+        };
+        layout.collect_member_lines(tokens);
+        layout
+    }
+
+    fn collect_member_lines(&mut self, tokens: &[Token]) {
+        let mut index = 0usize;
+        let mut depth = 0usize;
+        while let Some(token) = tokens.get(index) {
+            if matches!(token.kind, TokenKind::Eof) {
+                break;
+            }
+            if depth == 0 {
+                let kind_index = if matches!(token.kind, TokenKind::Pub) {
+                    index + 1
+                } else {
+                    index
+                };
+                match tokens.get(kind_index).map(|token| &token.kind) {
+                    Some(TokenKind::Struct) => {
+                        let (lines, next_index) = collect_struct_field_lines(tokens, kind_index);
+                        self.struct_field_lines.push(lines);
+                        index = next_index;
+                        continue;
+                    }
+                    Some(TokenKind::Enum) => {
+                        let (lines, next_index) = collect_enum_variant_lines(tokens, kind_index);
+                        self.enum_variant_lines.push(lines);
+                        index = next_index;
+                        continue;
+                    }
+                    _ => {}
+                }
+            }
+            match token.kind {
+                TokenKind::LBrace => depth += 1,
+                TokenKind::RBrace => depth = depth.saturating_sub(1),
+                _ => {}
+            }
+            index += 1;
+        }
+    }
+}
+
+fn collect_struct_field_lines(tokens: &[Token], start: usize) -> (Vec<usize>, usize) {
+    let Some(open) = find_next_kind(tokens, start, TokenKind::LBrace) else {
+        return (Vec::new(), start + 1);
+    };
+    let mut lines = Vec::new();
+    let mut depth = 1usize;
+    let mut index = open + 1;
+    while let Some(token) = tokens.get(index) {
+        match token.kind {
+            TokenKind::LBrace => depth += 1,
+            TokenKind::RBrace => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (lines, index + 1);
+                }
+            }
+            TokenKind::Ident(_) if depth == 1 => {
+                if matches!(
+                    tokens.get(index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Colon)
+                ) {
+                    lines.push(token.line);
+                }
+            }
+            TokenKind::Pub if depth == 1 => {
+                if matches!(
+                    (
+                        tokens.get(index + 1).map(|token| &token.kind),
+                        tokens.get(index + 2).map(|token| &token.kind),
+                    ),
+                    (Some(TokenKind::Ident(_)), Some(TokenKind::Colon))
+                ) {
+                    lines.push(token.line);
+                }
+            }
+            _ => {}
+        }
+        index += 1;
+    }
+    (lines, index)
+}
+
+fn collect_enum_variant_lines(tokens: &[Token], start: usize) -> (Vec<usize>, usize) {
+    let Some(open) = find_next_kind(tokens, start, TokenKind::LBrace) else {
+        return (Vec::new(), start + 1);
+    };
+    let mut lines = Vec::new();
+    let mut depth = 1usize;
+    let mut index = open + 1;
+    while let Some(token) = tokens.get(index) {
+        match token.kind {
+            TokenKind::LBrace | TokenKind::LParen => depth += 1,
+            TokenKind::RBrace | TokenKind::RParen => {
+                depth = depth.saturating_sub(1);
+                if depth == 0 {
+                    return (lines, index + 1);
+                }
+            }
+            TokenKind::Ident(_) if depth == 1 => lines.push(token.line),
+            _ => {}
+        }
+        index += 1;
+    }
+    (lines, index)
+}
+
+fn find_next_kind(tokens: &[Token], start: usize, expected: TokenKind) -> Option<usize> {
+    tokens
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find(|(_, token)| same_token_kind(&token.kind, &expected))
+        .map(|(index, _)| index)
+}
+
+fn same_token_kind(left: &TokenKind, right: &TokenKind) -> bool {
+    std::mem::discriminant(left) == std::mem::discriminant(right)
+}
+
 fn validate_format_ast(path: &Path, ast: &SourceFile) -> Result<(), Diagnostic> {
     for function in &ast.functions {
         validate_stmts(path, &function.body)?;
@@ -604,6 +1002,10 @@ fn stmt_span(stmt: &Stmt) -> &crate::ast::Span {
         | Stmt::Continue { span, .. }
         | Stmt::Defer { span, .. } => span,
     }
+}
+
+fn stmt_line(stmt: &Stmt) -> usize {
+    stmt_span(stmt).line
 }
 
 fn params(params: &[Param], in_impl: bool) -> String {
@@ -973,14 +1375,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_comments_without_dropping_them() {
+    fn preserves_line_comments_without_dropping_them() {
         let source = "package app.main\n// keep me\nfn main() -> void {\n    return\n}\n";
-        let err = format_source(Path::new("main.nomo"), source).unwrap_err();
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
-        assert_eq!(err.code, "E0109");
-        assert_eq!(err.message, "nomo fmt does not preserve comments yet");
-        assert_eq!(err.line, 2);
-        assert_eq!(err.column, 1);
+        assert_eq!(
+            formatted,
+            "package app.main\n\n// keep me\nfn main() -> void {\n    return\n}\n"
+        );
+    }
+
+    #[test]
+    fn preserves_doc_comments_field_comments_and_trailing_comments() {
+        let source = "package app.main\n\n/// User record\npub struct User{\n/// Stable id\npub id:string // visible id\n}\n\nfn main(){\nlet value:i32=1 // one\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+        let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
+
+        assert_eq!(formatted, twice);
+        assert!(formatted.contains("/// User record\npub struct User {"));
+        assert!(formatted.contains("    /// Stable id\n    pub id: string // visible id"));
+        assert!(formatted.contains("    let value: i32 = 1 // one"));
+    }
+
+    #[test]
+    fn preserves_nested_block_comments() {
+        let source = "package app.main\n/* outer\n/* inner */\nend */\nfn main(){\nreturn\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert!(formatted.contains("/* outer\n/* inner */\nend */\nfn main() -> void"));
     }
 
     #[test]

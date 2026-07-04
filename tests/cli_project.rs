@@ -126,6 +126,36 @@ fn nomo_fmt_formats_standalone_source_file() {
 }
 
 #[test]
+fn nomo_fmt_preserves_comments_in_standalone_source_file() {
+    let root = temp_test_root("fmt-comments");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        "package app . main\n\n/// Entry point\nfn main(){\nlet message:string=\"hi\" // greeting\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        fs::read_to_string(&source).unwrap(),
+        "package app.main\n\n/// Entry point\nfn main() -> void {\n    let message: string = \"hi\" // greeting\n}\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_fmt_check_reports_differences_without_writing() {
     let root = temp_test_root("fmt-check");
     reset_dir(&root);

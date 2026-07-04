@@ -6491,6 +6491,19 @@ import std.io
 import std.process
 
 fn main() -> void {
+    let spawned: Result<i32, ProcessError> = process.spawn("printf spawn-ok >/dev/null")
+    match spawned {
+        Ok(code) => {
+            if code == 0 {
+                io.println("spawn-ok")
+            } else {
+                io.println("spawn-bad")
+            }
+        }
+        Err(err) => {
+            io.println(err.message)
+        }
+    }
     let status: Result<i32, ProcessError> = process.status("printf status-ok >/dev/null")
     match status {
         Ok(code) => {
@@ -6544,7 +6557,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "status-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n"
+        "spawn-ok\nstatus-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n"
     );
     assert!(
         output.stderr.is_empty(),

@@ -223,8 +223,16 @@ pub fn emit_c(program: &Program) -> String {
         emit_env_temp_dir_helper(&mut out);
         out.push('\n');
     }
-    if uses_process_status(program) || uses_process_exec(program) || uses_process_output(program) {
+    if uses_process_spawn(program)
+        || uses_process_status(program)
+        || uses_process_exec(program)
+        || uses_process_output(program)
+    {
         emit_process_common_helpers(&mut out);
+        out.push('\n');
+    }
+    if uses_process_spawn(program) || uses_process_status(program) {
+        emit_process_spawn_helper(&mut out);
         out.push('\n');
     }
     if uses_process_status(program) {
@@ -3396,7 +3404,7 @@ fn emit_process_common_helpers(out: &mut String) {
     out.push_str("}\n");
 }
 
-fn emit_process_status_helper(out: &mut String) {
+fn emit_process_spawn_helper(out: &mut String) {
     let process_error = c_struct_ident("ProcessError", &[]);
     let result = c_enum_ident(
         "Result",
@@ -3423,7 +3431,7 @@ fn emit_process_status_helper(out: &mut String) {
     );
     out.push_str("static ");
     out.push_str(&result);
-    out.push_str(" nomo_process_status(nomo_string command) {\n");
+    out.push_str(" nomo_process_spawn(nomo_string command) {\n");
     out.push_str("    int status = system(command.data);\n");
     out.push_str("    if (status == -1) {\n");
     out.push_str("        return (");
@@ -3445,6 +3453,21 @@ fn emit_process_status_helper(out: &mut String) {
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = nomo_process_exit_code(status)};\n");
+    out.push_str("}\n");
+}
+
+fn emit_process_status_helper(out: &mut String) {
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::I32,
+            ValueType::Struct("ProcessError".to_string(), Vec::new()),
+        ],
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_process_status(nomo_string command) {\n");
+    out.push_str("    return nomo_process_spawn(command);\n");
     out.push_str("}\n");
 }
 
@@ -5628,6 +5651,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::JsonParse { value: expr }
         | ValueExpr::JsonStringify { value: expr }
         | ValueExpr::ProcessExit { code: expr }
+        | ValueExpr::ProcessSpawn { command: expr }
         | ValueExpr::ProcessStatus { command: expr }
         | ValueExpr::ProcessExec { command: expr }
         | ValueExpr::ProcessOutput { command: expr }
@@ -6599,6 +6623,11 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, code);
             out.push(')');
         }
+        ValueExpr::ProcessSpawn { command } => {
+            out.push_str("nomo_process_spawn(");
+            emit_expr(out, command);
+            out.push(')');
+        }
         ValueExpr::ProcessStatus { command } => {
             out.push_str("nomo_process_status(");
             emit_expr(out, command);
@@ -7532,6 +7561,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -7899,6 +7929,7 @@ where
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -8378,7 +8409,9 @@ fn collect_expr_struct(
         ValueExpr::CollectionsStringSetNew => {
             push_struct_instance(seen, out, "StringSet", &[]);
         }
-        ValueExpr::ProcessStatus { command } | ValueExpr::ProcessExec { command } => {
+        ValueExpr::ProcessSpawn { command }
+        | ValueExpr::ProcessStatus { command }
+        | ValueExpr::ProcessExec { command } => {
             push_struct_instance(seen, out, "ProcessError", &[]);
             collect_expr_struct(command, seen, out);
         }
@@ -9017,6 +9050,18 @@ fn collect_expr_enum(
         | ValueExpr::CollectionsStringSetLen { set: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
+        ValueExpr::ProcessSpawn { command } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::I32,
+                    ValueType::Struct("ProcessError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(command, seen, out);
+        }
         ValueExpr::RegexCompile { pattern } => {
             push_enum_instance(
                 seen,
@@ -9747,6 +9792,15 @@ fn uses_process_status(program: &Program) -> bool {
     })
 }
 
+fn uses_process_spawn(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_process_spawn))
+    })
+}
+
 fn uses_process_exec(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function
@@ -10312,6 +10366,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -10396,6 +10451,10 @@ fn expr_is_env_set(expr: &ValueExpr) -> bool {
 
 fn expr_is_process_status(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::ProcessStatus { .. })
+}
+
+fn expr_is_process_spawn(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::ProcessSpawn { .. })
 }
 
 fn expr_is_process_exec(expr: &ValueExpr) -> bool {
@@ -11035,6 +11094,7 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: name }
         | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
+        | ValueExpr::ProcessSpawn { command: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
         | ValueExpr::ProcessOutput { command: name }
@@ -11244,6 +11304,7 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: name }
         | ValueExpr::CollectionsStringSetLen { set: name }
         | ValueExpr::ProcessExit { code: name }
+        | ValueExpr::ProcessSpawn { command: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
         | ValueExpr::ProcessOutput { command: name }
@@ -11423,6 +11484,7 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -11620,6 +11682,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -11823,6 +11886,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -12065,6 +12129,7 @@ fn collect_expr_array_elements(
         | ValueExpr::CollectionsStringMapLen { map: path }
         | ValueExpr::CollectionsStringSetLen { set: path }
         | ValueExpr::ProcessExit { code: path }
+        | ValueExpr::ProcessSpawn { command: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
         | ValueExpr::ProcessOutput { command: path }
@@ -13472,6 +13537,16 @@ mod tests {
                 return_type: ValueType::Void,
                 body: vec![
                     Statement::Let {
+                        name: "spawned".to_string(),
+                        value_type: ValueType::Enum(
+                            "Result".to_string(),
+                            vec![ValueType::I32, process_error.clone()],
+                        ),
+                        initializer: ValueExpr::ProcessSpawn {
+                            command: Box::new(ValueExpr::StringLiteral("printf ok".to_string())),
+                        },
+                    },
+                    Statement::Let {
                         name: "status".to_string(),
                         value_type: ValueType::Enum(
                             "Result".to_string(),
@@ -13515,9 +13590,14 @@ mod tests {
 
         let c = emit_c(&program);
         assert!(c.contains("static int32_t nomo_process_exit_code(int status)"));
+        assert!(c.contains("nomo_process_spawn(nomo_string command)"));
         assert!(c.contains("nomo_process_status(nomo_string command)"));
         assert!(c.contains("nomo_process_exec(nomo_string command)"));
         assert!(c.contains("nomo_process_output(nomo_string command)"));
+        assert!(
+            c.contains("nomo_spawned = nomo_process_spawn(nomo_string_literal(\"printf ok\"));")
+        );
+        assert!(c.contains("return nomo_process_spawn(command);"));
         assert!(
             c.contains("nomo_status = nomo_process_status(nomo_string_literal(\"printf ok\"));")
         );

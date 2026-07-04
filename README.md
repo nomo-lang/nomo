@@ -372,8 +372,11 @@ prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
 negative durations.
 
 `std.process` provides synchronous process helpers: `process.exit`,
-`process.status`, `process.exec`, and `process.output`. `status` returns a
-command exit code as `Result<i32, ProcessError>`. `exec` captures stdout as
+`process.spawn`, `process.status`, `process.exec`, and `process.output`.
+`spawn` starts a shell command, waits for it to finish, and returns its exit
+code as `Result<i32, ProcessError>` without capturing stdout or stderr.
+`status` has the same exit-code behavior and is kept as the descriptive helper
+name for callers that only need the final status. `exec` captures stdout as
 `Result<string, ProcessError>` and treats a non-zero exit status as an error.
 `output` returns `Result<ProcessOutput, ProcessError>` with `status`, `stdout`,
 and `stderr`; non-zero exits stay in `Ok(ProcessOutput)` so callers can inspect

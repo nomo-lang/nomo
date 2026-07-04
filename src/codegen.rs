@@ -75,7 +75,7 @@ struct LocalArray {
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
     out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <sys/time.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <windows.h>\n#define NOMO_GETCWD _getcwd\n#else\n#include <dirent.h>\n#include <sys/time.h>\n#include <unistd.h>\n#define NOMO_GETCWD getcwd\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -141,6 +141,22 @@ pub fn emit_c(program: &Program) -> String {
     }
     if uses_fs_write_string(program) {
         emit_fs_write_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_fs_exists(program) {
+        emit_fs_exists_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_fs_create_dir(program) {
+        emit_fs_create_dir_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_fs_remove_dir(program) {
+        emit_fs_remove_dir_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_fs_read_dir(program) {
+        emit_fs_read_dir_helper(&mut out);
         out.push('\n');
     }
     if uses_fs_open(program) {
@@ -1805,6 +1821,227 @@ fn emit_fs_write_string_helper(out: &mut String) {
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = 0};\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_exists_helper(out: &mut String) {
+    out.push_str("static int nomo_fs_exists(nomo_string path) {\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    DWORD attrs = GetFileAttributesA(path.data);\n");
+    out.push_str("    return attrs != INVALID_FILE_ATTRIBUTES;\n");
+    out.push_str("#else\n");
+    out.push_str("    struct stat info;\n");
+    out.push_str("    return stat(path.data, &info) == 0;\n");
+    out.push_str("#endif\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_create_dir_helper(out: &mut String) {
+    emit_fs_dir_result_helper(out, "create_dir", "mkdir");
+}
+
+fn emit_fs_remove_dir_helper(out: &mut String) {
+    emit_fs_dir_result_helper(out, "remove_dir", "rmdir");
+}
+
+fn emit_fs_dir_result_helper(out: &mut String, function: &str, c_call: &str) {
+    let fs_error = c_struct_ident("FsError", &[]);
+    let result = c_enum_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            ValueType::Void,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_fs_");
+    out.push_str(function);
+    out.push_str("(nomo_string path) {\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    int status = ");
+    if c_call == "mkdir" {
+        out.push_str("_mkdir(path.data);\n");
+    } else {
+        out.push_str("_rmdir(path.data);\n");
+    }
+    out.push_str("#else\n");
+    out.push_str("    int status = ");
+    if c_call == "mkdir" {
+        out.push_str("mkdir(path.data, 0777);\n");
+    } else {
+        out.push_str("rmdir(path.data);\n");
+    }
+    out.push_str("#endif\n");
+    out.push_str("    if (status != 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = 0};\n");
+    out.push_str("}\n");
+}
+
+fn emit_fs_read_dir_helper(out: &mut String) {
+    let fs_error = c_struct_ident("FsError", &[]);
+    let entries_type = ValueType::Array(Box::new(ValueType::String));
+    let result = c_enum_ident(
+        "Result",
+        &[
+            entries_type.clone(),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+    );
+    let ok = c_enum_variant_ident(
+        "Result",
+        &[
+            entries_type.clone(),
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Ok",
+    );
+    let err = c_enum_variant_ident(
+        "Result",
+        &[
+            entries_type,
+            ValueType::Struct("FsError".to_string(), Vec::new()),
+        ],
+        "Err",
+    );
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_fs_read_dir(nomo_string path) {\n");
+    out.push_str("    nomo_array_string entries = nomo_array_string_new();\n");
+    out.push_str("#ifdef _WIN32\n");
+    out.push_str("    size_t path_len = strlen(path.data);\n");
+    out.push_str("    int needs_sep = path_len > 0 && path.data[path_len - 1] != '/' && path.data[path_len - 1] != '\\\\';\n");
+    out.push_str("    char *pattern = (char *)malloc(path_len + (needs_sep ? 3 : 2));\n");
+    out.push_str("    if (pattern == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    memcpy(pattern, path.data, path_len);\n");
+    out.push_str("    if (needs_sep) {\n");
+    out.push_str("        pattern[path_len] = '\\\\';\n");
+    out.push_str("        pattern[path_len + 1] = '*';\n");
+    out.push_str("        pattern[path_len + 2] = '\\0';\n");
+    out.push_str("    } else {\n");
+    out.push_str("        pattern[path_len] = '*';\n");
+    out.push_str("        pattern[path_len + 1] = '\\0';\n");
+    out.push_str("    }\n");
+    out.push_str("    WIN32_FIND_DATAA data;\n");
+    out.push_str("    HANDLE handle = FindFirstFileA(pattern, &data);\n");
+    out.push_str("    free(pattern);\n");
+    out.push_str("    if (handle == INVALID_HANDLE_VALUE) {\n");
+    out.push_str("        nomo_array_string_release(entries);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(\"failed to read directory\")}};\n");
+    out.push_str("    }\n");
+    out.push_str("    do {\n");
+    out.push_str("        if (strcmp(data.cFileName, \".\") != 0 && strcmp(data.cFileName, \"..\") != 0) {\n");
+    out.push_str("            nomo_string entry = nomo_string_from_cstr(data.cFileName);\n");
+    out.push_str("            entries = nomo_array_string_push(entries, entry);\n");
+    out.push_str("            nomo_string_release(entry);\n");
+    out.push_str("        }\n");
+    out.push_str("    } while (FindNextFileA(handle, &data));\n");
+    out.push_str("    FindClose(handle);\n");
+    out.push_str("#else\n");
+    out.push_str("    DIR *dir = opendir(path.data);\n");
+    out.push_str("    if (dir == NULL) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("    errno = 0;\n");
+    out.push_str("    struct dirent *entry;\n");
+    out.push_str("    while ((entry = readdir(dir)) != NULL) {\n");
+    out.push_str("        if (strcmp(entry->d_name, \".\") == 0 || strcmp(entry->d_name, \"..\") == 0) { continue; }\n");
+    out.push_str("        nomo_string name = nomo_string_from_cstr(entry->d_name);\n");
+    out.push_str("        entries = nomo_array_string_push(entries, name);\n");
+    out.push_str("        nomo_string_release(name);\n");
+    out.push_str("    }\n");
+    out.push_str("    if (errno != 0) {\n");
+    out.push_str("        const char *message = strerror(errno);\n");
+    out.push_str("        closedir(dir);\n");
+    out.push_str("        nomo_array_string_release(entries);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(message)}};\n");
+    out.push_str("    }\n");
+    out.push_str("    if (closedir(dir) != 0) {\n");
+    out.push_str("        nomo_array_string_release(entries);\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push_str(" = (");
+    out.push_str(&fs_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_from_cstr(strerror(errno))}};\n");
+    out.push_str("    }\n");
+    out.push_str("#endif\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident("Ok"));
+    out.push_str(" = entries};\n");
     out.push_str("}\n");
 }
 
@@ -3653,6 +3890,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::Unary { expr, .. }
         | ValueExpr::StringLen { value: expr }
         | ValueExpr::FsReadToString { path: expr }
+        | ValueExpr::FsExists { path: expr }
+        | ValueExpr::FsCreateDir { path: expr }
+        | ValueExpr::FsRemoveDir { path: expr }
+        | ValueExpr::FsReadDir { path: expr }
         | ValueExpr::FsOpen { path: expr }
         | ValueExpr::FileClose { file: expr }
         | ValueExpr::EnvGet { name: expr }
@@ -4538,6 +4779,26 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, content);
             out.push(')');
         }
+        ValueExpr::FsExists { path } => {
+            out.push_str("nomo_fs_exists(");
+            emit_expr(out, path);
+            out.push(')');
+        }
+        ValueExpr::FsCreateDir { path } => {
+            out.push_str("nomo_fs_create_dir(");
+            emit_expr(out, path);
+            out.push(')');
+        }
+        ValueExpr::FsRemoveDir { path } => {
+            out.push_str("nomo_fs_remove_dir(");
+            emit_expr(out, path);
+            out.push(')');
+        }
+        ValueExpr::FsReadDir { path } => {
+            out.push_str("nomo_fs_read_dir(");
+            emit_expr(out, path);
+            out.push(')');
+        }
         ValueExpr::FsOpen { path } => {
             out.push_str("nomo_fs_open(");
             emit_expr(out, path);
@@ -5226,6 +5487,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
             collect_expr_result_map_err(right, out);
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
@@ -5514,6 +5779,10 @@ where
             walk_expr(right, visit);
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::FsOpen { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
@@ -5927,6 +6196,13 @@ fn collect_expr_struct(
             push_struct_instance(seen, out, "FsError", &[]);
             collect_expr_struct(path, seen, out);
             collect_expr_struct(content, seen, out);
+        }
+        ValueExpr::FsExists { path } => collect_expr_struct(path, seen, out),
+        ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path } => {
+            push_struct_instance(seen, out, "FsError", &[]);
+            collect_expr_struct(path, seen, out);
         }
         ValueExpr::FsOpen { path } => {
             push_struct_instance(seen, out, "FsError", &[]);
@@ -6498,6 +6774,31 @@ fn collect_expr_enum(
             collect_expr_enum(path, seen, out);
             collect_expr_enum(content, seen, out);
         }
+        ValueExpr::FsExists { path } => collect_expr_enum(path, seen, out),
+        ValueExpr::FsCreateDir { path } | ValueExpr::FsRemoveDir { path } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(path, seen, out);
+        }
+        ValueExpr::FsReadDir { path } => {
+            push_enum_instance(
+                seen,
+                out,
+                "Result",
+                &[
+                    ValueType::Array(Box::new(ValueType::String)),
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            );
+            collect_expr_enum(path, seen, out);
+        }
         ValueExpr::FsOpen { path } => {
             push_enum_instance(
                 seen,
@@ -6802,6 +7103,42 @@ fn uses_fs_write_string(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_uses_fs_write_string(statement))
+    })
+}
+
+fn uses_fs_exists(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_exists))
+    })
+}
+
+fn uses_fs_create_dir(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_create_dir))
+    })
+}
+
+fn uses_fs_remove_dir(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_remove_dir))
+    })
+}
+
+fn uses_fs_read_dir(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_fs_read_dir))
     })
 }
 
@@ -7358,6 +7695,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::StringLen { value: path }
@@ -7447,6 +7788,22 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
 
 fn expr_is_env_set(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::EnvSet { .. })
+}
+
+fn expr_is_fs_exists(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsExists { .. })
+}
+
+fn expr_is_fs_create_dir(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsCreateDir { .. })
+}
+
+fn expr_is_fs_remove_dir(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsRemoveDir { .. })
+}
+
+fn expr_is_fs_read_dir(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::FsReadDir { .. })
 }
 
 fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
@@ -7897,9 +8254,12 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         ValueExpr::EnvSet { name, value } => {
             expr_uses_fs_read_to_string(name) || expr_uses_fs_read_to_string(value)
         }
-        ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
-            expr_uses_fs_read_to_string(path)
-        }
+        ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
+        | ValueExpr::FsOpen { path }
+        | ValueExpr::FileClose { file: path } => expr_uses_fs_read_to_string(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
         | ValueExpr::ResultIsErr { result, .. }
@@ -8028,7 +8388,11 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::MathBinary { left, right, .. } => {
             expr_uses_fs_write_string(left) || expr_uses_fs_write_string(right)
         }
-        ValueExpr::FsReadToString { path } => expr_uses_fs_write_string(path),
+        ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path } => expr_uses_fs_write_string(path),
         ValueExpr::EnvSet { name, value } => {
             expr_uses_fs_write_string(name) || expr_uses_fs_write_string(value)
         }
@@ -8162,6 +8526,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             expr_uses_fs_open(left) || expr_uses_fs_open(right)
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
@@ -8288,6 +8656,10 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             expr_uses_env_get(left) || expr_uses_env_get(right)
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
@@ -8417,6 +8789,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         }
         ValueExpr::FsReadToString { path }
         | ValueExpr::FsOpen { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
+        | ValueExpr::FsReadDir { path }
         | ValueExpr::FileClose { file: path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::PathBasename { path }
@@ -8571,6 +8947,9 @@ fn collect_expr_array_elements(
             collect_expr_array_elements(separator, seen, out);
         }
         ValueExpr::FsReadToString { path }
+        | ValueExpr::FsExists { path }
+        | ValueExpr::FsCreateDir { path }
+        | ValueExpr::FsRemoveDir { path }
         | ValueExpr::EnvGet { name: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
@@ -8583,6 +8962,10 @@ fn collect_expr_array_elements(
         | ValueExpr::NumParseU64 { value: path }
         | ValueExpr::NumParseF64 { value: path }
         | ValueExpr::NumToString { value: path, .. } => {
+            collect_expr_array_elements(path, seen, out);
+        }
+        ValueExpr::FsReadDir { path } => {
+            push_array_element_type(seen, out, &ValueType::String);
             collect_expr_array_elements(path, seen, out);
         }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
@@ -10074,8 +10457,17 @@ mod tests {
             "Result".to_string(),
             vec![ValueType::String, fs_error.clone()],
         );
-        let result_void_error =
-            ValueType::Enum("Result".to_string(), vec![ValueType::Void, fs_error]);
+        let result_void_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![ValueType::Void, fs_error.clone()],
+        );
+        let result_array_string_error = ValueType::Enum(
+            "Result".to_string(),
+            vec![
+                ValueType::Array(Box::new(ValueType::String)),
+                fs_error.clone(),
+            ],
+        );
         let program = Program {
             consts: Vec::new(),
             package: "app.main".to_string(),
@@ -10089,21 +10481,38 @@ mod tests {
                     value_type: ValueType::String,
                 }],
             }],
-            enums: vec![EnumType {
-                package: "app.main".to_string(),
-                name: "Result".to_string(),
-                type_params: vec!["T".to_string(), "E".to_string()],
-                variants: vec![
-                    EnumVariantType {
-                        name: "Ok".to_string(),
-                        payload: Some(ValueType::TypeParam("T".to_string())),
-                    },
-                    EnumVariantType {
-                        name: "Err".to_string(),
-                        payload: Some(ValueType::TypeParam("E".to_string())),
-                    },
-                ],
-            }],
+            enums: vec![
+                EnumType {
+                    package: "app.main".to_string(),
+                    name: "Option".to_string(),
+                    type_params: vec!["T".to_string()],
+                    variants: vec![
+                        EnumVariantType {
+                            name: "Some".to_string(),
+                            payload: Some(ValueType::TypeParam("T".to_string())),
+                        },
+                        EnumVariantType {
+                            name: "None".to_string(),
+                            payload: None,
+                        },
+                    ],
+                },
+                EnumType {
+                    package: "app.main".to_string(),
+                    name: "Result".to_string(),
+                    type_params: vec!["T".to_string(), "E".to_string()],
+                    variants: vec![
+                        EnumVariantType {
+                            name: "Ok".to_string(),
+                            payload: Some(ValueType::TypeParam("T".to_string())),
+                        },
+                        EnumVariantType {
+                            name: "Err".to_string(),
+                            payload: Some(ValueType::TypeParam("E".to_string())),
+                        },
+                    ],
+                },
+            ],
             functions: vec![Function {
                 package: "app.main".to_string(),
                 name: "main".to_string(),
@@ -10119,10 +10528,38 @@ mod tests {
                     },
                     Statement::Let {
                         name: "write_result".to_string(),
-                        value_type: result_void_error,
+                        value_type: result_void_error.clone(),
                         initializer: ValueExpr::FsWriteString {
                             path: Box::new(ValueExpr::StringLiteral("output.txt".to_string())),
                             content: Box::new(ValueExpr::StringLiteral("hello".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "exists".to_string(),
+                        value_type: ValueType::Bool,
+                        initializer: ValueExpr::FsExists {
+                            path: Box::new(ValueExpr::StringLiteral("tmp".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "create_result".to_string(),
+                        value_type: result_void_error.clone(),
+                        initializer: ValueExpr::FsCreateDir {
+                            path: Box::new(ValueExpr::StringLiteral("tmp".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "entries_result".to_string(),
+                        value_type: result_array_string_error,
+                        initializer: ValueExpr::FsReadDir {
+                            path: Box::new(ValueExpr::StringLiteral("tmp".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "remove_result".to_string(),
+                        value_type: result_void_error,
+                        initializer: ValueExpr::FsRemoveDir {
+                            path: Box::new(ValueExpr::StringLiteral("tmp".to_string())),
                         },
                     },
                 ],
@@ -10134,10 +10571,19 @@ mod tests {
         assert!(c.contains("typedef struct nomo_struct_FsError"));
         assert!(c.contains("static nomo_enum_Result_string_struct_FsError nomo_fs_read_to_string"));
         assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_write_string"));
+        assert!(c.contains("static int nomo_fs_exists"));
+        assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_create_dir"));
+        assert!(c.contains("static nomo_enum_Result_void_struct_FsError nomo_fs_remove_dir"));
+        assert!(c.contains("static nomo_enum_Result_array_string_struct_FsError nomo_fs_read_dir"));
+        assert!(c.contains("typedef struct nomo_array_string"));
         assert!(c.contains("nomo_fs_read_to_string(nomo_string_literal(\"input.txt\"))"));
         assert!(c.contains(
             "nomo_fs_write_string(nomo_string_literal(\"output.txt\"), nomo_string_literal(\"hello\"))"
         ));
+        assert!(c.contains("nomo_fs_exists(nomo_string_literal(\"tmp\"))"));
+        assert!(c.contains("nomo_fs_create_dir(nomo_string_literal(\"tmp\"))"));
+        assert!(c.contains("nomo_fs_read_dir(nomo_string_literal(\"tmp\"))"));
+        assert!(c.contains("nomo_fs_remove_dir(nomo_string_literal(\"tmp\"))"));
     }
 
     #[test]

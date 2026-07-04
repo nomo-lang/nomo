@@ -404,6 +404,18 @@ pub enum ValueExpr {
         path: Box<ValueExpr>,
         content: Box<ValueExpr>,
     },
+    FsExists {
+        path: Box<ValueExpr>,
+    },
+    FsCreateDir {
+        path: Box<ValueExpr>,
+    },
+    FsRemoveDir {
+        path: Box<ValueExpr>,
+    },
+    FsReadDir {
+        path: Box<ValueExpr>,
+    },
     FsOpen {
         path: Box<ValueExpr>,
     },
@@ -1706,6 +1718,10 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.fs.File"
             | "std.fs.read_to_string"
             | "std.fs.write_string"
+            | "std.fs.exists"
+            | "std.fs.create_dir"
+            | "std.fs.remove_dir"
+            | "std.fs.read_dir"
             | "std.fs.open"
             | "std.env"
             | "std.env.args"
@@ -8262,6 +8278,10 @@ fn lower_value_expr_with_expected(
             }
             if callee == &["fs", "read_to_string"]
                 || callee == &["fs", "write_string"]
+                || callee == &["fs", "exists"]
+                || callee == &["fs", "create_dir"]
+                || callee == &["fs", "remove_dir"]
+                || callee == &["fs", "read_dir"]
                 || callee == &["fs", "open"]
             {
                 require_import(path, imports, span, "std.fs", &callee.join("."))?;
@@ -9223,6 +9243,106 @@ fn lower_fs_builtin(
                 ValueExpr::FsWriteString {
                     path: Box::new(lowered_path),
                     content: Box::new(lowered_content),
+                },
+            ))
+        }
+        [module, name] if module == "fs" && name == "exists" => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`fs.exists` expects exactly one path string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`fs.exists` expects a string path",
+                ));
+            }
+            Ok((
+                ValueType::Bool,
+                ValueExpr::FsExists {
+                    path: Box::new(lowered_path),
+                },
+            ))
+        }
+        [module, name] if module == "fs" && (name == "create_dir" || name == "remove_dir") => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`fs.{name}` expects exactly one path string"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("`fs.{name}` expects a string path"),
+                ));
+            }
+            let expr = if name == "create_dir" {
+                ValueExpr::FsCreateDir {
+                    path: Box::new(lowered_path),
+                }
+            } else {
+                ValueExpr::FsRemoveDir {
+                    path: Box::new(lowered_path),
+                }
+            };
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, fs_error]),
+                expr,
+            ))
+        }
+        [module, name] if module == "fs" && name == "read_dir" => {
+            let [path_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`fs.read_dir` expects exactly one path string",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (path_type, lowered_path) = lower_value_expr(
+                path, path_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if path_type != ValueType::String {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "`fs.read_dir` expects a string path",
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Array(Box::new(ValueType::String)),
+                        ValueType::Struct("FsError".to_string(), Vec::new()),
+                    ],
+                ),
+                ValueExpr::FsReadDir {
+                    path: Box::new(lowered_path),
                 },
             ))
         }
@@ -12540,6 +12660,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "write_string" if imports.iter().any(|item| item == "std.fs.write_string") => {
             vec!["fs".to_string(), "write_string".to_string()]
         }
+        "exists" if imports.iter().any(|item| item == "std.fs.exists") => {
+            vec!["fs".to_string(), "exists".to_string()]
+        }
+        "create_dir" if imports.iter().any(|item| item == "std.fs.create_dir") => {
+            vec!["fs".to_string(), "create_dir".to_string()]
+        }
+        "remove_dir" if imports.iter().any(|item| item == "std.fs.remove_dir") => {
+            vec!["fs".to_string(), "remove_dir".to_string()]
+        }
+        "read_dir" if imports.iter().any(|item| item == "std.fs.read_dir") => {
+            vec!["fs".to_string(), "read_dir".to_string()]
+        }
         "open" if imports.iter().any(|item| item == "std.fs.open") => {
             vec!["fs".to_string(), "open".to_string()]
         }
@@ -14589,6 +14721,92 @@ fn main() -> void {
         assert!(matches!(
             save.body[0],
             Statement::Return(Some(ValueExpr::FsWriteString { .. }))
+        ));
+    }
+
+    #[test]
+    fn accepts_fs_directory_builtins() {
+        let source = r#"package app.main
+
+import std.fs
+import std.array
+import std.io
+
+fn prepare(path: string) -> Result<Array<string>, FsError> {
+    let present: bool = fs.exists(path)
+    fs.create_dir(path)?
+    let entries: Array<string> = fs.read_dir(path)?
+    fs.remove_dir(path)?
+    return Ok(entries)
+}
+
+fn main() -> void {
+    let entries: Result<Array<string>, FsError> = prepare("/tmp/nomo-dir")
+    io.println("done")
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "FsError"));
+        assert!(program.enums.iter().any(|item| item.name == "Result"));
+        let prepare = program
+            .functions
+            .iter()
+            .find(|f| f.name == "prepare")
+            .unwrap();
+        assert_eq!(
+            prepare.return_type,
+            ValueType::Enum(
+                "Result".to_string(),
+                vec![
+                    ValueType::Array(Box::new(ValueType::String)),
+                    ValueType::Struct("FsError".to_string(), Vec::new()),
+                ],
+            )
+        );
+        assert!(matches!(
+            prepare.body[0],
+            Statement::Let {
+                initializer: ValueExpr::FsExists { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_fs_directory_imports() {
+        let source = r#"package app.main
+
+import std.fs.exists
+import std.fs.create_dir
+import std.fs.remove_dir
+import std.fs.read_dir
+import std.array
+
+fn prepare(path: string) -> Result<Array<string>, FsError> {
+    let present: bool = exists(path)
+    create_dir(path)?
+    let entries: Array<string> = read_dir(path)?
+    remove_dir(path)?
+    return Ok(entries)
+}
+
+fn main() -> void {
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let prepare = program
+            .functions
+            .iter()
+            .find(|f| f.name == "prepare")
+            .unwrap();
+        assert!(matches!(
+            prepare.body[0],
+            Statement::Let {
+                initializer: ValueExpr::FsExists { .. },
+                ..
+            }
         ));
     }
 

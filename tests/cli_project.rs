@@ -4893,6 +4893,115 @@ fn main() -> void {{
 }
 
 #[test]
+fn nomo_run_executes_fs_directory_helpers() {
+    let root = temp_test_root("fs-directory-helpers");
+    reset_dir(&root);
+    let project = root.join("fs_dirs");
+    let empty_dir = root.join("empty");
+    let list_dir = root.join("list");
+    let list_a = list_dir.join("a.txt");
+    let list_b = list_dir.join("b.txt");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"fs_dirs\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        format!(
+            r#"package app.main
+
+import std.array
+import std.fs
+import std.io
+
+fn has_entry(entries: Array<string>, needle: string) -> bool {{
+    let mut found: bool = false
+    for entry in entries {{
+        found = found || entry == needle
+    }}
+    return found
+}}
+
+fn require_ok(result: Result<void, FsError>) -> Result<bool, FsError> {{
+    return match result {{
+        Ok(value) => Ok(true)
+        Err(err) => Err(err)
+    }}
+}}
+
+fn checked() -> Result<void, FsError> {{
+    let created_empty: bool = require_ok(fs.create_dir("{}"))?
+    let exists_message: string = if fs.exists("{}") {{ "empty exists" }} else {{ "empty missing" }}
+    io.println(exists_message)
+    let empty_entries: Array<string> = fs.read_dir("{}")?
+    let empty_message: string = if empty_entries.len() == 0 {{ "empty read" }} else {{ "empty unexpected" }}
+    io.println(empty_message)
+    let removed_empty: bool = require_ok(fs.remove_dir("{}"))?
+    let remove_message: string = if fs.exists("{}") {{ "remove failed" }} else {{ "empty removed" }}
+    io.println(remove_message)
+    let created_list: bool = require_ok(fs.create_dir("{}"))?
+    let wrote_a: bool = require_ok(fs.write_string("{}", "a"))?
+    let wrote_b: bool = require_ok(fs.write_string("{}", "b"))?
+    let entries: Array<string> = fs.read_dir("{}")?
+    let has_a: bool = has_entry(entries, "a.txt")
+    let has_b: bool = has_entry(entries, "b.txt")
+    let list_message: string = if has_a && has_b {{ "list read" }} else {{ "list missing" }}
+    io.println(list_message)
+    return Ok(void)
+}}
+
+fn main() -> void {{
+    match checked() {{
+        Ok(value) => {{
+            io.println("fs dirs ok")
+        }}
+        Err(err) => {{
+            io.println(err.message)
+        }}
+    }}
+}}
+"#,
+            empty_dir.display(),
+            empty_dir.display(),
+            empty_dir.display(),
+            empty_dir.display(),
+            empty_dir.display(),
+            list_dir.display(),
+            list_a.display(),
+            list_b.display(),
+            list_dir.display()
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "empty exists\nempty read\nempty removed\nlist read\nfs dirs ok\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_handles_missing_env_get_as_none() {
     let root = temp_test_root("env-get-none");
     reset_dir(&root);

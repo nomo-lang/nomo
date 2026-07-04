@@ -42,6 +42,14 @@ the same code.
 - [E0207](E0207.md) - unterminated function body
 - [E0208](E0208.md) - expected expression
 - [E0209](E0209.md) - missing closing parenthesis
+- [E0210](E0210.md) - invalid call argument list
+- [E0211](E0211.md) - missing required newline
+- [E0212](E0212.md) - invalid let statement
+- [E0213](E0213.md) - missing initializer
+- [E0214](E0214.md) - missing parameter type separator
+- [E0215](E0215.md) - invalid parameter separator
+- [E0216](E0216.md) - expected return statement
+- [E0217](E0217.md) - invalid assignment or postfix update
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

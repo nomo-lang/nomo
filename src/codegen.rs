@@ -118,6 +118,10 @@ pub fn emit_c(program: &Program) -> String {
     }
     emit_struct_and_enum_types(&mut out, program);
     emit_nominal_lifecycle_helpers(&mut out, program);
+    if uses_hash_builtin(program) {
+        emit_hash_helpers(&mut out);
+        out.push('\n');
+    }
     for element_type in &array_element_types {
         emit_array_helpers(&mut out, element_type);
         out.push('\n');
@@ -947,6 +951,54 @@ fn emit_log_enabled_helper(out: &mut String) {
     out.push_str("    int32_t threshold = filter == NULL ? 1 : nomo_log_level_value(filter);\n");
     out.push_str("    int32_t current = nomo_log_level_value(level.data);\n");
     out.push_str("    return threshold < 4 && current >= threshold;\n");
+    out.push_str("}\n");
+}
+
+fn emit_hash_helpers(out: &mut String) {
+    let hash_state = c_type(&ValueType::Struct("HashState".to_string(), Vec::new()));
+    let value_field = c_member_ident("value");
+    out.push_str("static const uint64_t NOMO_HASH_OFFSET = UINT64_C(14695981039346656037);\n");
+    out.push_str("static const uint64_t NOMO_HASH_PRIME = UINT64_C(1099511628211);\n\n");
+    out.push_str("static uint64_t nomo_hash_write_bytes(uint64_t state, const char *data) {\n");
+    out.push_str("    const unsigned char *bytes = (const unsigned char *)data;\n");
+    out.push_str("    while (*bytes != '\\0') {\n");
+    out.push_str("        state ^= (uint64_t)(*bytes);\n");
+    out.push_str("        state *= NOMO_HASH_PRIME;\n");
+    out.push_str("        bytes += 1;\n");
+    out.push_str("    }\n");
+    out.push_str("    return state;\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&hash_state);
+    out.push_str(" nomo_hash_new(void) {\n");
+    out.push_str("    return (");
+    out.push_str(&hash_state);
+    out.push_str("){.");
+    out.push_str(&value_field);
+    out.push_str(" = NOMO_HASH_OFFSET};\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_hash_string(nomo_string value) {\n");
+    out.push_str("    return nomo_hash_write_bytes(NOMO_HASH_OFFSET, value.data);\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&hash_state);
+    out.push_str(" nomo_hash_write_string(");
+    out.push_str(&hash_state);
+    out.push_str(" state, nomo_string value) {\n");
+    out.push_str("    return (");
+    out.push_str(&hash_state);
+    out.push_str("){.");
+    out.push_str(&value_field);
+    out.push_str(" = nomo_hash_write_bytes(state.");
+    out.push_str(&value_field);
+    out.push_str(", value.data)};\n");
+    out.push_str("}\n\n");
+    out.push_str("static uint64_t nomo_hash_finish(");
+    out.push_str(&hash_state);
+    out.push_str(" state) {\n");
+    out.push_str("    return state.");
+    out.push_str(&value_field);
+    out.push_str(";\n");
     out.push_str("}\n");
 }
 
@@ -4598,6 +4650,8 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnvGet { name: expr }
         | ValueExpr::TimeSleepMillis { duration: expr }
         | ValueExpr::LogEnabled { level: expr }
+        | ValueExpr::HashString { value: expr }
+        | ValueExpr::HashFinish { state: expr }
         | ValueExpr::ProcessExit { code: expr }
         | ValueExpr::ProcessStatus { command: expr }
         | ValueExpr::ProcessExec { command: expr }
@@ -4617,6 +4671,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::FsWriteString {
             path: left,
             content: right,
+        }
+        | ValueExpr::HashWriteString {
+            state: left,
+            value: right,
         }
         | ValueExpr::FileWriteString {
             file: left,
@@ -4690,6 +4748,7 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Panic { .. }
+        | ValueExpr::HashNew
         | ValueExpr::MutBorrow(_)
         | ValueExpr::Call { .. }
         | ValueExpr::EnvCwd
@@ -5384,6 +5443,26 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::LogEnabled { level } => {
             out.push_str("nomo_log_enabled(");
             emit_expr(out, level);
+            out.push(')');
+        }
+        ValueExpr::HashNew => {
+            out.push_str("nomo_hash_new()");
+        }
+        ValueExpr::HashString { value } => {
+            out.push_str("nomo_hash_string(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::HashWriteString { state, value } => {
+            out.push_str("nomo_hash_write_string(");
+            emit_expr(out, state);
+            out.push_str(", ");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::HashFinish { state } => {
+            out.push_str("nomo_hash_finish(");
+            emit_expr(out, state);
             out.push(')');
         }
         ValueExpr::ProcessExit { code } => {
@@ -6263,6 +6342,8 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6307,6 +6388,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         }
         ValueExpr::EnvSet { name, value } => {
             collect_expr_result_map_err(name, out);
+            collect_expr_result_map_err(value, out);
+        }
+        ValueExpr::HashWriteString { state, value } => {
+            collect_expr_result_map_err(state, out);
             collect_expr_result_map_err(value, out);
         }
         ValueExpr::Call { args, .. } => {
@@ -6363,6 +6448,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::CharLiteral(_)
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
+        | ValueExpr::HashNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
@@ -6566,6 +6652,8 @@ where
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -6611,6 +6699,10 @@ where
         }
         ValueExpr::EnvSet { name, value } => {
             walk_expr(name, visit);
+            walk_expr(value, visit);
+        }
+        ValueExpr::HashWriteString { state, value } => {
+            walk_expr(state, visit);
             walk_expr(value, visit);
         }
         ValueExpr::Call { args, .. } => {
@@ -6665,6 +6757,7 @@ where
         | ValueExpr::CharLiteral(_)
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
+        | ValueExpr::HashNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
@@ -6960,8 +7053,18 @@ fn collect_expr_struct(
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
+        | ValueExpr::HashString { value }
+        | ValueExpr::HashFinish { state: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_struct(value, seen, out),
+        ValueExpr::HashNew => {
+            push_struct_instance(seen, out, "HashState", &[]);
+        }
+        ValueExpr::HashWriteString { state, value } => {
+            push_struct_instance(seen, out, "HashState", &[]);
+            collect_expr_struct(state, seen, out);
+            collect_expr_struct(value, seen, out);
+        }
         ValueExpr::ProcessStatus { command } | ValueExpr::ProcessExec { command } => {
             push_struct_instance(seen, out, "ProcessError", &[]);
             collect_expr_struct(command, seen, out);
@@ -7546,8 +7649,15 @@ fn collect_expr_enum(
         | ValueExpr::MathUnary { value, .. }
         | ValueExpr::TimeSleepMillis { duration: value }
         | ValueExpr::LogEnabled { level: value }
+        | ValueExpr::HashString { value }
+        | ValueExpr::HashFinish { state: value }
         | ValueExpr::ProcessExit { code: value }
         | ValueExpr::Unary { expr: value, .. } => collect_expr_enum(value, seen, out),
+        ValueExpr::HashNew => {}
+        ValueExpr::HashWriteString { state, value } => {
+            collect_expr_enum(state, seen, out);
+            collect_expr_enum(value, seen, out);
+        }
         ValueExpr::ProcessStatus { command } => {
             push_enum_instance(
                 seen,
@@ -8072,6 +8182,15 @@ fn uses_log_enabled(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_log_enabled))
+    })
+}
+
+fn uses_hash_builtin(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_hash_builtin))
     })
 }
 
@@ -8624,6 +8743,9 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         ValueExpr::EnvSet { name, value } => {
             expr_contains(name, predicate) || expr_contains(value, predicate)
         }
+        ValueExpr::HashWriteString { state, value } => {
+            expr_contains(state, predicate) || expr_contains(value, predicate)
+        }
         ValueExpr::Call { args, .. } => args.iter().any(|arg| expr_contains(arg, predicate)),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_contains(array, predicate) || expr_contains(index, predicate)
@@ -8664,6 +8786,8 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -8722,6 +8846,7 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::CharLiteral(_)
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
+        | ValueExpr::HashNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvArgs
@@ -8794,6 +8919,16 @@ fn expr_is_io_read_line(expr: &ValueExpr) -> bool {
 
 fn expr_is_log_enabled(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::LogEnabled { .. })
+}
+
+fn expr_is_hash_builtin(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::HashNew
+            | ValueExpr::HashString { .. }
+            | ValueExpr::HashWriteString { .. }
+            | ValueExpr::HashFinish { .. }
+    )
 }
 
 fn expr_is_num_parse_i64(expr: &ValueExpr) -> bool {
@@ -9275,6 +9410,8 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: name, .. }
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
+        | ValueExpr::HashString { value: name }
+        | ValueExpr::HashFinish { state: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9284,7 +9421,10 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseF64 { value: name }
         | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_read_to_string(name),
         ValueExpr::EnvArgs => false,
-        ValueExpr::ArrayNew { .. } => false,
+        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_read_to_string(state) || expr_uses_fs_read_to_string(value)
+        }
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_read_to_string(array),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -9424,6 +9564,8 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: name, .. }
         | ValueExpr::TimeSleepMillis { duration: name }
         | ValueExpr::LogEnabled { level: name }
+        | ValueExpr::HashString { value: name }
+        | ValueExpr::HashFinish { state: name }
         | ValueExpr::ProcessExit { code: name }
         | ValueExpr::ProcessStatus { command: name }
         | ValueExpr::ProcessExec { command: name }
@@ -9433,7 +9575,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::NumParseF64 { value: name }
         | ValueExpr::NumToString { value: name, .. } => expr_uses_fs_write_string(name),
         ValueExpr::EnvArgs => false,
-        ValueExpr::ArrayNew { .. } => false,
+        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_write_string(state) || expr_uses_fs_write_string(value)
+        }
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_write_string(array),
         ValueExpr::ArrayGet { array, index, .. } => {
@@ -9546,6 +9691,8 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9580,7 +9727,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         ValueExpr::EnvSet { name, value } => expr_uses_fs_open(name) || expr_uses_fs_open(value),
         ValueExpr::EnvArgs => false,
         ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => false,
-        ValueExpr::ArrayNew { .. } => false,
+        ValueExpr::ArrayNew { .. } | ValueExpr::HashNew => false,
+        ValueExpr::HashWriteString { state, value } => {
+            expr_uses_fs_open(state) || expr_uses_fs_open(value)
+        }
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_open(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_fs_open(array) || expr_uses_fs_open(index)
@@ -9685,6 +9835,8 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9701,6 +9853,9 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             expr_uses_env_get(file) || expr_uses_env_get(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_get(name) || expr_uses_env_get(value),
+        ValueExpr::HashWriteString { state, value } => {
+            expr_uses_env_get(state) || expr_uses_env_get(value)
+        }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => expr_uses_env_get(path),
         ValueExpr::ResultMapErr { result, .. }
         | ValueExpr::ResultIsOk { result, .. }
@@ -9770,6 +9925,7 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::CharLiteral(_)
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
+        | ValueExpr::HashNew
         | ValueExpr::Variable(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
@@ -9830,6 +9986,8 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -9862,6 +10020,9 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             expr_uses_env_args(file) || expr_uses_env_args(content)
         }
         ValueExpr::EnvSet { name, value } => expr_uses_env_args(name) || expr_uses_env_args(value),
+        ValueExpr::HashWriteString { state, value } => {
+            expr_uses_env_args(state) || expr_uses_env_args(value)
+        }
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_args(array),
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_uses_env_args(array) || expr_uses_env_args(index)
@@ -9909,6 +10070,7 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             expr_uses_env_args(value) || arms.iter().any(|arm| expr_uses_env_args(&arm.value))
         }
         ValueExpr::ArrayNew { .. }
+        | ValueExpr::HashNew
         | ValueExpr::StringLiteral(_)
         | ValueExpr::IntLiteral(_)
         | ValueExpr::FloatLiteral(_)
@@ -9996,6 +10158,8 @@ fn collect_expr_array_elements(
         | ValueExpr::MathUnary { value: path, .. }
         | ValueExpr::TimeSleepMillis { duration: path }
         | ValueExpr::LogEnabled { level: path }
+        | ValueExpr::HashString { value: path }
+        | ValueExpr::HashFinish { state: path }
         | ValueExpr::ProcessExit { code: path }
         | ValueExpr::ProcessStatus { command: path }
         | ValueExpr::ProcessExec { command: path }
@@ -10015,6 +10179,11 @@ fn collect_expr_array_elements(
         }
         ValueExpr::FsOpen { path } | ValueExpr::FileClose { file: path } => {
             collect_expr_array_elements(path, seen, out);
+        }
+        ValueExpr::HashNew => {}
+        ValueExpr::HashWriteString { state, value } => {
+            collect_expr_array_elements(state, seen, out);
+            collect_expr_array_elements(value, seen, out);
         }
         ValueExpr::ResultMapErr {
             result,

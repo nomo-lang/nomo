@@ -96,6 +96,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.path", "path manipulation helpers"),
         ("std.math", "numeric helpers"),
         ("std.num", "numeric parsing and conversion helpers"),
+        ("std.hash", "stable non-cryptographic hashing helpers"),
         ("std.char", "character helpers"),
         ("std.os", "target OS helpers"),
         ("std.time", "clock and sleep helpers"),

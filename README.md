@@ -331,6 +331,11 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 integer type with wraparound semantics. In v0.1, `to_string` is used through
 the `num` module to avoid colliding with `char.to_string`.
 
+`std.hash` provides stable non-cryptographic FNV-1a helpers:
+`hash.string`, `hash.new`, `hash.write_string`, and `hash.finish`.
+`HashState` lets callers build the same hash incrementally from multiple
+strings. Use `std.crypto` for cryptographic hashes once that module lands.
+
 `std.char` provides ASCII character-class helpers: `char.is_digit`,
 `char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
 `char` scalar to a UTF-8 string.

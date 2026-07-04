@@ -4591,6 +4591,67 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_std_hash_helpers() {
+    let root = temp_test_root("std-hash-helpers");
+    reset_dir(&root);
+    let project = root.join("std_hash_helpers");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"std_hash_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.hash
+import std.io
+import std.num
+
+fn main() -> void {
+    let direct: u64 = hash.string("nomo")
+    let empty: HashState = hash.new()
+    let first: HashState = hash.write_string(empty, "no")
+    let second: HashState = hash.write_string(first, "mo")
+    let incremental: u64 = hash.finish(second)
+    io.println(num.to_string(direct))
+    if direct == incremental {
+        io.println("same")
+    } else {
+        io.println("different")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "4330230535792317134\nsame\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
     let root = temp_test_root("try-identifier-question");
     reset_dir(&root);

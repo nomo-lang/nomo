@@ -350,6 +350,17 @@ pub enum ValueExpr {
     LogEnabled {
         level: Box<ValueExpr>,
     },
+    HashNew,
+    HashString {
+        value: Box<ValueExpr>,
+    },
+    HashWriteString {
+        state: Box<ValueExpr>,
+        value: Box<ValueExpr>,
+    },
+    HashFinish {
+        state: Box<ValueExpr>,
+    },
     ProcessExit {
         code: Box<ValueExpr>,
     },
@@ -1811,6 +1822,12 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.log.warn"
             | "std.log.error"
             | "std.log.enabled"
+            | "std.hash"
+            | "std.hash.HashState"
+            | "std.hash.new"
+            | "std.hash.string"
+            | "std.hash.write_string"
+            | "std.hash.finish"
             | "std.os"
             | "std.os.platform"
             | "std.os.arch"
@@ -1961,6 +1978,7 @@ fn missing_standard_type_import(
         "FsError" | "File" | "FileMetadata" => Some("std.fs"),
         "IoError" => Some("std.io"),
         "NumError" => Some("std.num"),
+        "HashState" => Some("std.hash"),
         _ => None,
     }
 }
@@ -2110,6 +2128,9 @@ fn validate_standard_type_conflicts(
     if needs.process {
         reject_user_std_struct(path, structs, "ProcessError")?;
         reject_user_std_struct(path, structs, "ProcessOutput")?;
+    }
+    if needs.hash {
+        reject_user_std_struct(path, structs, "HashState")?;
     }
     if needs.io || needs.fs || needs.num || needs.process || needs.result {
         reject_user_std_enum(path, enums, "Result")?;
@@ -2360,6 +2381,7 @@ struct StandardTypeNeeds {
     fs: bool,
     env: bool,
     process: bool,
+    hash: bool,
     num: bool,
     result: bool,
     option: bool,
@@ -2382,6 +2404,10 @@ fn standard_type_needs(imports: &[String], ast: &SourceFile) -> StandardTypeNeed
             .iter()
             .any(|item| item == "std.process" || item.starts_with("std.process."))
             || source_uses_process_builtin(ast),
+        hash: imports
+            .iter()
+            .any(|item| item == "std.hash" || item.starts_with("std.hash."))
+            || source_uses_hash_builtin(ast),
         num: imports
             .iter()
             .any(|item| item == "std.num" || item.starts_with("std.num."))
@@ -2416,6 +2442,9 @@ fn standard_struct_names(needs: StandardTypeNeeds) -> impl Iterator<Item = (Stri
     if needs.process {
         names.push(("ProcessError".to_string(), 0));
         names.push(("ProcessOutput".to_string(), 0));
+    }
+    if needs.hash {
+        names.push(("HashState".to_string(), 0));
     }
     names.into_iter()
 }
@@ -2530,6 +2559,17 @@ fn inject_standard_types(
             ],
         });
     }
+    if needs.hash && !structs.iter().any(|item| item.name == "HashState") {
+        structs.push(StructType {
+            package: "std.hash".to_string(),
+            name: "HashState".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "value".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
     if (needs.io || needs.fs || needs.num || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
@@ -2592,6 +2632,12 @@ fn source_uses_process_builtin(ast: &SourceFile) -> bool {
     ast_functions(ast)
         .flat_map(|function| function.body.iter())
         .any(stmt_uses_process_builtin)
+}
+
+fn source_uses_hash_builtin(ast: &SourceFile) -> bool {
+    ast_functions(ast)
+        .flat_map(|function| function.body.iter())
+        .any(stmt_uses_hash_builtin)
 }
 
 fn source_uses_num_builtin(ast: &SourceFile) -> bool {
@@ -3102,6 +3148,46 @@ fn stmt_uses_process_builtin(stmt: &Stmt) -> bool {
     }
 }
 
+fn stmt_uses_hash_builtin(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_hash_builtin(value),
+        Stmt::LetElse {
+            value, else_body, ..
+        } => expr_uses_hash_builtin(value) || else_body.iter().any(stmt_uses_hash_builtin),
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            ..
+        } => {
+            expr_uses_hash_builtin(value)
+                || body.iter().any(stmt_uses_hash_builtin)
+                || else_body
+                    .as_ref()
+                    .is_some_and(|else_body| else_body.iter().any(stmt_uses_hash_builtin))
+        }
+        Stmt::Return { value, .. } => value.as_ref().is_some_and(expr_uses_hash_builtin),
+        Stmt::Expr { expr, .. } => expr_uses_hash_builtin(expr),
+        Stmt::Match { value, arms, .. } => {
+            expr_uses_hash_builtin(value)
+                || arms
+                    .iter()
+                    .any(|arm| arm.body.iter().any(stmt_uses_hash_builtin))
+        }
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body } => body.iter().any(stmt_uses_hash_builtin),
+            ForVariant::While { condition, body } => {
+                expr_uses_hash_builtin(condition) || body.iter().any(stmt_uses_hash_builtin)
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                expr_uses_hash_builtin(iterable) || body.iter().any(stmt_uses_hash_builtin)
+            }
+        },
+        Stmt::Defer { stmt, .. } => stmt_uses_hash_builtin(stmt),
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
+    }
+}
+
 fn stmt_uses_num_builtin(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses_num_builtin(value),
@@ -3333,6 +3419,45 @@ fn expr_uses_process_builtin(expr: &AstExpr) -> bool {
         AstExpr::Cast { expr, .. } => expr_uses_process_builtin(expr),
         AstExpr::Binary { left, right, .. } => {
             expr_uses_process_builtin(left) || expr_uses_process_builtin(right)
+        }
+        AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+fn expr_uses_hash_builtin(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            is_hash_builtin_call(callee) || args.iter().any(expr_uses_hash_builtin)
+        }
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| expr_uses_hash_builtin(value)),
+        AstExpr::Match { value, arms } => {
+            expr_uses_hash_builtin(value)
+                || arms.iter().any(|arm| expr_uses_hash_builtin(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            expr_uses_hash_builtin(condition)
+                || expr_uses_hash_builtin(then_branch)
+                || expr_uses_hash_builtin(else_branch)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => expr_uses_hash_builtin(message),
+        AstExpr::MutArg { .. } => false,
+        AstExpr::Cast { expr, .. } => expr_uses_hash_builtin(expr),
+        AstExpr::Binary { left, right, .. } => {
+            expr_uses_hash_builtin(left) || expr_uses_hash_builtin(right)
         }
         AstExpr::Name(_)
         | AstExpr::String(_)
@@ -8309,6 +8434,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "hash" {
+                    return lower_hash_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "env" {
                     return lower_env_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8629,6 +8759,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_log_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_hash_builtin_call(callee) {
+                require_import(path, imports, span, "std.hash", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "hash builtins do not accept type arguments",
+                    ));
+                }
+                return lower_hash_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -10183,6 +10326,160 @@ fn log_statement_expr(level: &str, message: ValueExpr) -> ValueExpr {
             }],
         }),
         else_branch: Box::new(ValueExpr::VoidLiteral),
+    }
+}
+
+fn is_hash_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "hash"
+                && matches!(name.as_str(), "new" | "string" | "write_string" | "finish")
+    )
+}
+
+fn lower_hash_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("hash builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "hash");
+    match name.as_str() {
+        "new" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.new` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Struct("HashState".to_string(), Vec::new()),
+                ValueExpr::HashNew,
+            ))
+        }
+        "string" => {
+            let [value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.string` expects exactly one string value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (value_type, value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.string` expects a string value",
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::U64,
+                ValueExpr::HashString {
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "write_string" => {
+            let [state_arg, value_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.write_string` expects a HashState and string value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (state_type, state) = lower_value_expr(
+                path, state_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_state = ValueType::Struct("HashState".to_string(), Vec::new());
+            if state_type != expected_state {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.write_string` expects a HashState value",
+                    &expected_state,
+                    &state_type,
+                ));
+            }
+            let (value_type, value) = lower_value_expr(
+                path, value_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.write_string` expects a string value",
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            Ok((
+                ValueType::Struct("HashState".to_string(), Vec::new()),
+                ValueExpr::HashWriteString {
+                    state: Box::new(state),
+                    value: Box::new(value),
+                },
+            ))
+        }
+        "finish" => {
+            let [state_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`hash.finish` expects exactly one HashState value",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (state_type, state) = lower_value_expr(
+                path, state_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            let expected_state = ValueType::Struct("HashState".to_string(), Vec::new());
+            if state_type != expected_state {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`hash.finish` expects a HashState value",
+                    &expected_state,
+                    &state_type,
+                ));
+            }
+            Ok((
+                ValueType::U64,
+                ValueExpr::HashFinish {
+                    state: Box::new(state),
+                },
+            ))
+        }
+        _ => unreachable!("hash builtin dispatcher only passes known calls"),
     }
 }
 
@@ -13680,6 +13977,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "enabled" if imports.iter().any(|item| item == "std.log.enabled") => {
             vec!["log".to_string(), "enabled".to_string()]
         }
+        "new" if imports.iter().any(|item| item == "std.hash.new") => {
+            vec!["hash".to_string(), "new".to_string()]
+        }
+        "string" if imports.iter().any(|item| item == "std.hash.string") => {
+            vec!["hash".to_string(), "string".to_string()]
+        }
+        "write_string" if imports.iter().any(|item| item == "std.hash.write_string") => {
+            vec!["hash".to_string(), "write_string".to_string()]
+        }
+        "finish" if imports.iter().any(|item| item == "std.hash.finish") => {
+            vec!["hash".to_string(), "finish".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.env.get") => {
             vec!["env".to_string(), "get".to_string()]
         }
@@ -15244,6 +15553,123 @@ fn main() -> void {
         let err = parse_inline(source).unwrap_err();
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("string message"));
+    }
+
+    #[test]
+    fn accepts_hash_builtins() {
+        let source = r#"package app.main
+
+import std.hash
+
+fn main() -> void {
+    let direct: u64 = hash.string("nomo")
+    let state: HashState = hash.new()
+    let written: HashState = hash.write_string(state, "nomo")
+    let finished: u64 = hash.finish(written)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        assert!(program.structs.iter().any(|item| item.name == "HashState"));
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::HashString { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::HashNew,
+                ..
+            } if name == "HashState" && args.is_empty()
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Struct(ref name, ref args),
+                initializer: ValueExpr::HashWriteString { .. },
+                ..
+            } if name == "HashState" && args.is_empty()
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::U64,
+                initializer: ValueExpr::HashFinish { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_hash_builtin_imports() {
+        let source = r#"package app.main
+
+import std.hash.HashState
+import std.hash.finish
+import std.hash.new
+import std.hash.string
+import std.hash.write_string
+
+fn main() -> void {
+    let direct: u64 = string("nomo")
+    let state: HashState = new()
+    let written: HashState = write_string(state, "nomo")
+    let finished: u64 = finish(written)
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::HashString { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::HashNew,
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                initializer: ValueExpr::HashWriteString { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                initializer: ValueExpr::HashFinish { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_hash_non_string_value() {
+        let source = r#"package app.main
+
+import std.hash
+
+fn main() -> void {
+    let value: u64 = hash.string(1)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert!(err.message.contains("string value"));
     }
 
     #[test]

@@ -79,6 +79,14 @@ the same code.
 - [E0246](E0246.md) - expected panic expression
 - [E0247](E0247.md) - missing panic argument list
 - [E0248](E0248.md) - missing panic closing parenthesis
+- [E0250](E0250.md) - expected impl block
+- [E0251](E0251.md) - invalid impl target type
+- [E0252](E0252.md) - missing impl body
+- [E0253](E0253.md) - unterminated impl body
+- [E0254](E0254.md) - invalid impl body member
+- [E0255](E0255.md) - unsupported impl target
+- [E0256](E0256.md) - invalid method self parameter
+- [E0257](E0257.md) - invalid method receiver type
 - [E0258](E0258.md) - invalid interface implementation
 - [E0301](E0301.md) - unknown name or missing import
 - [E0404](E0404.md) - type mismatch

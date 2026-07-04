@@ -33,6 +33,9 @@ the same code.
 - [E0404](E0404.md) - type mismatch
 - [E0501](E0501.md) - immutable value mutation
 - [E0901](E0901.md) - manifest or project configuration error
+- [E0902](E0902.md) - project source processing error
+- [E0903](E0903.md) - module not found
+- [E0904](E0904.md) - module package mismatch
 - [E1500](E1500.md) - expected interface declaration
 - [E1501](E1501.md) - missing interface body
 - [E1502](E1502.md) - unterminated interface body

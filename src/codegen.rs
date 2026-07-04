@@ -550,6 +550,42 @@ fn emit_string_runtime(out: &mut String) {
     out.push_str("    out[len] = '\\0';\n");
     out.push_str("    return nomo_string_owned(out);\n");
     out.push_str("}\n");
+    out.push_str("\nstatic int nomo_char_is_digit(uint32_t value) {\n");
+    out.push_str("    return value <= 127 && isdigit((unsigned char)value) != 0;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_char_is_alpha(uint32_t value) {\n");
+    out.push_str("    return value <= 127 && isalpha((unsigned char)value) != 0;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic int nomo_char_is_whitespace(uint32_t value) {\n");
+    out.push_str("    return value <= 127 && isspace((unsigned char)value) != 0;\n");
+    out.push_str("}\n");
+    out.push_str("\nstatic nomo_string nomo_char_to_string(uint32_t value) {\n");
+    out.push_str("    char *out = (char *)malloc(5);\n");
+    out.push_str("    if (out == NULL) { nomo_panic(\"out of memory\"); }\n");
+    out.push_str("    if (value <= 0x7F) {\n");
+    out.push_str("        out[0] = (char)value;\n");
+    out.push_str("        out[1] = '\\0';\n");
+    out.push_str("    } else if (value <= 0x7FF) {\n");
+    out.push_str("        out[0] = (char)(0xC0 | (value >> 6));\n");
+    out.push_str("        out[1] = (char)(0x80 | (value & 0x3F));\n");
+    out.push_str("        out[2] = '\\0';\n");
+    out.push_str("    } else if (value <= 0xFFFF) {\n");
+    out.push_str("        out[0] = (char)(0xE0 | (value >> 12));\n");
+    out.push_str("        out[1] = (char)(0x80 | ((value >> 6) & 0x3F));\n");
+    out.push_str("        out[2] = (char)(0x80 | (value & 0x3F));\n");
+    out.push_str("        out[3] = '\\0';\n");
+    out.push_str("    } else if (value <= 0x10FFFF) {\n");
+    out.push_str("        out[0] = (char)(0xF0 | (value >> 18));\n");
+    out.push_str("        out[1] = (char)(0x80 | ((value >> 12) & 0x3F));\n");
+    out.push_str("        out[2] = (char)(0x80 | ((value >> 6) & 0x3F));\n");
+    out.push_str("        out[3] = (char)(0x80 | (value & 0x3F));\n");
+    out.push_str("        out[4] = '\\0';\n");
+    out.push_str("    } else {\n");
+    out.push_str("        out[0] = '?';\n");
+    out.push_str("        out[1] = '\\0';\n");
+    out.push_str("    }\n");
+    out.push_str("    return nomo_string_owned(out);\n");
+    out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_path_string_from_slice(const char *data, size_t start, size_t len) {\n");
     out.push_str("    return nomo_string_from_slice(data, start, len);\n");
     out.push_str("}\n\n");
@@ -3210,6 +3246,10 @@ fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { .. }
         | ValueExpr::StringToLower { .. }
         | ValueExpr::StringToUpper { .. }
+        | ValueExpr::CharIsDigit { .. }
+        | ValueExpr::CharIsAlpha { .. }
+        | ValueExpr::CharIsWhitespace { .. }
+        | ValueExpr::CharToString { .. }
         | ValueExpr::PathJoin { .. }
         | ValueExpr::PathBasename { .. }
         | ValueExpr::PathDirname { .. }
@@ -3903,6 +3943,26 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             emit_expr(out, value);
             out.push(')');
         }
+        ValueExpr::CharIsDigit { value } => {
+            out.push_str("nomo_char_is_digit(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CharIsAlpha { value } => {
+            out.push_str("nomo_char_is_alpha(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CharIsWhitespace { value } => {
+            out.push_str("nomo_char_is_whitespace(");
+            emit_expr(out, value);
+            out.push(')');
+        }
+        ValueExpr::CharToString { value } => {
+            out.push_str("nomo_char_to_string(");
+            emit_expr(out, value);
+            out.push(')');
+        }
         ValueExpr::PathJoin { left, right } => {
             out.push_str("nomo_path_join(");
             emit_expr(out, left);
@@ -4580,6 +4640,10 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::StringTrim { value: path }
         | ValueExpr::StringToLower { value: path }
         | ValueExpr::StringToUpper { value: path }
+        | ValueExpr::CharIsDigit { value: path }
+        | ValueExpr::CharIsAlpha { value: path }
+        | ValueExpr::CharIsWhitespace { value: path }
+        | ValueExpr::CharToString { value: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
@@ -4843,6 +4907,10 @@ where
         | ValueExpr::StringTrim { value: path }
         | ValueExpr::StringToLower { value: path }
         | ValueExpr::StringToUpper { value: path }
+        | ValueExpr::CharIsDigit { value: path }
+        | ValueExpr::CharIsAlpha { value: path }
+        | ValueExpr::CharIsWhitespace { value: path }
+        | ValueExpr::CharToString { value: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
@@ -5205,6 +5273,10 @@ fn collect_expr_struct(
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::PathBasename { path: value }
         | ValueExpr::PathDirname { path: value }
         | ValueExpr::PathExtension { path: value }
@@ -5699,6 +5771,10 @@ fn collect_expr_enum(
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::PathBasename { path: value }
         | ValueExpr::PathDirname { path: value }
         | ValueExpr::PathExtension { path: value }
@@ -6499,6 +6575,10 @@ fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
         | ValueExpr::StringTrim { value: path }
         | ValueExpr::StringToLower { value: path }
         | ValueExpr::StringToUpper { value: path }
+        | ValueExpr::CharIsDigit { value: path }
+        | ValueExpr::CharIsAlpha { value: path }
+        | ValueExpr::CharIsWhitespace { value: path }
+        | ValueExpr::CharToString { value: path }
         | ValueExpr::PathBasename { path }
         | ValueExpr::PathDirname { path }
         | ValueExpr::PathExtension { path }
@@ -7043,6 +7123,10 @@ fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_read_to_string(value),
@@ -7156,6 +7240,10 @@ fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. } => expr_uses_fs_write_string(value),
@@ -7266,6 +7354,10 @@ fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -7369,6 +7461,10 @@ fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -7475,6 +7571,10 @@ fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -7677,6 +7777,10 @@ fn collect_expr_array_elements(
         | ValueExpr::StringTrim { value }
         | ValueExpr::StringToLower { value }
         | ValueExpr::StringToUpper { value }
+        | ValueExpr::CharIsDigit { value }
+        | ValueExpr::CharIsAlpha { value }
+        | ValueExpr::CharIsWhitespace { value }
+        | ValueExpr::CharToString { value }
         | ValueExpr::Unary { expr: value, .. }
         | ValueExpr::Cast { expr: value, .. }
         | ValueExpr::EnumPayload { value, .. }
@@ -8634,6 +8738,59 @@ mod tests {
         assert!(c.contains("uint32_t nomo_fn_initial(void);"));
         assert!(c.contains("return 35486;"));
         assert!(c.contains("uint32_t nomo_letter = nomo_fn_initial();"));
+    }
+
+    #[test]
+    fn emits_char_helpers() {
+        let program = Program {
+            consts: Vec::new(),
+            package: "app.main".to_string(),
+            imports: vec!["std.char".to_string()],
+            structs: Vec::new(),
+            enums: Vec::new(),
+            functions: vec![Function {
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![
+                    Statement::Let {
+                        name: "digit".to_string(),
+                        value_type: ValueType::Bool,
+                        initializer: ValueExpr::CharIsDigit {
+                            value: Box::new(ValueExpr::CharLiteral('7')),
+                        },
+                    },
+                    Statement::Let {
+                        name: "alpha".to_string(),
+                        value_type: ValueType::Bool,
+                        initializer: ValueExpr::CharIsAlpha {
+                            value: Box::new(ValueExpr::CharLiteral('N')),
+                        },
+                    },
+                    Statement::Let {
+                        name: "space".to_string(),
+                        value_type: ValueType::Bool,
+                        initializer: ValueExpr::CharIsWhitespace {
+                            value: Box::new(ValueExpr::CharLiteral(' ')),
+                        },
+                    },
+                    Statement::Let {
+                        name: "text".to_string(),
+                        value_type: ValueType::String,
+                        initializer: ValueExpr::CharToString {
+                            value: Box::new(ValueExpr::CharLiteral('語')),
+                        },
+                    },
+                ],
+            }],
+        };
+
+        let c = emit_c(&program);
+        assert!(c.contains("static int nomo_char_is_digit(uint32_t value)"));
+        assert!(c.contains("static nomo_string nomo_char_to_string(uint32_t value)"));
+        assert!(c.contains("int nomo_digit = nomo_char_is_digit(55);"));
+        assert!(c.contains("nomo_string nomo_text = nomo_char_to_string(35486);"));
     }
 
     #[test]

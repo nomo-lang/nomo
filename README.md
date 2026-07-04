@@ -311,6 +311,10 @@ operate on matching numeric types, while `math.floor`, `math.ceil`,
 `math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on
 `f64` values.
 
+`std.char` provides ASCII character-class helpers: `char.is_digit`,
+`char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
+`char` scalar to a UTF-8 string.
+
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
 `string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.

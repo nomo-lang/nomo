@@ -320,6 +320,18 @@ pub enum ValueExpr {
     StringToUpper {
         value: Box<ValueExpr>,
     },
+    CharIsDigit {
+        value: Box<ValueExpr>,
+    },
+    CharIsAlpha {
+        value: Box<ValueExpr>,
+    },
+    CharIsWhitespace {
+        value: Box<ValueExpr>,
+    },
+    CharToString {
+        value: Box<ValueExpr>,
+    },
     PathJoin {
         left: Box<ValueExpr>,
         right: Box<ValueExpr>,
@@ -1677,6 +1689,11 @@ fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
             | "std.string.trim"
             | "std.string.to_lower"
             | "std.string.to_upper"
+            | "std.char"
+            | "std.char.is_digit"
+            | "std.char.is_alpha"
+            | "std.char.is_whitespace"
+            | "std.char.to_string"
             | "std.path"
             | "std.path.join"
             | "std.path.basename"
@@ -7795,6 +7812,11 @@ fn lower_value_expr_with_expected(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
                     );
                 }
+                if qualified[0] == "char" {
+                    return lower_char_builtin(
+                        path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                    );
+                }
                 if qualified[0] == "option" {
                     return lower_option_builtin(
                         path, &qualified, args, scope, imports, signatures, structs, enums, span,
@@ -8080,6 +8102,19 @@ fn lower_value_expr_with_expected(
                     ));
                 }
                 return lower_math_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
+            if is_char_builtin_call(callee) {
+                require_import(path, imports, span, "std.char", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "char builtins do not accept type arguments",
+                    ));
+                }
+                return lower_char_builtin(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
@@ -9284,6 +9319,79 @@ fn is_math_builtin_call(callee: &[String]) -> bool {
                         | "cos"
                 )
     )
+}
+
+fn is_char_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "char"
+                && matches!(
+                    name.as_str(),
+                    "is_digit" | "is_alpha" | "is_whitespace" | "to_string"
+                )
+    )
+}
+
+fn lower_char_builtin(
+    path: &Path,
+    callee: &[String],
+    args: &[AstExpr],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<(ValueType, ValueExpr), Diagnostic> {
+    let [module, name] = callee else {
+        unreachable!("char builtin dispatcher only passes qualified calls")
+    };
+    debug_assert_eq!(module, "char");
+    let [value] = args else {
+        return Err(Diagnostic::new(
+            "E0407",
+            format!("`char.{name}` expects exactly one char argument"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let (value_type, lowered) = lower_value_expr(
+        path, value, scope, imports, signatures, structs, enums, span,
+    )?;
+    if value_type != ValueType::Char {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!("`char.{name}` expects a char value"),
+            &ValueType::Char,
+            &value_type,
+        ));
+    }
+    let expr = match name.as_str() {
+        "is_digit" => ValueExpr::CharIsDigit {
+            value: Box::new(lowered),
+        },
+        "is_alpha" => ValueExpr::CharIsAlpha {
+            value: Box::new(lowered),
+        },
+        "is_whitespace" => ValueExpr::CharIsWhitespace {
+            value: Box::new(lowered),
+        },
+        "to_string" => ValueExpr::CharToString {
+            value: Box::new(lowered),
+        },
+        _ => unreachable!("char builtin dispatcher only passes known calls"),
+    };
+    let return_type = if name == "to_string" {
+        ValueType::String
+    } else {
+        ValueType::Bool
+    };
+    Ok((return_type, expr))
 }
 
 fn lower_math_builtin(
@@ -11750,6 +11858,18 @@ fn resolve_specific_value_builtin(name: &str, imports: &[String]) -> Option<Vec<
         "cos" if imports.iter().any(|item| item == "std.math.cos") => {
             vec!["math".to_string(), "cos".to_string()]
         }
+        "is_digit" if imports.iter().any(|item| item == "std.char.is_digit") => {
+            vec!["char".to_string(), "is_digit".to_string()]
+        }
+        "is_alpha" if imports.iter().any(|item| item == "std.char.is_alpha") => {
+            vec!["char".to_string(), "is_alpha".to_string()]
+        }
+        "is_whitespace" if imports.iter().any(|item| item == "std.char.is_whitespace") => {
+            vec!["char".to_string(), "is_whitespace".to_string()]
+        }
+        "to_string" if imports.iter().any(|item| item == "std.char.to_string") => {
+            vec!["char".to_string(), "to_string".to_string()]
+        }
         "is_ok" if imports.iter().any(|item| item == "std.result.is_ok") => {
             vec!["result".to_string(), "is_ok".to_string()]
         }
@@ -12773,6 +12893,104 @@ fn main() -> void {
         assert_eq!(err.code, "E0404");
         assert!(err.message.contains("path.basename"));
         assert!(err.message.contains("string"));
+    }
+
+    #[test]
+    fn accepts_char_builtins() {
+        let source = r#"package app.main
+
+import std.char
+
+fn main() -> void {
+    let digit: bool = char.is_digit('7')
+    let alpha: bool = char.is_alpha('N')
+    let space: bool = char.is_whitespace(' ')
+    let text: string = char.to_string('語')
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::CharIsDigit { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::CharIsAlpha { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[2],
+            Statement::Let {
+                value_type: ValueType::Bool,
+                initializer: ValueExpr::CharIsWhitespace { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[3],
+            Statement::Let {
+                value_type: ValueType::String,
+                initializer: ValueExpr::CharToString { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn accepts_specific_char_builtin_imports() {
+        let source = r#"package app.main
+
+import std.char.is_digit
+import std.char.to_string
+
+fn main() -> void {
+    let digit: bool = is_digit('7')
+    let text: string = to_string('N')
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                initializer: ValueExpr::CharIsDigit { .. },
+                ..
+            }
+        ));
+        assert!(matches!(
+            main.body[1],
+            Statement::Let {
+                initializer: ValueExpr::CharToString { .. },
+                ..
+            }
+        ));
+    }
+
+    #[test]
+    fn rejects_char_builtin_non_char_argument() {
+        let source = r#"package app.main
+
+import std.char
+
+fn main() -> void {
+    let value: bool = char.is_digit("7")
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E0404");
+        assert_eq!(err.expected.as_deref(), Some("char"));
+        assert_eq!(err.found.as_deref(), Some("string"));
     }
 
     #[test]

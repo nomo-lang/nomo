@@ -2290,6 +2290,151 @@ fn nomo_publish_without_dry_run_reports_upload_not_implemented() {
 }
 
 #[test]
+fn nomo_project_commands_use_file_registry_dependency_module_public_api() {
+    let root = temp_test_root("file-registry-dependency-module-public-api");
+    reset_dir(&root);
+    let package = root.join("utils");
+    let registry = root.join("registry");
+    let registry_download = registry.join("api/v1/packages/fynn/utils/0.1.0/download");
+    let archive_out = root.join("archive-out");
+    let project = root.join("hello");
+    let source = project.join("src/main.nomo");
+    let c_path = project.join("build/c/main.c");
+    fs::create_dir_all(package.join("src")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(registry_download.parent().unwrap()).unwrap();
+    fs::write(
+        package.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/main.nomo"),
+        "package utils.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/path.nomo"),
+        r#"package local_utils.path
+
+pub struct Segment {
+    value: i64
+}
+
+pub fn join(a: i64, b: i64) -> i64 {
+    return a + b
+}
+
+pub fn make_segment(value: i64) -> Segment {
+    return Segment { value: value }
+}
+"#,
+    )
+    .unwrap();
+
+    let publish_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&package)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&archive_out)
+        .output()
+        .unwrap();
+    assert!(
+        publish_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&publish_output.stderr)
+    );
+    fs::copy(
+        archive_out.join("fynn-utils-0.1.0.nomo-package"),
+        &registry_download,
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = {{ package = \"fynn/utils\", version = \"0.1.0\", registry = \"file://{}\" }}\n",
+            registry.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        r#"package app.main
+
+import local_utils.path
+
+fn main() -> void {
+    let total: i64 = join(40, 2)
+    let segment: Segment = make_segment(total)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let cache_version_dir = project.join(".nomo/cache/registry/fynn/utils/0.1.0");
+    let cached_source_exists = fs::read_dir(&cache_version_dir)
+        .unwrap()
+        .any(|entry| entry.unwrap().path().join("source/src/path.nomo").is_file());
+    assert!(cached_source_exists);
+    let generated_c = fs::read_to_string(c_path).unwrap();
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_struct_Segment"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_struct_Segment"));
+
+    let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        resolve_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve_output.stderr)
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(
+        lockfile.contains("source = \"registry+file://"),
+        "{lockfile}"
+    );
+    assert!(lockfile.contains("checksum = \"sha256:"), "{lockfile}");
+
+    let vendor_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("vendor")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        vendor_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&vendor_output.stderr)
+    );
+    assert!(
+        project
+            .join("vendor/fynn/utils/0.1.0/src/path.nomo")
+            .is_file()
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_deps_update_precise_rewrites_registry_lockfile() {
     let root = temp_test_root("deps-update-precise-registry");
     reset_dir(&root);

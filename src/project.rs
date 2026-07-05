@@ -10,7 +10,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::Write;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
 
@@ -770,7 +770,20 @@ fn dependency_module_root(
                 )?
             }
         }
-        DependencySource::Registry { .. } => return Ok(None),
+        DependencySource::Registry { version, registry } => {
+            let Some(dep_root) = resolve_registry_source(
+                base_root,
+                &dependency.alias,
+                &dependency.package,
+                version,
+                registry.as_deref(),
+                offline,
+            )?
+            else {
+                return Ok(None);
+            };
+            dep_root
+        }
     };
     validate_dependency_package(&dep_root, dependency)?;
     Ok(Some(dep_root))
@@ -806,7 +819,21 @@ fn resolved_dependency_module_root(
             };
             dep_root
         }
-        DependencySource::Registry { .. } => return Ok(None),
+        DependencySource::Registry { version, registry } => {
+            let Some(dep_root) = registry_cached_source_root(
+                source_base,
+                &dependency.package,
+                version,
+                registry.as_deref(),
+            )?
+            else {
+                let Some(vendored) = vendored_source_root(source_base, dependency)? else {
+                    return Ok(None);
+                };
+                return Ok(Some(vendored));
+            };
+            dep_root
+        }
     };
     let dep_manifest = parse_manifest_at_root(&dep_root)?;
     let actual_id = format!(
@@ -2235,7 +2262,54 @@ fn resolve_dependencies(
                     child_dependencies,
                 )
             }
-            DependencySource::Registry { .. } => (dependency.source.clone(), None, Vec::new()),
+            DependencySource::Registry { version, registry } => match resolve_registry_source(
+                base_root,
+                &dependency.alias,
+                &dependency.package,
+                version,
+                registry.as_deref(),
+                offline,
+            )? {
+                Some(dep_root) => {
+                    if path_stack.contains(&dep_root) {
+                        return Err(format!(
+                            "cyclic registry dependency involving `{}` at {}",
+                            dependency.package,
+                            dep_root.display()
+                        ));
+                    }
+
+                    path_stack.push(dep_root.clone());
+                    let dep_manifest = parse_manifest_at_root(&dep_root)?;
+                    let actual_id = format!(
+                        "{}/{}",
+                        dep_manifest.package.namespace, dep_manifest.package.name
+                    );
+                    if actual_id != dependency.package {
+                        return Err(format!(
+                            "registry dependency `{}` expected package `{}`, found `{}`",
+                            dependency.alias, dependency.package, actual_id
+                        ));
+                    }
+                    let child_dependencies = resolve_dependencies(
+                        &dep_manifest.dependencies,
+                        &dep_root,
+                        path_stack,
+                        package_sources,
+                        lock_source_base,
+                        git_cache_base,
+                        offline,
+                    )?;
+                    let checksum = package_checksum(&dep_root)?;
+                    path_stack.pop();
+                    (
+                        dependency.source.clone(),
+                        Some(checksum),
+                        child_dependencies,
+                    )
+                }
+                None => (dependency.source.clone(), None, Vec::new()),
+            },
         };
         remember_package_source(package_sources, &dependency.package, &resolved_source)?;
 
@@ -2351,6 +2425,249 @@ fn archive_checksum(bytes: &[u8]) -> String {
 
 fn package_archive_filename(package: &str, version: &str) -> String {
     format!("{}-{}.nomo-package", package.replace('/', "-"), version)
+}
+
+fn resolve_registry_source(
+    base_root: &Path,
+    alias: &str,
+    package: &str,
+    version: &str,
+    registry: Option<&str>,
+    offline: bool,
+) -> Result<Option<PathBuf>, String> {
+    if let Some(source_root) = registry_cached_source_root(base_root, package, version, registry)? {
+        return Ok(Some(source_root));
+    }
+    if offline {
+        return Ok(None);
+    }
+    let Some(registry) = registry else {
+        return Ok(None);
+    };
+    let Some(download_path) = registry_file_download_path(registry, package, version)? else {
+        return Ok(None);
+    };
+    if !download_path.is_file() {
+        return Err(format!(
+            "registry dependency `{alias}` archive is missing at {}",
+            download_path.display()
+        ));
+    }
+    let archive = fs::read(&download_path).map_err(|err| {
+        format!(
+            "failed to read registry dependency `{alias}` archive at {}: {err}",
+            download_path.display()
+        )
+    })?;
+    let cache_root = registry_cache_root(base_root, package, version, Some(registry));
+    fs::create_dir_all(&cache_root).map_err(|err| err.to_string())?;
+    let archive_path = cache_root.join("package.nomo-package");
+    fs::write(&archive_path, &archive).map_err(|err| {
+        format!(
+            "failed to cache registry dependency `{alias}` archive at {}: {err}",
+            archive_path.display()
+        )
+    })?;
+    let source_root = cache_root.join("source");
+    unpack_package_archive(&archive, package, version, &source_root)?;
+    Ok(Some(source_root))
+}
+
+fn registry_cached_source_root(
+    base_root: &Path,
+    package: &str,
+    version: &str,
+    _registry: Option<&str>,
+) -> Result<Option<PathBuf>, String> {
+    let source_root = registry_cache_root(base_root, package, version, _registry).join("source");
+    if !source_root.exists() {
+        return Ok(None);
+    }
+    fs::canonicalize(&source_root).map(Some).map_err(|err| {
+        format!(
+            "failed to resolve cached registry package `{package}` at {}: {err}",
+            source_root.display()
+        )
+    })
+}
+
+fn registry_cache_root(
+    base_root: &Path,
+    package: &str,
+    version: &str,
+    registry: Option<&str>,
+) -> PathBuf {
+    let mut root = base_root.join(".nomo/cache/registry");
+    for segment in package.split('/') {
+        root.push(segment);
+    }
+    root.push(version);
+    root.push(registry_cache_key(registry));
+    root
+}
+
+fn registry_cache_key(registry: Option<&str>) -> String {
+    let Some(registry) = registry else {
+        return "default".to_string();
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(registry.as_bytes());
+    hex_lower(&hasher.finalize())
+}
+
+fn registry_file_download_path(
+    registry: &str,
+    package: &str,
+    version: &str,
+) -> Result<Option<PathBuf>, String> {
+    let Some(root) = registry.strip_prefix("file://") else {
+        return Ok(None);
+    };
+    let mut path = PathBuf::from(root);
+    path.push("api/v1/packages");
+    let (owner, name) = package.split_once('/').ok_or_else(|| {
+        format!("registry package `{package}` must use canonical owner/package form")
+    })?;
+    path.push(owner);
+    path.push(name);
+    path.push(version);
+    path.push("download");
+    Ok(Some(path))
+}
+
+fn unpack_package_archive(
+    archive: &[u8],
+    expected_package: &str,
+    expected_version: &str,
+    target: &Path,
+) -> Result<(), String> {
+    let mut cursor = 0usize;
+    expect_archive_line(archive, &mut cursor, "nomo-package-v1")?;
+    expect_archive_line(archive, &mut cursor, &format!("package {expected_package}"))?;
+    expect_archive_line(archive, &mut cursor, &format!("version {expected_version}"))?;
+    let files_line = read_archive_line(archive, &mut cursor)?;
+    let Some(files_count) = files_line
+        .strip_prefix("files ")
+        .and_then(|count| count.parse::<usize>().ok())
+    else {
+        return Err("package archive is missing file count".to_string());
+    };
+
+    if target.exists() {
+        fs::remove_dir_all(target).map_err(|err| {
+            format!(
+                "failed to replace cached registry package at {}: {err}",
+                target.display()
+            )
+        })?;
+    }
+    fs::create_dir_all(target).map_err(|err| err.to_string())?;
+
+    for _ in 0..files_count {
+        let file_line = read_archive_line(archive, &mut cursor)?;
+        let (relative, length, expected_checksum) = parse_archive_file_header(&file_line)?;
+        let end = cursor
+            .checked_add(length)
+            .ok_or_else(|| "package archive file length overflowed".to_string())?;
+        if end > archive.len() {
+            return Err(format!(
+                "package archive ended before file `{relative}` was complete"
+            ));
+        }
+        let bytes = &archive[cursor..end];
+        let actual_checksum = archive_checksum(bytes);
+        if actual_checksum != expected_checksum {
+            return Err(format!(
+                "checksum mismatch for package archive file `{relative}`: expected {expected_checksum}, found {actual_checksum}"
+            ));
+        }
+        let output = archive_output_path(target, &relative)?;
+        if let Some(parent) = output.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(&output, bytes)
+            .map_err(|err| format!("failed to write {}: {err}", output.display()))?;
+        cursor = end;
+        if archive.get(cursor) != Some(&b'\n') {
+            return Err(format!(
+                "package archive file `{relative}` is missing trailing newline"
+            ));
+        }
+        cursor += 1;
+    }
+    if cursor != archive.len() {
+        return Err("package archive contains trailing data".to_string());
+    }
+    if !target.join("nomo.toml").is_file() || !target.join("src").is_dir() {
+        return Err("package archive must contain nomo.toml and src/".to_string());
+    }
+    Ok(())
+}
+
+fn expect_archive_line(archive: &[u8], cursor: &mut usize, expected: &str) -> Result<(), String> {
+    let actual = read_archive_line(archive, cursor)?;
+    if actual != expected {
+        return Err(format!(
+            "package archive expected `{expected}`, found `{actual}`"
+        ));
+    }
+    Ok(())
+}
+
+fn read_archive_line(archive: &[u8], cursor: &mut usize) -> Result<String, String> {
+    let start = *cursor;
+    let Some(offset) = archive[start..].iter().position(|byte| *byte == b'\n') else {
+        return Err("package archive is truncated".to_string());
+    };
+    let end = start + offset;
+    *cursor = end + 1;
+    String::from_utf8(archive[start..end].to_vec())
+        .map_err(|_| "package archive header is not UTF-8".to_string())
+}
+
+fn parse_archive_file_header(header: &str) -> Result<(String, usize, String), String> {
+    let mut parts = header.split(' ');
+    if parts.next() != Some("file") {
+        return Err(format!(
+            "package archive expected file header, found `{header}`"
+        ));
+    }
+    let relative = parts
+        .next()
+        .ok_or_else(|| "package archive file header is missing path".to_string())?
+        .to_string();
+    let length = parts
+        .next()
+        .and_then(|length| length.parse::<usize>().ok())
+        .ok_or_else(|| format!("package archive file `{relative}` has invalid length"))?;
+    let checksum = parts
+        .next()
+        .ok_or_else(|| format!("package archive file `{relative}` is missing checksum"))?
+        .to_string();
+    if parts.next().is_some() {
+        return Err(format!(
+            "package archive file `{relative}` has malformed header"
+        ));
+    }
+    validate_checksum(&relative, &checksum)?;
+    Ok((relative, length, checksum))
+}
+
+fn archive_output_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
+    let relative_path = Path::new(relative);
+    if relative_path.is_absolute() {
+        return Err(format!(
+            "package archive path `{relative}` must be relative"
+        ));
+    }
+    let mut output = root.to_path_buf();
+    for component in relative_path.components() {
+        match component {
+            Component::Normal(segment) => output.push(segment),
+            _ => return Err(format!("package archive path `{relative}` is not safe")),
+        }
+    }
+    Ok(output)
 }
 
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
@@ -2872,7 +3189,18 @@ fn locked_source_root(
             };
             dep_root
         }
-        DependencySource::Registry { .. } => return Ok(None),
+        DependencySource::Registry { version, registry } => {
+            let Some(dep_root) = registry_cached_source_root(
+                base_root,
+                &dependency.package,
+                version,
+                registry.as_deref(),
+            )?
+            else {
+                return Ok(None);
+            };
+            dep_root
+        }
     };
     let dep_manifest = parse_manifest_at_root(&dep_root)?;
     let actual_id = format!(
@@ -3014,14 +3342,29 @@ fn vendor_dependency(
 ) -> Result<VendorPackage, String> {
     let source = lock_source_string(dependency);
     match &dependency.source {
-        DependencySource::Registry { .. } => Ok(VendorPackage {
-            id: dependency.package.clone(),
-            alias: dependency.alias.clone(),
-            source,
-            path: None,
-            checksum: dependency.checksum.clone(),
-            skipped: Some("registry source archives are not fetched in v0.1".to_string()),
-        }),
+        DependencySource::Registry { .. } => {
+            let Some(source_root) = locked_source_root(source_base, dependency)? else {
+                return Ok(VendorPackage {
+                    id: dependency.package.clone(),
+                    alias: dependency.alias.clone(),
+                    source,
+                    path: None,
+                    checksum: dependency.checksum.clone(),
+                    skipped: Some("registry source archive is not cached".to_string()),
+                });
+            };
+            let relative = vendor_relative_path(dependency);
+            let target = vendor_root.join(&relative);
+            copy_package_source(&source_root, &target)?;
+            Ok(VendorPackage {
+                id: dependency.package.clone(),
+                alias: dependency.alias.clone(),
+                source,
+                path: Some(relative),
+                checksum: dependency.checksum.clone(),
+                skipped: None,
+            })
+        }
         DependencySource::Path { .. } | DependencySource::Git { .. } => {
             let Some(source_root) = locked_source_root(source_base, dependency)? else {
                 return Err(format!(

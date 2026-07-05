@@ -237,17 +237,20 @@ the canonical package ID and source URL. Cache misses clone the repository;
 cache hits run `git fetch --tags --prune origin` before checking out the
 requested `branch`, `tag`, or `rev`. Branch sources also run `git pull
 --ff-only`. The checkout is validated against the expected canonical package ID
-and locked to the actual `HEAD` revision. Resolved `path` and `git` packages include a
-`sha256:` checksum over `nomo.toml` and `src/` contents. Registry sources are
-recorded as leaf sources in v0.1, optionally with an explicit `registry`
-endpoint, but do not include checksums because v0.1 does not fetch registry
-archives. `nomo add` and `nomo remove` edit the registry dependency entries in
-`nomo.toml`; package archive fetching and full version solving are separate
-registry slices. `nomo publish --dry-run` validates the selected package with
-`nomo check`, packages `nomo.toml` plus `src/` into a deterministic
-`.nomo-package` archive, and prints its `sha256:` checksum and byte size. Actual
-registry upload is intentionally not implemented in this slice. A dependency
-must specify exactly one source among `path`, `git`, and `version`.
+and locked to the actual `HEAD` revision. Resolved `path`, `git`, and fetched
+registry packages include a `sha256:` checksum over `nomo.toml` and `src/`
+contents. Registry sources without an explicit endpoint remain leaf lockfile
+entries. Registry sources with a `file://` endpoint read
+`/api/v1/packages/<owner>/<package>/<version>/download`, unpack the
+deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
+provide imported public API to project builds. `nomo add` and `nomo remove` edit
+the registry dependency entries in `nomo.toml`; HTTP registry download, upload,
+and full version solving are separate registry slices. `nomo publish --dry-run`
+validates the selected package with `nomo check`, packages `nomo.toml` plus
+`src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
+checksum and byte size. Actual registry upload is intentionally not implemented
+in this slice. A dependency must specify exactly one source among `path`, `git`,
+and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and

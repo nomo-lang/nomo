@@ -60,6 +60,13 @@ pub struct PublishPackage {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistrySearchResult {
+    pub package: String,
+    pub version: Option<String>,
+    pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyVendorOptions {
     pub dir: PathBuf,
     pub sync: bool,
@@ -474,6 +481,39 @@ pub fn publish_package_archive(
     upload_http_registry_archive(registry, &package.package, &package.version, &archive)
         .map_err(BuildError::Message)?;
     Ok(package)
+}
+
+pub fn search_registry_packages(
+    registry: &str,
+    query: &str,
+) -> Result<Vec<RegistrySearchResult>, String> {
+    if query.trim().is_empty() {
+        return Err("nomo search requires a non-empty query".to_string());
+    }
+    if !registry.starts_with("http://") {
+        return Err(format!(
+            "registry search currently supports only http:// endpoints, got `{registry}`"
+        ));
+    }
+    let request = http_registry_search_request(registry, query)?;
+    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
+        format!(
+            "failed to connect to registry `{}` for search: {err}",
+            request.authority
+        )
+    })?;
+    let request_text = format!(
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
+        request.path, request.authority
+    );
+    stream
+        .write_all(request_text.as_bytes())
+        .map_err(|err| format!("failed to request registry search: {err}"))?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|err| format!("failed to read registry search response: {err}"))?;
+    parse_http_registry_search_response(registry, &response)
 }
 
 pub fn update_project_dependencies(
@@ -2652,12 +2692,42 @@ fn http_registry_upload_request(
     http_registry_api_request(registry, package, version, "")
 }
 
+fn http_registry_search_request(
+    registry: &str,
+    query: &str,
+) -> Result<HttpRegistryRequest, String> {
+    let (host, port, authority, base_path) = http_registry_base(registry)?;
+    Ok(HttpRegistryRequest {
+        host,
+        port,
+        authority,
+        path: format!(
+            "{}/api/v1/packages?query={}",
+            base_path.trim_end_matches('/'),
+            percent_encode_query(query)
+        ),
+    })
+}
+
 fn http_registry_api_request(
     registry: &str,
     package: &str,
     version: &str,
     suffix: &str,
 ) -> Result<HttpRegistryRequest, String> {
+    let (host, port, authority, base_path) = http_registry_base(registry)?;
+    let (owner, name) = package.split_once('/').ok_or_else(|| {
+        format!("registry package `{package}` must use canonical owner/package form")
+    })?;
+    Ok(HttpRegistryRequest {
+        host,
+        port,
+        authority,
+        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}{suffix}"),
+    })
+}
+
+fn http_registry_base(registry: &str) -> Result<(String, u16, String, String), String> {
     let rest = registry
         .strip_prefix("http://")
         .ok_or_else(|| format!("registry endpoint `{registry}` must start with http://"))?;
@@ -2669,16 +2739,12 @@ fn http_registry_api_request(
         return Err("registry endpoint is missing a host".to_string());
     }
     let (host, port) = parse_http_authority(authority)?;
-    let base_path = base_path.trim_end_matches('/');
-    let (owner, name) = package.split_once('/').ok_or_else(|| {
-        format!("registry package `{package}` must use canonical owner/package form")
-    })?;
-    Ok(HttpRegistryRequest {
+    Ok((
         host,
         port,
-        authority: authority.to_string(),
-        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}{suffix}"),
-    })
+        authority.to_string(),
+        base_path.trim_end_matches('/').to_string(),
+    ))
 }
 
 fn parse_http_authority(authority: &str) -> Result<(String, u16), String> {
@@ -2719,6 +2785,66 @@ fn parse_http_registry_response(
     Ok(response[header_end + 4..].to_vec())
 }
 
+fn parse_http_registry_search_response(
+    registry: &str,
+    response: &[u8],
+) -> Result<Vec<RegistrySearchResult>, String> {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Err(format!(
+            "registry `{registry}` returned a malformed search response"
+        ));
+    };
+    let headers = String::from_utf8(response[..header_end].to_vec())
+        .map_err(|_| format!("registry `{registry}` returned non-UTF-8 search headers"))?;
+    let status = headers
+        .lines()
+        .next()
+        .ok_or_else(|| format!("registry `{registry}` returned an empty search response"))?;
+    if !status.starts_with("HTTP/1.1 200 ") && !status.starts_with("HTTP/1.0 200 ") {
+        return Err(format!("registry `{registry}` failed to search: {status}"));
+    }
+    let response: RegistrySearchResponse = serde_json::from_slice(&response[header_end + 4..])
+        .map_err(|err| format!("registry `{registry}` returned invalid search JSON: {err}"))?;
+    let results = match response {
+        RegistrySearchResponse::Items(items) => items,
+        RegistrySearchResponse::Packages { packages } => packages,
+        RegistrySearchResponse::Results { results } => results,
+    };
+    results
+        .into_iter()
+        .map(|item| {
+            validate_package_id(&item.package)?;
+            if let Some(version) = &item.version {
+                validate_version_like("package version", version)?;
+            }
+            Ok(RegistrySearchResult {
+                package: item.package,
+                version: item.version,
+                description: item
+                    .description
+                    .filter(|description| !description.is_empty()),
+            })
+        })
+        .collect()
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(untagged)]
+enum RegistrySearchResponse {
+    Items(Vec<RegistrySearchItem>),
+    Packages { packages: Vec<RegistrySearchItem> },
+    Results { results: Vec<RegistrySearchItem> },
+}
+
+#[derive(Debug, Deserialize)]
+struct RegistrySearchItem {
+    package: String,
+    #[serde(default)]
+    version: Option<String>,
+    #[serde(default)]
+    description: Option<String>,
+}
+
 fn parse_http_registry_upload_response(
     registry: &str,
     package: &str,
@@ -2749,6 +2875,19 @@ fn parse_http_registry_upload_response(
         ));
     }
     Ok(())
+}
+
+fn percent_encode_query(query: &str) -> String {
+    let mut encoded = String::new();
+    for byte in query.bytes() {
+        match byte {
+            b'A'..=b'Z' | b'a'..=b'z' | b'0'..=b'9' | b'-' | b'_' | b'.' | b'~' => {
+                encoded.push(byte as char)
+            }
+            _ => encoded.push_str(&format!("%{byte:02X}")),
+        }
+    }
+    encoded
 }
 
 fn unpack_package_archive(

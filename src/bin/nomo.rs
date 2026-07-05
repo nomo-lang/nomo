@@ -13,8 +13,8 @@ use nomo::project::{
     remove_dependency, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_tests_with_options,
     run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
-    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
-    vendor_workspace_dependencies,
+    search_registry_packages, update_project_dependencies, update_workspace_dependencies,
+    vendor_project_dependencies, vendor_workspace_dependencies,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -291,6 +291,28 @@ fn run() -> Result<(), String> {
             println!("updated {}", manifest.display());
             Ok(())
         }
+        "search" => {
+            let (query, registry) =
+                parse_search_args(args, "usage: nomo search <query> --registry <url>")?;
+            let results = search_registry_packages(&registry, &query)?;
+            if results.is_empty() {
+                println!("no packages found");
+            } else {
+                for result in results {
+                    match (result.version.as_deref(), result.description.as_deref()) {
+                        (Some(version), Some(description)) => {
+                            println!("{} {} - {}", result.package, version, description)
+                        }
+                        (Some(version), None) => println!("{} {}", result.package, version),
+                        (None, Some(description)) => {
+                            println!("{} - {}", result.package, description)
+                        }
+                        (None, None) => println!("{}", result.package),
+                    }
+                }
+            }
+            Ok(())
+        }
         "publish" => {
             let (path, dry_run, registry, output, json) = parse_publish_args(
                 args,
@@ -561,6 +583,36 @@ fn parse_remove_args(args: Vec<String>, usage: &str) -> Result<(PathBuf, String)
         [alias, path] => Ok((PathBuf::from(path), alias.clone())),
         _ => Err(usage.to_string()),
     }
+}
+
+fn parse_search_args(args: Vec<String>, usage: &str) -> Result<(String, String), String> {
+    let mut query = None;
+    let mut registry = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if let Some(value) = arg.strip_prefix("--registry=") {
+            if value.is_empty() {
+                return Err("--registry requires a registry endpoint".to_string());
+            }
+            registry = Some(value.to_string());
+        } else if arg == "--registry" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--registry requires a registry endpoint".to_string());
+            };
+            registry = Some(value.clone());
+        } else if arg.starts_with('-') {
+            return Err(usage.to_string());
+        } else if query.is_none() {
+            query = Some(arg.clone());
+        } else {
+            return Err(usage.to_string());
+        }
+        index += 1;
+    }
+    let query = query.ok_or_else(|| usage.to_string())?;
+    let registry = registry.ok_or_else(|| "nomo search requires --registry <url>".to_string())?;
+    Ok((query, registry))
 }
 
 fn parse_publish_args(
@@ -1183,6 +1235,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

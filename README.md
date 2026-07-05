@@ -54,7 +54,7 @@ nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [-
 nomo clean [path]                 # remove generated build artifacts
 nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
 nomo remove <alias> [path]        # remove a dependency from nomo.toml
-nomo publish [path] --dry-run [--output <dir>] [--json-errors] # validate and build a package archive
+nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors] # validate, package, or upload a package archive
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
@@ -245,11 +245,12 @@ entries. Registry sources with a `file://` or `http://` endpoint read
 deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
 provide imported public API to project builds. `nomo add` and `nomo remove` edit
 the registry dependency entries in `nomo.toml`; HTTPS/TLS registry download,
-upload, auth, search, and full version solving are separate registry slices. `nomo publish --dry-run`
+auth, search, and full version solving are separate registry slices. `nomo publish --dry-run`
 validates the selected package with `nomo check`, packages `nomo.toml` plus
 `src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
-checksum and byte size. Actual registry upload is intentionally not implemented
-in this slice. A dependency must specify exactly one source among `path`, `git`,
+checksum and byte size. `nomo publish --registry <url>` prepares the same
+archive and uploads it with `PUT /api/v1/packages/<owner>/<package>/<version>`
+to an `http://` registry endpoint. A dependency must specify exactly one source among `path`, `git`,
 and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.

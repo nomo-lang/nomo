@@ -459,6 +459,23 @@ pub fn prepare_publish_package(
     })
 }
 
+pub fn publish_package_archive(
+    project: &Project,
+    registry: &str,
+    output_dir: Option<&Path>,
+) -> Result<PublishPackage, BuildError> {
+    let package = prepare_publish_package(project, output_dir)?;
+    let archive = fs::read(&package.archive_path).map_err(|err| {
+        BuildError::Message(format!(
+            "failed to read {} for registry upload: {err}",
+            package.archive_path.display()
+        ))
+    })?;
+    upload_http_registry_archive(registry, &package.package, &package.version, &archive)
+        .map_err(BuildError::Message)?;
+    Ok(package)
+}
+
 pub fn update_project_dependencies(
     project: &Project,
     target: Option<&str>,
@@ -2577,6 +2594,41 @@ fn fetch_http_registry_archive(
     parse_http_registry_response(alias, registry, &response)
 }
 
+fn upload_http_registry_archive(
+    registry: &str,
+    package: &str,
+    version: &str,
+    archive: &[u8],
+) -> Result<(), String> {
+    if !registry.starts_with("http://") {
+        return Err(format!(
+            "registry upload currently supports only http:// endpoints, got `{registry}`"
+        ));
+    }
+    let request = http_registry_upload_request(registry, package, version)?;
+    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
+        format!(
+            "failed to connect to registry `{}` for package `{package}`: {err}",
+            request.authority
+        )
+    })?;
+    let request_text = format!(
+        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        request.path,
+        request.authority,
+        archive.len()
+    );
+    stream
+        .write_all(request_text.as_bytes())
+        .and_then(|_| stream.write_all(archive))
+        .map_err(|err| format!("failed to upload package `{package}`: {err}"))?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|err| format!("failed to read registry upload response for `{package}`: {err}"))?;
+    parse_http_registry_upload_response(registry, package, version, &response)
+}
+
 struct HttpRegistryRequest {
     host: String,
     port: u16,
@@ -2588,6 +2640,23 @@ fn http_registry_request(
     registry: &str,
     package: &str,
     version: &str,
+) -> Result<HttpRegistryRequest, String> {
+    http_registry_api_request(registry, package, version, "/download")
+}
+
+fn http_registry_upload_request(
+    registry: &str,
+    package: &str,
+    version: &str,
+) -> Result<HttpRegistryRequest, String> {
+    http_registry_api_request(registry, package, version, "")
+}
+
+fn http_registry_api_request(
+    registry: &str,
+    package: &str,
+    version: &str,
+    suffix: &str,
 ) -> Result<HttpRegistryRequest, String> {
     let rest = registry
         .strip_prefix("http://")
@@ -2608,7 +2677,7 @@ fn http_registry_request(
         host,
         port,
         authority: authority.to_string(),
-        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}/download"),
+        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}{suffix}"),
     })
 }
 
@@ -2648,6 +2717,38 @@ fn parse_http_registry_response(
         ));
     }
     Ok(response[header_end + 4..].to_vec())
+}
+
+fn parse_http_registry_upload_response(
+    registry: &str,
+    package: &str,
+    version: &str,
+    response: &[u8],
+) -> Result<(), String> {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Err(format!(
+            "registry `{registry}` returned a malformed upload response for `{package}` {version}"
+        ));
+    };
+    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
+        format!("registry `{registry}` returned non-UTF-8 upload headers for `{package}` {version}")
+    })?;
+    let status = headers
+        .lines()
+        .next()
+        .ok_or_else(|| format!("registry `{registry}` returned an empty upload response"))?;
+    if !status.starts_with("HTTP/1.1 200 ")
+        && !status.starts_with("HTTP/1.1 201 ")
+        && !status.starts_with("HTTP/1.1 204 ")
+        && !status.starts_with("HTTP/1.0 200 ")
+        && !status.starts_with("HTTP/1.0 201 ")
+        && !status.starts_with("HTTP/1.0 204 ")
+    {
+        return Err(format!(
+            "registry `{registry}` failed to publish `{package}` {version}: {status}"
+        ));
+    }
+    Ok(())
 }
 
 fn unpack_package_archive(

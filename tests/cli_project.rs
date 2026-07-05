@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] --dry-run [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -2258,8 +2258,8 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
 }
 
 #[test]
-fn nomo_publish_without_dry_run_reports_upload_not_implemented() {
-    let root = temp_test_root("publish-upload-not-implemented");
+fn nomo_publish_without_dry_run_or_registry_reports_required_mode() {
+    let root = temp_test_root("publish-requires-mode");
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
@@ -2283,9 +2283,105 @@ fn nomo_publish_without_dry_run_reports_upload_not_implemented() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("registry upload is not implemented yet"),
+        stderr.contains("nomo publish requires either --dry-run or --registry <url>"),
         "{stderr}"
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_publish_uploads_archive_to_http_registry() {
+    let root = temp_test_root("publish-http-upload");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let out_dir = root.join("packages");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry_addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        let header_end = loop {
+            let read = stream.read(&mut buffer).unwrap();
+            assert!(read > 0, "connection closed before HTTP headers arrived");
+            request.extend_from_slice(&buffer[..read]);
+            if let Some(header_end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                break header_end;
+            }
+        };
+        let headers = String::from_utf8_lossy(&request[..header_end]);
+        assert!(
+            headers.starts_with("PUT /api/v1/packages/fynn/hello/0.1.0 HTTP/1.1\r\n"),
+            "{headers}"
+        );
+        assert!(
+            headers.contains("Content-Type: application/octet-stream\r\n"),
+            "{headers}"
+        );
+        let content_length = headers
+            .lines()
+            .find_map(|line| line.strip_prefix("Content-Length: "))
+            .and_then(|value| value.parse::<usize>().ok())
+            .expect("missing Content-Length");
+        let body_start = header_end + 4;
+        while request.len() - body_start < content_length {
+            let read = stream.read(&mut buffer).unwrap();
+            assert!(read > 0, "connection closed before upload body finished");
+            request.extend_from_slice(&buffer[..read]);
+        }
+        let body = &request[body_start..body_start + content_length];
+        let body_text = String::from_utf8_lossy(body);
+        assert!(body_text.starts_with("nomo-package-v1\n"), "{body_text}");
+        assert!(body_text.contains("package fynn/hello\n"), "{body_text}");
+        assert!(body_text.contains("version 0.1.0\n"), "{body_text}");
+        stream
+            .write_all(b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--registry")
+        .arg(format!("http://{registry_addr}"))
+        .arg("--output")
+        .arg(&out_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.join().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let archive = out_dir.join("fynn-hello-0.1.0.nomo-package");
+    assert!(stdout.contains("published fynn/hello 0.1.0\n"), "{stdout}");
+    assert!(
+        stdout.contains(&format!("archive {}\n", archive.display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("checksum sha256:"), "{stdout}");
+    assert!(stdout.contains("size "), "{stdout}");
+    assert!(
+        stdout.contains(&format!("registry http://{registry_addr}\n")),
+        "{stdout}"
+    );
+    assert!(archive.is_file());
 
     fs::remove_dir_all(&root).unwrap();
 }

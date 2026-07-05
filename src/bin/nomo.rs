@@ -9,11 +9,12 @@ use nomo::project::{
     DependencyVendorOptions, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
     add_registry_dependency, build_project_with_options, check_project, clean_dependency_cache,
     clean_project, create_project, dependency_tree_with_options, discover_project,
-    discover_workspace, prepare_publish_package, project_package_id, remove_dependency,
-    resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
-    run_project_tests_with_options, run_project_with_args_and_diagnostics,
-    run_standalone_script_with_args_and_diagnostics, update_project_dependencies,
-    update_workspace_dependencies, vendor_project_dependencies, vendor_workspace_dependencies,
+    discover_workspace, prepare_publish_package, project_package_id, publish_package_archive,
+    remove_dependency, resolve_project_dependencies_with_options,
+    resolve_workspace_dependencies_with_options, run_project_tests_with_options,
+    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
+    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
+    vendor_workspace_dependencies,
 };
 use nomo::{Diagnostic, format_source};
 use std::env;
@@ -291,26 +292,37 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "publish" => {
-            let (path, dry_run, output, json) = parse_publish_args(
+            let (path, dry_run, registry, output, json) = parse_publish_args(
                 args,
-                "usage: nomo publish [path] --dry-run [--output <dir>] [--json-errors]",
+                "usage: nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]",
             )?;
-            if !dry_run {
-                return Err(
-                    "registry upload is not implemented yet; use `nomo publish --dry-run` to validate and build a package archive"
-                        .to_string(),
-                );
-            }
             let project = discover_project(&path)?;
-            let package = match prepare_publish_package(&project, output.as_deref()) {
-                Ok(package) => package,
-                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                Err(err) => return Err(err.human()),
-            };
-            println!("publish dry-run {} {}", package.package, package.version);
-            println!("archive {}", package.archive_path.display());
-            println!("checksum {}", package.checksum);
-            println!("size {}", package.size);
+            if dry_run {
+                let package = match prepare_publish_package(&project, output.as_deref()) {
+                    Ok(package) => package,
+                    Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                    Err(err) => return Err(err.human()),
+                };
+                println!("publish dry-run {} {}", package.package, package.version);
+                println!("archive {}", package.archive_path.display());
+                println!("checksum {}", package.checksum);
+                println!("size {}", package.size);
+            } else {
+                let registry = registry.ok_or_else(|| {
+                    "nomo publish requires either --dry-run or --registry <url>".to_string()
+                })?;
+                let package = match publish_package_archive(&project, &registry, output.as_deref())
+                {
+                    Ok(package) => package,
+                    Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                    Err(err) => return Err(err.human()),
+                };
+                println!("published {} {}", package.package, package.version);
+                println!("archive {}", package.archive_path.display());
+                println!("checksum {}", package.checksum);
+                println!("size {}", package.size);
+                println!("registry {registry}");
+            }
             Ok(())
         }
         "deps" => {
@@ -554,8 +566,9 @@ fn parse_remove_args(args: Vec<String>, usage: &str) -> Result<(PathBuf, String)
 fn parse_publish_args(
     args: Vec<String>,
     usage: &str,
-) -> Result<(PathBuf, bool, Option<PathBuf>, bool), String> {
+) -> Result<(PathBuf, bool, Option<String>, Option<PathBuf>, bool), String> {
     let mut dry_run = false;
+    let mut registry = None;
     let mut output = None;
     let mut json = false;
     let mut path = None;
@@ -565,6 +578,17 @@ fn parse_publish_args(
             dry_run = true;
         } else if arg == "--json-errors" {
             json = true;
+        } else if let Some(value) = arg.strip_prefix("--registry=") {
+            if value.is_empty() {
+                return Err("--registry requires a URL".to_string());
+            }
+            registry = Some(value.to_string());
+        } else if arg == "--registry" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--registry requires a URL".to_string());
+            };
+            registry = Some(value.clone());
         } else if let Some(value) = arg.strip_prefix("--output=") {
             if value.is_empty() {
                 return Err("--output requires a directory".to_string());
@@ -585,9 +609,15 @@ fn parse_publish_args(
         }
         index += 1;
     }
+    if dry_run && registry.is_some() {
+        return Err(
+            "nomo publish accepts either --dry-run or --registry <url>, not both".to_string(),
+        );
+    }
     Ok((
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         dry_run,
+        registry,
         output,
         json,
     ))
@@ -1153,6 +1183,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] --dry-run [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

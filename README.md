@@ -461,6 +461,7 @@ Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
 pages live under [`docs/diagnostics/`](docs/diagnostics/index.md). User-facing
 docs start at [`docs/index.md`](docs/index.md), including the
+[`standard-library`](docs/standard-library.md) reference and
 [`package-management`](docs/package-management.md) guide for manifests,
 workspaces, lockfiles, vendoring, and offline builds.
 

@@ -516,6 +516,35 @@ pub fn search_registry_packages(
     parse_http_registry_search_response(registry, &response)
 }
 
+pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Result<(), String> {
+    validate_package_id(package)?;
+    validate_version_like("package version", version)?;
+    if !registry.starts_with("http://") {
+        return Err(format!(
+            "registry yank currently supports only http:// endpoints, got `{registry}`"
+        ));
+    }
+    let request = http_registry_yank_request(registry, package, version)?;
+    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
+        format!(
+            "failed to connect to registry `{}` to yank `{package}` {version}: {err}",
+            request.authority
+        )
+    })?;
+    let request_text = format!(
+        "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+        request.path, request.authority
+    );
+    stream
+        .write_all(request_text.as_bytes())
+        .map_err(|err| format!("failed to request yank for `{package}` {version}: {err}"))?;
+    let mut response = Vec::new();
+    stream
+        .read_to_end(&mut response)
+        .map_err(|err| format!("failed to read registry yank response for `{package}`: {err}"))?;
+    parse_http_registry_yank_response(registry, package, version, &response)
+}
+
 pub fn update_project_dependencies(
     project: &Project,
     target: Option<&str>,
@@ -2692,6 +2721,14 @@ fn http_registry_upload_request(
     http_registry_api_request(registry, package, version, "")
 }
 
+fn http_registry_yank_request(
+    registry: &str,
+    package: &str,
+    version: &str,
+) -> Result<HttpRegistryRequest, String> {
+    http_registry_api_request(registry, package, version, "/yank")
+}
+
 fn http_registry_search_request(
     registry: &str,
     query: &str,
@@ -2872,6 +2909,38 @@ fn parse_http_registry_upload_response(
     {
         return Err(format!(
             "registry `{registry}` failed to publish `{package}` {version}: {status}"
+        ));
+    }
+    Ok(())
+}
+
+fn parse_http_registry_yank_response(
+    registry: &str,
+    package: &str,
+    version: &str,
+    response: &[u8],
+) -> Result<(), String> {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Err(format!(
+            "registry `{registry}` returned a malformed yank response for `{package}` {version}"
+        ));
+    };
+    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
+        format!("registry `{registry}` returned non-UTF-8 yank headers for `{package}` {version}")
+    })?;
+    let status = headers
+        .lines()
+        .next()
+        .ok_or_else(|| format!("registry `{registry}` returned an empty yank response"))?;
+    if !status.starts_with("HTTP/1.1 200 ")
+        && !status.starts_with("HTTP/1.1 202 ")
+        && !status.starts_with("HTTP/1.1 204 ")
+        && !status.starts_with("HTTP/1.0 200 ")
+        && !status.starts_with("HTTP/1.0 202 ")
+        && !status.starts_with("HTTP/1.0 204 ")
+    {
+        return Err(format!(
+            "registry `{registry}` failed to yank `{package}` {version}: {status}"
         ));
     }
     Ok(())

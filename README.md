@@ -55,6 +55,7 @@ nomo clean [path]                 # remove generated build artifacts
 nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
 nomo remove <alias> [path]        # remove a dependency from nomo.toml
 nomo search <query> --registry <url> # query an http:// registry package index
+nomo yank <owner/package> <version> --registry <url> # mark a published registry version as yanked
 nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors] # validate, package, or upload a package archive
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
@@ -253,8 +254,11 @@ checksum and byte size. `nomo publish --registry <url>` prepares the same
 archive and uploads it with `PUT /api/v1/packages/<owner>/<package>/<version>`
 to an `http://` registry endpoint. `nomo search <query> --registry <url>` calls
 `GET /api/v1/packages?query=<encoded>` and expects a JSON array of objects with
-`package`, optional `version`, and optional `description`. A dependency must
-specify exactly one source among `path`, `git`, and `version`.
+`package`, optional `version`, and optional `description`. `nomo yank
+<owner/package> <version> --registry <url>` marks a published version as yanked
+with `POST /api/v1/packages/<owner>/<package>/<version>/yank`; yanked versions
+remain buildable from existing lockfiles. A dependency must specify exactly one
+source among `path`, `git`, and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and

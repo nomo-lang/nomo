@@ -541,6 +541,36 @@ pub fn login_registry(registry: &str, token: &str) -> Result<RegistryLogin, Stri
     })
 }
 
+pub fn add_registry_package_owner(registry: &str, package: &str, user: &str) -> Result<(), String> {
+    validate_package_id(package)?;
+    validate_package_segment("registry owner user", user)?;
+    if !registry.starts_with("http://") {
+        return Err(format!(
+            "registry owner management currently supports only http:// endpoints, got `{registry}`"
+        ));
+    }
+    let request = http_registry_owner_add_request(registry, package, user)?;
+    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
+        format!(
+            "failed to connect to registry `{}` to add owner `{user}` for `{package}`: {err}",
+            request.authority
+        )
+    })?;
+    let authorization = registry_authorization_header(registry)?;
+    let request_text = format!(
+        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
+        request.path, request.authority, authorization
+    );
+    stream.write_all(request_text.as_bytes()).map_err(|err| {
+        format!("failed to request owner add for `{package}` user `{user}`: {err}")
+    })?;
+    let mut response = Vec::new();
+    stream.read_to_end(&mut response).map_err(|err| {
+        format!("failed to read registry owner response for `{package}` user `{user}`: {err}")
+    })?;
+    parse_http_registry_owner_add_response(registry, package, user, &response)
+}
+
 pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Result<(), String> {
     validate_package_id(package)?;
     validate_version_like("package version", version)?;
@@ -2758,6 +2788,23 @@ fn http_registry_yank_request(
     http_registry_api_request(registry, package, version, "/yank")
 }
 
+fn http_registry_owner_add_request(
+    registry: &str,
+    package: &str,
+    user: &str,
+) -> Result<HttpRegistryRequest, String> {
+    let (host, port, authority, base_path) = http_registry_base(registry)?;
+    let (owner, name) = package.split_once('/').ok_or_else(|| {
+        format!("registry package `{package}` must use canonical owner/package form")
+    })?;
+    Ok(HttpRegistryRequest {
+        host,
+        port,
+        authority,
+        path: format!("{base_path}/api/v1/packages/{owner}/{name}/owners/{user}"),
+    })
+}
+
 fn http_registry_search_request(
     registry: &str,
     query: &str,
@@ -2970,6 +3017,40 @@ fn parse_http_registry_yank_response(
     {
         return Err(format!(
             "registry `{registry}` failed to yank `{package}` {version}: {status}"
+        ));
+    }
+    Ok(())
+}
+
+fn parse_http_registry_owner_add_response(
+    registry: &str,
+    package: &str,
+    user: &str,
+    response: &[u8],
+) -> Result<(), String> {
+    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+        return Err(format!(
+            "registry `{registry}` returned a malformed owner response for `{package}` user `{user}`"
+        ));
+    };
+    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
+        format!(
+            "registry `{registry}` returned non-UTF-8 owner headers for `{package}` user `{user}`"
+        )
+    })?;
+    let status = headers
+        .lines()
+        .next()
+        .ok_or_else(|| format!("registry `{registry}` returned an empty owner response"))?;
+    if !status.starts_with("HTTP/1.1 200 ")
+        && !status.starts_with("HTTP/1.1 201 ")
+        && !status.starts_with("HTTP/1.1 204 ")
+        && !status.starts_with("HTTP/1.0 200 ")
+        && !status.starts_with("HTTP/1.0 201 ")
+        && !status.starts_with("HTTP/1.0 204 ")
+    {
+        return Err(format!(
+            "registry `{registry}` failed to add owner `{user}` for `{package}`: {status}"
         ));
     }
     Ok(())

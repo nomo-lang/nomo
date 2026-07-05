@@ -2420,6 +2420,16 @@ mod tests {
     }
 
     #[test]
+    fn rejects_try_keyword_style_propagation() {
+        let source = "package app.main\n\nfn parse() -> Result<i64, string> {\n    return Ok(1)\n}\n\nfn main() -> Result<i64, string> {\n    return try parse()?\n}\n";
+        let tokens = lex(Path::new("main.nomo"), source).unwrap();
+        let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+        assert_eq!(err.code, "E0211");
+        assert!(err.message.contains("expected newline after statement"));
+    }
+
+    #[test]
     fn parses_float_literal_and_cast_expression() {
         let source = "package app.main\n\nfn ratio(age: i64) -> f64 {\n    return age as f64\n}\n\nfn main() -> void {\n    let pi: f64 = 3.14\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();

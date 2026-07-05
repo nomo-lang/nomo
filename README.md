@@ -299,9 +299,10 @@ The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
 early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 `None` early from the current `Option`-returning function.
-There is no `try` keyword or statement syntax in v0.1; postfix `?` is the
-only error/absence propagation syntax. Cross-layer `Result` error conversion is
-written explicitly as `result.map_err(named_converter)?`.
+There is no `try` keyword or statement syntax in v0.1; `try` remains an ordinary
+identifier, and postfix `?` is the only error/absence propagation syntax.
+Cross-layer `Result` error conversion is written explicitly as
+`result.map_err(named_converter)?`.
 
 `std.option` provides carrier helpers as module functions, specific imports, and
 value methods: `is_some`, `is_none`, `unwrap_or`, `map`, and `and_then`.

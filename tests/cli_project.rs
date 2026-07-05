@@ -2761,6 +2761,17 @@ fn nomo_locked_flags_require_and_validate_lockfile() {
     let stderr = String::from_utf8_lossy(&missing_build.stderr);
     assert!(stderr.contains("nomo.lock is required"), "{stderr}");
 
+    let missing_frozen_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--frozen")
+        .arg("--emit-c")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(!missing_frozen_build.status.success());
+    let stderr = String::from_utf8_lossy(&missing_frozen_build.stderr);
+    assert!(stderr.contains("nomo.lock is required"), "{stderr}");
+
     let missing_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("deps")
         .arg("tree")
@@ -2801,6 +2812,40 @@ fn nomo_locked_flags_require_and_validate_lockfile() {
         format!("built {}\n", app.join("build/c/main.c").display())
     );
 
+    let frozen_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg("--frozen")
+        .arg("--emit-c")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        frozen_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen_build.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&frozen_build.stdout),
+        format!("built {}\n", app.join("build/c/main.c").display())
+    );
+
+    let frozen_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--frozen")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        frozen_tree.status.success(),
+        "{}",
+        String::from_utf8_lossy(&frozen_tree.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&frozen_tree.stdout),
+        "fynn/app 0.1.0\n+-- json -> nomo-lang/json 0.1.0 (registry)\n"
+    );
+
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.2.0\" }\n",
@@ -2816,6 +2861,17 @@ fn nomo_locked_flags_require_and_validate_lockfile() {
         .unwrap();
     assert!(!stale_resolve.status.success());
     let stderr = String::from_utf8_lossy(&stale_resolve.stderr);
+    assert!(stderr.contains("nomo.lock is out of date"), "{stderr}");
+
+    let stale_frozen_resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--frozen")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(!stale_frozen_resolve.status.success());
+    let stderr = String::from_utf8_lossy(&stale_frozen_resolve.stderr);
     assert!(stderr.contains("nomo.lock is out of date"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();

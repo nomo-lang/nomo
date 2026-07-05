@@ -71,6 +71,39 @@ fn examples_check_and_run() {
     }
 }
 
+#[test]
+fn examples_tree_is_fmt_checked() {
+    let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("fmt")
+        .arg("--check")
+        .arg(&examples_dir)
+        .output()
+        .unwrap_or_else(|err| {
+            panic!(
+                "failed to run nomo fmt --check {}: {err}",
+                examples_dir.display()
+            )
+        });
+
+    assert!(
+        output.status.success(),
+        "nomo fmt --check failed for {}\nstdout:\n{}\nstderr:\n{}",
+        examples_dir.display(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "all files already formatted\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+}
+
 fn example_projects() -> Vec<PathBuf> {
     let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
     let mut examples = fs::read_dir(&examples_dir)

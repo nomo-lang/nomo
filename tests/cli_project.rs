@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -2257,6 +2257,52 @@ fn nomo_search_requires_registry() {
 }
 
 #[test]
+fn nomo_login_writes_registry_credentials() {
+    let root = temp_test_root("registry-login");
+    reset_dir(&root);
+    let nomo_home = root.join("nomo-home");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg("http://packages.example.test/")
+        .arg("--token")
+        .arg("secret-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("logged in http://packages.example.test\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!(
+            "credentials {}\n",
+            nomo_home.join("credentials.toml").display()
+        )),
+        "{stdout}"
+    );
+    let credentials = fs::read_to_string(nomo_home.join("credentials.toml")).unwrap();
+    assert!(
+        credentials.contains("endpoint = \"http://packages.example.test\""),
+        "{credentials}"
+    );
+    assert!(
+        credentials.contains("token = \"secret-token\""),
+        "{credentials}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_yank_marks_http_registry_package_version() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let registry_addr = listener.local_addr().unwrap();
@@ -2304,6 +2350,71 @@ fn nomo_yank_marks_http_registry_package_version() {
         stdout.contains(&format!("registry http://{registry_addr}\n")),
         "{stdout}"
     );
+}
+
+#[test]
+fn nomo_yank_uses_logged_in_registry_token() {
+    let root = temp_test_root("registry-yank-auth");
+    reset_dir(&root);
+    let nomo_home = root.join("nomo-home");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry_addr = listener.local_addr().unwrap();
+    let registry = format!("http://{registry_addr}");
+
+    let login = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--token")
+        .arg("secret-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        login.status.success(),
+        "{}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            assert!(read > 0, "connection closed before HTTP headers arrived");
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8_lossy(&request);
+        assert!(
+            request.contains("Authorization: Bearer secret-token\r\n"),
+            "{request}"
+        );
+        stream
+            .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("yank")
+        .arg("fynn/hello")
+        .arg("0.1.0")
+        .arg("--registry")
+        .arg(&registry)
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
@@ -2435,6 +2546,7 @@ fn nomo_publish_uploads_archive_to_http_registry() {
     reset_dir(&root);
     let project = root.join("hello");
     let out_dir = root.join("packages");
+    let nomo_home = root.join("nomo-home");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("nomo.toml"),
@@ -2449,6 +2561,22 @@ fn nomo_publish_uploads_archive_to_http_registry() {
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let registry_addr = listener.local_addr().unwrap();
+    let registry = format!("http://{registry_addr}");
+    let login = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--token")
+        .arg("publish-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        login.status.success(),
+        "{}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
     let server = thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
         let mut request = Vec::new();
@@ -2468,6 +2596,10 @@ fn nomo_publish_uploads_archive_to_http_registry() {
         );
         assert!(
             headers.contains("Content-Type: application/octet-stream\r\n"),
+            "{headers}"
+        );
+        assert!(
+            headers.contains("Authorization: Bearer publish-token\r\n"),
             "{headers}"
         );
         let content_length = headers
@@ -2495,9 +2627,10 @@ fn nomo_publish_uploads_archive_to_http_registry() {
         .arg("publish")
         .arg(&project)
         .arg("--registry")
-        .arg(format!("http://{registry_addr}"))
+        .arg(&registry)
         .arg("--output")
         .arg(&out_dir)
+        .env("NOMO_HOME", &nomo_home)
         .output()
         .unwrap();
 
@@ -2517,7 +2650,7 @@ fn nomo_publish_uploads_archive_to_http_registry() {
     assert!(stdout.contains("checksum sha256:"), "{stdout}");
     assert!(stdout.contains("size "), "{stdout}");
     assert!(
-        stdout.contains(&format!("registry http://{registry_addr}\n")),
+        stdout.contains(&format!("registry {registry}\n")),
         "{stdout}"
     );
     assert!(archive.is_file());

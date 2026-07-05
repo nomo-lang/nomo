@@ -7,6 +7,7 @@ use crate::{lexer, parser};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
+use std::env;
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
 use std::io::{Read, Write};
@@ -64,6 +65,12 @@ pub struct RegistrySearchResult {
     pub package: String,
     pub version: Option<String>,
     pub description: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RegistryLogin {
+    pub credentials_path: PathBuf,
+    pub registry: String,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -516,6 +523,24 @@ pub fn search_registry_packages(
     parse_http_registry_search_response(registry, &response)
 }
 
+pub fn login_registry(registry: &str, token: &str) -> Result<RegistryLogin, String> {
+    if !registry.starts_with("http://") {
+        return Err(format!(
+            "registry login currently supports only http:// endpoints, got `{registry}`"
+        ));
+    }
+    validate_registry_token(token)?;
+    let endpoint = canonical_registry_endpoint(registry);
+    let credentials_path = registry_credentials_path()?;
+    let mut document = read_registry_credentials(&credentials_path)?;
+    upsert_registry_credential(&mut document, &endpoint, token);
+    write_registry_credentials(&credentials_path, &document)?;
+    Ok(RegistryLogin {
+        credentials_path,
+        registry: endpoint,
+    })
+}
+
 pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Result<(), String> {
     validate_package_id(package)?;
     validate_version_like("package version", version)?;
@@ -531,9 +556,10 @@ pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Re
             request.authority
         )
     })?;
+    let authorization = registry_authorization_header(registry)?;
     let request_text = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
-        request.path, request.authority
+        "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
+        request.path, request.authority, authorization
     );
     stream
         .write_all(request_text.as_bytes())
@@ -2649,9 +2675,10 @@ fn fetch_http_registry_archive(
             request.authority
         )
     })?;
+    let authorization = registry_authorization_header(registry)?;
     let request_text = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nAccept: application/octet-stream\r\nConnection: close\r\n\r\n",
-        request.path, request.authority
+        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Accept: application/octet-stream\r\nConnection: close\r\n\r\n",
+        request.path, request.authority, authorization
     );
     stream
         .write_all(request_text.as_bytes())
@@ -2681,10 +2708,12 @@ fn upload_http_registry_archive(
             request.authority
         )
     })?;
+    let authorization = registry_authorization_header(registry)?;
     let request_text = format!(
-        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nContent-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
         request.path,
         request.authority,
+        authorization,
         archive.len()
     );
     stream
@@ -2942,6 +2971,127 @@ fn parse_http_registry_yank_response(
         return Err(format!(
             "registry `{registry}` failed to yank `{package}` {version}: {status}"
         ));
+    }
+    Ok(())
+}
+
+#[derive(Debug, Default, Deserialize, Serialize)]
+struct RegistryCredentialsDocument {
+    #[serde(default)]
+    registry: Vec<RegistryCredentialEntry>,
+}
+
+#[derive(Debug, Clone, Deserialize, Serialize)]
+struct RegistryCredentialEntry {
+    endpoint: String,
+    token: String,
+}
+
+fn registry_authorization_header(registry: &str) -> Result<String, String> {
+    let Some(token) = registry_token(registry)? else {
+        return Ok(String::new());
+    };
+    Ok(format!("Authorization: Bearer {token}\r\n"))
+}
+
+fn registry_token(registry: &str) -> Result<Option<String>, String> {
+    let credentials_path = registry_credentials_path()?;
+    if !credentials_path.is_file() {
+        return Ok(None);
+    }
+    let endpoint = canonical_registry_endpoint(registry);
+    let document = read_registry_credentials(&credentials_path)?;
+    Ok(document
+        .registry
+        .into_iter()
+        .find(|entry| canonical_registry_endpoint(&entry.endpoint) == endpoint)
+        .map(|entry| entry.token))
+}
+
+fn read_registry_credentials(path: &Path) -> Result<RegistryCredentialsDocument, String> {
+    if !path.is_file() {
+        return Ok(RegistryCredentialsDocument::default());
+    }
+    let text = fs::read_to_string(path).map_err(|err| {
+        format!(
+            "failed to read registry credentials at {}: {err}",
+            path.display()
+        )
+    })?;
+    toml::from_str(&text).map_err(|err| {
+        format!(
+            "failed to parse registry credentials at {}: {err}",
+            path.display()
+        )
+    })
+}
+
+fn write_registry_credentials(
+    path: &Path,
+    document: &RegistryCredentialsDocument,
+) -> Result<(), String> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| {
+            format!(
+                "failed to create registry credentials directory {}: {err}",
+                parent.display()
+            )
+        })?;
+    }
+    let mut text = toml::to_string_pretty(document)
+        .map_err(|err| format!("failed to render registry credentials: {err}"))?;
+    if !text.ends_with('\n') {
+        text.push('\n');
+    }
+    fs::write(path, text).map_err(|err| {
+        format!(
+            "failed to write registry credentials at {}: {err}",
+            path.display()
+        )
+    })
+}
+
+fn upsert_registry_credential(
+    document: &mut RegistryCredentialsDocument,
+    endpoint: &str,
+    token: &str,
+) {
+    if let Some(entry) = document
+        .registry
+        .iter_mut()
+        .find(|entry| canonical_registry_endpoint(&entry.endpoint) == endpoint)
+    {
+        entry.endpoint = endpoint.to_string();
+        entry.token = token.to_string();
+        return;
+    }
+    document.registry.push(RegistryCredentialEntry {
+        endpoint: endpoint.to_string(),
+        token: token.to_string(),
+    });
+}
+
+fn registry_credentials_path() -> Result<PathBuf, String> {
+    let root = if let Some(value) = env::var_os("NOMO_HOME") {
+        PathBuf::from(value)
+    } else if let Some(value) = env::var_os("HOME") {
+        PathBuf::from(value).join(".nomo")
+    } else {
+        return Err("NOMO_HOME or HOME must be set to store registry credentials".to_string());
+    };
+    Ok(root.join("credentials.toml"))
+}
+
+fn canonical_registry_endpoint(registry: &str) -> String {
+    registry.trim_end_matches('/').to_string()
+}
+
+fn validate_registry_token(token: &str) -> Result<(), String> {
+    if token.is_empty() {
+        return Err("registry token cannot be empty".to_string());
+    }
+    if token.contains('\r') || token.contains('\n') {
+        return Err("registry token cannot contain newlines".to_string());
     }
     Ok(())
 }

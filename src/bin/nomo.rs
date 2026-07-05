@@ -9,8 +9,8 @@ use nomo::project::{
     DependencyVendorOptions, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
     add_registry_dependency, build_project_with_options, check_project, clean_dependency_cache,
     clean_project, create_project, dependency_tree_with_options, discover_project,
-    discover_workspace, prepare_publish_package, project_package_id, publish_package_archive,
-    remove_dependency, resolve_project_dependencies_with_options,
+    discover_workspace, login_registry, prepare_publish_package, project_package_id,
+    publish_package_archive, remove_dependency, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_tests_with_options,
     run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
     search_registry_packages, update_project_dependencies, update_workspace_dependencies,
@@ -272,6 +272,14 @@ fn run() -> Result<(), String> {
             let project = discover_project(&path)?;
             let cleaned = clean_project(&project)?;
             println!("cleaned {}", cleaned.display());
+            Ok(())
+        }
+        "login" => {
+            let (registry, token) =
+                parse_login_args(args, "usage: nomo login --registry <url> --token <token>")?;
+            let login = login_registry(&registry, &token)?;
+            println!("logged in {}", login.registry);
+            println!("credentials {}", login.credentials_path.display());
             Ok(())
         }
         "add" => {
@@ -623,6 +631,43 @@ fn parse_search_args(args: Vec<String>, usage: &str) -> Result<(String, String),
     let query = query.ok_or_else(|| usage.to_string())?;
     let registry = registry.ok_or_else(|| "nomo search requires --registry <url>".to_string())?;
     Ok((query, registry))
+}
+
+fn parse_login_args(args: Vec<String>, usage: &str) -> Result<(String, String), String> {
+    let mut registry = None;
+    let mut token = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if let Some(value) = arg.strip_prefix("--registry=") {
+            if value.is_empty() {
+                return Err("--registry requires a registry endpoint".to_string());
+            }
+            registry = Some(value.to_string());
+        } else if arg == "--registry" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--registry requires a registry endpoint".to_string());
+            };
+            registry = Some(value.clone());
+        } else if let Some(value) = arg.strip_prefix("--token=") {
+            if value.is_empty() {
+                return Err("--token requires a registry token".to_string());
+            }
+            token = Some(value.to_string());
+        } else if arg == "--token" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--token requires a registry token".to_string());
+            };
+            token = Some(value.clone());
+        } else {
+            return Err(usage.to_string());
+        }
+        index += 1;
+    }
+    let registry = registry.ok_or_else(|| "nomo login requires --registry <url>".to_string())?;
+    let token = token.ok_or_else(|| "nomo login requires --token <token>".to_string())?;
+    Ok((registry, token))
 }
 
 fn parse_yank_args(args: Vec<String>, usage: &str) -> Result<(String, String, String), String> {
@@ -1275,6 +1320,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

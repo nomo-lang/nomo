@@ -1434,6 +1434,19 @@ mod tests {
     }
 
     #[test]
+    fn formats_try_identifier_and_question_propagation() {
+        let source = "package app.main\n\nfn try()->Result<string,string>{\nreturn Ok(\"value\")\n}\n\nfn compute()->Result<string,string>{\nlet value:string=try()?\ndefer cleanup(try()?)\nreturn Ok(try()?)\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+        let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
+
+        assert_eq!(formatted, twice);
+        assert_eq!(
+            formatted,
+            "package app.main\n\nfn try() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nfn compute() -> Result<string, string> {\n    let value: string = try()?\n    defer cleanup(try()?)\n    return Ok(try()?)\n}\n"
+        );
+    }
+
+    #[test]
     fn formats_compound_assignment_operators() {
         let source = "package app.main\n\nfn main() -> void {\nlet mut value:i64=1\nvalue+=2\nvalue-=1\nvalue*=3\nvalue/=2\nvalue%=2\nvalue<<=1\nvalue>>=1\nvalue&=6\nvalue^=3\nvalue|=8\nvalue&^=1\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();

@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] --dry-run [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -2177,6 +2177,112 @@ fn nomo_add_rejects_duplicate_dependency_alias() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("dependency `json` already exists"),
+        "{stderr}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
+    let root = temp_test_root("publish-dry-run");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let out_dir = root.join("packages");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/util.nomo"),
+        "package app.util\n\npub fn answer() -> i64 {\n    return 42\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&out_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let archive = out_dir.join("fynn-hello-0.1.0.nomo-package");
+    assert!(
+        stdout.contains("publish dry-run fynn/hello 0.1.0\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("archive {}\n", archive.display())),
+        "{stdout}"
+    );
+    assert!(stdout.contains("checksum sha256:"), "{stdout}");
+    assert!(stdout.contains("size "), "{stdout}");
+    assert!(archive.is_file());
+    let archive_text = fs::read_to_string(&archive).unwrap();
+    assert!(
+        archive_text.starts_with("nomo-package-v1\n"),
+        "{archive_text}"
+    );
+    assert!(
+        archive_text.contains("package fynn/hello\n"),
+        "{archive_text}"
+    );
+    assert!(archive_text.contains("version 0.1.0\n"), "{archive_text}");
+    assert!(archive_text.contains("file nomo.toml "), "{archive_text}");
+    assert!(
+        archive_text.contains("file src/main.nomo "),
+        "{archive_text}"
+    );
+    assert!(
+        archive_text.contains("file src/util.nomo "),
+        "{archive_text}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_publish_without_dry_run_reports_upload_not_implemented() {
+    let root = temp_test_root("publish-upload-not-implemented");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("registry upload is not implemented yet"),
         "{stderr}"
     );
 

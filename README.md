@@ -54,6 +54,7 @@ nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [-
 nomo clean [path]                 # remove generated build artifacts
 nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
 nomo remove <alias> [path]        # remove a dependency from nomo.toml
+nomo publish [path] --dry-run [--output <dir>] [--json-errors] # validate and build a package archive
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
@@ -241,9 +242,12 @@ and locked to the actual `HEAD` revision. Resolved `path` and `git` packages inc
 recorded as leaf sources in v0.1, optionally with an explicit `registry`
 endpoint, but do not include checksums because v0.1 does not fetch registry
 archives. `nomo add` and `nomo remove` edit the registry dependency entries in
-`nomo.toml`; package archive fetching, publishing, and full version solving are
-separate registry slices. A dependency must specify exactly one source among
-`path`, `git`, and `version`.
+`nomo.toml`; package archive fetching and full version solving are separate
+registry slices. `nomo publish --dry-run` validates the selected package with
+`nomo check`, packages `nomo.toml` plus `src/` into a deterministic
+`.nomo-package` archive, and prints its `sha256:` checksum and byte size. Actual
+registry upload is intentionally not implemented in this slice. A dependency
+must specify exactly one source among `path`, `git`, and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and

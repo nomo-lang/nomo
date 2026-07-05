@@ -9,6 +9,7 @@ use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::hash::{DefaultHasher, Hash, Hasher};
+use std::io::Write;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::Instant;
@@ -46,6 +47,15 @@ pub struct DependencyAddSpec {
     pub package: String,
     pub version: String,
     pub registry: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct PublishPackage {
+    pub package: String,
+    pub version: String,
+    pub archive_path: PathBuf,
+    pub checksum: String,
+    pub size: usize,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -404,6 +414,48 @@ pub fn remove_dependency(project: &Project, alias: &str) -> Result<PathBuf, Stri
 
     parse_manifest_at_root(&project.root)?;
     Ok(manifest_path)
+}
+
+pub fn prepare_publish_package(
+    project: &Project,
+    output_dir: Option<&Path>,
+) -> Result<PublishPackage, BuildError> {
+    let manifest_path = project.root.join("nomo.toml");
+    if !manifest_path.is_file() {
+        return Err(BuildError::Message(format!(
+            "package is missing {}",
+            manifest_path.display()
+        )));
+    }
+    let src = project.root.join("src");
+    if !src.is_dir() {
+        return Err(BuildError::Message(format!(
+            "package is missing {}",
+            src.display()
+        )));
+    }
+
+    check_project(project).map_err(BuildError::Diagnostic)?;
+    let manifest = parse_manifest_at_root(&project.root).map_err(BuildError::Message)?;
+    let archive = build_package_archive(&project.root, &manifest).map_err(BuildError::Message)?;
+    let checksum = archive_checksum(&archive);
+    let package = format!("{}/{}", manifest.package.namespace, manifest.package.name);
+    let version = manifest.package.version;
+    let output_dir = output_dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| project.root.join("build/package"));
+    fs::create_dir_all(&output_dir).map_err(|err| BuildError::Message(err.to_string()))?;
+    let archive_path = output_dir.join(package_archive_filename(&package, &version));
+    fs::write(&archive_path, &archive).map_err(|err| {
+        BuildError::Message(format!("failed to write {}: {err}", archive_path.display()))
+    })?;
+    Ok(PublishPackage {
+        package,
+        version,
+        archive_path,
+        checksum,
+        size: archive.len(),
+    })
 }
 
 pub fn update_project_dependencies(
@@ -2225,6 +2277,80 @@ fn package_checksum(root: &Path) -> Result<String, String> {
         hasher.update(b"\0");
     }
     Ok(format!("sha256:{}", hex_lower(&hasher.finalize())))
+}
+
+fn build_package_archive(root: &Path, manifest: &Manifest) -> Result<Vec<u8>, String> {
+    let mut files = package_source_files(root)?;
+    files.sort();
+
+    let mut archive = Vec::new();
+    writeln!(&mut archive, "nomo-package-v1").expect("write to Vec cannot fail");
+    writeln!(
+        &mut archive,
+        "package {}/{}",
+        manifest.package.namespace, manifest.package.name
+    )
+    .expect("write to Vec cannot fail");
+    writeln!(&mut archive, "version {}", manifest.package.version)
+        .expect("write to Vec cannot fail");
+    writeln!(&mut archive, "files {}", files.len()).expect("write to Vec cannot fail");
+
+    for file in files {
+        let relative = file
+            .strip_prefix(root)
+            .map_err(|err| err.to_string())?
+            .to_string_lossy()
+            .replace('\\', "/");
+        if relative.contains('\n') || relative.contains('\0') {
+            return Err(format!("package file path `{relative}` is not publishable"));
+        }
+        let bytes = fs::read(&file)
+            .map_err(|err| format!("failed to read {} for archive: {err}", file.display()))?;
+        let file_checksum = archive_checksum(&bytes);
+        writeln!(
+            &mut archive,
+            "file {} {} {}",
+            relative,
+            bytes.len(),
+            file_checksum
+        )
+        .expect("write to Vec cannot fail");
+        archive.extend_from_slice(&bytes);
+        archive.push(b'\n');
+    }
+
+    Ok(archive)
+}
+
+fn package_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let mut files = Vec::new();
+    let manifest = root.join("nomo.toml");
+    if !manifest.is_file() {
+        return Err(format!("package is missing {}", manifest.display()));
+    }
+    files.push(manifest);
+    let src = root.join("src");
+    if !src.is_dir() {
+        return Err(format!("package is missing {}", src.display()));
+    }
+    collect_source_files(&src, &mut files)?;
+    if files.len() == 1 {
+        return Err(format!(
+            "package source directory is empty: {}",
+            src.display()
+        ));
+    }
+    Ok(files)
+}
+
+fn archive_checksum(bytes: &[u8]) -> String {
+    let mut hasher = Sha256::new();
+    hasher.update(bytes);
+    format!("sha256:{}", hex_lower(&hasher.finalize()))
+}
+
+fn package_archive_filename(package: &str, version: &str) -> String {
+    format!("{}-{}.nomo-package", package.replace('/', "-"), version)
 }
 
 fn collect_source_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {

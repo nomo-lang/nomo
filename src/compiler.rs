@@ -17,6 +17,7 @@ const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 const BUILTIN_FFI_PUTS_EXPR: &str = "__nomo_ffi_puts";
+const EXTERN_CALL_PREFIX: &str = "__nomo_extern::";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
@@ -805,6 +806,7 @@ struct FunctionSignature {
     type_params: Vec<String>,
     params: Vec<ParamSignature>,
     return_type: ValueType,
+    extern_symbol: Option<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -1281,6 +1283,9 @@ fn lower_program(
             function_signature(path, function, &struct_map, &enum_map)?,
         );
     }
+    let extern_call_names =
+        collect_extern_signatures(path, &ast, &struct_map, &enum_map, &mut signatures)?;
+    validate_extern_calls_are_unsafe(path, &ast, &extern_call_names)?;
     let local_struct_names = ast
         .structs
         .iter()
@@ -4583,7 +4588,371 @@ fn function_signature(
         type_params: function.type_params.clone(),
         params,
         return_type,
+        extern_symbol: None,
     })
+}
+
+fn collect_extern_signatures(
+    path: &Path,
+    ast: &SourceFile,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    signatures: &mut HashMap<String, FunctionSignature>,
+) -> Result<HashSet<String>, Diagnostic> {
+    let mut extern_names = HashSet::new();
+    for block in &ast.extern_blocks {
+        if block.abi != "C" {
+            return Err(Diagnostic::new(
+                "E1511",
+                "v0.1 only supports extern \"C\" blocks",
+                path,
+                block.span.line,
+                block.span.column,
+                block.span.length,
+                &block.span.text,
+            ));
+        }
+        for function in &block.functions {
+            if !extern_names.insert(function.name.clone())
+                || signatures.contains_key(&function.name)
+            {
+                return Err(Diagnostic::new(
+                    "E0304",
+                    format!("function `{}` is already defined", function.name),
+                    path,
+                    function.span.line,
+                    function.span.column,
+                    function.span.length,
+                    &function.span.text,
+                ));
+            }
+            if function.name == "puts" {
+                continue;
+            }
+            signatures.insert(
+                function.name.clone(),
+                extern_function_signature(path, function, structs, enums)?,
+            );
+        }
+    }
+    Ok(extern_names)
+}
+
+fn extern_function_signature(
+    path: &Path,
+    function: &AstFunctionSignature,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<FunctionSignature, Diagnostic> {
+    if !function.type_params.is_empty() {
+        return Err(Diagnostic::new(
+            "E1519",
+            "extern \"C\" functions cannot be generic in v0.1",
+            path,
+            function.span.line,
+            function.span.column,
+            function.span.length,
+            &function.span.text,
+        ));
+    }
+    let struct_names = structs
+        .values()
+        .map(|item| (item.name.clone(), item.type_params.len()))
+        .collect::<Vec<_>>();
+    let enum_names = enums
+        .values()
+        .map(|item| (item.name.clone(), item.type_params.len()))
+        .collect::<Vec<_>>();
+    let params = function
+        .params
+        .iter()
+        .map(|param| {
+            if param.mutable {
+                return Err(Diagnostic::new(
+                    "E1519",
+                    "extern \"C\" function parameters cannot be `mut` in v0.1",
+                    path,
+                    function.span.line,
+                    function.span.column,
+                    function.span.length,
+                    &function.span.text,
+                ));
+            }
+            let value_type = parse_value_type_with_names(
+                &param.type_ref,
+                &struct_names,
+                &enum_names,
+                &function.type_params,
+            )
+            .ok_or_else(|| {
+                unsupported_type_diagnostic(
+                    path,
+                    &function.span,
+                    &param.type_ref,
+                    "unsupported extern parameter type in v0.1 current implementation",
+                    &struct_names,
+                    &enum_names,
+                )
+            })?;
+            ensure_supported_extern_type(path, &function.span, &value_type, false)?;
+            Ok(ParamSignature {
+                value_type,
+                mutable: false,
+            })
+        })
+        .collect::<Result<Vec<_>, Diagnostic>>()?;
+    let return_type = parse_value_type_with_names(
+        &function.return_type,
+        &struct_names,
+        &enum_names,
+        &function.type_params,
+    )
+    .ok_or_else(|| {
+        unsupported_type_diagnostic(
+            path,
+            &function.span,
+            &function.return_type,
+            "unsupported extern return type in v0.1 current implementation",
+            &struct_names,
+            &enum_names,
+        )
+    })?;
+    ensure_supported_extern_type(path, &function.span, &return_type, true)?;
+    Ok(FunctionSignature {
+        type_params: Vec::new(),
+        params,
+        return_type,
+        extern_symbol: Some(function.name.clone()),
+    })
+}
+
+fn ensure_supported_extern_type(
+    path: &Path,
+    span: &Span,
+    value_type: &ValueType,
+    allow_void: bool,
+) -> Result<(), Diagnostic> {
+    let supported = matches!(
+        value_type,
+        ValueType::Int
+            | ValueType::I32
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::Float
+            | ValueType::Bool
+            | ValueType::Char
+    ) || (allow_void && value_type == &ValueType::Void);
+    if supported {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(
+            "E1519",
+            format!(
+                "extern \"C\" type `{}` is not supported; v0.1 supports primitive integer, float, bool, char{}",
+                value_type.name(),
+                if allow_void {
+                    ", and void return types"
+                } else {
+                    ""
+                }
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ))
+    }
+}
+
+fn validate_extern_calls_are_unsafe(
+    path: &Path,
+    ast: &SourceFile,
+    extern_names: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    for const_def in &ast.consts {
+        validate_extern_expr_is_unsafe(
+            path,
+            &const_def.value,
+            false,
+            extern_names,
+            &const_def.span,
+        )?;
+    }
+    for function in ast_functions(ast) {
+        for stmt in &function.body {
+            validate_extern_stmt_is_unsafe(path, stmt, false, extern_names)?;
+        }
+    }
+    for stmt in &ast.script_body {
+        validate_extern_stmt_is_unsafe(path, stmt, false, extern_names)?;
+    }
+    Ok(())
+}
+
+fn validate_extern_stmt_is_unsafe(
+    path: &Path,
+    stmt: &Stmt,
+    in_unsafe: bool,
+    extern_names: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    match stmt {
+        Stmt::Let { value, span, .. }
+        | Stmt::Assign { value, span, .. }
+        | Stmt::Expr { expr: value, span } => {
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)
+        }
+        Stmt::LetElse {
+            value,
+            else_body,
+            span,
+            ..
+        } => {
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            for stmt in else_body {
+                validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+            }
+            Ok(())
+        }
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            span,
+            ..
+        } => {
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            for stmt in body {
+                validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+            }
+            if let Some(else_body) = else_body {
+                for stmt in else_body {
+                    validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::Return { value, span } => {
+            if let Some(value) = value {
+                validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            }
+            Ok(())
+        }
+        Stmt::Match { value, arms, span } => {
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            for arm in arms {
+                for stmt in &arm.body {
+                    validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::For { variant, span } => {
+            match variant {
+                crate::ast::ForVariant::Infinite { body } => {
+                    for stmt in body {
+                        validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                    }
+                }
+                crate::ast::ForVariant::While { condition, body } => {
+                    validate_extern_expr_is_unsafe(path, condition, in_unsafe, extern_names, span)?;
+                    for stmt in body {
+                        validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                    }
+                }
+                crate::ast::ForVariant::Iterate { iterable, body, .. } => {
+                    validate_extern_expr_is_unsafe(path, iterable, in_unsafe, extern_names, span)?;
+                    for stmt in body {
+                        validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                    }
+                }
+            }
+            Ok(())
+        }
+        Stmt::Defer { stmt, .. } => {
+            validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)
+        }
+        Stmt::Unsafe { body, .. } => {
+            for stmt in body {
+                validate_extern_stmt_is_unsafe(path, stmt, true, extern_names)?;
+            }
+            Ok(())
+        }
+        Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
+    }
+}
+
+fn validate_extern_expr_is_unsafe(
+    path: &Path,
+    expr: &AstExpr,
+    in_unsafe: bool,
+    extern_names: &HashSet<String>,
+    span: &Span,
+) -> Result<(), Diagnostic> {
+    match expr {
+        AstExpr::Call { callee, args, .. } => {
+            if callee.len() == 1 && extern_names.contains(&callee[0]) && !in_unsafe {
+                return Err(Diagnostic::new(
+                    "E1519",
+                    format!(
+                        "extern function `{}` must be called inside an `unsafe` block",
+                        callee[0]
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            for arg in args {
+                validate_extern_expr_is_unsafe(path, arg, in_unsafe, extern_names, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::Question { expr: base }
+        | AstExpr::Unary { expr: base, .. }
+        | AstExpr::Cast { expr: base, .. } => {
+            validate_extern_expr_is_unsafe(path, base, in_unsafe, extern_names, span)
+        }
+        AstExpr::Binary { left, right, .. } => {
+            validate_extern_expr_is_unsafe(path, left, in_unsafe, extern_names, span)?;
+            validate_extern_expr_is_unsafe(path, right, in_unsafe, extern_names, span)
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_extern_expr_is_unsafe(path, condition, in_unsafe, extern_names, span)?;
+            validate_extern_expr_is_unsafe(path, then_branch, in_unsafe, extern_names, span)?;
+            validate_extern_expr_is_unsafe(path, else_branch, in_unsafe, extern_names, span)
+        }
+        AstExpr::Match { value, arms } => {
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            for arm in arms {
+                validate_extern_expr_is_unsafe(path, &arm.value, in_unsafe, extern_names, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::Panic { message } => {
+            validate_extern_expr_is_unsafe(path, message, in_unsafe, extern_names, span)
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => Ok(()),
+    }
 }
 
 fn collect_interfaces<'a>(
@@ -4760,6 +5129,7 @@ fn interface_method_signature(
         type_params: signature.type_params.clone(),
         params,
         return_type,
+        extern_symbol: None,
     })
 }
 
@@ -9798,7 +10168,11 @@ fn lower_value_expr_with_expected(
             Ok((
                 signature.return_type.clone(),
                 ValueExpr::Call {
-                    name: call_name,
+                    name: signature
+                        .extern_symbol
+                        .as_ref()
+                        .map(|symbol| extern_call_name(symbol))
+                        .unwrap_or(call_name),
                     args: lowered_args,
                 },
             ))
@@ -16827,6 +17201,7 @@ fn instantiate_function_signature(
             })
             .collect(),
         return_type: substitute_type_params(&signature.return_type, &signature.type_params, args),
+        extern_symbol: signature.extern_symbol.clone(),
     }
 }
 
@@ -17055,6 +17430,10 @@ fn parse_value_type_with_names(
 
 fn method_internal_name(owner_name: &str, method_name: &str) -> String {
     format!("{owner_name}_{method_name}")
+}
+
+fn extern_call_name(symbol: &str) -> String {
+    format!("{EXTERN_CALL_PREFIX}{symbol}")
 }
 
 fn generic_function_instance_name(name: &str, args: &[ValueType]) -> String {
@@ -24024,6 +24403,58 @@ fn main() -> void {
                 .functions
                 .iter()
                 .any(|function| function.name == "User_to_string")
+        );
+    }
+
+    #[test]
+    fn accepts_extern_c_primitive_call_inside_unsafe() {
+        let source = r#"package app.main
+
+extern "C" {
+    fn abs(value: i32) -> i32
+}
+
+fn main() -> void {
+    unsafe {
+        let value: i32 = abs(-7)
+    }
+}
+"#;
+
+        let program = parse_inline(source).unwrap();
+        let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+        assert!(matches!(
+            main.body[0],
+            Statement::Let {
+                value_type: ValueType::I32,
+                initializer: ValueExpr::Call {
+                    ref name,
+                    ref args,
+                },
+                ..
+            } if name == "__nomo_extern::abs"
+                && matches!(args.as_slice(), [ValueExpr::IntLiteral(-7)])
+        ));
+    }
+
+    #[test]
+    fn rejects_extern_c_call_outside_unsafe() {
+        let source = r#"package app.main
+
+extern "C" {
+    fn abs(value: i32) -> i32
+}
+
+fn main() -> void {
+    let value: i32 = abs(-7)
+}
+"#;
+
+        let err = parse_inline(source).unwrap_err();
+        assert_eq!(err.code, "E1519");
+        assert!(
+            err.message
+                .contains("extern function `abs` must be called inside an `unsafe` block")
         );
     }
 

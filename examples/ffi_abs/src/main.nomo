@@ -1,0 +1,18 @@
+package app.main
+
+import std.io
+
+extern "C" {
+    fn abs(value: i32) -> i32
+}
+
+fn main() -> void {
+    unsafe {
+        let magnitude: i32 = abs(-7)
+    }
+    if magnitude == 7 {
+        io.println("ffi abs ok")
+    } else {
+        io.println("ffi abs wrong")
+    }
+}

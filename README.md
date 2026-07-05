@@ -318,8 +318,8 @@ The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
 early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
 `None` early from the current `Option`-returning function.
-There is no `try` keyword or statement syntax in v0.1; `try` remains an ordinary
-identifier, and postfix `?` is the only error/absence propagation syntax.
+There is no `try` keyword or statement syntax in v0.1; postfix `?` is the only
+error/absence propagation syntax.
 Cross-layer `Result` error conversion is written explicitly as
 `result.map_err(named_converter)?`.
 
@@ -341,7 +341,8 @@ interface impl provides every required method with matching parameters,
 mutability and return type; full generic constraints, dynamic dispatch,
 associated types and blanket impls are not part of v0.1. `extern "C"` blocks
 plus `unsafe { ... }` support the initial C FFI path, currently including string
-calls to C `puts`.
+calls to C `puts` and primitive integer/float/bool/char extern calls such as
+`abs(i32) -> i32`.
 
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
 `fs.write_string`, `fs.read_bytes`, `fs.write_bytes`, `fs.exists`,

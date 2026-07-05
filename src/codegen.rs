@@ -10,6 +10,7 @@ const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 const BUILTIN_FFI_PUTS_EXPR: &str = "__nomo_ffi_puts";
+const EXTERN_CALL_PREFIX: &str = "__nomo_extern::";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
@@ -7998,6 +7999,16 @@ fn emit_expr(out: &mut String, expr: &ValueExpr) {
             } else if name == BUILTIN_FFI_PUTS_EXPR {
                 out.push_str("puts(");
                 emit_string_data_expr(out, &args[0]);
+                out.push(')');
+            } else if let Some(symbol) = name.strip_prefix(EXTERN_CALL_PREFIX) {
+                out.push_str(symbol);
+                out.push('(');
+                for (index, arg) in args.iter().enumerate() {
+                    if index > 0 {
+                        out.push_str(", ");
+                    }
+                    emit_expr(out, arg);
+                }
                 out.push(')');
             } else {
                 out.push_str(&c_fn_ident(name));

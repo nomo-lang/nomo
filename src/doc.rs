@@ -580,7 +580,7 @@ fn collect_block_doc(lines: &[&str], start: usize) -> (String, usize) {
 }
 
 fn write_doc_package(output: &Path, package: &DocPackage) -> Result<(), DocError> {
-    let package_dir = output.join(package.package.replace('/', "/"));
+    let package_dir = output.join(&package.package);
     fs::create_dir_all(&package_dir).map_err(|err| DocError::Message(err.to_string()))?;
     fs::write(package_dir.join("index.html"), render_package_html(package))
         .map_err(|err| DocError::Message(err.to_string()))?;

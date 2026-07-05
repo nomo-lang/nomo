@@ -1,3 +1,15 @@
+#![allow(
+    clippy::cloned_ref_to_slice_refs,
+    clippy::collapsible_if,
+    clippy::large_enum_variant,
+    clippy::needless_borrow,
+    clippy::needless_option_as_deref,
+    clippy::redundant_closure,
+    clippy::result_large_err,
+    clippy::single_char_add_str,
+    clippy::too_many_arguments
+)]
+
 pub mod ast;
 pub mod codegen;
 pub mod compiler;

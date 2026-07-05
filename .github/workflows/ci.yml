@@ -1,0 +1,43 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  nomo:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+
+      - name: Format
+        run: cargo fmt --check
+
+      - name: Clippy
+        run: cargo clippy --workspace -- -D warnings
+
+      - name: Test
+        run: cargo test --workspace
+
+      - name: Release Build
+        run: cargo build --workspace --release
+
+      - name: Check Example Formatting
+        run: cargo run --bin nomo -- fmt --check examples
+
+      - name: Check Workspace Example
+        run: cargo run --bin nomo -- check --workspace examples/workspace_basic
+
+      - name: Test Workspace Example
+        run: cargo run --bin nomo -- test --workspace examples/workspace_basic
+
+      - name: Document Workspace Example
+        run: cargo run --bin nomo -- doc --workspace examples/workspace_basic

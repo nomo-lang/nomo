@@ -1459,11 +1459,11 @@ fn lower_program(
                 )
             })?;
         ensure_supported_value_type(path, &value_type, &const_def.span)?;
-        let mut const_scope = HashMap::new();
+        let const_scope = HashMap::new();
         let (init_type, initializer) = lower_value_expr_with_expected(
             path,
             &const_def.value,
-            &mut const_scope,
+            &const_scope,
             &imports,
             &signatures,
             &struct_map,

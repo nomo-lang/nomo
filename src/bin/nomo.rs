@@ -1,3 +1,5 @@
+#![allow(clippy::result_large_err, clippy::type_complexity)]
+
 use nomo::doc::{
     collect_project_docs, generate_project_docs, generate_std_docs, render_packages_json,
     std_doc_package, write_doc_index,

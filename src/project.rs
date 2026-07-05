@@ -41,6 +41,14 @@ pub struct DependencyUpdateOptions {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DependencyAddSpec {
+    pub alias: String,
+    pub package: String,
+    pub version: String,
+    pub registry: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyVendorOptions {
     pub dir: PathBuf,
     pub sync: bool,
@@ -347,6 +355,55 @@ pub fn resolve_workspace_dependencies_with_options(
     let lock = render_workspace_lockfile(&graphs)?;
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)
+}
+
+pub fn add_registry_dependency(
+    project: &Project,
+    spec: DependencyAddSpec,
+) -> Result<PathBuf, String> {
+    validate_dependency_alias(&spec.alias)?;
+    if spec.alias == "std" {
+        return Err(
+            "dependency alias `std` is reserved for the built-in standard library".to_string(),
+        );
+    }
+    validate_package_id(&spec.package)?;
+    validate_version_like(
+        &format!("dependency `{}` version", spec.alias),
+        &spec.version,
+    )?;
+    if spec.registry.as_deref().is_some_and(str::is_empty) {
+        return Err("--registry requires a non-empty registry endpoint".to_string());
+    }
+
+    let manifest_path = project.root.join("nomo.toml");
+    let text = fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;
+    let mut document = parse_manifest_document(&text)?;
+    upsert_registry_dependency(&mut document, &spec)?;
+    let rendered = render_manifest_document(&document)?;
+    fs::write(&manifest_path, rendered).map_err(|err| err.to_string())?;
+
+    parse_manifest_at_root(&project.root)?;
+    Ok(manifest_path)
+}
+
+pub fn remove_dependency(project: &Project, alias: &str) -> Result<PathBuf, String> {
+    validate_dependency_alias(alias)?;
+    if alias == "std" {
+        return Err(
+            "dependency alias `std` is reserved for the built-in standard library".to_string(),
+        );
+    }
+
+    let manifest_path = project.root.join("nomo.toml");
+    let text = fs::read_to_string(&manifest_path).map_err(|err| err.to_string())?;
+    let mut document = parse_manifest_document(&text)?;
+    remove_dependency_from_manifest(&mut document, alias)?;
+    let rendered = render_manifest_document(&document)?;
+    fs::write(&manifest_path, rendered).map_err(|err| err.to_string())?;
+
+    parse_manifest_at_root(&project.root)?;
+    Ok(manifest_path)
 }
 
 pub fn update_project_dependencies(
@@ -1174,6 +1231,72 @@ fn parse_manifest_document(manifest: &str) -> Result<toml::Value, String> {
     manifest
         .parse::<toml::Value>()
         .map_err(|err| format!("failed to parse nomo.toml as TOML: {err}"))
+}
+
+fn upsert_registry_dependency(
+    document: &mut toml::Value,
+    spec: &DependencyAddSpec,
+) -> Result<(), String> {
+    let root = document
+        .as_table_mut()
+        .ok_or_else(|| "manifest root must be a TOML table".to_string())?;
+    let dependencies = root
+        .entry("dependencies".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()));
+    let dependencies = dependencies
+        .as_table_mut()
+        .ok_or_else(|| "manifest `dependencies` must be a TOML table".to_string())?;
+    if dependencies.contains_key(&spec.alias) {
+        return Err(format!("dependency `{}` already exists", spec.alias));
+    }
+
+    let mut fields = toml::map::Map::new();
+    fields.insert(
+        "package".to_string(),
+        toml::Value::String(spec.package.clone()),
+    );
+    fields.insert(
+        "version".to_string(),
+        toml::Value::String(spec.version.clone()),
+    );
+    if let Some(registry) = &spec.registry {
+        fields.insert(
+            "registry".to_string(),
+            toml::Value::String(registry.clone()),
+        );
+    }
+    let value = toml::Value::Table(fields);
+    parse_dependency_value(&spec.alias, &value, None)?;
+    dependencies.insert(spec.alias.clone(), value);
+    Ok(())
+}
+
+fn remove_dependency_from_manifest(document: &mut toml::Value, alias: &str) -> Result<(), String> {
+    let root = document
+        .as_table_mut()
+        .ok_or_else(|| "manifest root must be a TOML table".to_string())?;
+    let Some(dependencies) = root.get_mut("dependencies") else {
+        return Err(format!("dependency `{alias}` was not found"));
+    };
+    let dependencies = dependencies
+        .as_table_mut()
+        .ok_or_else(|| "manifest `dependencies` must be a TOML table".to_string())?;
+    if dependencies.remove(alias).is_none() {
+        return Err(format!("dependency `{alias}` was not found"));
+    }
+    if dependencies.is_empty() {
+        root.remove("dependencies");
+    }
+    Ok(())
+}
+
+fn render_manifest_document(document: &toml::Value) -> Result<String, String> {
+    let mut rendered = toml::to_string_pretty(document)
+        .map_err(|err| format!("failed to render nomo.toml as TOML: {err}"))?;
+    if !rendered.ends_with('\n') {
+        rendered.push('\n');
+    }
+    Ok(rendered)
 }
 
 fn parse_manifest_document_at_root(

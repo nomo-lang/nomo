@@ -52,6 +52,8 @@ nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one 
 nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
 nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
 nomo clean [path]                 # remove generated build artifacts
+nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
+nomo remove <alias> [path]        # remove a dependency from nomo.toml
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
 nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
@@ -238,8 +240,9 @@ and locked to the actual `HEAD` revision. Resolved `path` and `git` packages inc
 `sha256:` checksum over `nomo.toml` and `src/` contents. Registry sources are
 recorded as leaf sources in v0.1, optionally with an explicit `registry`
 endpoint, but do not include checksums because v0.1 does not fetch registry
-archives. Public registry fetching and full version solving are deliberately
-left for later versions. A dependency must specify exactly one source among
+archives. `nomo add` and `nomo remove` edit the registry dependency entries in
+`nomo.toml`; package archive fetching, publishing, and full version solving are
+separate registry slices. A dependency must specify exactly one source among
 `path`, `git`, and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.

@@ -5,10 +5,11 @@ use nomo::doc::{
     std_doc_package, write_doc_index,
 };
 use nomo::project::{
-    BuildError, DependencyResolutionOptions, DependencyUpdateOptions, DependencyVendorOptions,
-    ProjectTestOptions, ProjectTestReport, ProjectTestStatus, build_project_with_options,
-    check_project, clean_dependency_cache, clean_project, create_project,
-    dependency_tree_with_options, discover_project, discover_workspace, project_package_id,
+    BuildError, DependencyAddSpec, DependencyResolutionOptions, DependencyUpdateOptions,
+    DependencyVendorOptions, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
+    add_registry_dependency, build_project_with_options, check_project, clean_dependency_cache,
+    clean_project, create_project, dependency_tree_with_options, discover_project,
+    discover_workspace, project_package_id, remove_dependency,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     run_project_tests_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics, update_project_dependencies,
@@ -272,6 +273,23 @@ fn run() -> Result<(), String> {
             println!("cleaned {}", cleaned.display());
             Ok(())
         }
+        "add" => {
+            let (path, spec) = parse_add_args(
+                args,
+                "usage: nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]",
+            )?;
+            let project = discover_project(&path)?;
+            let manifest = add_registry_dependency(&project, spec)?;
+            println!("updated {}", manifest.display());
+            Ok(())
+        }
+        "remove" => {
+            let (path, alias) = parse_remove_args(args, "usage: nomo remove <alias> [path]")?;
+            let project = discover_project(&path)?;
+            let manifest = remove_dependency(&project, &alias)?;
+            println!("updated {}", manifest.display());
+            Ok(())
+        }
         "deps" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
                 return Err(
@@ -432,6 +450,80 @@ fn parse_optional_path(args: Vec<String>, usage: &str) -> Result<PathBuf, String
     match args.as_slice() {
         [] => env::current_dir().map_err(|err| err.to_string()),
         [path] => Ok(PathBuf::from(path)),
+        _ => Err(usage.to_string()),
+    }
+}
+
+fn parse_add_args(args: Vec<String>, usage: &str) -> Result<(PathBuf, DependencyAddSpec), String> {
+    let mut registry = None;
+    let mut values = Vec::new();
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if let Some(value) = arg.strip_prefix("--registry=") {
+            if value.is_empty() {
+                return Err("--registry requires a registry endpoint".to_string());
+            }
+            registry = Some(value.to_string());
+        } else if arg == "--registry" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--registry requires a registry endpoint".to_string());
+            };
+            registry = Some(value.clone());
+        } else if arg.starts_with('-') {
+            return Err(usage.to_string());
+        } else {
+            values.push(arg.clone());
+        }
+        index += 1;
+    }
+
+    let current_dir = || env::current_dir().map_err(|err| err.to_string());
+    match values.as_slice() {
+        [spec] => Ok((current_dir()?, parse_dependency_add_spec(spec, registry)?)),
+        [spec, path] => Ok((
+            PathBuf::from(path),
+            parse_dependency_add_spec(spec, registry)?,
+        )),
+        _ => Err(usage.to_string()),
+    }
+}
+
+fn parse_dependency_add_spec(
+    spec: &str,
+    registry: Option<String>,
+) -> Result<DependencyAddSpec, String> {
+    let Some((alias, package_and_version)) = spec.split_once('@') else {
+        return Err(
+            "dependency spec must use `alias@owner/package:version`, for example `json@nomo-lang/json:0.1.0`"
+                .to_string(),
+        );
+    };
+    let Some((package, version)) = package_and_version.rsplit_once(':') else {
+        return Err(
+            "dependency spec must include a version after `:`, for example `json@nomo-lang/json:0.1.0`"
+                .to_string(),
+        );
+    };
+    if alias.is_empty() || package.is_empty() || version.is_empty() {
+        return Err(
+            "dependency spec must use `alias@owner/package:version`, for example `json@nomo-lang/json:0.1.0`"
+                .to_string(),
+        );
+    }
+    Ok(DependencyAddSpec {
+        alias: alias.to_string(),
+        package: package.to_string(),
+        version: version.to_string(),
+        registry,
+    })
+}
+
+fn parse_remove_args(args: Vec<String>, usage: &str) -> Result<(PathBuf, String), String> {
+    let current_dir = || env::current_dir().map_err(|err| err.to_string());
+    match args.as_slice() {
+        [alias] => Ok((current_dir()?, alias.clone())),
+        [alias, path] => Ok((PathBuf::from(path), alias.clone())),
         _ => Err(usage.to_string()),
     }
 }
@@ -996,6 +1088,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

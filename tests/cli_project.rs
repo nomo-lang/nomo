@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -2048,6 +2048,136 @@ fn nomo_deps_update_rewrites_git_branch_lockfile() {
     assert!(
         !updated_lockfile.contains(&format!("rev = \"{first_rev}\"")),
         "{updated_lockfile}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_add_and_remove_edit_registry_dependency_manifest() {
+    let root = temp_test_root("deps-add-remove");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+
+    let add_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("add")
+        .arg("json@nomo-lang/json:0.1.0")
+        .arg(&project)
+        .arg("--registry")
+        .arg("https://packages.nomo.test")
+        .output()
+        .unwrap();
+
+    assert!(
+        add_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&add_output.stdout),
+        format!("updated {}\n", project.join("nomo.toml").display())
+    );
+    let manifest = fs::read_to_string(project.join("nomo.toml")).unwrap();
+    assert!(manifest.contains("[dependencies.json]\n"), "{manifest}");
+    assert!(
+        manifest.contains("package = \"nomo-lang/json\""),
+        "{manifest}"
+    );
+    assert!(manifest.contains("version = \"0.1.0\""), "{manifest}");
+    assert!(
+        manifest.contains("registry = \"https://packages.nomo.test\""),
+        "{manifest}"
+    );
+
+    let tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tree_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&tree_output.stdout),
+        "fynn/hello 0.1.0\n+-- json -> nomo-lang/json 0.1.0 (registry https://packages.nomo.test)\n"
+    );
+
+    let remove_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("remove")
+        .arg("json")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        remove_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&remove_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&remove_output.stdout),
+        format!("updated {}\n", project.join("nomo.toml").display())
+    );
+    let manifest = fs::read_to_string(project.join("nomo.toml")).unwrap();
+    assert!(!manifest.contains("[dependencies"), "{manifest}");
+    assert!(!manifest.contains("nomo-lang/json"), "{manifest}");
+
+    let tree_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        tree_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tree_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&tree_output.stdout),
+        "fynn/hello 0.1.0\n(no dependencies)\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_add_rejects_duplicate_dependency_alias() {
+    let root = temp_test_root("deps-add-duplicate");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("add")
+        .arg("json@nomo-lang/json:0.2.0")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("dependency `json` already exists"),
+        "{stderr}"
     );
 
     fs::remove_dir_all(&root).unwrap();

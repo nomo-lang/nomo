@@ -852,8 +852,19 @@ fn json_escape(value: &str) -> String {
 
 fn open_doc_index(path: &Path) -> Result<(), String> {
     let index = path.join("index.html");
+    if !index.is_file() {
+        return Err(format!("failed to open missing {}", index.display()));
+    }
+    if env::var_os("NOMO_DOC_OPEN").as_deref() == Some(std::ffi::OsStr::new("0")) {
+        return Ok(());
+    }
     let status = if cfg!(target_os = "macos") {
         process::Command::new("open").arg(&index).status()
+    } else if cfg!(target_os = "windows") {
+        process::Command::new("cmd")
+            .args(["/C", "start", ""])
+            .arg(&index)
+            .status()
     } else {
         process::Command::new("xdg-open").arg(&index).status()
     }

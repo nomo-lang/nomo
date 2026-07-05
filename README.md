@@ -97,8 +97,9 @@ emitted as documented child items and are included in the search index. By
 default it writes `build/doc/index.html`,
 package/module HTML pages, and `search-index.json`. `--json` prints the same
 documentation model to stdout without writing files. `--workspace` documents
-workspace members, `--package` selects one member, and `--std` adds the current
-built-in standard-library module index.
+workspace members, `--package` selects one member, `--std` adds the current
+built-in standard-library module index, and `--open` opens the generated
+`index.html` after writing docs. `--open` is not valid together with `--json`.
 
 Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
 `/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with

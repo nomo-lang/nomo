@@ -385,6 +385,49 @@ extern "C" {
 }
 
 #[test]
+fn nomo_doc_open_opens_generated_index() {
+    let root = temp_test_root("doc-open");
+    reset_dir(&root);
+    let project = root.join("hello");
+    let output_dir = root.join("docs-out");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "//! Hello module docs.\n\npackage app.main\n\npub fn greet() -> string {\n    return \"hello\"\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .env("NOMO_DOC_OPEN", "0")
+        .arg("doc")
+        .arg(&project)
+        .arg("--open")
+        .arg("--output")
+        .arg(&output_dir)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("documented {}\n", output_dir.display())
+    );
+    assert!(output_dir.join("index.html").is_file());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_doc_json_reports_project_docs() {
     let root = temp_test_root("doc-json");
     reset_dir(&root);

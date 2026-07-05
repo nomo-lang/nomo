@@ -459,7 +459,10 @@ character classes in v0.1. `string.split(value, separator)` returns
 
 Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
-pages live under [`docs/diagnostics/`](docs/diagnostics/index.md).
+pages live under [`docs/diagnostics/`](docs/diagnostics/index.md). User-facing
+docs start at [`docs/index.md`](docs/index.md), including the
+[`package-management`](docs/package-management.md) guide for manifests,
+workspaces, lockfiles, vendoring, and offline builds.
 
 ## Library crate
 

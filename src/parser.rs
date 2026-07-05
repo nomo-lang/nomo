@@ -1468,6 +1468,13 @@ impl Parser<'_> {
 
     fn parse_name_or_call(&mut self) -> Result<Expr, Diagnostic> {
         let path = self.parse_path()?;
+        if path.len() == 1 && path[0] == "try" && starts_try_operand(&self.peek().kind) {
+            return Err(self.error(
+                "E0211",
+                "`try` propagation syntax is not supported; use postfix `?` instead",
+                self.peek().length(),
+            ));
+        }
         if self.allow_struct_literals && matches!(self.peek().kind, TokenKind::LBrace) {
             return self.parse_struct_literal(path);
         }
@@ -1887,6 +1894,23 @@ fn assign_op_from_token(kind: &TokenKind) -> Option<AssignOp> {
         TokenKind::AmpCaretEqual => Some(AssignOp::BitAndNot),
         _ => None,
     }
+}
+
+fn starts_try_operand(kind: &TokenKind) -> bool {
+    matches!(
+        kind,
+        TokenKind::String(_)
+            | TokenKind::Int(_)
+            | TokenKind::Float(_)
+            | TokenKind::Char(_)
+            | TokenKind::True
+            | TokenKind::False
+            | TokenKind::Void
+            | TokenKind::If
+            | TokenKind::Match
+            | TokenKind::Panic
+            | TokenKind::Ident(_)
+    )
 }
 
 fn postfix_op_from_token(kind: &TokenKind) -> Option<PostfixOp> {
@@ -2426,7 +2450,7 @@ mod tests {
         let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
         assert_eq!(err.code, "E0211");
-        assert!(err.message.contains("expected newline after statement"));
+        assert!(err.message.contains("use postfix `?` instead"));
     }
 
     #[test]

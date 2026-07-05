@@ -10,7 +10,7 @@ use nomo::project::{
     add_registry_dependency, add_registry_package_owner, build_project_with_options, check_project,
     clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
     discover_project, discover_workspace, login_registry, prepare_publish_package,
-    project_package_id, publish_package_archive, remove_dependency,
+    project_package_id, publish_package_archive, remove_dependency, remove_registry_package_owner,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     run_project_tests_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics, search_registry_packages,
@@ -286,7 +286,8 @@ fn run() -> Result<(), String> {
         "owner" => {
             let [subcommand, rest @ ..] = args.as_slice() else {
                 return Err(
-                    "usage: nomo owner add <owner/package> <user> --registry <url>".to_string(),
+                    "usage: nomo owner <add|remove> <owner/package> <user> --registry <url>"
+                        .to_string(),
                 );
             };
             match subcommand.as_str() {
@@ -297,6 +298,16 @@ fn run() -> Result<(), String> {
                     )?;
                     add_registry_package_owner(&registry, &package, &user)?;
                     println!("added owner {user} to {package}");
+                    println!("registry {registry}");
+                    Ok(())
+                }
+                "remove" => {
+                    let (package, user, registry) = parse_owner_remove_args(
+                        rest.to_vec(),
+                        "usage: nomo owner remove <owner/package> <user> --registry <url>",
+                    )?;
+                    remove_registry_package_owner(&registry, &package, &user)?;
+                    println!("removed owner {user} from {package}");
                     println!("registry {registry}");
                     Ok(())
                 }
@@ -695,6 +706,21 @@ fn parse_owner_add_args(
     args: Vec<String>,
     usage: &str,
 ) -> Result<(String, String, String), String> {
+    parse_owner_registry_args(args, usage, "nomo owner add requires --registry <url>")
+}
+
+fn parse_owner_remove_args(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<(String, String, String), String> {
+    parse_owner_registry_args(args, usage, "nomo owner remove requires --registry <url>")
+}
+
+fn parse_owner_registry_args(
+    args: Vec<String>,
+    usage: &str,
+    missing_registry: &str,
+) -> Result<(String, String, String), String> {
     let mut registry = None;
     let mut positional = Vec::new();
     let mut index = 0;
@@ -720,8 +746,7 @@ fn parse_owner_add_args(
     let [package, user] = positional.as_slice() else {
         return Err(usage.to_string());
     };
-    let registry =
-        registry.ok_or_else(|| "nomo owner add requires --registry <url>".to_string())?;
+    let registry = registry.ok_or_else(|| missing_registry.to_string())?;
     Ok((package.clone(), user.clone(), registry))
 }
 
@@ -1375,6 +1400,6 @@ fn is_missing_manifest_error(message: &str) -> bool {
 
 fn print_help() {
     println!(
-        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
+        "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n"
     );
 }

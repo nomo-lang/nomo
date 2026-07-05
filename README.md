@@ -54,6 +54,7 @@ nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [-
 nomo clean [path]                 # remove generated build artifacts
 nomo login --registry <url> --token <token> # store a registry bearer token in $NOMO_HOME/credentials.toml
 nomo owner add <owner/package> <user> --registry <url> # add a package owner through an http:// registry
+nomo owner remove <owner/package> <user> --registry <url> # remove a package owner through an http:// registry
 nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
 nomo remove <alias> [path]        # remove a dependency from nomo.toml
 nomo search <query> --registry <url> # query an http:// registry package index
@@ -265,9 +266,10 @@ remain buildable from existing lockfiles. `nomo login --registry <url> --token
 registry download, publish, and yank requests to the same endpoint include
 `Authorization: Bearer <token>`. `nomo owner add <owner/package> <user>
 --registry <url>` adds a package owner with `PUT
-/api/v1/packages/<owner>/<package>/owners/<user>` and also uses the stored
-Bearer token when present. A dependency must specify exactly one source among
-`path`, `git`, and `version`.
+/api/v1/packages/<owner>/<package>/owners/<user>`, and `nomo owner remove`
+removes one with `DELETE /api/v1/packages/<owner>/<package>/owners/<user>`;
+both use the stored Bearer token when present. A dependency must specify exactly
+one source among `path`, `git`, and `version`.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and

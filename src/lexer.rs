@@ -596,14 +596,10 @@ mod tests {
     }
 
     #[test]
-    fn lexes_try_as_identifier_not_keyword() {
-        let tokens = lex(Path::new("main.nomo"), "fn try() -> void {}\n").unwrap();
+    fn lexes_question_mark_operator() {
+        let tokens = lex(Path::new("main.nomo"), "fn main() -> void { parse()? }\n").unwrap();
 
-        assert!(
-            tokens
-                .iter()
-                .any(|token| token.kind == TokenKind::Ident("try".to_string()))
-        );
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Question));
     }
 
     #[test]

@@ -6,7 +6,7 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
@@ -2396,6 +2396,104 @@ fn nomo_owner_add_requires_registry() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
         stderr.contains("nomo owner add requires --registry <url>"),
+        "{stderr}"
+    );
+}
+
+#[test]
+fn nomo_owner_remove_uses_logged_in_registry_token() {
+    let root = temp_test_root("registry-owner-remove");
+    reset_dir(&root);
+    let nomo_home = root.join("nomo-home");
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry_addr = listener.local_addr().unwrap();
+    let registry = format!("http://{registry_addr}");
+
+    let login = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--token")
+        .arg("owner-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        login.status.success(),
+        "{}",
+        String::from_utf8_lossy(&login.stderr)
+    );
+
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            assert!(read > 0, "connection closed before HTTP headers arrived");
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8_lossy(&request);
+        assert!(
+            request.starts_with("DELETE /api/v1/packages/fynn/hello/owners/alice HTTP/1.1\r\n"),
+            "{request}"
+        );
+        assert!(
+            request.contains("Authorization: Bearer owner-token\r\n"),
+            "{request}"
+        );
+        assert!(request.contains("Content-Length: 0\r\n"), "{request}");
+        stream
+            .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
+            .unwrap();
+    });
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("owner")
+        .arg("remove")
+        .arg("fynn/hello")
+        .arg("alice")
+        .arg("--registry")
+        .arg(&registry)
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.join().unwrap();
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("removed owner alice from fynn/hello\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains(&format!("registry {registry}\n")),
+        "{stdout}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_owner_remove_requires_registry() {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("owner")
+        .arg("remove")
+        .arg("fynn/hello")
+        .arg("alice")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("nomo owner remove requires --registry <url>"),
         "{stderr}"
     );
 }
@@ -6367,14 +6465,14 @@ fn main() -> void {
 }
 
 #[test]
-fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
-    let root = temp_test_root("try-identifier-question");
+fn nomo_run_uses_question_for_result_propagation() {
+    let root = temp_test_root("question-result-propagation");
     reset_dir(&root);
-    let project = root.join("try_identifier_question");
+    let project = root.join("question_result_propagation");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("nomo.toml"),
-        "[package]\nname = \"try_identifier_question\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+        "[package]\nname = \"question_result_propagation\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
     )
     .unwrap();
     fs::write(
@@ -6383,12 +6481,12 @@ fn nomo_run_treats_try_as_identifier_and_uses_question_for_propagation() {
 
 import std.io
 
-fn try() -> Result<string, string> {
+fn load_value() -> Result<string, string> {
     return Ok("question")
 }
 
 fn compute() -> Result<string, string> {
-    let value: string = try()?
+    let value: string = load_value()?
     return Ok(value)
 }
 
@@ -6430,14 +6528,14 @@ fn main() -> void {
 }
 
 #[test]
-fn nomo_run_treats_try_as_identifier_and_uses_question_for_option_propagation() {
-    let root = temp_test_root("try-identifier-option-question");
+fn nomo_run_uses_question_for_option_propagation() {
+    let root = temp_test_root("question-option-propagation");
     reset_dir(&root);
-    let project = root.join("try_identifier_option_question");
+    let project = root.join("question_option_propagation");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("nomo.toml"),
-        "[package]\nname = \"try_identifier_option_question\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+        "[package]\nname = \"question_option_propagation\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
     )
     .unwrap();
     fs::write(
@@ -6446,12 +6544,12 @@ fn nomo_run_treats_try_as_identifier_and_uses_question_for_option_propagation() 
 
 import std.io
 
-fn try() -> Option<string> {
+fn load_value() -> Option<string> {
     return Some("question")
 }
 
 fn compute() -> Option<string> {
-    return try()?
+    return load_value()?
 }
 
 fn main() -> void {

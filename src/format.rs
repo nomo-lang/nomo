@@ -1434,15 +1434,15 @@ mod tests {
     }
 
     #[test]
-    fn formats_try_identifier_and_question_propagation() {
-        let source = "package app.main\n\nfn try()->Result<string,string>{\nreturn Ok(\"value\")\n}\n\nfn compute()->Result<string,string>{\nlet value:string=try()?\ndefer cleanup(try()?)\nreturn Ok(try()?)\n}\n";
+    fn formats_question_propagation() {
+        let source = "package app.main\n\nfn load_value()->Result<string,string>{\nreturn Ok(\"value\")\n}\n\nfn compute()->Result<string,string>{\nlet value:string=load_value()?\ndefer cleanup(load_value()?)\nreturn Ok(load_value()?)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
         assert_eq!(formatted, twice);
         assert_eq!(
             formatted,
-            "package app.main\n\nfn try() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nfn compute() -> Result<string, string> {\n    let value: string = try()?\n    defer cleanup(try()?)\n    return Ok(try()?)\n}\n"
+            "package app.main\n\nfn load_value() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nfn compute() -> Result<string, string> {\n    let value: string = load_value()?\n    defer cleanup(load_value()?)\n    return Ok(load_value()?)\n}\n"
         );
     }
 

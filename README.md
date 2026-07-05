@@ -240,12 +240,12 @@ requested `branch`, `tag`, or `rev`. Branch sources also run `git pull
 and locked to the actual `HEAD` revision. Resolved `path`, `git`, and fetched
 registry packages include a `sha256:` checksum over `nomo.toml` and `src/`
 contents. Registry sources without an explicit endpoint remain leaf lockfile
-entries. Registry sources with a `file://` endpoint read
+entries. Registry sources with a `file://` or `http://` endpoint read
 `/api/v1/packages/<owner>/<package>/<version>/download`, unpack the
 deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
 provide imported public API to project builds. `nomo add` and `nomo remove` edit
-the registry dependency entries in `nomo.toml`; HTTP registry download, upload,
-and full version solving are separate registry slices. `nomo publish --dry-run`
+the registry dependency entries in `nomo.toml`; HTTPS/TLS registry download,
+upload, auth, search, and full version solving are separate registry slices. `nomo publish --dry-run`
 validates the selected package with `nomo check`, packages `nomo.toml` plus
 `src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
 checksum and byte size. Actual registry upload is intentionally not implemented
@@ -268,13 +268,13 @@ updates only the in-memory source used for lockfile generation, and never edits
 `nomo.toml`: registry dependencies use the precise value as `version`, git
 dependencies use it as `rev` with any branch/tag selector cleared, and path
 dependencies are rejected.
-`nomo deps vendor [path]` ensures a lockfile exists, copies locked `path` and
-`git` dependency sources into `vendor/`, and writes `vendor/nomo-vendor.toml`.
-`--dir <path>` selects a different output directory, and `--sync` removes the
-vendor directory before copying. Registry dependencies are recorded as skipped
-until registry archive fetching exists. Locked/offline project builds and checks
-fall back to the default `vendor/` directory when a locked path source or git
-cache checkout is missing.
+`nomo deps vendor [path]` ensures a lockfile exists, copies locked `path`, `git`,
+and cached registry dependency sources into `vendor/`, and writes
+`vendor/nomo-vendor.toml`. `--dir <path>` selects a different output directory,
+and `--sync` removes the vendor directory before copying. Registry dependencies
+without a cached archive are recorded as skipped. Locked/offline project builds
+and checks fall back to the default `vendor/` directory when a locked path
+source, git cache checkout, or registry cache entry is missing.
 `nomo deps clean-cache [path]` removes the project or workspace
 `.nomo/deps/git` cache. The command is idempotent and does not remove
 `nomo.lock`, source files, or build artifacts.

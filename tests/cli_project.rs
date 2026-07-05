@@ -3,6 +3,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket as RustUdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::thread;
 use std::time::{Duration, Instant};
 
 const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo publish [path] --dry-run [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
@@ -2430,6 +2431,122 @@ fn main() -> void {
             .join("vendor/fynn/utils/0.1.0/src/path.nomo")
             .is_file()
     );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_project_commands_use_http_registry_dependency_module_public_api() {
+    let root = temp_test_root("http-registry-dependency-module-public-api");
+    reset_dir(&root);
+    let package = root.join("utils");
+    let archive_out = root.join("archive-out");
+    let project = root.join("hello");
+    let source = project.join("src/main.nomo");
+    let c_path = project.join("build/c/main.c");
+    fs::create_dir_all(package.join("src")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        package.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/main.nomo"),
+        "package utils.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/path.nomo"),
+        r#"package local_utils.path
+
+pub fn join(a: i64, b: i64) -> i64 {
+    return a + b
+}
+"#,
+    )
+    .unwrap();
+
+    let publish_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&package)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&archive_out)
+        .output()
+        .unwrap();
+    assert!(
+        publish_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&publish_output.stderr)
+    );
+    let archive = fs::read(archive_out.join("fynn-utils-0.1.0.nomo-package")).unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry_addr = listener.local_addr().unwrap();
+    let server = thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0u8; 1024];
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            if read == 0 {
+                break;
+            }
+            request.extend_from_slice(&buffer[..read]);
+            if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        let request = String::from_utf8_lossy(&request);
+        assert!(
+            request.starts_with("GET /api/v1/packages/fynn/utils/0.1.0/download HTTP/1.1\r\n"),
+            "{request}"
+        );
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+            archive.len()
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.write_all(&archive).unwrap();
+    });
+
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = {{ package = \"fynn/utils\", version = \"0.1.0\", registry = \"http://{}\" }}\n",
+            registry_addr
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &source,
+        r#"package app.main
+
+import local_utils.path
+
+fn main() -> void {
+    let total: i64 = join(40, 2)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    server.join().unwrap();
+    let generated_c = fs::read_to_string(c_path).unwrap();
+    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
 
     fs::remove_dir_all(&root).unwrap();
 }

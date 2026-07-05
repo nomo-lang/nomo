@@ -72,6 +72,58 @@ pub fn symbols_for_project_with_overrides(
     Ok(symbols)
 }
 
+pub fn dependency_symbols_for_project_with_overrides(
+    project: &Project,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let Ok(context) = project_module_context(project) else {
+        return Ok(Vec::new());
+    };
+    let mut files = Vec::new();
+    for module in &context.external_modules {
+        collect_nomo_files(&module.source_root, &mut files).map_err(|message| {
+            Diagnostic::new("E0902", message, &module.source_root, 1, 1, 1, "")
+        })?;
+    }
+    for (path, _) in source_overrides {
+        if context
+            .external_modules
+            .iter()
+            .any(|module| is_project_nomo_source(&module.source_root, path))
+            && !files.iter().any(|file| file == path)
+        {
+            files.push(path.clone());
+        }
+    }
+    files.sort();
+    files.dedup();
+
+    let overrides = source_overrides
+        .iter()
+        .map(|(path, source)| (path.clone(), source.clone()))
+        .collect::<BTreeMap<_, _>>();
+
+    let mut symbols = Vec::new();
+    for path in files {
+        let source = match overrides.get(&path) {
+            Some(source) => source.clone(),
+            None => fs::read_to_string(&path).map_err(|err| {
+                Diagnostic::new(
+                    "E0902",
+                    format!("failed to read {}: {err}", path.display()),
+                    &path,
+                    1,
+                    1,
+                    1,
+                    "",
+                )
+            })?,
+        };
+        symbols.extend(public_symbols_for_text(&path, &source)?);
+    }
+    Ok(symbols)
+}
+
 pub fn identifier_at_position(source: &str, position: TextPosition) -> Option<String> {
     let line = source.lines().nth(position.line as usize)?;
     let byte_index = utf16_character_to_byte_index(line, position.character);
@@ -1489,6 +1541,54 @@ mod tests {
         )
         .unwrap();
         assert!(missing_private.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn dependency_symbols_for_project_include_public_dependency_api_only() {
+        let root = env::temp_dir().join(format!(
+            "nomo_semantic_dependency_symbols_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let project_root = root.join("hello");
+        let dependency_root = root.join("utils");
+        fs::create_dir_all(project_root.join("src")).unwrap();
+        fs::create_dir_all(dependency_root.join("src")).unwrap();
+        fs::write(
+            project_root.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            dependency_root.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        write_source(&project_root.join("src/main.nomo"), "package app.main\n");
+        write_source(
+            &dependency_root.join("src/path.nomo"),
+            "package local_utils.path\n\npub struct PathInfo {\n    pub name: string\n    hidden: string\n}\n\npub fn join(a: string, b: string) -> string {\n    return a\n}\n\nfn hidden() -> string {\n    return \"hidden\"\n}\n",
+        );
+        let project = Project {
+            main: project_root.join("src/main.nomo"),
+            root: project_root,
+            name: "hello".to_string(),
+            workspace_root: None,
+        };
+
+        let symbols = dependency_symbols_for_project_with_overrides(&project, &[]).unwrap();
+
+        let names = symbols
+            .iter()
+            .map(|symbol| symbol.name.as_str())
+            .collect::<Vec<_>>();
+        assert!(names.contains(&"PathInfo"), "{names:?}");
+        assert!(names.contains(&"name"), "{names:?}");
+        assert!(names.contains(&"join"), "{names:?}");
+        assert!(!names.contains(&"hidden"), "{names:?}");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -1,0 +1,12 @@
+[package]
+name = "nomo-codegen-c"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nomo-ir = { path = "../nomo_ir" }
+
+[lib]
+name = "nomo_codegen_c"
+path = "src/lib.rs"

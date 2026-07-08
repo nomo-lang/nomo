@@ -6,7 +6,12 @@ license.workspace = true
 
 [workspace]
 resolver = "2"
-members = [".", "crates/nomo_ir", "crates/nomo_syntax"]
+members = [
+    ".",
+    "crates/nomo_codegen_c",
+    "crates/nomo_ir",
+    "crates/nomo_syntax",
+]
 
 [workspace.package]
 version = "0.1.0"
@@ -20,6 +25,7 @@ sha2 = "0.10"
 toml = "0.8"
 
 [dependencies]
+nomo-codegen-c = { path = "crates/nomo_codegen_c" }
 nomo-ir = { path = "crates/nomo_ir" }
 nomo-syntax = { path = "crates/nomo_syntax" }
 serde.workspace = true

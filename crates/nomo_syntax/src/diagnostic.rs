@@ -233,9 +233,8 @@ mod tests {
 
     #[test]
     fn json_diagnostic_sample_snapshot() {
-        let diagnostic =
-            crate::check_source_text(Path::new("samples/invalid.nomo"), "package main\n@\n")
-                .expect_err("source should produce a lexer diagnostic");
+        let diagnostic = crate::lexer::lex(Path::new("samples/invalid.nomo"), "package main\n@\n")
+            .expect_err("source should produce a lexer diagnostic");
 
         assert_eq!(
             diagnostic.json(),

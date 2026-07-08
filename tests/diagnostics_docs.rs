@@ -86,6 +86,7 @@ fn emitted_codes() -> BTreeSet<String> {
     let root = Path::new(env!("CARGO_MANIFEST_DIR"));
     let mut files = Vec::new();
     collect_rs_files(&root.join("src"), &mut files);
+    collect_rs_files(&root.join("crates"), &mut files);
     collect_rs_files(&root.join("tests"), &mut files);
 
     let mut codes = BTreeSet::new();

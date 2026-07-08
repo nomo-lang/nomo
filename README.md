@@ -9,12 +9,14 @@ front-end (lexer, parser, AST, type/semantic checks and diagnostics) and a C99
 back-end. `.nomo` source is translated to C99 and then handed to the system C
 compiler (`cc`) to produce a native executable.
 
-This repository ships two binaries and one library:
+This repository ships two binaries and reusable Rust crates:
 
 - `nomo` — the project manager (`new` / `check` / `build` / `run` / `fmt`).
 - `nomoc` — the compiler driver that operates on a single `.nomo` source file.
 - `nomo` (lib crate) — the reusable compiler API, consumed by other repositories
   such as the [`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server.
+- `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
+  shared by the compiler, formatter, docs and future LSP semantic services.
 
 ## Role in the Nomo ecosystem
 
@@ -35,9 +37,10 @@ server in turn. Language decisions are tracked in the
 
 ## Build and install
 
-This repository is a single-member Cargo workspace today, with package metadata
-and dependencies centralized at the workspace level so future `crates/*` splits
-can inherit the same settings.
+This repository is a Cargo workspace. Package metadata and shared dependencies
+are centralized at the workspace level so `crates/*` members inherit the same
+settings. The first split-out member is `crates/nomo_syntax`, which owns the
+AST, diagnostics, lexer and parser.
 
 ```bash
 cargo build --workspace --release

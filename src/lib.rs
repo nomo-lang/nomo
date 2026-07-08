@@ -10,14 +10,10 @@
     clippy::too_many_arguments
 )]
 
-pub mod ast;
 pub mod codegen;
 pub mod compiler;
-pub mod diagnostic;
 pub mod doc;
 pub mod format;
-pub mod lexer;
-pub mod parser;
 pub mod project;
 pub mod semantic;
 
@@ -31,3 +27,4 @@ pub use compiler::{
 pub use diagnostic::{Diagnostic, Suggestion};
 pub use format::format_source;
 pub use lexer::{Token, TokenKind, lex};
+pub use nomo_syntax::{ast, diagnostic, lexer, parser};

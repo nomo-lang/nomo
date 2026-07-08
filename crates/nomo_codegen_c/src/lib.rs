@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 
 mod array_helpers;
 mod expressions;
+mod host_fs_helpers;
 mod host_helpers;
 mod instances;
 mod names;
@@ -29,6 +30,7 @@ mod types;
 mod usage;
 use array_helpers::*;
 use expressions::*;
+use host_fs_helpers::*;
 use host_helpers::*;
 use instances::*;
 use names::*;

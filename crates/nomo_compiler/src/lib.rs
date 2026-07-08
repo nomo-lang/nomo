@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 mod analysis;
 mod builtins;
+mod builtins_string;
 mod declarations;
 mod expressions;
 mod externs;
@@ -35,6 +36,7 @@ mod typing;
 mod validation;
 use analysis::*;
 use builtins::*;
+use builtins_string::*;
 use declarations::*;
 use expressions::*;
 use externs::*;

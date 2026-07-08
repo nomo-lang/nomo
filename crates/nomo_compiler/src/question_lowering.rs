@@ -1,0 +1,1991 @@
+use super::*;
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_question_exprs_in_stmt_into(
+    path: &Path,
+    stmt: &Stmt,
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    is_tail: bool,
+    loop_depth: usize,
+    out: &mut Vec<Statement>,
+) -> Result<bool, Diagnostic> {
+    let rewritten = match stmt {
+        Stmt::Let {
+            name,
+            mutable,
+            type_annotation,
+            value,
+            span,
+        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_question(value) => {
+            if scope.contains_key(name) {
+                return Err(Diagnostic::new(
+                    "E0302",
+                    format!("variable `{name}` is already defined in this scope"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let AstExpr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } = value
+            else {
+                unreachable!("guard matched if expression");
+            };
+            let annotated_type = if let Some(annotation) = type_annotation {
+                let annotated_type =
+                    parse_non_void_type(annotation, structs, enums).ok_or_else(|| {
+                        unsupported_type_diagnostic_from_maps(
+                            path,
+                            span,
+                            annotation,
+                            format!(
+                                "unsupported variable type `{}` in v0.1 current implementation",
+                                annotation.path.join(".")
+                            ),
+                            structs,
+                            enums,
+                        )
+                    })?;
+                ensure_supported_value_type(path, &annotated_type, span)?;
+                Some(annotated_type)
+            } else {
+                None
+            };
+            let (condition, _) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (condition_type, condition) = lower_value_expr(
+                path, &condition, scope, imports, signatures, structs, enums, span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
+            }
+            let (then_type, body) = lower_expr_as_assignment_block(
+                path,
+                name,
+                then_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                annotated_type.as_ref(),
+                span,
+            )?;
+            let else_expected = annotated_type
+                .as_ref()
+                .or(if then_type == ValueType::Never {
+                    None
+                } else {
+                    Some(&then_type)
+                });
+            let (else_type, else_body) = lower_expr_as_assignment_block(
+                path,
+                name,
+                else_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                else_expected,
+                span,
+            )?;
+            let value_type = if let Some(annotated_type) = annotated_type {
+                if then_type != ValueType::Never && then_type != annotated_type {
+                    return Err(type_mismatch_expected_found(
+                        path,
+                        span,
+                        format!(
+                            "`if` branch returns `{}` but `{name}` is annotated as `{}`",
+                            then_type.name(),
+                            annotated_type.name()
+                        ),
+                        &annotated_type,
+                        &then_type,
+                    ));
+                }
+                if else_type != ValueType::Never && else_type != annotated_type {
+                    return Err(type_mismatch_expected_found(
+                        path,
+                        span,
+                        format!(
+                            "`if` branch returns `{}` but `{name}` is annotated as `{}`",
+                            else_type.name(),
+                            annotated_type.name()
+                        ),
+                        &annotated_type,
+                        &else_type,
+                    ));
+                }
+                annotated_type
+            } else if then_type == ValueType::Never && else_type == ValueType::Never {
+                return Err(Diagnostic::new(
+                    "E0403",
+                    "`if` initializer must contain at least one value-producing branch",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            } else if then_type == ValueType::Never {
+                else_type
+            } else if else_type == ValueType::Never || then_type == else_type {
+                then_type
+            } else {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "`if` branches return `{}` and `{}`",
+                        then_type.name(),
+                        else_type.name()
+                    ),
+                ));
+            };
+            scope.insert(
+                name.clone(),
+                Binding {
+                    value_type: value_type.clone(),
+                    mutable: *mutable,
+                    source: BindingSource::Local,
+                },
+            );
+            out.push(Statement::LetIf {
+                name: name.clone(),
+                value_type,
+                condition,
+                body,
+                else_body,
+            });
+            return Ok(true);
+        }
+        Stmt::Let {
+            name,
+            mutable,
+            type_annotation,
+            value,
+            span,
+        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_question(value) => {
+            if scope.contains_key(name) {
+                return Err(Diagnostic::new(
+                    "E0302",
+                    format!("variable `{name}` is already defined in this scope"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let AstExpr::Match { value, arms } = value else {
+                unreachable!("guard matched match expression");
+            };
+            let annotated_type = if let Some(annotation) = type_annotation {
+                let annotated_type =
+                    parse_non_void_type(annotation, structs, enums).ok_or_else(|| {
+                        unsupported_type_diagnostic_from_maps(
+                            path,
+                            span,
+                            annotation,
+                            format!(
+                                "unsupported variable type `{}` in v0.1 current implementation",
+                                annotation.path.join(".")
+                            ),
+                            structs,
+                            enums,
+                        )
+                    })?;
+                ensure_supported_value_type(path, &annotated_type, span)?;
+                Some(annotated_type)
+            } else {
+                None
+            };
+            let (value, _) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (value_type, lowered_value) = lower_value_expr(
+                path, &value, scope, imports, signatures, structs, enums, span,
+            )?;
+            let ValueType::Enum(enum_name, enum_args) = value_type else {
+                return Err(type_mismatch(path, span, "`match` expects an enum value"));
+            };
+            let enum_type = enums
+                .get(&enum_name)
+                .expect("enum value must refer to a known enum");
+            let mut seen = HashMap::new();
+            let mut result_type = annotated_type.clone();
+            let mut lowered_arms = Vec::new();
+            for arm in arms {
+                let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0316",
+                        format!(
+                            "match arm must use `{enum_name}.Variant` or a supported prelude variant"
+                        ),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                let Some(variant_type) =
+                    enum_type.variants.iter().find(|item| item.name == *variant)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0315",
+                        format!("enum `{enum_name}` has no variant `{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                if seen.insert(variant.clone(), ()).is_some() {
+                    return Err(Diagnostic::new(
+                        "E0317",
+                        format!("duplicate match arm for `{enum_name}.{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let mut arm_scope = scope.clone();
+                let payload_type = variant_type.payload.as_ref().map(|payload| {
+                    substitute_type_params(payload, &enum_type.type_params, &enum_args)
+                });
+                match (&payload_type, &arm.binding) {
+                    (Some(payload_type), Some(binding)) => {
+                        if scope.contains_key(binding) {
+                            return Err(Diagnostic::new(
+                                "E0302",
+                                format!("variable `{binding}` is already defined in this scope"),
+                                path,
+                                span.line,
+                                span.column,
+                                span.length,
+                                &span.text,
+                            ));
+                        }
+                        arm_scope.insert(
+                            binding.clone(),
+                            Binding {
+                                value_type: payload_type.clone(),
+                                mutable: false,
+                                source: BindingSource::EnumPayload {
+                                    value: lowered_value.clone(),
+                                    variant: variant.clone(),
+                                },
+                            },
+                        );
+                    }
+                    (Some(_), None) => {
+                        return Err(Diagnostic::new(
+                            "E0321",
+                            format!("match arm `{enum_name}.{variant}` must bind its payload"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Diagnostic::new(
+                            "E0322",
+                            format!("match arm `{enum_name}.{variant}` has no payload to bind"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, None) => {}
+                }
+                let (arm_type, body) = lower_expr_as_assignment_block(
+                    path,
+                    name,
+                    &arm.value,
+                    &mut arm_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    result_type.as_ref(),
+                    span,
+                )?;
+                if let Some(expected_type) = &result_type {
+                    if arm_type != ValueType::Never && expected_type != &arm_type {
+                        return Err(type_mismatch(
+                            path,
+                            span,
+                            format!(
+                                "match arm returns `{}` but previous arms return `{}`",
+                                arm_type.name(),
+                                expected_type.name()
+                            ),
+                        ));
+                    }
+                } else if arm_type == ValueType::Never {
+                    // A diverging arm does not determine the match initializer type.
+                } else {
+                    result_type = Some(arm_type);
+                }
+                lowered_arms.push(MatchStatementArm {
+                    variant,
+                    binding: arm.binding.clone(),
+                    body,
+                });
+            }
+            for variant in &enum_type.variants {
+                if !seen.contains_key(&variant.name) {
+                    return Err(Diagnostic::new(
+                        "E0318",
+                        format!("match is missing arm `{enum_name}.{}`", variant.name),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            }
+            let Some(value_type) = result_type else {
+                return Err(Diagnostic::new(
+                    "E0319",
+                    "`match` initializer must contain at least one value-producing arm",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            scope.insert(
+                name.clone(),
+                Binding {
+                    value_type: value_type.clone(),
+                    mutable: *mutable,
+                    source: BindingSource::Local,
+                },
+            );
+            out.push(Statement::LetMatch {
+                name: name.clone(),
+                value_type,
+                value: lowered_value,
+                enum_name,
+                enum_args,
+                arms: lowered_arms,
+            });
+            return Ok(true);
+        }
+        Stmt::Let {
+            name,
+            mutable,
+            type_annotation,
+            value,
+            span,
+        } if !matches!(value, AstExpr::Question { .. }) => {
+            if scope.contains_key(name) {
+                return Err(Diagnostic::new(
+                    "E0302",
+                    format!("variable `{name}` is already defined in this scope"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Let {
+                name: name.clone(),
+                mutable: *mutable,
+                type_annotation: type_annotation.clone(),
+                value,
+                span: span.clone(),
+            }
+        }
+        Stmt::LetElse {
+            pattern,
+            binding,
+            value,
+            else_body,
+            span,
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::LetElse {
+                pattern: pattern.clone(),
+                binding: binding.clone(),
+                value,
+                else_body: else_body.clone(),
+                span: span.clone(),
+            }
+        }
+        Stmt::IfLet {
+            pattern,
+            binding,
+            value,
+            body,
+            else_body,
+            span,
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::IfLet {
+                pattern: pattern.clone(),
+                binding: binding.clone(),
+                value,
+                body: body.clone(),
+                else_body: else_body.clone(),
+                span: span.clone(),
+            }
+        }
+        Stmt::Match { value, arms, span } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Match {
+                value,
+                arms: arms.clone(),
+                span: span.clone(),
+            }
+        }
+        Stmt::For {
+            variant:
+                ForVariant::Iterate {
+                    binding,
+                    iterable,
+                    body,
+                },
+            span,
+        } if ast_expr_contains_question(iterable) => {
+            let (iterable, changed) = extract_question_exprs(
+                path,
+                iterable,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::For {
+                variant: ForVariant::Iterate {
+                    binding: binding.clone(),
+                    iterable,
+                    body: body.clone(),
+                },
+                span: span.clone(),
+            }
+        }
+        Stmt::Assign {
+            target,
+            op,
+            value,
+            span,
+        } if matches!(value, AstExpr::If { .. }) && ast_expr_contains_question(value) => {
+            let AstExpr::If {
+                condition,
+                then_branch,
+                else_branch,
+            } = value
+            else {
+                unreachable!("guard matched if expression");
+            };
+            let (condition, _) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (condition_type, condition) = lower_value_expr(
+                path, &condition, scope, imports, signatures, structs, enums, span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
+            }
+            let body = lower_expr_as_target_assignment_block(
+                path,
+                target,
+                *op,
+                then_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            let else_body = lower_expr_as_target_assignment_block(
+                path,
+                target,
+                *op,
+                else_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            out.push(Statement::If {
+                condition,
+                body,
+                else_body,
+            });
+            return Ok(true);
+        }
+        Stmt::Assign {
+            target,
+            op,
+            value: AstExpr::Match { value, arms },
+            span,
+        } if ast_expr_contains_question(value)
+            || arms
+                .iter()
+                .any(|arm| ast_expr_contains_question(&arm.value)) =>
+        {
+            let (value, _) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (value_type, lowered_value) = lower_value_expr(
+                path, &value, scope, imports, signatures, structs, enums, span,
+            )?;
+            let ValueType::Enum(enum_name, enum_args) = value_type else {
+                return Err(type_mismatch(path, span, "`match` expects an enum value"));
+            };
+            let enum_type = enums
+                .get(&enum_name)
+                .expect("enum value must refer to a known enum");
+            let mut seen = HashMap::new();
+            let mut lowered_arms = Vec::new();
+            for arm in arms {
+                let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0316",
+                        format!(
+                            "match arm must use `{enum_name}.Variant` or a supported prelude variant"
+                        ),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                let Some(variant_type) =
+                    enum_type.variants.iter().find(|item| item.name == *variant)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0315",
+                        format!("enum `{enum_name}` has no variant `{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                if seen.insert(variant.clone(), ()).is_some() {
+                    return Err(Diagnostic::new(
+                        "E0317",
+                        format!("duplicate match arm for `{enum_name}.{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let mut arm_scope = scope.clone();
+                let payload_type = variant_type.payload.as_ref().map(|payload| {
+                    substitute_type_params(payload, &enum_type.type_params, &enum_args)
+                });
+                match (&payload_type, &arm.binding) {
+                    (Some(payload_type), Some(binding)) => {
+                        if scope.contains_key(binding) {
+                            return Err(Diagnostic::new(
+                                "E0302",
+                                format!("variable `{binding}` is already defined in this scope"),
+                                path,
+                                span.line,
+                                span.column,
+                                span.length,
+                                &span.text,
+                            ));
+                        }
+                        arm_scope.insert(
+                            binding.clone(),
+                            Binding {
+                                value_type: payload_type.clone(),
+                                mutable: false,
+                                source: BindingSource::EnumPayload {
+                                    value: lowered_value.clone(),
+                                    variant: variant.clone(),
+                                },
+                            },
+                        );
+                    }
+                    (Some(_), None) => {
+                        return Err(Diagnostic::new(
+                            "E0321",
+                            format!("match arm `{enum_name}.{variant}` must bind its payload"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Diagnostic::new(
+                            "E0322",
+                            format!("match arm `{enum_name}.{variant}` has no payload to bind"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, None) => {}
+                }
+                let body = lower_expr_as_target_assignment_block(
+                    path,
+                    target,
+                    *op,
+                    &arm.value,
+                    &mut arm_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    span,
+                )?;
+                lowered_arms.push(MatchStatementArm {
+                    variant,
+                    binding: arm.binding.clone(),
+                    body,
+                });
+            }
+            for variant in &enum_type.variants {
+                if !seen.contains_key(&variant.name) {
+                    return Err(Diagnostic::new(
+                        "E0318",
+                        format!("match is missing arm `{enum_name}.{}`", variant.name),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            }
+            out.push(Statement::Match {
+                value: lowered_value,
+                enum_name,
+                enum_args,
+                arms: lowered_arms,
+            });
+            return Ok(true);
+        }
+        Stmt::Assign {
+            target,
+            op,
+            value,
+            span,
+        } if ast_expr_contains_question(value) => {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Assign {
+                target: target.clone(),
+                op: *op,
+                value,
+                span: span.clone(),
+            }
+        }
+        Stmt::Defer { stmt, span } if matches!(stmt.as_ref(), Stmt::Expr { .. }) => {
+            let Stmt::Expr {
+                expr,
+                span: expr_span,
+            } = stmt.as_ref()
+            else {
+                unreachable!("guard matched expression defer");
+            };
+            if !ast_expr_contains_question(expr) {
+                return Ok(false);
+            }
+            let (expr, changed) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Defer {
+                stmt: Box::new(Stmt::Expr {
+                    expr,
+                    span: expr_span.clone(),
+                }),
+                span: span.clone(),
+            }
+        }
+        Stmt::Expr { expr, span }
+            if !(is_tail && return_type != &ValueType::Void)
+                && ast_expr_contains_question(expr) =>
+        {
+            let (expr, changed) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Expr {
+                expr,
+                span: span.clone(),
+            }
+        }
+        Stmt::Return {
+            value:
+                Some(AstExpr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                }),
+            span,
+        } if ast_expr_contains_question(condition)
+            || ast_expr_contains_question(then_branch)
+            || ast_expr_contains_question(else_branch) =>
+        {
+            let (condition, _) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (condition_type, condition) = lower_value_expr(
+                path, &condition, scope, imports, signatures, structs, enums, span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
+            }
+            let body = lower_tail_expr_as_return_block(
+                path,
+                then_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            let else_body = lower_tail_expr_as_return_block(
+                path,
+                else_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            out.push(Statement::If {
+                condition,
+                body,
+                else_body,
+            });
+            return Ok(true);
+        }
+        Stmt::Return {
+            value:
+                Some(AstExpr::Call {
+                    callee,
+                    type_args,
+                    args,
+                }),
+            span,
+        } if type_args.is_empty()
+            && is_result_ok_callee(callee, signatures)
+            && matches!(args.as_slice(), [AstExpr::If { .. }])
+            && args.iter().any(ast_expr_contains_question) =>
+        {
+            let [
+                AstExpr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                },
+            ] = args.as_slice()
+            else {
+                unreachable!("guard matched single if argument");
+            };
+            let (condition, _) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (condition_type, condition) = lower_value_expr(
+                path, &condition, scope, imports, signatures, structs, enums, span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
+            }
+            let then_ok = AstExpr::Call {
+                callee: callee.clone(),
+                type_args: Vec::new(),
+                args: vec![then_branch.as_ref().clone()],
+            };
+            let else_ok = AstExpr::Call {
+                callee: callee.clone(),
+                type_args: Vec::new(),
+                args: vec![else_branch.as_ref().clone()],
+            };
+            let body = lower_tail_expr_as_return_block(
+                path,
+                &then_ok,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            let else_body = lower_tail_expr_as_return_block(
+                path,
+                &else_ok,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            out.push(Statement::If {
+                condition,
+                body,
+                else_body,
+            });
+            return Ok(true);
+        }
+        Stmt::Return {
+            value:
+                Some(AstExpr::Call {
+                    callee,
+                    type_args,
+                    args,
+                }),
+            span,
+        } if type_args.is_empty()
+            && is_result_ok_callee(callee, signatures)
+            && matches!(args.as_slice(), [AstExpr::Match { .. }])
+            && args.iter().any(ast_expr_contains_question) =>
+        {
+            let [AstExpr::Match { value, arms }] = args.as_slice() else {
+                unreachable!("guard matched single match argument");
+            };
+            let (value, _) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (value_type, lowered_value) = lower_value_expr(
+                path, &value, scope, imports, signatures, structs, enums, span,
+            )?;
+            let ValueType::Enum(enum_name, enum_args) = value_type else {
+                return Err(type_mismatch(path, span, "`match` expects an enum value"));
+            };
+            let enum_type = enums
+                .get(&enum_name)
+                .expect("enum value must refer to a known enum");
+            let mut seen = HashMap::new();
+            let mut lowered_arms = Vec::new();
+            for arm in arms {
+                let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0316",
+                        format!(
+                            "match arm must use `{enum_name}.Variant` or a supported prelude variant"
+                        ),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                let Some(variant_type) =
+                    enum_type.variants.iter().find(|item| item.name == *variant)
+                else {
+                    return Err(Diagnostic::new(
+                        "E0315",
+                        format!("enum `{enum_name}` has no variant `{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                if seen.insert(variant.clone(), ()).is_some() {
+                    return Err(Diagnostic::new(
+                        "E0317",
+                        format!("duplicate match arm for `{enum_name}.{variant}`"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let mut arm_scope = scope.clone();
+                let payload_type = variant_type.payload.as_ref().map(|payload| {
+                    substitute_type_params(payload, &enum_type.type_params, &enum_args)
+                });
+                match (&payload_type, &arm.binding) {
+                    (Some(payload_type), Some(binding)) => {
+                        if scope.contains_key(binding) {
+                            return Err(Diagnostic::new(
+                                "E0302",
+                                format!("variable `{binding}` is already defined in this scope"),
+                                path,
+                                span.line,
+                                span.column,
+                                span.length,
+                                &span.text,
+                            ));
+                        }
+                        arm_scope.insert(
+                            binding.clone(),
+                            Binding {
+                                value_type: payload_type.clone(),
+                                mutable: false,
+                                source: BindingSource::EnumPayload {
+                                    value: lowered_value.clone(),
+                                    variant: variant.clone(),
+                                },
+                            },
+                        );
+                    }
+                    (Some(_), None) => {
+                        return Err(Diagnostic::new(
+                            "E0321",
+                            format!("match arm `{enum_name}.{variant}` must bind its payload"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, Some(_)) => {
+                        return Err(Diagnostic::new(
+                            "E0322",
+                            format!("match arm `{enum_name}.{variant}` has no payload to bind"),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    (None, None) => {}
+                }
+                let ok_arm = AstExpr::Call {
+                    callee: callee.clone(),
+                    type_args: Vec::new(),
+                    args: vec![arm.value.clone()],
+                };
+                let body = lower_tail_expr_as_return_block(
+                    path,
+                    &ok_arm,
+                    &mut arm_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    span,
+                )?;
+                lowered_arms.push(MatchStatementArm {
+                    variant,
+                    binding: arm.binding.clone(),
+                    body,
+                });
+            }
+            for variant in &enum_type.variants {
+                if !seen.contains_key(&variant.name) {
+                    return Err(Diagnostic::new(
+                        "E0318",
+                        format!("match is missing arm `{enum_name}.{}`", variant.name),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            }
+            out.push(Statement::Match {
+                value: lowered_value,
+                enum_name,
+                enum_args,
+                arms: lowered_arms,
+            });
+            return Ok(true);
+        }
+        Stmt::Return {
+            value: Some(value),
+            span,
+        } if matches!(value, AstExpr::Match { .. }) && ast_expr_contains_question(value) => {
+            let AstExpr::Match { value, arms } = value else {
+                unreachable!("guard matched match expression");
+            };
+            let (value, _) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            out.push(lower_tail_match_expr_as_statement(
+                path,
+                &value,
+                arms,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?);
+            return Ok(true);
+        }
+        Stmt::Return {
+            value: Some(value),
+            span,
+        } if !matches!(value, AstExpr::Question { .. })
+            && question_expr_from_success_return(value, signatures).is_none() =>
+        {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Return {
+                value: Some(value),
+                span: span.clone(),
+            }
+        }
+        Stmt::Expr {
+            expr:
+                AstExpr::If {
+                    condition,
+                    then_branch,
+                    else_branch,
+                },
+            span,
+        } if is_tail
+            && return_type != &ValueType::Void
+            && (ast_expr_contains_question(condition)
+                || ast_expr_contains_question(then_branch)
+                || ast_expr_contains_question(else_branch)) =>
+        {
+            let (condition, _) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (condition_type, condition) = lower_value_expr(
+                path, &condition, scope, imports, signatures, structs, enums, span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
+            }
+            let body = lower_tail_expr_as_return_block(
+                path,
+                then_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            let else_body = lower_tail_expr_as_return_block(
+                path,
+                else_branch,
+                &mut scope.clone(),
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?;
+            out.push(Statement::If {
+                condition,
+                body,
+                else_body,
+            });
+            return Ok(true);
+        }
+        Stmt::Expr {
+            expr: AstExpr::Match { value, arms },
+            span,
+        } if is_tail
+            && return_type != &ValueType::Void
+            && arms
+                .iter()
+                .any(|arm| ast_expr_contains_question(&arm.value)) =>
+        {
+            out.push(lower_tail_match_expr_as_statement(
+                path,
+                value,
+                arms,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+            )?);
+            return Ok(true);
+        }
+        Stmt::Expr { expr, span } if is_tail && return_type != &ValueType::Void => {
+            let (expr, changed) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            if !changed {
+                return Ok(false);
+            }
+            Stmt::Expr {
+                expr,
+                span: span.clone(),
+            }
+        }
+        _ => return Ok(false),
+    };
+    out.push(lower_stmt(
+        path,
+        &rewritten,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        false,
+        loop_depth,
+    )?);
+    Ok(true)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_expr_as_assignment_block(
+    path: &Path,
+    target: &str,
+    expr: &AstExpr,
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    expected: Option<&ValueType>,
+    span: &Span,
+) -> Result<(ValueType, Vec<Statement>), Diagnostic> {
+    let mut out = Vec::new();
+    let (expr, _) = extract_question_exprs(
+        path,
+        expr,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        span,
+        &mut out,
+    )?;
+    let (value_type, value) = lower_value_expr_with_expected(
+        path, &expr, scope, imports, signatures, structs, enums, expected, span,
+    )?;
+    if value_type != ValueType::Never {
+        out.push(Statement::Assign {
+            name: target.to_string(),
+            value,
+        });
+    }
+    Ok((value_type, out))
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_expr_as_target_assignment_block(
+    path: &Path,
+    target: &[String],
+    op: AssignOp,
+    expr: &AstExpr,
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+) -> Result<Vec<Statement>, Diagnostic> {
+    let mut out = Vec::new();
+    let (expr, _) = extract_question_exprs(
+        path,
+        expr,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        span,
+        &mut out,
+    )?;
+    out.push(lower_assign_stmt(
+        path, target, op, &expr, scope, imports, signatures, structs, enums, span,
+    )?);
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_tail_expr_as_return_block(
+    path: &Path,
+    expr: &AstExpr,
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+) -> Result<Vec<Statement>, Diagnostic> {
+    let mut out = Vec::new();
+    let stmt = Stmt::Return {
+        value: Some(expr.clone()),
+        span: span.clone(),
+    };
+    lower_stmt_into(
+        path,
+        &stmt,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        false,
+        0,
+        &mut out,
+    )?;
+    Ok(out)
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_tail_match_expr_as_statement(
+    path: &Path,
+    value: &AstExpr,
+    arms: &[AstMatchArm],
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+) -> Result<Statement, Diagnostic> {
+    let (value_type, lowered_value) = lower_value_expr(
+        path, value, scope, imports, signatures, structs, enums, span,
+    )?;
+    let ValueType::Enum(enum_name, enum_args) = value_type else {
+        return Err(type_mismatch(path, span, "`match` expects an enum value"));
+    };
+    let enum_type = enums
+        .get(&enum_name)
+        .expect("enum value must refer to a known enum");
+    let mut seen = HashMap::new();
+    let mut lowered_arms = Vec::new();
+    for arm in arms {
+        let Some(variant) = resolve_match_arm_variant(&arm.pattern, &enum_name, scope) else {
+            return Err(Diagnostic::new(
+                "E0316",
+                format!("match arm must use `{enum_name}.Variant` or a supported prelude variant"),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        };
+        let Some(variant_type) = enum_type.variants.iter().find(|item| item.name == *variant)
+        else {
+            return Err(Diagnostic::new(
+                "E0315",
+                format!("enum `{enum_name}` has no variant `{variant}`"),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        };
+        if seen.insert(variant.clone(), ()).is_some() {
+            return Err(Diagnostic::new(
+                "E0317",
+                format!("duplicate match arm for `{enum_name}.{variant}`"),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        let mut arm_scope = scope.clone();
+        let payload_type = variant_type
+            .payload
+            .as_ref()
+            .map(|payload| substitute_type_params(payload, &enum_type.type_params, &enum_args));
+        match (&payload_type, &arm.binding) {
+            (Some(payload_type), Some(binding)) => {
+                if scope.contains_key(binding) {
+                    return Err(Diagnostic::new(
+                        "E0302",
+                        format!("variable `{binding}` is already defined in this scope"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                arm_scope.insert(
+                    binding.clone(),
+                    Binding {
+                        value_type: payload_type.clone(),
+                        mutable: false,
+                        source: BindingSource::EnumPayload {
+                            value: lowered_value.clone(),
+                            variant: variant.clone(),
+                        },
+                    },
+                );
+            }
+            (Some(_), None) => {
+                return Err(Diagnostic::new(
+                    "E0321",
+                    format!("match arm `{enum_name}.{variant}` must bind its payload"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            (None, Some(_)) => {
+                return Err(Diagnostic::new(
+                    "E0322",
+                    format!("match arm `{enum_name}.{variant}` has no payload to bind"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            (None, None) => {}
+        }
+        let body = lower_tail_expr_as_return_block(
+            path,
+            &arm.value,
+            &mut arm_scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            return_type,
+            span,
+        )?;
+        lowered_arms.push(MatchStatementArm {
+            variant,
+            binding: arm.binding.clone(),
+            body,
+        });
+    }
+    for variant in &enum_type.variants {
+        if !seen.contains_key(&variant.name) {
+            return Err(Diagnostic::new(
+                "E0318",
+                format!("match is missing arm `{enum_name}.{}`", variant.name),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+    }
+    Ok(Statement::Match {
+        value: lowered_value,
+        enum_name,
+        enum_args,
+        arms: lowered_arms,
+    })
+}
+
+pub(super) fn ast_expr_contains_question(expr: &AstExpr) -> bool {
+    match expr {
+        AstExpr::Question { .. } => true,
+        AstExpr::Call { args, .. } => args.iter().any(ast_expr_contains_question),
+        AstExpr::StructLiteral { fields, .. } => fields
+            .iter()
+            .any(|(_, value)| ast_expr_contains_question(value)),
+        AstExpr::Match { value, arms } => {
+            ast_expr_contains_question(value)
+                || arms
+                    .iter()
+                    .any(|arm| ast_expr_contains_question(&arm.value))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            ast_expr_contains_question(condition)
+                || ast_expr_contains_question(then_branch)
+                || ast_expr_contains_question(else_branch)
+        }
+        AstExpr::Panic { message } | AstExpr::Unary { expr: message, .. } => {
+            ast_expr_contains_question(message)
+        }
+        AstExpr::Cast { expr, .. } => ast_expr_contains_question(expr),
+        AstExpr::Binary { left, right, .. } => {
+            ast_expr_contains_question(left) || ast_expr_contains_question(right)
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => false,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn extract_question_exprs(
+    path: &Path,
+    expr: &AstExpr,
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+    out: &mut Vec<Statement>,
+) -> Result<(AstExpr, bool), Diagnostic> {
+    match expr {
+        AstExpr::Question { expr } => {
+            let (rewritten_result, _) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (result_type, result_expr) = lower_value_expr(
+                path,
+                &rewritten_result,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            let (carrier, ok_type) = question_payload(path, span, &result_type, return_type)?;
+            let temp = fresh_internal_binding(scope, "question_value");
+            scope.insert(
+                temp.clone(),
+                Binding {
+                    value_type: ok_type.clone(),
+                    mutable: false,
+                    source: BindingSource::Local,
+                },
+            );
+            out.push(Statement::QuestionLet {
+                carrier,
+                name: temp.clone(),
+                value_type: ok_type,
+                result_type,
+                return_type: return_type.clone(),
+                result_expr,
+            });
+            Ok((AstExpr::Name(vec![temp]), true))
+        }
+        AstExpr::Call {
+            callee,
+            type_args,
+            args,
+        } => {
+            let (args, changed) = extract_question_exprs_from_vec(
+                path,
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Call {
+                    callee: callee.clone(),
+                    type_args: type_args.clone(),
+                    args,
+                },
+                changed,
+            ))
+        }
+        AstExpr::StructLiteral { type_name, fields } => {
+            let mut changed = false;
+            let mut rewritten = Vec::new();
+            for (field, value) in fields {
+                let (value, value_changed) = extract_question_exprs(
+                    path,
+                    value,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    span,
+                    out,
+                )?;
+                changed |= value_changed;
+                rewritten.push((field.clone(), value));
+            }
+            Ok((
+                AstExpr::StructLiteral {
+                    type_name: type_name.clone(),
+                    fields: rewritten,
+                },
+                changed,
+            ))
+        }
+        AstExpr::Binary { left, op, right } => {
+            let (left, left_changed) = extract_question_exprs(
+                path,
+                left,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (right, right_changed) = extract_question_exprs(
+                path,
+                right,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Binary {
+                    left: Box::new(left),
+                    op: op.clone(),
+                    right: Box::new(right),
+                },
+                left_changed || right_changed,
+            ))
+        }
+        AstExpr::Cast { expr, target } => {
+            let (expr, changed) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Cast {
+                    expr: Box::new(expr),
+                    target: target.clone(),
+                },
+                changed,
+            ))
+        }
+        AstExpr::Unary { op, expr } => {
+            let (expr, changed) = extract_question_exprs(
+                path,
+                expr,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Unary {
+                    op: op.clone(),
+                    expr: Box::new(expr),
+                },
+                changed,
+            ))
+        }
+        AstExpr::Match { value, arms } => {
+            let (value, changed) = extract_question_exprs(
+                path,
+                value,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Match {
+                    value: Box::new(value),
+                    arms: arms.clone(),
+                },
+                changed,
+            ))
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            let (condition, changed) = extract_question_exprs(
+                path,
+                condition,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::If {
+                    condition: Box::new(condition),
+                    then_branch: then_branch.clone(),
+                    else_branch: else_branch.clone(),
+                },
+                changed,
+            ))
+        }
+        AstExpr::Panic { message } => {
+            let (message, changed) = extract_question_exprs(
+                path,
+                message,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Panic {
+                    message: Box::new(message),
+                },
+                changed,
+            ))
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => Ok((expr.clone(), false)),
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn extract_question_exprs_from_vec(
+    path: &Path,
+    exprs: &[AstExpr],
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+    out: &mut Vec<Statement>,
+) -> Result<(Vec<AstExpr>, bool), Diagnostic> {
+    let mut changed = false;
+    let mut rewritten = Vec::new();
+    for expr in exprs {
+        let (expr, expr_changed) = extract_question_exprs(
+            path,
+            expr,
+            scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            return_type,
+            span,
+            out,
+        )?;
+        changed |= expr_changed;
+        rewritten.push(expr);
+    }
+    Ok((rewritten, changed))
+}
+
+pub(super) fn fresh_internal_binding(scope: &HashMap<String, Binding>, prefix: &str) -> String {
+    let mut index = 0;
+    loop {
+        let candidate = format!("__{prefix}_{index}");
+        if !scope.contains_key(&candidate) {
+            return candidate;
+        }
+        index += 1;
+    }
+}

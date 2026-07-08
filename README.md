@@ -160,6 +160,20 @@ cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git",
 fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
 ```
 
+Projects and source dependencies can declare native linker metadata for C FFI:
+
+```toml
+[ffi]
+libraries = ["sqlite3"]
+library_paths = ["native/lib"]
+frameworks = ["Security"]
+link_args = ["-Wl,-rpath,@loader_path"]
+```
+
+`library_paths` are resolved relative to the manifest that declares them. During
+native `nomo build`, `nomo run`, and `nomo test`, Nomo aggregates `[ffi]`
+metadata from the root package and source dependencies and passes it to `cc`.
+
 Workspace roots can share package defaults and dependency declarations with
 member packages:
 
@@ -342,7 +356,9 @@ mutability and return type; full generic constraints, dynamic dispatch,
 associated types and blanket impls are not part of v0.1. `extern "C"` blocks
 plus `unsafe { ... }` support the initial C FFI path, currently including string
 calls to C `puts` and primitive integer/float/bool/char extern calls such as
-`abs(i32) -> i32`.
+`abs(i32) -> i32`. Project manifests can use `[ffi]` linker metadata to pass
+native libraries, library search paths, macOS frameworks, and raw link arguments
+to project builds and tests.
 
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
 `fs.write_string`, `fs.read_bytes`, `fs.write_bytes`, `fs.exists`,

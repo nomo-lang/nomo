@@ -79,6 +79,14 @@ pub struct DependencyVendorOptions {
     pub sync: bool,
 }
 
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct FfiLinkMetadata {
+    pub libraries: Vec<String>,
+    pub library_paths: Vec<PathBuf>,
+    pub frameworks: Vec<String>,
+    pub link_args: Vec<String>,
+}
+
 impl Default for DependencyVendorOptions {
     fn default() -> Self {
         Self {
@@ -92,6 +100,7 @@ impl Default for DependencyVendorOptions {
 pub struct Manifest {
     pub package: PackageMetadata,
     pub dependencies: Vec<Dependency>,
+    pub ffi: FfiLinkMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -1092,6 +1101,8 @@ pub fn build_project_with_options(
 ) -> Result<PathBuf, BuildError> {
     let context =
         project_module_context_with_options(project, options).map_err(BuildError::Message)?;
+    let ffi_link_metadata =
+        project_ffi_link_metadata_with_options(project, options).map_err(BuildError::Message)?;
     let c = compile_source_to_c_with_project_modules(
         &project.main,
         Some(&context.local_source_root),
@@ -1111,12 +1122,9 @@ pub fn build_project_with_options(
     }
 
     let bin_path = bin_dir.join(&project.name);
-    let output = Command::new("cc")
-        .arg("-std=c99")
-        .arg(&c_path)
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
+    let mut command = Command::new("cc");
+    configure_c_compile_command(&mut command, &c_path, &bin_path, &ffi_link_metadata);
+    let output = command
         .output()
         .map_err(|err| BuildError::Message(format!("failed to run cc: {err}")))?;
     if !output.status.success() {
@@ -1137,6 +1145,8 @@ pub fn run_project_tests_with_options(
     let project_id = package_id(&manifest.package);
     let context = project_module_context_with_options(project, options.resolution)
         .map_err(BuildError::Message)?;
+    let ffi_link_metadata = project_ffi_link_metadata_with_options(project, options.resolution)
+        .map_err(BuildError::Message)?;
     let mut test_sources = discover_project_tests(project)?;
     test_sources.sort_by(|left, right| left.name.cmp(&right.name));
     if let Some(filter) = options.filter.as_deref() {
@@ -1151,7 +1161,14 @@ pub fn run_project_tests_with_options(
     let mut results = Vec::new();
     for test in test_sources {
         let started = Instant::now();
-        let result = run_single_project_test(project, &context, &test, &c_dir, &bin_dir);
+        let result = run_single_project_test(
+            project,
+            &context,
+            &ffi_link_metadata,
+            &test,
+            &c_dir,
+            &bin_dir,
+        );
         let duration_ms = started.elapsed().as_millis();
         match result {
             Ok(()) => results.push(ProjectTestCaseResult {
@@ -1277,6 +1294,7 @@ fn is_void_type(type_ref: &crate::ast::TypeRef) -> bool {
 fn run_single_project_test(
     project: &Project,
     context: &ProjectModuleContext,
+    ffi_link_metadata: &FfiLinkMetadata,
     test: &DiscoveredTest,
     c_dir: &Path,
     bin_dir: &Path,
@@ -1294,12 +1312,9 @@ fn run_single_project_test(
     let c_path = c_dir.join(format!("{file_stem}.c"));
     let bin_path = bin_dir.join(file_stem);
     fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
-    let output = Command::new("cc")
-        .arg("-std=c99")
-        .arg(&c_path)
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
+    let mut command = Command::new("cc");
+    configure_c_compile_command(&mut command, &c_path, &bin_path, ffi_link_metadata);
+    let output = command
         .output()
         .map_err(|err| format!("failed to run cc: {err}"))?;
     if !output.status.success() {
@@ -1382,6 +1397,116 @@ fn safe_test_artifact_name(name: &str) -> String {
         .collect()
 }
 
+fn project_ffi_link_metadata_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+) -> Result<FfiLinkMetadata, String> {
+    let manifest = parse_manifest_at_root(&project.root)?;
+    let mut metadata = FfiLinkMetadata::default();
+    let mut seen = BTreeSet::new();
+    let root_id = package_id(&manifest.package);
+    seen.insert(root_id);
+    metadata.extend(manifest.ffi);
+
+    if options.locked || (options.offline && project.lock_root().join("nomo.lock").is_file()) {
+        let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
+        collect_locked_dependency_ffi_metadata(
+            &graph.dependencies,
+            &source_base,
+            &mut seen,
+            &mut metadata,
+        )?;
+    } else {
+        collect_current_dependency_ffi_metadata(
+            &project.root,
+            &manifest.dependencies,
+            options.offline,
+            &mut seen,
+            &mut metadata,
+        )?;
+    }
+    Ok(metadata)
+}
+
+fn collect_current_dependency_ffi_metadata(
+    base_root: &Path,
+    dependencies: &[Dependency],
+    offline: bool,
+    seen: &mut BTreeSet<String>,
+    metadata: &mut FfiLinkMetadata,
+) -> Result<(), String> {
+    for dependency in dependencies {
+        let Some(dep_root) = dependency_module_root(base_root, dependency, offline)? else {
+            continue;
+        };
+        let manifest = parse_manifest_at_root(&dep_root)?;
+        let package_id = package_id(&manifest.package);
+        if !seen.insert(package_id) {
+            continue;
+        }
+        let dependencies = manifest.dependencies.clone();
+        metadata.extend(manifest.ffi);
+        collect_current_dependency_ffi_metadata(&dep_root, &dependencies, offline, seen, metadata)?;
+    }
+    Ok(())
+}
+
+fn collect_locked_dependency_ffi_metadata(
+    dependencies: &[ResolvedDependency],
+    source_base: &Path,
+    seen: &mut BTreeSet<String>,
+    metadata: &mut FfiLinkMetadata,
+) -> Result<(), String> {
+    for dependency in dependencies {
+        let Some(dep_root) = resolved_dependency_module_root(source_base, dependency)? else {
+            continue;
+        };
+        let manifest = parse_manifest_at_root(&dep_root)?;
+        let package_id = package_id(&manifest.package);
+        if seen.insert(package_id) {
+            metadata.extend(manifest.ffi);
+        }
+        collect_locked_dependency_ffi_metadata(
+            &dependency.dependencies,
+            source_base,
+            seen,
+            metadata,
+        )?;
+    }
+    Ok(())
+}
+
+impl FfiLinkMetadata {
+    fn extend(&mut self, other: FfiLinkMetadata) {
+        self.libraries.extend(other.libraries);
+        self.library_paths.extend(other.library_paths);
+        self.frameworks.extend(other.frameworks);
+        self.link_args.extend(other.link_args);
+    }
+}
+
+fn configure_c_compile_command(
+    command: &mut Command,
+    c_path: &Path,
+    bin_path: &Path,
+    ffi_link_metadata: &FfiLinkMetadata,
+) {
+    command.arg("-std=c99").arg(c_path);
+    for path in &ffi_link_metadata.library_paths {
+        command.arg(format!("-L{}", path.display()));
+    }
+    for library in &ffi_link_metadata.libraries {
+        command.arg(format!("-l{library}"));
+    }
+    for framework in &ffi_link_metadata.frameworks {
+        command.arg("-framework").arg(framework);
+    }
+    for arg in &ffi_link_metadata.link_args {
+        command.arg(arg);
+    }
+    command.arg("-lm").arg("-o").arg(bin_path);
+}
+
 fn package_id(package: &PackageMetadata) -> String {
     format!("{}/{}", package.namespace, package.name)
 }
@@ -1450,12 +1575,14 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     let c_path = c_dir.join("main.c");
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
     let bin_path = bin_dir.join(stem);
-    let output = Command::new("cc")
-        .arg("-std=c99")
-        .arg(&c_path)
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
+    let mut command = Command::new("cc");
+    configure_c_compile_command(
+        &mut command,
+        &c_path,
+        &bin_path,
+        &FfiLinkMetadata::default(),
+    );
+    let output = command
         .output()
         .map_err(|err| BuildError::Message(format!("failed to run cc: {err}")))?;
     if !output.status.success() {
@@ -1572,6 +1699,7 @@ fn parse_manifest_document_at_root(
         edition: "2026".to_string(),
     };
     let mut dependencies = Vec::new();
+    let ffi = parse_ffi_link_metadata(root, optional_table(document, "ffi")?)?;
 
     let package_table = optional_table(&document, "package")?;
     if package_table.is_none() && optional_table(document, "workspace")?.is_some() {
@@ -1622,7 +1750,51 @@ fn parse_manifest_document_at_root(
     Ok(Manifest {
         package,
         dependencies,
+        ffi,
     })
+}
+
+fn parse_ffi_link_metadata(
+    root: &Path,
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<FfiLinkMetadata, String> {
+    let Some(table) = table else {
+        return Ok(FfiLinkMetadata::default());
+    };
+    let libraries = optional_string_array_field(table, "ffi", "libraries")?;
+    let raw_library_paths = optional_string_array_field(table, "ffi", "library_paths")?;
+    validate_non_empty_ffi_entries("ffi.library_paths", &raw_library_paths)?;
+    let library_paths = raw_library_paths
+        .into_iter()
+        .map(|path| rebase_ffi_library_path(root, &path))
+        .collect();
+    let frameworks = optional_string_array_field(table, "ffi", "frameworks")?;
+    let link_args = optional_string_array_field(table, "ffi", "link_args")?;
+    validate_non_empty_ffi_entries("ffi.libraries", &libraries)?;
+    validate_non_empty_ffi_entries("ffi.frameworks", &frameworks)?;
+    validate_non_empty_ffi_entries("ffi.link_args", &link_args)?;
+    Ok(FfiLinkMetadata {
+        libraries,
+        library_paths,
+        frameworks,
+        link_args,
+    })
+}
+
+fn validate_non_empty_ffi_entries(section: &str, values: &[String]) -> Result<(), String> {
+    if values.iter().any(|value| value.is_empty()) {
+        return Err(format!("manifest `{section}` entries must not be empty"));
+    }
+    Ok(())
+}
+
+fn rebase_ffi_library_path(root: &Path, path: &str) -> PathBuf {
+    let path = PathBuf::from(path);
+    if path.is_absolute() {
+        path
+    } else {
+        root.join(path)
+    }
 }
 
 fn workspace_context_for_manifest(
@@ -4846,6 +5018,29 @@ path = "../utils"
                 path: "../utils".to_string(),
             }
         );
+    }
+
+    #[test]
+    fn parses_ffi_link_metadata_and_rebases_library_paths() {
+        let root = Path::new("/tmp/nomo-ffi-demo");
+        let manifest = r#"[package]
+namespace = "local"
+name = "ffi-demo"
+version = "0.1.0"
+edition = "2026"
+
+[ffi]
+libraries = ["z"]
+library_paths = ["native/lib"]
+frameworks = ["Security"]
+link_args = ["-Wl,-rpath,@loader_path"]
+"#;
+        let parsed = parse_manifest_text(manifest, root).unwrap();
+
+        assert_eq!(parsed.ffi.libraries, vec!["z"]);
+        assert_eq!(parsed.ffi.library_paths, vec![root.join("native/lib")]);
+        assert_eq!(parsed.ffi.frameworks, vec!["Security"]);
+        assert_eq!(parsed.ffi.link_args, vec!["-Wl,-rpath,@loader_path"]);
     }
 
     #[test]

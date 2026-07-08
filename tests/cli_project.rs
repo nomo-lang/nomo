@@ -1029,6 +1029,114 @@ fn nomo_run_standalone_file_with_explicit_main() {
 }
 
 #[test]
+fn nomo_run_and_test_use_manifest_ffi_link_metadata() {
+    let root = temp_test_root("ffi-link-metadata");
+    reset_dir(&root);
+    let project = root.join("ffi-link");
+    let native = project.join("native");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(&native).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"ffi-link\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[ffi]\nlibraries = [\"nomoffi\"]\nlibrary_paths = [\"native\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        native.join("nomoffi.c"),
+        "int native_answer(int value) { return value * 2; }\n",
+    )
+    .unwrap();
+    let compile_output = Command::new("cc")
+        .arg("-c")
+        .arg(native.join("nomoffi.c"))
+        .arg("-o")
+        .arg(native.join("nomoffi.o"))
+        .output()
+        .unwrap();
+    assert!(
+        compile_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&compile_output.stdout),
+        String::from_utf8_lossy(&compile_output.stderr)
+    );
+    let archive_output = Command::new("ar")
+        .arg("rcs")
+        .arg(native.join("libnomoffi.a"))
+        .arg(native.join("nomoffi.o"))
+        .output()
+        .unwrap();
+    assert!(
+        archive_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&archive_output.stdout),
+        String::from_utf8_lossy(&archive_output.stderr)
+    );
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+
+extern "C" {
+    fn native_answer(value: i32) -> i32
+}
+
+#[test]
+fn native_answer_test() -> void {
+    unsafe {
+        let answer: i32 = native_answer(10)
+    }
+    let status: string = if answer == 20 {
+        "ok"
+    } else {
+        panic("ffi test link failed")
+    }
+}
+
+fn main() -> void {
+    unsafe {
+        let answer: i32 = native_answer(21)
+    }
+    if answer == 42 {
+        io.println("ffi link ok")
+    } else {
+        panic("ffi run link failed")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let run_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&run_output.stdout), "ffi link ok\n");
+
+    let test_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        test_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&test_output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&test_output.stdout).contains("ok app.main.native_answer_test")
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_binary_arithmetic() {
     let root = temp_test_root("run-arithmetic");
     reset_dir(&root);

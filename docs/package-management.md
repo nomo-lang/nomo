@@ -23,6 +23,25 @@ loader. `std`, `nomo`, and `core` are reserved namespaces.
 be used as an ordinary dependency alias, and `std` is not written to the
 lockfile as a normal package.
 
+## FFI Link Metadata
+
+Packages that declare `extern "C"` functions can add linker metadata:
+
+```toml
+[ffi]
+libraries = ["sqlite3"]
+library_paths = ["native/lib"]
+frameworks = ["Security"]
+link_args = ["-Wl,-rpath,@loader_path"]
+```
+
+`libraries` become `-l<name>`, `library_paths` become `-L<path>`, `frameworks`
+become macOS `-framework <name>` arguments, and `link_args` are passed through
+as raw `cc` arguments. Relative `library_paths` are resolved from the package
+root that declares them. `nomo build`, `nomo run`, and `nomo test` aggregate
+metadata from the root package and source dependencies; standalone script mode
+does not read a manifest and therefore does not use `[ffi]`.
+
 ## Dependencies
 
 Dependency keys are source import aliases. For example:

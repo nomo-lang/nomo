@@ -15,6 +15,8 @@ This repository ships two binaries and reusable Rust crates:
 - `nomoc` — the compiler driver that operates on a single `.nomo` source file.
 - `nomo` (lib crate) — the reusable compiler API, consumed by other repositories
   such as the [`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server.
+- `nomo-compiler` (lib crate) — the source-to-IR compiler pipeline, including
+  import validation, lowering, type checks and script entry synthesis.
 - `nomo-codegen-c` (lib crate) — the C99 backend that emits native C source from
   lowered Nomo IR.
 - `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
@@ -48,6 +50,7 @@ are centralized at the workspace level so `crates/*` members inherit the same
 settings. Split-out members include `crates/nomo_syntax`, which owns the AST,
 diagnostics, lexer and parser, `crates/nomo_ir`, which owns the lowered compiler
 IR, `crates/nomo_manifest`, which owns `nomo.toml` parsing and editing, and
+`crates/nomo_compiler`, which owns source-to-IR compilation, and
 `crates/nomo_codegen_c`, which owns the C99 backend.
 
 ```bash

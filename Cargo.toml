@@ -8,6 +8,7 @@ license.workspace = true
 resolver = "2"
 members = [
     ".",
+    "crates/nomo_compiler",
     "crates/nomo_codegen_c",
     "crates/nomo_ir",
     "crates/nomo_manifest",
@@ -27,6 +28,7 @@ toml = "0.8"
 
 [dependencies]
 nomo-codegen-c = { path = "crates/nomo_codegen_c" }
+nomo-compiler = { path = "crates/nomo_compiler" }
 nomo-ir = { path = "crates/nomo_ir" }
 nomo-manifest = { path = "crates/nomo_manifest" }
 nomo-syntax = { path = "crates/nomo_syntax" }

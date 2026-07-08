@@ -101,6 +101,7 @@ name = "nomo"
 version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
+ "nomo-compiler",
  "nomo-ir",
  "nomo-manifest",
  "nomo-syntax",
@@ -115,6 +116,15 @@ name = "nomo-codegen-c"
 version = "0.1.0"
 dependencies = [
  "nomo-ir",
+]
+
+[[package]]
+name = "nomo-compiler"
+version = "0.1.0"
+dependencies = [
+ "nomo-codegen-c",
+ "nomo-ir",
+ "nomo-syntax",
 ]
 
 [[package]]

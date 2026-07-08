@@ -105,6 +105,7 @@ dependencies = [
  "nomo-ir",
  "nomo-lockfile",
  "nomo-manifest",
+ "nomo-resolver",
  "nomo-syntax",
  "serde",
  "serde_json",
@@ -146,6 +147,14 @@ name = "nomo-manifest"
 version = "0.1.0"
 dependencies = [
  "toml",
+]
+
+[[package]]
+name = "nomo-resolver"
+version = "0.1.0"
+dependencies = [
+ "nomo-manifest",
+ "sha2",
 ]
 
 [[package]]

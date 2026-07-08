@@ -25,6 +25,9 @@ This repository ships two binaries and reusable Rust crates:
   and locked dependency graph reconstruction.
 - `nomo-manifest` (lib crate) — the `nomo.toml` manifest model, TOML parsing,
   workspace inheritance and dependency declaration editing.
+- `nomo-resolver` (lib crate) — package source hashing and archive
+  pack/unpack primitives used by dependency resolution, vendoring and registry
+  cache flows.
 - `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
   shared by the compiler, formatter, docs and future LSP semantic services.
 
@@ -54,6 +57,7 @@ diagnostics, lexer and parser, `crates/nomo_ir`, which owns the lowered compiler
 IR, `crates/nomo_manifest`, which owns `nomo.toml` parsing and editing, and
 `crates/nomo_compiler`, which owns source-to-IR compilation, and
 `crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
+`crates/nomo_resolver`, which owns package source/archive primitives, and
 `crates/nomo_codegen_c`, which owns the C99 backend.
 
 ```bash

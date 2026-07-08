@@ -1,0 +1,13 @@
+[package]
+name = "nomo-resolver"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nomo-manifest = { path = "../nomo_manifest" }
+sha2.workspace = true
+
+[lib]
+name = "nomo_resolver"
+path = "src/lib.rs"

@@ -1,0 +1,12 @@
+[package]
+name = "nomo-manifest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+toml.workspace = true
+
+[lib]
+name = "nomo_manifest"
+path = "src/lib.rs"

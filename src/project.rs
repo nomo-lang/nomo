@@ -26,7 +26,7 @@ use nomo_manifest::{
 };
 use nomo_resolver::{
     archive_checksum, build_package_archive, hex_lower, package_archive_filename, package_checksum,
-    unpack_package_archive,
+    registry_cached_source_root, resolve_registry_source,
 };
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -881,6 +881,7 @@ fn dependency_module_root(
             }
         }
         DependencySource::Registry { version, registry } => {
+            let authorization = registry_dependency_authorization(registry.as_deref())?;
             let Some(dep_root) = resolve_registry_source(
                 base_root,
                 &dependency.alias,
@@ -888,6 +889,7 @@ fn dependency_module_root(
                 version,
                 registry.as_deref(),
                 offline,
+                authorization.as_deref(),
             )?
             else {
                 return Ok(None);
@@ -1914,54 +1916,58 @@ fn resolve_dependencies(
                     child_dependencies,
                 )
             }
-            DependencySource::Registry { version, registry } => match resolve_registry_source(
-                base_root,
-                &dependency.alias,
-                &dependency.package,
-                version,
-                registry.as_deref(),
-                offline,
-            )? {
-                Some(dep_root) => {
-                    if path_stack.contains(&dep_root) {
-                        return Err(format!(
-                            "cyclic registry dependency involving `{}` at {}",
-                            dependency.package,
-                            dep_root.display()
-                        ));
-                    }
+            DependencySource::Registry { version, registry } => {
+                let authorization = registry_dependency_authorization(registry.as_deref())?;
+                match resolve_registry_source(
+                    base_root,
+                    &dependency.alias,
+                    &dependency.package,
+                    version,
+                    registry.as_deref(),
+                    offline,
+                    authorization.as_deref(),
+                )? {
+                    Some(dep_root) => {
+                        if path_stack.contains(&dep_root) {
+                            return Err(format!(
+                                "cyclic registry dependency involving `{}` at {}",
+                                dependency.package,
+                                dep_root.display()
+                            ));
+                        }
 
-                    path_stack.push(dep_root.clone());
-                    let dep_manifest = parse_manifest_at_root(&dep_root)?;
-                    let actual_id = format!(
-                        "{}/{}",
-                        dep_manifest.package.namespace, dep_manifest.package.name
-                    );
-                    if actual_id != dependency.package {
-                        return Err(format!(
-                            "registry dependency `{}` expected package `{}`, found `{}`",
-                            dependency.alias, dependency.package, actual_id
-                        ));
+                        path_stack.push(dep_root.clone());
+                        let dep_manifest = parse_manifest_at_root(&dep_root)?;
+                        let actual_id = format!(
+                            "{}/{}",
+                            dep_manifest.package.namespace, dep_manifest.package.name
+                        );
+                        if actual_id != dependency.package {
+                            return Err(format!(
+                                "registry dependency `{}` expected package `{}`, found `{}`",
+                                dependency.alias, dependency.package, actual_id
+                            ));
+                        }
+                        let child_dependencies = resolve_dependencies(
+                            &dep_manifest.dependencies,
+                            &dep_root,
+                            path_stack,
+                            package_sources,
+                            lock_source_base,
+                            git_cache_base,
+                            offline,
+                        )?;
+                        let checksum = package_checksum(&dep_root)?;
+                        path_stack.pop();
+                        (
+                            dependency.source.clone(),
+                            Some(checksum),
+                            child_dependencies,
+                        )
                     }
-                    let child_dependencies = resolve_dependencies(
-                        &dep_manifest.dependencies,
-                        &dep_root,
-                        path_stack,
-                        package_sources,
-                        lock_source_base,
-                        git_cache_base,
-                        offline,
-                    )?;
-                    let checksum = package_checksum(&dep_root)?;
-                    path_stack.pop();
-                    (
-                        dependency.source.clone(),
-                        Some(checksum),
-                        child_dependencies,
-                    )
+                    None => (dependency.source.clone(), None, Vec::new()),
                 }
-                None => (dependency.source.clone(), None, Vec::new()),
-            },
+            }
         };
         remember_package_source(package_sources, &dependency.package, &resolved_source)?;
 
@@ -1974,156 +1980,6 @@ fn resolve_dependencies(
         });
     }
     Ok(resolved)
-}
-
-fn resolve_registry_source(
-    base_root: &Path,
-    alias: &str,
-    package: &str,
-    version: &str,
-    registry: Option<&str>,
-    offline: bool,
-) -> Result<Option<PathBuf>, String> {
-    if let Some(source_root) = registry_cached_source_root(base_root, package, version, registry)? {
-        return Ok(Some(source_root));
-    }
-    if offline {
-        return Ok(None);
-    }
-    let Some(registry) = registry else {
-        return Ok(None);
-    };
-    let Some(archive) = read_registry_archive(alias, registry, package, version)? else {
-        return Ok(None);
-    };
-    let cache_root = registry_cache_root(base_root, package, version, Some(registry));
-    fs::create_dir_all(&cache_root).map_err(|err| err.to_string())?;
-    let archive_path = cache_root.join("package.nomo-package");
-    fs::write(&archive_path, &archive).map_err(|err| {
-        format!(
-            "failed to cache registry dependency `{alias}` archive at {}: {err}",
-            archive_path.display()
-        )
-    })?;
-    let source_root = cache_root.join("source");
-    unpack_package_archive(&archive, package, version, &source_root)?;
-    Ok(Some(source_root))
-}
-
-fn registry_cached_source_root(
-    base_root: &Path,
-    package: &str,
-    version: &str,
-    _registry: Option<&str>,
-) -> Result<Option<PathBuf>, String> {
-    let source_root = registry_cache_root(base_root, package, version, _registry).join("source");
-    if !source_root.exists() {
-        return Ok(None);
-    }
-    fs::canonicalize(&source_root).map(Some).map_err(|err| {
-        format!(
-            "failed to resolve cached registry package `{package}` at {}: {err}",
-            source_root.display()
-        )
-    })
-}
-
-fn registry_cache_root(
-    base_root: &Path,
-    package: &str,
-    version: &str,
-    registry: Option<&str>,
-) -> PathBuf {
-    let mut root = base_root.join(".nomo/cache/registry");
-    for segment in package.split('/') {
-        root.push(segment);
-    }
-    root.push(version);
-    root.push(registry_cache_key(registry));
-    root
-}
-
-fn registry_cache_key(registry: Option<&str>) -> String {
-    let Some(registry) = registry else {
-        return "default".to_string();
-    };
-    let mut hasher = Sha256::new();
-    hasher.update(registry.as_bytes());
-    hex_lower(&hasher.finalize())
-}
-
-fn registry_file_download_path(
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<Option<PathBuf>, String> {
-    let Some(root) = registry.strip_prefix("file://") else {
-        return Ok(None);
-    };
-    let mut path = PathBuf::from(root);
-    path.push("api/v1/packages");
-    let (owner, name) = package.split_once('/').ok_or_else(|| {
-        format!("registry package `{package}` must use canonical owner/package form")
-    })?;
-    path.push(owner);
-    path.push(name);
-    path.push(version);
-    path.push("download");
-    Ok(Some(path))
-}
-
-fn read_registry_archive(
-    alias: &str,
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<Option<Vec<u8>>, String> {
-    if let Some(download_path) = registry_file_download_path(registry, package, version)? {
-        if !download_path.is_file() {
-            return Err(format!(
-                "registry dependency `{alias}` archive is missing at {}",
-                download_path.display()
-            ));
-        }
-        return fs::read(&download_path).map(Some).map_err(|err| {
-            format!(
-                "failed to read registry dependency `{alias}` archive at {}: {err}",
-                download_path.display()
-            )
-        });
-    }
-    if registry.starts_with("http://") {
-        return fetch_http_registry_archive(alias, registry, package, version).map(Some);
-    }
-    Ok(None)
-}
-
-fn fetch_http_registry_archive(
-    alias: &str,
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<Vec<u8>, String> {
-    let request = http_registry_request(registry, package, version)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` for dependency `{alias}`: {err}",
-            request.authority
-        )
-    })?;
-    let authorization = registry_authorization_header(registry)?;
-    let request_text = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Accept: application/octet-stream\r\nConnection: close\r\n\r\n",
-        request.path, request.authority, authorization
-    );
-    stream
-        .write_all(request_text.as_bytes())
-        .map_err(|err| format!("failed to request registry dependency `{alias}`: {err}"))?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|err| format!("failed to read registry response for `{alias}`: {err}"))?;
-    parse_http_registry_response(alias, registry, &response)
 }
 
 fn upload_http_registry_archive(
@@ -2168,14 +2024,6 @@ struct HttpRegistryRequest {
     port: u16,
     authority: String,
     path: String,
-}
-
-fn http_registry_request(
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<HttpRegistryRequest, String> {
-    http_registry_api_request(registry, package, version, "/download")
 }
 
 fn http_registry_upload_request(
@@ -2285,31 +2133,6 @@ fn parse_http_authority(authority: &str) -> Result<(String, u16), String> {
         .parse::<u16>()
         .map_err(|_| format!("registry endpoint `{authority}` has invalid port"))?;
     Ok((host.to_string(), port))
-}
-
-fn parse_http_registry_response(
-    alias: &str,
-    registry: &str,
-    response: &[u8],
-) -> Result<Vec<u8>, String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed response for dependency `{alias}`"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!("registry `{registry}` returned non-UTF-8 headers for dependency `{alias}`")
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty response"))?;
-    if !status.starts_with("HTTP/1.1 200 ") && !status.starts_with("HTTP/1.0 200 ") {
-        return Err(format!(
-            "registry `{registry}` failed to fetch dependency `{alias}`: {status}"
-        ));
-    }
-    Ok(response[header_end + 4..].to_vec())
 }
 
 fn parse_http_registry_search_response(
@@ -2521,6 +2344,16 @@ fn registry_authorization_header(registry: &str) -> Result<String, String> {
         return Ok(String::new());
     };
     Ok(format!("Authorization: Bearer {token}\r\n"))
+}
+
+fn registry_dependency_authorization(registry: Option<&str>) -> Result<Option<String>, String> {
+    let Some(registry) = registry else {
+        return Ok(None);
+    };
+    if !registry.starts_with("http://") {
+        return Ok(None);
+    }
+    registry_authorization_header(registry).map(Some)
 }
 
 fn registry_token(registry: &str) -> Result<Option<String>, String> {

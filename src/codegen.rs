@@ -1,7 +1,7 @@
-use crate::compiler::{
+use nomo_ir::{
     BinaryOp, DeferredCall, EnumType, ExternFunction, Function, LoopKind, MatchStatementArm,
-    MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement,
-    StructType, UnaryOp, ValueExpr, ValueType,
+    MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Program,
+    QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -8013,16 +8013,11 @@ fn emit_lvalue_path(out: &mut String, path: &[String]) {
     }
 }
 
-fn emit_match_expr(out: &mut String, value: &ValueExpr, arms: &[crate::compiler::MatchValueArm]) {
+fn emit_match_expr(out: &mut String, value: &ValueExpr, arms: &[MatchValueArm]) {
     emit_match_arm(out, value, arms, 0);
 }
 
-fn emit_match_arm(
-    out: &mut String,
-    value: &ValueExpr,
-    arms: &[crate::compiler::MatchValueArm],
-    index: usize,
-) {
+fn emit_match_arm(out: &mut String, value: &ValueExpr, arms: &[MatchValueArm], index: usize) {
     let arm = &arms[index];
     if index + 1 == arms.len() {
         emit_expr(out, &arm.value);

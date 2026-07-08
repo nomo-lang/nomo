@@ -1,5 +1,5 @@
 use super::*;
-use crate::compiler::{EnumVariantType, MatchValueArm, Parameter, StructField, ValueExpr};
+use nomo_ir::{EnumVariantType, MatchValueArm, Parameter, StructField, ValueExpr};
 
 fn string_literal(value: &str) -> String {
     format!("nomo_string_literal(\"{value}\")")

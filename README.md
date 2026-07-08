@@ -15,6 +15,8 @@ This repository ships two binaries and reusable Rust crates:
 - `nomoc` — the compiler driver that operates on a single `.nomo` source file.
 - `nomo` (lib crate) — the reusable compiler API, consumed by other repositories
   such as the [`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server.
+- `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
+  analysis and the C99 code generator.
 - `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
   shared by the compiler, formatter, docs and future LSP semantic services.
 
@@ -39,8 +41,9 @@ server in turn. Language decisions are tracked in the
 
 This repository is a Cargo workspace. Package metadata and shared dependencies
 are centralized at the workspace level so `crates/*` members inherit the same
-settings. The first split-out member is `crates/nomo_syntax`, which owns the
-AST, diagnostics, lexer and parser.
+settings. Split-out members include `crates/nomo_syntax`, which owns the AST,
+diagnostics, lexer and parser, and `crates/nomo_ir`, which owns the lowered
+compiler IR consumed by the C99 backend.
 
 ```bash
 cargo build --workspace --release

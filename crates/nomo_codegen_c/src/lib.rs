@@ -31,6 +31,7 @@ mod runtime;
 mod statements;
 mod types;
 mod usage;
+mod usage_array_elements;
 mod usage_host_scans;
 use array_helpers::*;
 use expressions::*;
@@ -46,6 +47,7 @@ use runtime::*;
 use statements::*;
 use types::*;
 use usage::*;
+use usage_array_elements::*;
 use usage_host_scans::*;
 
 const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";

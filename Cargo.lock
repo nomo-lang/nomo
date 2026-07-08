@@ -103,6 +103,7 @@ dependencies = [
  "nomo-codegen-c",
  "nomo-compiler",
  "nomo-ir",
+ "nomo-lockfile",
  "nomo-manifest",
  "nomo-syntax",
  "serde",
@@ -130,6 +131,15 @@ dependencies = [
 [[package]]
 name = "nomo-ir"
 version = "0.1.0"
+
+[[package]]
+name = "nomo-lockfile"
+version = "0.1.0"
+dependencies = [
+ "nomo-manifest",
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "nomo-manifest"

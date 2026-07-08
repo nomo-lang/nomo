@@ -21,6 +21,8 @@ This repository ships two binaries and reusable Rust crates:
   lowered Nomo IR.
 - `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
   analysis and the C99 code generator.
+- `nomo-lockfile` (lib crate) — the `nomo.lock` model, TOML parsing, rendering
+  and locked dependency graph reconstruction.
 - `nomo-manifest` (lib crate) — the `nomo.toml` manifest model, TOML parsing,
   workspace inheritance and dependency declaration editing.
 - `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
@@ -51,6 +53,7 @@ settings. Split-out members include `crates/nomo_syntax`, which owns the AST,
 diagnostics, lexer and parser, `crates/nomo_ir`, which owns the lowered compiler
 IR, `crates/nomo_manifest`, which owns `nomo.toml` parsing and editing, and
 `crates/nomo_compiler`, which owns source-to-IR compilation, and
+`crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
 `crates/nomo_codegen_c`, which owns the C99 backend.
 
 ```bash

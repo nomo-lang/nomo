@@ -35,8 +35,12 @@ server in turn. Language decisions are tracked in the
 
 ## Build and install
 
+This repository is a single-member Cargo workspace today, with package metadata
+and dependencies centralized at the workspace level so future `crates/*` splits
+can inherit the same settings.
+
 ```bash
-cargo build --release
+cargo build --workspace --release
 # or install both binaries onto your PATH:
 cargo install --path .
 ```
@@ -524,7 +528,7 @@ queries plus project-aware hover, definition, and reference queries over local
 ## Tests and examples
 
 ```bash
-cargo test
+cargo test --workspace
 ```
 
 Runnable sample programs live under [`examples/`](examples/).

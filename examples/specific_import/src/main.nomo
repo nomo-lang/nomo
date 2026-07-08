@@ -11,16 +11,16 @@ fn close_and_label(file: File) -> string {
 }
 
 fn main() -> void {
-    let write_result: Result<void, FsError> = write_string("/private/tmp/nomo-specific-import-example.txt", "ok")
+    let write_result: Result<void, FsError> = write_string("/tmp/nomo-specific-import-example.txt", "ok")
     let read_result: Result<string, FsError> = match write_result {
-        Ok(value) => read_to_string("/private/tmp/nomo-specific-import-example.txt")
+        Ok(value) => read_to_string("/tmp/nomo-specific-import-example.txt")
         Err(err) => Err(err)
     }
     let open_result: Result<File, FsError> = match read_result {
         Ok(text) => if text == "ok" {
-            open("/private/tmp/nomo-specific-import-example.txt")
+            open("/tmp/nomo-specific-import-example.txt")
         } else {
-            open("/private/tmp/nomo-specific-import-missing.txt")
+            open("/tmp/nomo-specific-import-missing.txt")
         }
         Err(err) => Err(err)
     }

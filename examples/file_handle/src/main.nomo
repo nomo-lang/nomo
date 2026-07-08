@@ -9,9 +9,9 @@ fn close_and_label(file: File) -> string {
 }
 
 fn main() -> void {
-    let write_result: Result<void, FsError> = fs.write_string("/private/tmp/nomo-file-handle-example.txt", "file handle ok")
+    let write_result: Result<void, FsError> = fs.write_string("/tmp/nomo-file-handle-example.txt", "file handle ok")
     let open_result: Result<File, FsError> = match write_result {
-        Ok(ignored) => fs.open("/private/tmp/nomo-file-handle-example.txt")
+        Ok(ignored) => fs.open("/tmp/nomo-file-handle-example.txt")
         Err(err) => Err(err)
     }
     let message: string = match open_result {

@@ -25,6 +25,8 @@ use std::path::{Path, PathBuf};
 mod analysis;
 mod analysis_generic;
 mod analysis_usage;
+mod analysis_usage_builtins;
+mod analysis_usage_prelude;
 mod builtins_collections;
 mod builtins_core_std;
 mod builtins_diagnostics;

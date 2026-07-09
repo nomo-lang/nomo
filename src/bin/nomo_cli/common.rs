@@ -1,6 +1,6 @@
 use nomo::project::{
-    DependencyResolutionOptions, Project, check_project, clean_project, discover_project,
-    discover_workspace, project_package_id,
+    BuildError, DependencyResolutionOptions, Project, build_project_with_options, check_project,
+    clean_project, discover_project, discover_workspace, project_package_id,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,32 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
             Err(diag) => Err(diag.human()),
         }
     }
+}
+
+pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
+    let (path, emit_c, json, workspace, deps) = parse_build_args(
+        args,
+        "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
+    )?;
+    if workspace {
+        for project in discover_workspace(&path)?.members {
+            let artifact = match build_project_with_options(&project, emit_c, deps) {
+                Ok(artifact) => artifact,
+                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                Err(err) => return Err(err.human()),
+            };
+            println!("built {}", artifact.display());
+        }
+    } else {
+        let project = discover_project(&path)?;
+        let artifact = match build_project_with_options(&project, emit_c, deps) {
+            Ok(artifact) => artifact,
+            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(err) => return Err(err.human()),
+        };
+        println!("built {}", artifact.display());
+    }
+    Ok(())
 }
 
 pub(super) fn run_clean_command(args: Vec<String>) -> Result<(), String> {

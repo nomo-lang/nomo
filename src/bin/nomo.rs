@@ -14,8 +14,8 @@ mod cli_registry;
 mod cli_test;
 
 use cli_common::{
-    is_missing_manifest_error, is_nomo_source_file, parse_build_args, parse_optional_path,
-    parse_run_args, run_check_command, run_clean_command,
+    is_missing_manifest_error, is_nomo_source_file, parse_optional_path, parse_run_args,
+    run_build_command, run_check_command, run_clean_command,
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::run_doc_command;
@@ -26,10 +26,10 @@ use cli_registry::{
 };
 use cli_test::run_test_command;
 use nomo::project::{
-    BuildError, add_registry_dependency, add_registry_package_owner, build_project_with_options,
-    clean_dependency_cache, create_project, dependency_tree_with_options, discover_project,
-    discover_workspace, login_registry, prepare_publish_package, publish_package_archive,
-    remove_dependency, remove_registry_package_owner, resolve_project_dependencies_with_options,
+    BuildError, add_registry_dependency, add_registry_package_owner, clean_dependency_cache,
+    create_project, dependency_tree_with_options, discover_project, discover_workspace,
+    login_registry, prepare_publish_package, publish_package_archive, remove_dependency,
+    remove_registry_package_owner, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics, search_registry_packages,
     update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
@@ -64,31 +64,7 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         "check" => run_check_command(args),
-        "build" => {
-            let (path, emit_c, json, workspace, deps) = parse_build_args(
-                args,
-                "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
-            )?;
-            if workspace {
-                for project in discover_workspace(&path)?.members {
-                    let artifact = match build_project_with_options(&project, emit_c, deps) {
-                        Ok(artifact) => artifact,
-                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                        Err(err) => return Err(err.human()),
-                    };
-                    println!("built {}", artifact.display());
-                }
-            } else {
-                let project = discover_project(&path)?;
-                let artifact = match build_project_with_options(&project, emit_c, deps) {
-                    Ok(artifact) => artifact,
-                    Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                    Err(err) => return Err(err.human()),
-                };
-                println!("built {}", artifact.display());
-            }
-            Ok(())
-        }
+        "build" => run_build_command(args),
         "run" => {
             let (path, program_args, json) = parse_run_args(args)?;
             let code = match discover_project(&path) {

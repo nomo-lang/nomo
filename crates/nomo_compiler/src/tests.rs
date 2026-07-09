@@ -12,6 +12,8 @@ mod tests_expressions;
 mod tests_nominal_interfaces;
 #[path = "tests_option_helpers.rs"]
 mod tests_option_helpers;
+#[path = "tests_question_expression_positions.rs"]
+mod tests_question_expression_positions;
 #[path = "tests_result_helpers.rs"]
 mod tests_result_helpers;
 #[path = "tests_result_option_question.rs"]

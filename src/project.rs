@@ -35,8 +35,7 @@ pub use build::{
     build_project, build_project_with_diagnostics, build_project_with_options, clean_project,
 };
 use dependency_resolution::{
-    dependency_graph_from_lockfile, locked_dependency_graph_and_source_base,
-    resolve_dependency_graph, resolve_dependency_graph_for_lock,
+    dependency_graph_from_lockfile, resolve_dependency_graph, resolve_dependency_graph_for_lock,
 };
 use dependency_tree::render_dependency_tree;
 use ffi::project_ffi_link_metadata_with_options;
@@ -65,7 +64,7 @@ pub use testing::{
     run_project_tests_with_options,
 };
 pub use update::{update_project_dependencies, update_workspace_dependencies};
-use vendor::write_vendor_directory;
+pub use vendor::{vendor_project_dependencies, vendor_workspace_dependencies};
 pub use workspace::{WorkspaceGraph, discover_workspace};
 
 #[derive(Debug, Clone)]
@@ -181,38 +180,6 @@ fn find_manifest_root(start: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-pub fn vendor_project_dependencies(
-    project: &Project,
-    options: DependencyVendorOptions,
-) -> Result<PathBuf, String> {
-    let lock_root = project.lock_root();
-    if !lock_root.join("nomo.lock").is_file() {
-        resolve_project_dependencies_with_options(project, DependencyResolutionOptions::default())?;
-    }
-    let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
-    write_vendor_directory(&lock_root, &source_base, &[graph], &options)
-}
-
-pub fn vendor_workspace_dependencies(
-    workspace: &WorkspaceGraph,
-    options: DependencyVendorOptions,
-) -> Result<PathBuf, String> {
-    if !workspace.root.join("nomo.lock").is_file() {
-        resolve_workspace_dependencies_with_options(
-            workspace,
-            DependencyResolutionOptions::default(),
-        )?;
-    }
-    let mut graphs = Vec::new();
-    let mut source_base = workspace.root.clone();
-    for project in &workspace.members {
-        let (graph, graph_source_base) = locked_dependency_graph_and_source_base(project)?;
-        source_base = graph_source_base;
-        graphs.push(graph);
-    }
-    write_vendor_directory(&workspace.root, &source_base, &graphs, &options)
 }
 
 pub fn dependency_tree(project: &Project) -> Result<String, String> {

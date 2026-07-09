@@ -1,5 +1,6 @@
 use super::{
-    DependencyResolutionOptions, Project, locked_dependency_graph_and_source_base,
+    DependencyResolutionOptions, Project,
+    dependency_resolution::locked_dependency_graph_and_source_base,
     modules::{dependency_module_root, resolved_dependency_module_root},
     package_id,
 };

@@ -1,4 +1,8 @@
-use super::{DependencyVendorOptions, git_cache::locked_git_root};
+use super::{
+    DependencyResolutionOptions, DependencyVendorOptions, Project, WorkspaceGraph,
+    dependency_resolution::locked_dependency_graph_and_source_base, git_cache::locked_git_root,
+    resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
+};
 use nomo_lockfile::{
     DependencyGraph, ResolvedDependency, flatten_dependencies, lock_source_string,
 };
@@ -9,6 +13,38 @@ use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
+
+pub fn vendor_project_dependencies(
+    project: &Project,
+    options: DependencyVendorOptions,
+) -> Result<PathBuf, String> {
+    let lock_root = project.lock_root();
+    if !lock_root.join("nomo.lock").is_file() {
+        resolve_project_dependencies_with_options(project, DependencyResolutionOptions::default())?;
+    }
+    let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
+    write_vendor_directory(&lock_root, &source_base, &[graph], &options)
+}
+
+pub fn vendor_workspace_dependencies(
+    workspace: &WorkspaceGraph,
+    options: DependencyVendorOptions,
+) -> Result<PathBuf, String> {
+    if !workspace.root.join("nomo.lock").is_file() {
+        resolve_workspace_dependencies_with_options(
+            workspace,
+            DependencyResolutionOptions::default(),
+        )?;
+    }
+    let mut graphs = Vec::new();
+    let mut source_base = workspace.root.clone();
+    for project in &workspace.members {
+        let (graph, graph_source_base) = locked_dependency_graph_and_source_base(project)?;
+        source_base = graph_source_base;
+        graphs.push(graph);
+    }
+    write_vendor_directory(&workspace.root, &source_base, &graphs, &options)
+}
 
 pub(super) fn locked_or_vendor_source_root(
     base_root: &Path,

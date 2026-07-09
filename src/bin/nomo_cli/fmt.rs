@@ -19,6 +19,21 @@ impl FormatError {
     }
 }
 
+pub(super) fn run_fmt_command(args: Vec<String>) -> Result<(), String> {
+    let (path, check, json) = parse_fmt_args(args)?;
+    match format_path(&path, check) {
+        Ok(changed) if check && changed => Err("format check failed".to_string()),
+        Ok(changed) => {
+            if !changed {
+                println!("all files already formatted");
+            }
+            Ok(())
+        }
+        Err(FormatError::Diagnostic(diag)) if json => Err(diag.json()),
+        Err(err) => Err(err.human()),
+    }
+}
+
 pub(super) fn parse_fmt_args(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
     let mut check = false;
     let mut json = false;

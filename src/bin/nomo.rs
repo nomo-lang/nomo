@@ -19,7 +19,7 @@ use cli_common::{
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::run_doc_command;
-use cli_fmt::{FormatError, format_path, parse_fmt_args};
+use cli_fmt::run_fmt_command;
 use cli_registry::{
     parse_add_args, parse_login_args, parse_owner_add_args, parse_owner_remove_args,
     parse_publish_args, parse_remove_args, parse_search_args, parse_yank_args,
@@ -140,20 +140,7 @@ fn run() -> Result<(), String> {
                 Err(format!("program exited with status {code}"))
             }
         }
-        "fmt" => {
-            let (path, check, json) = parse_fmt_args(args)?;
-            match format_path(&path, check) {
-                Ok(changed) if check && changed => Err("format check failed".to_string()),
-                Ok(changed) => {
-                    if !changed {
-                        println!("all files already formatted");
-                    }
-                    Ok(())
-                }
-                Err(FormatError::Diagnostic(diag)) if json => Err(diag.json()),
-                Err(err) => Err(err.human()),
-            }
-        }
+        "fmt" => run_fmt_command(args),
         "test" => run_test_command(args),
         "doc" => run_doc_command(args),
         "clean" => {

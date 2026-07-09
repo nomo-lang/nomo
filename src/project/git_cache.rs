@@ -1,4 +1,3 @@
-use super::git_remote_url;
 use nomo_manifest::parse_manifest_at_root;
 use nomo_resolver::hex_lower;
 use sha2::{Digest, Sha256};
@@ -240,4 +239,19 @@ fn git_cache_key(package: &str, git: &str) -> String {
     hasher.update(b"\0");
     hasher.update(git.as_bytes());
     format!("git-{}", hex_lower(&hasher.finalize()))
+}
+
+fn git_remote_url(root: &Path) -> Option<String> {
+    let output = Command::new("git")
+        .arg("-C")
+        .arg(root)
+        .arg("remote")
+        .arg("get-url")
+        .arg("origin")
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    Some(String::from_utf8_lossy(&output.stdout).trim().to_string())
 }

@@ -2,19 +2,22 @@
 
 #[path = "nomo_cli/fmt.rs"]
 mod cli_fmt;
+#[path = "nomo_cli/test.rs"]
+mod cli_test;
 
 use cli_fmt::{FormatError, format_path};
+use cli_test::{print_test_reports, reports_have_failures, test_reports_json};
 use nomo::doc::{
     collect_project_docs, generate_project_docs, generate_std_docs, render_packages_json,
     std_doc_package, write_doc_index,
 };
 use nomo::project::{
     BuildError, DependencyAddSpec, DependencyResolutionOptions, DependencyUpdateOptions,
-    DependencyVendorOptions, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
-    add_registry_dependency, add_registry_package_owner, build_project_with_options, check_project,
-    clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
-    discover_project, discover_workspace, login_registry, prepare_publish_package,
-    project_package_id, publish_package_archive, remove_dependency, remove_registry_package_owner,
+    DependencyVendorOptions, ProjectTestOptions, add_registry_dependency,
+    add_registry_package_owner, build_project_with_options, check_project, clean_dependency_cache,
+    clean_project, create_project, dependency_tree_with_options, discover_project,
+    discover_workspace, login_registry, prepare_publish_package, project_package_id,
+    publish_package_archive, remove_dependency, remove_registry_package_owner,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     run_project_tests_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics, search_registry_packages,
@@ -1182,80 +1185,6 @@ fn project_matches_package(
 ) -> Result<bool, String> {
     let package_id = project_package_id(project)?;
     Ok(package_id == package || project.name == package)
-}
-
-fn print_test_reports(reports: &[ProjectTestReport]) {
-    let total = reports
-        .iter()
-        .map(|report| report.tests.len())
-        .sum::<usize>();
-    println!("running {total} tests");
-    for report in reports {
-        for test in &report.tests {
-            match test.status {
-                ProjectTestStatus::Ok => println!("ok {}", test.name),
-                ProjectTestStatus::Failed => {
-                    println!("fail {}", test.name);
-                    if let Some(message) = test.message.as_deref() {
-                        println!("  {message}");
-                    }
-                }
-            }
-        }
-    }
-}
-
-fn reports_have_failures(reports: &[ProjectTestReport]) -> bool {
-    reports.iter().any(ProjectTestReport::has_failures)
-}
-
-fn test_reports_json(reports: &[ProjectTestReport]) -> String {
-    let status = if reports_have_failures(reports) {
-        "failed"
-    } else {
-        "ok"
-    };
-    let mut json = format!("{{\"status\":\"{status}\",\"tests\":[");
-    let mut first = true;
-    for report in reports {
-        for test in &report.tests {
-            if !first {
-                json.push(',');
-            }
-            first = false;
-            let status = match test.status {
-                ProjectTestStatus::Ok => "ok",
-                ProjectTestStatus::Failed => "failed",
-            };
-            json.push_str(&format!(
-                "{{\"name\":\"{}\",\"status\":\"{}\",\"duration_ms\":{}",
-                json_escape(&test.name),
-                status,
-                test.duration_ms
-            ));
-            if let Some(message) = test.message.as_deref() {
-                json.push_str(&format!(",\"message\":\"{}\"", json_escape(message)));
-            }
-            json.push('}');
-        }
-    }
-    json.push_str("]}");
-    json
-}
-
-fn json_escape(value: &str) -> String {
-    value
-        .chars()
-        .flat_map(|ch| match ch {
-            '"' => "\\\"".chars().collect::<Vec<_>>(),
-            '\\' => "\\\\".chars().collect::<Vec<_>>(),
-            '\n' => "\\n".chars().collect::<Vec<_>>(),
-            '\r' => "\\r".chars().collect::<Vec<_>>(),
-            '\t' => "\\t".chars().collect::<Vec<_>>(),
-            ch if ch.is_control() => format!("\\u{:04x}", ch as u32).chars().collect(),
-            ch => vec![ch],
-        })
-        .collect()
 }
 
 fn open_doc_index(path: &Path) -> Result<(), String> {

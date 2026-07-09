@@ -450,9 +450,11 @@ pub(super) fn lower_question_exprs_in_stmt_into(
             let [AstExpr::Match { value, arms }] = args.as_slice() else {
                 unreachable!("guard matched single match argument");
             };
-            let (value, _) = extract_question_exprs(
+            lower_question_result_ok_match_return(
                 path,
+                callee,
                 value,
+                arms,
                 scope,
                 imports,
                 signatures,
@@ -462,49 +464,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (value_type, lowered_value) = lower_value_expr(
-                path, &value, scope, imports, signatures, structs, enums, span,
-            )?;
-            let ValueType::Enum(enum_name, enum_args) = value_type else {
-                return Err(type_mismatch(path, span, "`match` expects an enum value"));
-            };
-            let enum_type = enums
-                .get(&enum_name)
-                .expect("enum value must refer to a known enum");
-            let lowered_arms = lower_question_match_arms(
-                path,
-                arms,
-                &enum_name,
-                &enum_args,
-                enum_type,
-                &lowered_value,
-                scope,
-                span,
-                |arm, arm_scope| {
-                    let ok_arm = AstExpr::Call {
-                        callee: callee.clone(),
-                        type_args: Vec::new(),
-                        args: vec![arm.value.clone()],
-                    };
-                    lower_tail_expr_as_return_block(
-                        path,
-                        &ok_arm,
-                        arm_scope,
-                        imports,
-                        signatures,
-                        structs,
-                        enums,
-                        return_type,
-                        span,
-                    )
-                },
-            )?;
-            out.push(Statement::Match {
-                value: lowered_value,
-                enum_name,
-                enum_args,
-                arms: lowered_arms,
-            });
             return Ok(true);
         }
         Stmt::Return {

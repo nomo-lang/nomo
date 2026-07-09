@@ -1,8 +1,97 @@
+use super::cli_common::parse_optional_path;
 use nomo::project::{
     DependencyResolutionOptions, DependencyUpdateOptions, DependencyVendorOptions,
+    clean_dependency_cache, dependency_tree_with_options, discover_project, discover_workspace,
+    resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
+    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
+    vendor_workspace_dependencies,
 };
 use std::env;
 use std::path::PathBuf;
+
+pub(super) fn run_deps_command(args: Vec<String>) -> Result<(), String> {
+    let [subcommand, rest @ ..] = args.as_slice() else {
+        return Err(
+            "usage: nomo deps <resolve|tree|update|vendor|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+        );
+    };
+    match subcommand.as_str() {
+        "resolve" => {
+            let (path, workspace, deps) = parse_deps_args(
+                rest.to_vec(),
+                &format!(
+                    "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                ),
+            )?;
+            if workspace {
+                let workspace = discover_workspace(&path)?;
+                let lock = resolve_workspace_dependencies_with_options(&workspace, deps)?;
+                println!("resolved {}", lock.display());
+                return Ok(());
+            }
+            let project = discover_project(&path)?;
+            let lock = resolve_project_dependencies_with_options(&project, deps)?;
+            println!("resolved {}", lock.display());
+            Ok(())
+        }
+        "tree" => {
+            let (path, workspace, deps) = parse_deps_args(
+                rest.to_vec(),
+                &format!(
+                    "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                ),
+            )?;
+            if workspace {
+                for project in discover_workspace(&path)?.members {
+                    print!("{}", dependency_tree_with_options(&project, deps)?);
+                }
+            } else {
+                let project = discover_project(&path)?;
+                print!("{}", dependency_tree_with_options(&project, deps)?);
+            }
+            Ok(())
+        }
+        "update" => {
+            let (path, target, workspace, deps) = parse_deps_update_args(
+                rest.to_vec(),
+                "usage: nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]",
+            )?;
+            if workspace {
+                let workspace = discover_workspace(&path)?;
+                let lock = update_workspace_dependencies(&workspace, target.as_deref(), deps)?;
+                println!("updated {}", lock.display());
+                return Ok(());
+            }
+            let project = discover_project(&path)?;
+            let lock = update_project_dependencies(&project, target.as_deref(), deps)?;
+            println!("updated {}", lock.display());
+            Ok(())
+        }
+        "vendor" => {
+            let (path, workspace, options) = parse_deps_vendor_args(
+                rest.to_vec(),
+                "usage: nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]",
+            )?;
+            if workspace {
+                let workspace = discover_workspace(&path)?;
+                let vendor = vendor_workspace_dependencies(&workspace, options)?;
+                println!("vendored {}", vendor.display());
+                return Ok(());
+            }
+            let project = discover_project(&path)?;
+            let vendor = vendor_project_dependencies(&project, options)?;
+            println!("vendored {}", vendor.display());
+            Ok(())
+        }
+        "clean-cache" => {
+            let path = parse_optional_path(rest.to_vec(), "usage: nomo deps clean-cache [path]")?;
+            let cleaned = clean_dependency_cache(&path)?;
+            println!("cleaned {}", cleaned.display());
+            Ok(())
+        }
+        other => Err(format!("unknown deps command `{other}`")),
+    }
+}
 
 pub(super) fn parse_deps_args(
     args: Vec<String>,

@@ -13,10 +13,8 @@ mod cli_registry;
 #[path = "nomo_cli/test.rs"]
 mod cli_test;
 
-use cli_common::{
-    parse_optional_path, run_build_command, run_check_command, run_clean_command, run_run_command,
-};
-use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
+use cli_common::{run_build_command, run_check_command, run_clean_command, run_run_command};
+use cli_deps::run_deps_command;
 use cli_doc::run_doc_command;
 use cli_fmt::run_fmt_command;
 use cli_registry::{
@@ -25,13 +23,10 @@ use cli_registry::{
 };
 use cli_test::run_test_command;
 use nomo::project::{
-    BuildError, add_registry_dependency, add_registry_package_owner, clean_dependency_cache,
-    create_project, dependency_tree_with_options, discover_project, discover_workspace,
-    login_registry, prepare_publish_package, publish_package_archive, remove_dependency,
-    remove_registry_package_owner, resolve_project_dependencies_with_options,
-    resolve_workspace_dependencies_with_options, search_registry_packages,
-    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
-    vendor_workspace_dependencies, yank_registry_package,
+    BuildError, add_registry_dependency, add_registry_package_owner, create_project,
+    discover_project, login_registry, prepare_publish_package, publish_package_archive,
+    remove_dependency, remove_registry_package_owner, search_registry_packages,
+    yank_registry_package,
 };
 use std::env;
 use std::process;
@@ -190,91 +185,7 @@ fn run() -> Result<(), String> {
             }
             Ok(())
         }
-        "deps" => {
-            let [subcommand, rest @ ..] = args.as_slice() else {
-                return Err(
-                    "usage: nomo deps <resolve|tree|update|vendor|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
-                );
-            };
-            match subcommand.as_str() {
-                "resolve" => {
-                    let (path, workspace, deps) = parse_deps_args(
-                        rest.to_vec(),
-                        &format!(
-                            "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
-                        ),
-                    )?;
-                    if workspace {
-                        let workspace = discover_workspace(&path)?;
-                        let lock = resolve_workspace_dependencies_with_options(&workspace, deps)?;
-                        println!("resolved {}", lock.display());
-                        return Ok(());
-                    }
-                    let project = discover_project(&path)?;
-                    let lock = resolve_project_dependencies_with_options(&project, deps)?;
-                    println!("resolved {}", lock.display());
-                    Ok(())
-                }
-                "tree" => {
-                    let (path, workspace, deps) = parse_deps_args(
-                        rest.to_vec(),
-                        &format!(
-                            "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
-                        ),
-                    )?;
-                    if workspace {
-                        for project in discover_workspace(&path)?.members {
-                            print!("{}", dependency_tree_with_options(&project, deps)?);
-                        }
-                    } else {
-                        let project = discover_project(&path)?;
-                        print!("{}", dependency_tree_with_options(&project, deps)?);
-                    }
-                    Ok(())
-                }
-                "update" => {
-                    let (path, target, workspace, deps) = parse_deps_update_args(
-                        rest.to_vec(),
-                        "usage: nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]",
-                    )?;
-                    if workspace {
-                        let workspace = discover_workspace(&path)?;
-                        let lock =
-                            update_workspace_dependencies(&workspace, target.as_deref(), deps)?;
-                        println!("updated {}", lock.display());
-                        return Ok(());
-                    }
-                    let project = discover_project(&path)?;
-                    let lock = update_project_dependencies(&project, target.as_deref(), deps)?;
-                    println!("updated {}", lock.display());
-                    Ok(())
-                }
-                "vendor" => {
-                    let (path, workspace, options) = parse_deps_vendor_args(
-                        rest.to_vec(),
-                        "usage: nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]",
-                    )?;
-                    if workspace {
-                        let workspace = discover_workspace(&path)?;
-                        let vendor = vendor_workspace_dependencies(&workspace, options)?;
-                        println!("vendored {}", vendor.display());
-                        return Ok(());
-                    }
-                    let project = discover_project(&path)?;
-                    let vendor = vendor_project_dependencies(&project, options)?;
-                    println!("vendored {}", vendor.display());
-                    Ok(())
-                }
-                "clean-cache" => {
-                    let path =
-                        parse_optional_path(rest.to_vec(), "usage: nomo deps clean-cache [path]")?;
-                    let cleaned = clean_dependency_cache(&path)?;
-                    println!("cleaned {}", cleaned.display());
-                    Ok(())
-                }
-                other => Err(format!("unknown deps command `{other}`")),
-            }
-        }
+        "deps" => run_deps_command(args),
         "help" | "--help" | "-h" => {
             print_help();
             Ok(())

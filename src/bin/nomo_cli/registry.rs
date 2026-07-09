@@ -1,6 +1,137 @@
-use nomo::project::DependencyAddSpec;
+use nomo::project::{
+    BuildError, DependencyAddSpec, add_registry_dependency, add_registry_package_owner,
+    discover_project, login_registry, prepare_publish_package, publish_package_archive,
+    remove_dependency, remove_registry_package_owner, search_registry_packages,
+    yank_registry_package,
+};
 use std::env;
 use std::path::PathBuf;
+
+pub(super) fn run_login_command(args: Vec<String>) -> Result<(), String> {
+    let (registry, token) =
+        parse_login_args(args, "usage: nomo login --registry <url> --token <token>")?;
+    let login = login_registry(&registry, &token)?;
+    println!("logged in {}", login.registry);
+    println!("credentials {}", login.credentials_path.display());
+    Ok(())
+}
+
+pub(super) fn run_owner_command(args: Vec<String>) -> Result<(), String> {
+    let [subcommand, rest @ ..] = args.as_slice() else {
+        return Err(
+            "usage: nomo owner <add|remove> <owner/package> <user> --registry <url>".to_string(),
+        );
+    };
+    match subcommand.as_str() {
+        "add" => {
+            let (package, user, registry) = parse_owner_add_args(
+                rest.to_vec(),
+                "usage: nomo owner add <owner/package> <user> --registry <url>",
+            )?;
+            add_registry_package_owner(&registry, &package, &user)?;
+            println!("added owner {user} to {package}");
+            println!("registry {registry}");
+            Ok(())
+        }
+        "remove" => {
+            let (package, user, registry) = parse_owner_remove_args(
+                rest.to_vec(),
+                "usage: nomo owner remove <owner/package> <user> --registry <url>",
+            )?;
+            remove_registry_package_owner(&registry, &package, &user)?;
+            println!("removed owner {user} from {package}");
+            println!("registry {registry}");
+            Ok(())
+        }
+        other => Err(format!("unknown owner command `{other}`")),
+    }
+}
+
+pub(super) fn run_add_command(args: Vec<String>) -> Result<(), String> {
+    let (path, spec) = parse_add_args(
+        args,
+        "usage: nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]",
+    )?;
+    let project = discover_project(&path)?;
+    let manifest = add_registry_dependency(&project, spec)?;
+    println!("updated {}", manifest.display());
+    Ok(())
+}
+
+pub(super) fn run_remove_command(args: Vec<String>) -> Result<(), String> {
+    let (path, alias) = parse_remove_args(args, "usage: nomo remove <alias> [path]")?;
+    let project = discover_project(&path)?;
+    let manifest = remove_dependency(&project, &alias)?;
+    println!("updated {}", manifest.display());
+    Ok(())
+}
+
+pub(super) fn run_search_command(args: Vec<String>) -> Result<(), String> {
+    let (query, registry) = parse_search_args(args, "usage: nomo search <query> --registry <url>")?;
+    let results = search_registry_packages(&registry, &query)?;
+    if results.is_empty() {
+        println!("no packages found");
+    } else {
+        for result in results {
+            match (result.version.as_deref(), result.description.as_deref()) {
+                (Some(version), Some(description)) => {
+                    println!("{} {} - {}", result.package, version, description)
+                }
+                (Some(version), None) => println!("{} {}", result.package, version),
+                (None, Some(description)) => {
+                    println!("{} - {}", result.package, description)
+                }
+                (None, None) => println!("{}", result.package),
+            }
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn run_yank_command(args: Vec<String>) -> Result<(), String> {
+    let (package, version, registry) = parse_yank_args(
+        args,
+        "usage: nomo yank <owner/package> <version> --registry <url>",
+    )?;
+    yank_registry_package(&registry, &package, &version)?;
+    println!("yanked {package} {version}");
+    println!("registry {registry}");
+    Ok(())
+}
+
+pub(super) fn run_publish_command(args: Vec<String>) -> Result<(), String> {
+    let (path, dry_run, registry, output, json) = parse_publish_args(
+        args,
+        "usage: nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]",
+    )?;
+    let project = discover_project(&path)?;
+    if dry_run {
+        let package = match prepare_publish_package(&project, output.as_deref()) {
+            Ok(package) => package,
+            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(err) => return Err(err.human()),
+        };
+        println!("publish dry-run {} {}", package.package, package.version);
+        println!("archive {}", package.archive_path.display());
+        println!("checksum {}", package.checksum);
+        println!("size {}", package.size);
+    } else {
+        let registry = registry.ok_or_else(|| {
+            "nomo publish requires either --dry-run or --registry <url>".to_string()
+        })?;
+        let package = match publish_package_archive(&project, &registry, output.as_deref()) {
+            Ok(package) => package,
+            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(err) => return Err(err.human()),
+        };
+        println!("published {} {}", package.package, package.version);
+        println!("archive {}", package.archive_path.display());
+        println!("checksum {}", package.checksum);
+        println!("size {}", package.size);
+        println!("registry {registry}");
+    }
+    Ok(())
+}
 
 pub(super) fn parse_add_args(
     args: Vec<String>,

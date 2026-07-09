@@ -1,6 +1,7 @@
 use nomo::project::{
     BuildError, DependencyResolutionOptions, Project, build_project_with_options, check_project,
     clean_project, discover_project, discover_workspace, project_package_id,
+    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -56,6 +57,30 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
         println!("built {}", artifact.display());
     }
     Ok(())
+}
+
+pub(super) fn run_run_command(args: Vec<String>) -> Result<(), String> {
+    let (path, program_args, json) = parse_run_args(args)?;
+    let code = match discover_project(&path) {
+        Ok(project) => match run_project_with_args_and_diagnostics(&project, &program_args) {
+            Ok(code) => code,
+            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(err) => return Err(err.human()),
+        },
+        Err(err) if is_nomo_source_file(&path) && is_missing_manifest_error(&err) => {
+            match run_standalone_script_with_args_and_diagnostics(&path, &program_args) {
+                Ok(code) => code,
+                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                Err(err) => return Err(err.human()),
+            }
+        }
+        Err(err) => return Err(err),
+    };
+    if code == 0 {
+        Ok(())
+    } else {
+        Err(format!("program exited with status {code}"))
+    }
 }
 
 pub(super) fn run_clean_command(args: Vec<String>) -> Result<(), String> {

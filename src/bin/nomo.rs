@@ -14,8 +14,7 @@ mod cli_registry;
 mod cli_test;
 
 use cli_common::{
-    is_missing_manifest_error, is_nomo_source_file, parse_optional_path, parse_run_args,
-    run_build_command, run_check_command, run_clean_command,
+    parse_optional_path, run_build_command, run_check_command, run_clean_command, run_run_command,
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::run_doc_command;
@@ -30,8 +29,7 @@ use nomo::project::{
     create_project, dependency_tree_with_options, discover_project, discover_workspace,
     login_registry, prepare_publish_package, publish_package_archive, remove_dependency,
     remove_registry_package_owner, resolve_project_dependencies_with_options,
-    resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
-    run_standalone_script_with_args_and_diagnostics, search_registry_packages,
+    resolve_workspace_dependencies_with_options, search_registry_packages,
     update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
     vendor_workspace_dependencies, yank_registry_package,
 };
@@ -65,31 +63,7 @@ fn run() -> Result<(), String> {
         }
         "check" => run_check_command(args),
         "build" => run_build_command(args),
-        "run" => {
-            let (path, program_args, json) = parse_run_args(args)?;
-            let code = match discover_project(&path) {
-                Ok(project) => {
-                    match run_project_with_args_and_diagnostics(&project, &program_args) {
-                        Ok(code) => code,
-                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                        Err(err) => return Err(err.human()),
-                    }
-                }
-                Err(err) if is_nomo_source_file(&path) && is_missing_manifest_error(&err) => {
-                    match run_standalone_script_with_args_and_diagnostics(&path, &program_args) {
-                        Ok(code) => code,
-                        Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                        Err(err) => return Err(err.human()),
-                    }
-                }
-                Err(err) => return Err(err),
-            };
-            if code == 0 {
-                Ok(())
-            } else {
-                Err(format!("program exited with status {code}"))
-            }
-        }
+        "run" => run_run_command(args),
         "fmt" => run_fmt_command(args),
         "test" => run_test_command(args),
         "doc" => run_doc_command(args),

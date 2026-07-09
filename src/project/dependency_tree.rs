@@ -1,5 +1,39 @@
+use super::{
+    DependencyResolutionOptions, Project,
+    dependency_resolution::{
+        dependency_graph_from_lockfile, resolve_dependency_graph, resolve_dependency_graph_for_lock,
+    },
+};
 use nomo_lockfile::{DependencyGraph, ResolvedDependency};
 use nomo_manifest::DependencySource;
+
+pub fn dependency_tree(project: &Project) -> Result<String, String> {
+    dependency_tree_with_options(project, DependencyResolutionOptions::default())
+}
+
+pub fn dependency_tree_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+) -> Result<String, String> {
+    let lock_root = project.lock_root();
+    let graph = if lock_root.join("nomo.lock").is_file() {
+        dependency_graph_from_lockfile(&project.root, &lock_root)?
+    } else if options.locked {
+        return Err(format!(
+            "nomo.lock is required for locked mode at {}",
+            lock_root.join("nomo.lock").display()
+        ));
+    } else {
+        resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?
+    };
+    Ok(render_dependency_tree(&graph))
+}
+
+pub fn dependency_tree_current_sources(project: &Project) -> Result<String, String> {
+    Ok(render_dependency_tree(&resolve_dependency_graph(
+        &project.root,
+    )?))
+}
 
 pub(super) fn render_dependency_tree(graph: &DependencyGraph) -> String {
     let mut out = String::new();

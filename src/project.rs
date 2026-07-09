@@ -34,10 +34,9 @@ use build::configure_c_compile_command;
 pub use build::{
     build_project, build_project_with_diagnostics, build_project_with_options, clean_project,
 };
-use dependency_resolution::{
-    dependency_graph_from_lockfile, resolve_dependency_graph, resolve_dependency_graph_for_lock,
+pub use dependency_tree::{
+    dependency_tree, dependency_tree_current_sources, dependency_tree_with_options,
 };
-use dependency_tree::render_dependency_tree;
 use ffi::project_ffi_link_metadata_with_options;
 pub use modules::{
     ProjectModuleContext, project_module_context, project_module_context_with_options,
@@ -180,34 +179,6 @@ fn find_manifest_root(start: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-pub fn dependency_tree(project: &Project) -> Result<String, String> {
-    dependency_tree_with_options(project, DependencyResolutionOptions::default())
-}
-
-pub fn dependency_tree_with_options(
-    project: &Project,
-    options: DependencyResolutionOptions,
-) -> Result<String, String> {
-    let lock_root = project.lock_root();
-    let graph = if lock_root.join("nomo.lock").is_file() {
-        dependency_graph_from_lockfile(&project.root, &lock_root)?
-    } else if options.locked {
-        return Err(format!(
-            "nomo.lock is required for locked mode at {}",
-            lock_root.join("nomo.lock").display()
-        ));
-    } else {
-        resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?
-    };
-    Ok(render_dependency_tree(&graph))
-}
-
-pub fn dependency_tree_current_sources(project: &Project) -> Result<String, String> {
-    Ok(render_dependency_tree(&resolve_dependency_graph(
-        &project.root,
-    )?))
 }
 
 impl Project {

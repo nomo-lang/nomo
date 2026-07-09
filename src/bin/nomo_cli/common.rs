@@ -1,6 +1,36 @@
-use nomo::project::{DependencyResolutionOptions, Project, project_package_id};
+use nomo::project::{
+    DependencyResolutionOptions, Project, check_project, discover_project, discover_workspace,
+    project_package_id,
+};
 use std::env;
 use std::path::{Path, PathBuf};
+
+pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
+    let (path, json, workspace) = parse_path_json_workspace(
+        args,
+        "usage: nomo check [path] [--json-errors] [--workspace]",
+    )?;
+    if workspace {
+        for project in discover_workspace(&path)?.members {
+            match check_project(&project) {
+                Ok(()) => println!("checked {}", project.main.display()),
+                Err(diag) if json => return Err(diag.json()),
+                Err(diag) => return Err(diag.human()),
+            }
+        }
+        Ok(())
+    } else {
+        let project = discover_project(&path)?;
+        match check_project(&project) {
+            Ok(()) => {
+                println!("checked {}", project.main.display());
+                Ok(())
+            }
+            Err(diag) if json => Err(diag.json()),
+            Err(diag) => Err(diag.human()),
+        }
+    }
+}
 
 pub(super) fn parse_path_json_workspace(
     args: Vec<String>,

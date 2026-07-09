@@ -14,6 +14,8 @@ mod tests_nominal_interfaces;
 mod tests_result_option_question;
 #[path = "tests_std_builtins.rs"]
 mod tests_std_builtins;
+#[path = "tests_std_io_string_path.rs"]
+mod tests_std_io_string_path;
 
 fn parse_inline(source: &str) -> Result<Program, Diagnostic> {
     let path = Path::new("main.nomo");

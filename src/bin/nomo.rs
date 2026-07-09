@@ -14,8 +14,8 @@ mod cli_registry;
 mod cli_test;
 
 use cli_common::{
-    filter_projects_by_package, is_missing_manifest_error, is_nomo_source_file, parse_build_args,
-    parse_optional_path, parse_path_json_workspace, parse_run_args, validate_project_package,
+    is_missing_manifest_error, is_nomo_source_file, parse_build_args, parse_optional_path,
+    parse_path_json_workspace, parse_run_args,
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::run_doc_command;
@@ -24,17 +24,17 @@ use cli_registry::{
     parse_add_args, parse_login_args, parse_owner_add_args, parse_owner_remove_args,
     parse_publish_args, parse_remove_args, parse_search_args, parse_yank_args,
 };
-use cli_test::{parse_test_args, print_test_reports, reports_have_failures, test_reports_json};
+use cli_test::run_test_command;
 use nomo::project::{
-    BuildError, ProjectTestOptions, add_registry_dependency, add_registry_package_owner,
-    build_project_with_options, check_project, clean_dependency_cache, clean_project,
-    create_project, dependency_tree_with_options, discover_project, discover_workspace,
-    login_registry, prepare_publish_package, publish_package_archive, remove_dependency,
+    BuildError, add_registry_dependency, add_registry_package_owner, build_project_with_options,
+    check_project, clean_dependency_cache, clean_project, create_project,
+    dependency_tree_with_options, discover_project, discover_workspace, login_registry,
+    prepare_publish_package, publish_package_archive, remove_dependency,
     remove_registry_package_owner, resolve_project_dependencies_with_options,
-    resolve_workspace_dependencies_with_options, run_project_tests_with_options,
-    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
-    search_registry_packages, update_project_dependencies, update_workspace_dependencies,
-    vendor_project_dependencies, vendor_workspace_dependencies, yank_registry_package,
+    resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_diagnostics, search_registry_packages,
+    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
+    vendor_workspace_dependencies, yank_registry_package,
 };
 use std::env;
 use std::process;
@@ -154,56 +154,7 @@ fn run() -> Result<(), String> {
                 Err(err) => Err(err.human()),
             }
         }
-        "test" => {
-            let (path, workspace, package, filter, json, deps) = parse_test_args(args)?;
-            let mut reports = Vec::new();
-            if workspace {
-                let mut projects = discover_workspace(&path)?.members;
-                if let Some(package) = package.as_deref() {
-                    projects = filter_projects_by_package(projects, package)?;
-                }
-                for project in projects {
-                    reports.push(
-                        run_project_tests_with_options(
-                            &project,
-                            ProjectTestOptions {
-                                filter: filter.clone(),
-                                resolution: deps,
-                            },
-                        )
-                        .map_err(|err| err.human())?,
-                    );
-                }
-            } else {
-                let project = discover_project(&path)?;
-                if let Some(package) = package.as_deref() {
-                    validate_project_package(&project, package)?;
-                }
-                reports.push(
-                    run_project_tests_with_options(
-                        &project,
-                        ProjectTestOptions {
-                            filter,
-                            resolution: deps,
-                        },
-                    )
-                    .map_err(|err| err.human())?,
-                );
-            }
-            if json {
-                println!("{}", test_reports_json(&reports));
-                if reports_have_failures(&reports) {
-                    process::exit(1);
-                }
-                return Ok(());
-            }
-            print_test_reports(&reports);
-            if reports_have_failures(&reports) {
-                Err("test failed".to_string())
-            } else {
-                Ok(())
-            }
-        }
+        "test" => run_test_command(args),
         "doc" => run_doc_command(args),
         "clean" => {
             let path = parse_optional_path(args, "usage: nomo clean [path]")?;

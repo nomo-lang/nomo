@@ -1,6 +1,62 @@
-use nomo::project::{DependencyResolutionOptions, ProjectTestReport, ProjectTestStatus};
+use super::cli_common::{filter_projects_by_package, validate_project_package};
+use nomo::project::{
+    DependencyResolutionOptions, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
+    discover_project, discover_workspace, run_project_tests_with_options,
+};
 use std::env;
 use std::path::PathBuf;
+use std::process;
+
+pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
+    let (path, workspace, package, filter, json, deps) = parse_test_args(args)?;
+    let mut reports = Vec::new();
+    if workspace {
+        let mut projects = discover_workspace(&path)?.members;
+        if let Some(package) = package.as_deref() {
+            projects = filter_projects_by_package(projects, package)?;
+        }
+        for project in projects {
+            reports.push(
+                run_project_tests_with_options(
+                    &project,
+                    ProjectTestOptions {
+                        filter: filter.clone(),
+                        resolution: deps,
+                    },
+                )
+                .map_err(|err| err.human())?,
+            );
+        }
+    } else {
+        let project = discover_project(&path)?;
+        if let Some(package) = package.as_deref() {
+            validate_project_package(&project, package)?;
+        }
+        reports.push(
+            run_project_tests_with_options(
+                &project,
+                ProjectTestOptions {
+                    filter,
+                    resolution: deps,
+                },
+            )
+            .map_err(|err| err.human())?,
+        );
+    }
+    if json {
+        println!("{}", test_reports_json(&reports));
+        if reports_have_failures(&reports) {
+            process::exit(1);
+        }
+        return Ok(());
+    }
+    print_test_reports(&reports);
+    if reports_have_failures(&reports) {
+        Err("test failed".to_string())
+    } else {
+        Ok(())
+    }
+}
 
 pub(super) fn parse_test_args(
     args: Vec<String>,

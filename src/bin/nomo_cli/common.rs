@@ -1,6 +1,6 @@
 use nomo::project::{
-    DependencyResolutionOptions, Project, check_project, discover_project, discover_workspace,
-    project_package_id,
+    DependencyResolutionOptions, Project, check_project, clean_project, discover_project,
+    discover_workspace, project_package_id,
 };
 use std::env;
 use std::path::{Path, PathBuf};
@@ -30,6 +30,14 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
             Err(diag) => Err(diag.human()),
         }
     }
+}
+
+pub(super) fn run_clean_command(args: Vec<String>) -> Result<(), String> {
+    let path = parse_optional_path(args, "usage: nomo clean [path]")?;
+    let project = discover_project(&path)?;
+    let cleaned = clean_project(&project)?;
+    println!("cleaned {}", cleaned.display());
+    Ok(())
 }
 
 pub(super) fn parse_path_json_workspace(

@@ -15,7 +15,7 @@ mod cli_test;
 
 use cli_common::{
     is_missing_manifest_error, is_nomo_source_file, parse_build_args, parse_optional_path,
-    parse_run_args, run_check_command,
+    parse_run_args, run_check_command, run_clean_command,
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::run_doc_command;
@@ -27,13 +27,13 @@ use cli_registry::{
 use cli_test::run_test_command;
 use nomo::project::{
     BuildError, add_registry_dependency, add_registry_package_owner, build_project_with_options,
-    clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
-    discover_project, discover_workspace, login_registry, prepare_publish_package,
-    publish_package_archive, remove_dependency, remove_registry_package_owner,
-    resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
-    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
-    search_registry_packages, update_project_dependencies, update_workspace_dependencies,
-    vendor_project_dependencies, vendor_workspace_dependencies, yank_registry_package,
+    clean_dependency_cache, create_project, dependency_tree_with_options, discover_project,
+    discover_workspace, login_registry, prepare_publish_package, publish_package_archive,
+    remove_dependency, remove_registry_package_owner, resolve_project_dependencies_with_options,
+    resolve_workspace_dependencies_with_options, run_project_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_diagnostics, search_registry_packages,
+    update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
+    vendor_workspace_dependencies, yank_registry_package,
 };
 use std::env;
 use std::process;
@@ -117,13 +117,7 @@ fn run() -> Result<(), String> {
         "fmt" => run_fmt_command(args),
         "test" => run_test_command(args),
         "doc" => run_doc_command(args),
-        "clean" => {
-            let path = parse_optional_path(args, "usage: nomo clean [path]")?;
-            let project = discover_project(&path)?;
-            let cleaned = clean_project(&project)?;
-            println!("cleaned {}", cleaned.display());
-            Ok(())
-        }
+        "clean" => run_clean_command(args),
         "login" => {
             let (registry, token) =
                 parse_login_args(args, "usage: nomo login --registry <url> --token <token>")?;

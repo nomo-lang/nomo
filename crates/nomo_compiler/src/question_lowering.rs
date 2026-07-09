@@ -378,9 +378,11 @@ pub(super) fn lower_question_exprs_in_stmt_into(
             || ast_expr_contains_question(then_branch)
             || ast_expr_contains_question(else_branch) =>
         {
-            let (condition, _) = extract_question_exprs(
+            lower_question_if_return(
                 path,
                 condition,
+                then_branch,
+                else_branch,
                 scope,
                 imports,
                 signatures,
@@ -390,39 +392,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (condition_type, condition) = lower_value_expr(
-                path, &condition, scope, imports, signatures, structs, enums, span,
-            )?;
-            if condition_type != ValueType::Bool {
-                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
-            }
-            let body = lower_tail_expr_as_return_block(
-                path,
-                then_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            let else_body = lower_tail_expr_as_return_block(
-                path,
-                else_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            out.push(Statement::If {
-                condition,
-                body,
-                else_body,
-            });
             return Ok(true);
         }
         Stmt::Return {
@@ -448,9 +417,12 @@ pub(super) fn lower_question_exprs_in_stmt_into(
             else {
                 unreachable!("guard matched single if argument");
             };
-            let (condition, _) = extract_question_exprs(
+            lower_question_result_ok_if_return(
                 path,
+                callee,
                 condition,
+                then_branch,
+                else_branch,
                 scope,
                 imports,
                 signatures,
@@ -460,49 +432,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (condition_type, condition) = lower_value_expr(
-                path, &condition, scope, imports, signatures, structs, enums, span,
-            )?;
-            if condition_type != ValueType::Bool {
-                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
-            }
-            let then_ok = AstExpr::Call {
-                callee: callee.clone(),
-                type_args: Vec::new(),
-                args: vec![then_branch.as_ref().clone()],
-            };
-            let else_ok = AstExpr::Call {
-                callee: callee.clone(),
-                type_args: Vec::new(),
-                args: vec![else_branch.as_ref().clone()],
-            };
-            let body = lower_tail_expr_as_return_block(
-                path,
-                &then_ok,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            let else_body = lower_tail_expr_as_return_block(
-                path,
-                &else_ok,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            out.push(Statement::If {
-                condition,
-                body,
-                else_body,
-            });
             return Ok(true);
         }
         Stmt::Return {
@@ -651,9 +580,11 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 || ast_expr_contains_question(then_branch)
                 || ast_expr_contains_question(else_branch)) =>
         {
-            let (condition, _) = extract_question_exprs(
+            lower_question_if_return(
                 path,
                 condition,
+                then_branch,
+                else_branch,
                 scope,
                 imports,
                 signatures,
@@ -663,39 +594,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (condition_type, condition) = lower_value_expr(
-                path, &condition, scope, imports, signatures, structs, enums, span,
-            )?;
-            if condition_type != ValueType::Bool {
-                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
-            }
-            let body = lower_tail_expr_as_return_block(
-                path,
-                then_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            let else_body = lower_tail_expr_as_return_block(
-                path,
-                else_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            out.push(Statement::If {
-                condition,
-                body,
-                else_body,
-            });
             return Ok(true);
         }
         Stmt::Expr {

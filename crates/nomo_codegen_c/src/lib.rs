@@ -18,6 +18,7 @@ use nomo_ir::{
 use std::collections::BTreeSet;
 
 mod array_helpers;
+mod expression_arrays;
 mod expressions;
 mod host_env_process_helpers;
 mod host_file_helpers;
@@ -46,6 +47,7 @@ mod usage_env_scans;
 mod usage_expr_walk;
 mod usage_host_scans;
 use array_helpers::*;
+use expression_arrays::*;
 use expressions::*;
 use host_env_process_helpers::*;
 use host_file_helpers::*;

@@ -24,6 +24,7 @@ use std::path::{Path, PathBuf};
 
 mod analysis;
 mod analysis_generic;
+mod analysis_usage;
 mod builtins_core_std;
 mod builtins_diagnostics;
 mod builtins_extensions;
@@ -52,6 +53,7 @@ mod typing;
 mod validation;
 use analysis::*;
 use analysis_generic::*;
+use analysis_usage::*;
 use builtins_core_std::*;
 use builtins_diagnostics::*;
 use builtins_extensions::*;

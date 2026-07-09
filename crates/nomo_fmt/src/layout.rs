@@ -1,4 +1,4 @@
-use crate::lexer::{Token, TokenKind};
+use nomo_syntax::lexer::{Token, TokenKind};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum TopLevelItem {

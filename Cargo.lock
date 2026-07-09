@@ -102,6 +102,7 @@ version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
  "nomo-compiler",
+ "nomo-fmt",
  "nomo-ir",
  "nomo-lockfile",
  "nomo-lsp-bridge",
@@ -127,6 +128,13 @@ version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
  "nomo-ir",
+ "nomo-syntax",
+]
+
+[[package]]
+name = "nomo-fmt"
+version = "0.1.0"
+dependencies = [
  "nomo-syntax",
 ]
 

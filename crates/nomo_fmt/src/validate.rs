@@ -1,5 +1,5 @@
-use crate::ast::{ForVariant, SourceFile, Span, Stmt};
-use crate::diagnostic::Diagnostic;
+use nomo_syntax::ast::{ForVariant, SourceFile, Span, Stmt};
+use nomo_syntax::diagnostic::Diagnostic;
 use std::path::Path;
 
 pub(super) fn validate_format_ast(path: &Path, ast: &SourceFile) -> Result<(), Diagnostic> {

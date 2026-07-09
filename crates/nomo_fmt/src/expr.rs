@@ -1,4 +1,4 @@
-use crate::ast::{AssignOp, BinaryOp, Expr, MatchArm, PostfixOp, TypeRef, UnaryOp};
+use nomo_syntax::ast::{AssignOp, BinaryOp, Expr, MatchArm, PostfixOp, TypeRef, UnaryOp};
 
 pub(super) fn type_ref(ty: &TypeRef) -> String {
     if ty.args.is_empty() {

@@ -1,0 +1,12 @@
+[package]
+name = "nomo-fmt"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nomo-syntax = { path = "../nomo_syntax" }
+
+[lib]
+name = "nomo_fmt"
+path = "src/lib.rs"

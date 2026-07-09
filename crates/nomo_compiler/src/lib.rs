@@ -78,6 +78,7 @@ mod statement_blocks;
 mod statement_patterns;
 mod statement_returns;
 mod statements;
+mod type_parsing;
 mod typing;
 mod validation;
 mod validation_imports;
@@ -145,6 +146,7 @@ use statement_blocks::*;
 use statement_patterns::*;
 use statement_returns::*;
 use statements::*;
+use type_parsing::*;
 use typing::*;
 use validation::*;
 

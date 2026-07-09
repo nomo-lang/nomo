@@ -19,6 +19,7 @@ use std::collections::BTreeSet;
 
 mod array_helpers;
 mod expression_arrays;
+mod expression_collections;
 mod expression_result_option;
 mod expression_std_misc;
 mod expression_string_char;
@@ -51,6 +52,7 @@ mod usage_expr_walk;
 mod usage_host_scans;
 use array_helpers::*;
 use expression_arrays::*;
+use expression_collections::*;
 use expression_result_option::*;
 use expression_std_misc::*;
 use expression_string_char::*;

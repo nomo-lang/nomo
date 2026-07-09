@@ -1,5 +1,6 @@
 use nomo::project::{discover_project, discover_workspace};
 use nomo::{Diagnostic, format_source};
+use std::env;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -16,6 +17,28 @@ impl FormatError {
             FormatError::Message(message) => message.clone(),
         }
     }
+}
+
+pub(super) fn parse_fmt_args(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
+    let mut check = false;
+    let mut json = false;
+    let mut path = None;
+    for arg in args {
+        if arg == "--check" {
+            check = true;
+        } else if arg == "--json-errors" {
+            json = true;
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err("usage: nomo fmt [path] [--check] [--json-errors]".to_string());
+        }
+    }
+    Ok((
+        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+        check,
+        json,
+    ))
 }
 
 pub(super) fn format_path(path: &Path, check: bool) -> Result<bool, FormatError> {

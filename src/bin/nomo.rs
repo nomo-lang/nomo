@@ -13,7 +13,7 @@ mod cli_test;
 
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_doc::parse_doc_args;
-use cli_fmt::{FormatError, format_path};
+use cli_fmt::{FormatError, format_path, parse_fmt_args};
 use cli_registry::{
     parse_add_args, parse_login_args, parse_owner_add_args, parse_owner_remove_args,
     parse_publish_args, parse_remove_args, parse_search_args, parse_yank_args,
@@ -600,28 +600,6 @@ fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), Str
         index += 1;
     }
     Ok((path.unwrap_or(current_dir()?), Vec::new(), json))
-}
-
-fn parse_fmt_args(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
-    let mut check = false;
-    let mut json = false;
-    let mut path = None;
-    for arg in args {
-        if arg == "--check" {
-            check = true;
-        } else if arg == "--json-errors" {
-            json = true;
-        } else if path.is_none() {
-            path = Some(PathBuf::from(arg));
-        } else {
-            return Err("usage: nomo fmt [path] [--check] [--json-errors]".to_string());
-        }
-    }
-    Ok((
-        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
-        check,
-        json,
-    ))
 }
 
 fn filter_projects_by_package(

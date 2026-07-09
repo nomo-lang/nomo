@@ -235,9 +235,13 @@ pub(super) fn lower_question_exprs_in_stmt_into(
             else {
                 unreachable!("guard matched if expression");
             };
-            let (condition, _) = extract_question_exprs(
+            lower_question_if_assignment(
                 path,
+                target,
+                *op,
                 condition,
+                then_branch,
+                else_branch,
                 scope,
                 imports,
                 signatures,
@@ -247,43 +251,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (condition_type, condition) = lower_value_expr(
-                path, &condition, scope, imports, signatures, structs, enums, span,
-            )?;
-            if condition_type != ValueType::Bool {
-                return Err(type_mismatch(path, span, "`if` condition must be `bool`"));
-            }
-            let body = lower_expr_as_target_assignment_block(
-                path,
-                target,
-                *op,
-                then_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            let else_body = lower_expr_as_target_assignment_block(
-                path,
-                target,
-                *op,
-                else_branch,
-                &mut scope.clone(),
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?;
-            out.push(Statement::If {
-                condition,
-                body,
-                else_body,
-            });
             return Ok(true);
         }
         Stmt::Assign {
@@ -296,9 +263,12 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 .iter()
                 .any(|arm| ast_expr_contains_question(&arm.value)) =>
         {
-            let (value, _) = extract_question_exprs(
+            lower_question_match_assignment(
                 path,
+                target,
+                *op,
                 value,
+                arms,
                 scope,
                 imports,
                 signatures,
@@ -308,46 +278,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            let (value_type, lowered_value) = lower_value_expr(
-                path, &value, scope, imports, signatures, structs, enums, span,
-            )?;
-            let ValueType::Enum(enum_name, enum_args) = value_type else {
-                return Err(type_mismatch(path, span, "`match` expects an enum value"));
-            };
-            let enum_type = enums
-                .get(&enum_name)
-                .expect("enum value must refer to a known enum");
-            let lowered_arms = lower_question_match_arms(
-                path,
-                arms,
-                &enum_name,
-                &enum_args,
-                enum_type,
-                &lowered_value,
-                scope,
-                span,
-                |arm, arm_scope| {
-                    lower_expr_as_target_assignment_block(
-                        path,
-                        target,
-                        *op,
-                        &arm.value,
-                        arm_scope,
-                        imports,
-                        signatures,
-                        structs,
-                        enums,
-                        return_type,
-                        span,
-                    )
-                },
-            )?;
-            out.push(Statement::Match {
-                value: lowered_value,
-                enum_name,
-                enum_args,
-                arms: lowered_arms,
-            });
             return Ok(true);
         }
         Stmt::Assign {

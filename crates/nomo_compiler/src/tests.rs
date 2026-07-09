@@ -14,6 +14,8 @@ mod tests_nominal_interfaces;
 mod tests_result_option_question;
 #[path = "tests_std_builtins.rs"]
 mod tests_std_builtins;
+#[path = "tests_std_collections_num_time.rs"]
+mod tests_std_collections_num_time;
 #[path = "tests_std_io_string_path.rs"]
 mod tests_std_io_string_path;
 #[path = "tests_std_json_http_regex.rs"]

@@ -291,7 +291,11 @@ pub fn greet(name: string) -> string {
     return "hello"
 }
 
-/** User-facing record. */
+/**
+ * User-facing record.
+ * /* Nested detail. */
+ * Still user-facing.
+ */
 pub struct User {
     /// User display name.
     pub name: string
@@ -342,6 +346,8 @@ extern "C" {
         "{module_html}"
     );
     assert!(module_html.contains("User-facing record."), "{module_html}");
+    assert!(module_html.contains("Nested detail."), "{module_html}");
+    assert!(module_html.contains("Still user-facing."), "{module_html}");
     assert!(module_html.contains("field User.name"), "{module_html}");
     assert!(module_html.contains("User display name."), "{module_html}");
     assert!(

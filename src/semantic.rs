@@ -1146,12 +1146,15 @@ fn extract_doc_comments(source: &str) -> DocComments {
 fn collect_block_doc(lines: &[&str], start: usize) -> (String, usize) {
     let mut raw = String::new();
     let mut index = start;
+    let mut depth = 0usize;
     while index < lines.len() {
         if !raw.is_empty() {
             raw.push('\n');
         }
-        raw.push_str(lines[index]);
-        if lines[index].contains("*/") {
+        let line = lines[index];
+        raw.push_str(line);
+        depth = update_block_comment_depth(line, depth);
+        if depth == 0 {
             index += 1;
             break;
         }
@@ -1166,6 +1169,25 @@ fn collect_block_doc(lines: &[&str], start: usize) -> (String, usize) {
         .trim()
         .to_string();
     (doc, index)
+}
+
+fn update_block_comment_depth(line: &str, mut depth: usize) -> usize {
+    let bytes = line.as_bytes();
+    let mut index = 0usize;
+    while index + 1 < bytes.len() {
+        match (bytes[index], bytes[index + 1]) {
+            (b'/', b'*') => {
+                depth += 1;
+                index += 2;
+            }
+            (b'*', b'/') => {
+                depth = depth.saturating_sub(1);
+                index += 2;
+            }
+            _ => index += 1,
+        }
+    }
+    depth
 }
 
 #[cfg(test)]
@@ -1281,6 +1303,20 @@ mod tests {
         assert_eq!(
             symbols[9].signature,
             "pub fn User.email(self: User) -> string"
+        );
+    }
+
+    #[test]
+    fn symbols_keep_nested_block_doc_comments() {
+        let source = "package app.main\n\n/**\n * Outer docs.\n * /* Nested docs. */\n * Still outer.\n */\npub fn nested() -> void {\n}\n";
+
+        let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(symbols.len(), 1);
+        assert_eq!(symbols[0].name, "nested");
+        assert_eq!(
+            symbols[0].docs,
+            "Outer docs.\n/* Nested docs. */\nStill outer."
         );
     }
 

@@ -1,0 +1,456 @@
+use super::*;
+pub(super) fn validate_imports(
+    path: &Path,
+    imports: &[String],
+    external_import_roots: &[String],
+    local_import_root: Option<&str>,
+) -> Result<(), Diagnostic> {
+    for import in imports {
+        let is_local_import = local_import_root
+            .is_some_and(|root| import.split('.').next().is_some_and(|item| item == root));
+        if !is_local_import && !is_supported_import(import, external_import_roots) {
+            return Err(Diagnostic::new(
+                "E0301",
+                format!("unsupported import `{import}` in v0.1"),
+                path,
+                1,
+                1,
+                import.len().max(1),
+                import,
+            ));
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_standard_type_imports(
+    path: &Path,
+    imports: &[String],
+    ast: &SourceFile,
+) -> Result<(), Diagnostic> {
+    for item in &ast.structs {
+        for field in &item.fields {
+            validate_type_ref_imports(path, imports, &field.type_ref, &synthetic_span())?;
+        }
+    }
+    for item in &ast.enums {
+        for variant in &item.variants {
+            if let Some(type_ref) = &variant.payload {
+                validate_type_ref_imports(path, imports, type_ref, &synthetic_span())?;
+            }
+        }
+    }
+    for item in &ast.consts {
+        validate_type_ref_imports(path, imports, &item.type_ref, &item.span)?;
+        validate_expr_type_imports(path, imports, &item.value, &item.span)?;
+    }
+    for function in ast_functions(ast) {
+        for param in &function.params {
+            validate_type_ref_imports(path, imports, &param.type_ref, &function.span)?;
+        }
+        validate_type_ref_imports(path, imports, &function.return_type, &function.span)?;
+        for stmt in &function.body {
+            validate_stmt_type_imports(path, imports, stmt)?;
+        }
+    }
+    Ok(())
+}
+
+pub(super) fn validate_stmt_type_imports(
+    path: &Path,
+    imports: &[String],
+    stmt: &Stmt,
+) -> Result<(), Diagnostic> {
+    match stmt {
+        Stmt::Let {
+            type_annotation,
+            value,
+            span,
+            ..
+        } => {
+            if let Some(type_ref) = type_annotation {
+                validate_type_ref_imports(path, imports, type_ref, span)?;
+            }
+            validate_expr_type_imports(path, imports, value, span)
+        }
+        Stmt::LetElse {
+            value,
+            else_body,
+            span,
+            ..
+        } => {
+            validate_expr_type_imports(path, imports, value, span)?;
+            for stmt in else_body {
+                validate_stmt_type_imports(path, imports, stmt)?;
+            }
+            Ok(())
+        }
+        Stmt::IfLet {
+            value,
+            body,
+            else_body,
+            span,
+            ..
+        } => {
+            validate_expr_type_imports(path, imports, value, span)?;
+            for stmt in body {
+                validate_stmt_type_imports(path, imports, stmt)?;
+            }
+            if let Some(else_body) = else_body {
+                for stmt in else_body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::Assign { value, span, .. }
+        | Stmt::Return {
+            value: Some(value),
+            span,
+        }
+        | Stmt::Expr { expr: value, span } => {
+            validate_expr_type_imports(path, imports, value, span)
+        }
+        Stmt::Postfix { .. }
+        | Stmt::Return { value: None, .. }
+        | Stmt::Break { .. }
+        | Stmt::Continue { .. } => Ok(()),
+        Stmt::Match { value, arms, span } => {
+            validate_expr_type_imports(path, imports, value, span)?;
+            for arm in arms {
+                for stmt in &arm.body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+            }
+            Ok(())
+        }
+        Stmt::For { variant, span } => match variant {
+            ForVariant::Infinite { body } => {
+                for stmt in body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+                Ok(())
+            }
+            ForVariant::While { condition, body } => {
+                validate_expr_type_imports(path, imports, condition, span)?;
+                for stmt in body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+                Ok(())
+            }
+            ForVariant::Iterate { iterable, body, .. } => {
+                validate_expr_type_imports(path, imports, iterable, span)?;
+                for stmt in body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+                Ok(())
+            }
+        },
+        Stmt::Defer { stmt, .. } => validate_stmt_type_imports(path, imports, stmt),
+        Stmt::Unsafe { body, .. } => {
+            for stmt in body {
+                validate_stmt_type_imports(path, imports, stmt)?;
+            }
+            Ok(())
+        }
+    }
+}
+
+pub(super) fn validate_expr_type_imports(
+    path: &Path,
+    imports: &[String],
+    expr: &AstExpr,
+    span: &Span,
+) -> Result<(), Diagnostic> {
+    match expr {
+        AstExpr::Call {
+            type_args, args, ..
+        } => {
+            for type_ref in type_args {
+                validate_type_ref_imports(path, imports, type_ref, span)?;
+            }
+            for arg in args {
+                validate_expr_type_imports(path, imports, arg, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::StructLiteral { fields, .. } => {
+            for (_, value) in fields {
+                validate_expr_type_imports(path, imports, value, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::Match { value, arms } => {
+            validate_expr_type_imports(path, imports, value, span)?;
+            for arm in arms {
+                validate_expr_type_imports(path, imports, &arm.value, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::If {
+            condition,
+            then_branch,
+            else_branch,
+        } => {
+            validate_expr_type_imports(path, imports, condition, span)?;
+            validate_expr_type_imports(path, imports, then_branch, span)?;
+            validate_expr_type_imports(path, imports, else_branch, span)
+        }
+        AstExpr::Panic { message }
+        | AstExpr::Question { expr: message }
+        | AstExpr::Unary { expr: message, .. } => {
+            validate_expr_type_imports(path, imports, message, span)
+        }
+        AstExpr::Cast { expr, target } => {
+            validate_expr_type_imports(path, imports, expr, span)?;
+            validate_type_ref_imports(path, imports, target, span)
+        }
+        AstExpr::Binary { left, right, .. } => {
+            validate_expr_type_imports(path, imports, left, span)?;
+            validate_expr_type_imports(path, imports, right, span)
+        }
+        AstExpr::MutArg { .. }
+        | AstExpr::Name(_)
+        | AstExpr::String(_)
+        | AstExpr::Int(_)
+        | AstExpr::Float(_)
+        | AstExpr::Char(_)
+        | AstExpr::Bool(_)
+        | AstExpr::Void => Ok(()),
+    }
+}
+
+pub(super) fn validate_type_ref_imports(
+    path: &Path,
+    imports: &[String],
+    type_ref: &crate::ast::TypeRef,
+    span: &Span,
+) -> Result<(), Diagnostic> {
+    if type_ref.path == ["Array"]
+        && !imports
+            .iter()
+            .any(|item| item == "std.array" || item == "std.array.Array")
+    {
+        return Err(Diagnostic::new(
+            "E0301",
+            "`Array` requires `import std.array.Array`",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    for arg in &type_ref.args {
+        validate_type_ref_imports(path, imports, arg, span)?;
+    }
+    Ok(())
+}
+
+pub(super) fn is_supported_import(import: &str, external_import_roots: &[String]) -> bool {
+    matches!(
+        import,
+        "std.io"
+            | "std.io.print"
+            | "std.io.println"
+            | "std.io.read_line"
+            | "std.io.eprint"
+            | "std.io.eprintln"
+            | "std.fs"
+            | "std.fs.FsError"
+            | "std.fs.File"
+            | "std.fs.FileMetadata"
+            | "std.fs.read_to_string"
+            | "std.fs.write_string"
+            | "std.fs.read_bytes"
+            | "std.fs.write_bytes"
+            | "std.fs.exists"
+            | "std.fs.metadata"
+            | "std.fs.create_dir"
+            | "std.fs.remove_dir"
+            | "std.fs.read_dir"
+            | "std.fs.open"
+            | "std.net"
+            | "std.net.NetError"
+            | "std.net.TcpListener"
+            | "std.net.TcpStream"
+            | "std.net.UdpDatagram"
+            | "std.net.UdpSocket"
+            | "std.net.connect"
+            | "std.net.listen"
+            | "std.net.udp_bind"
+            | "std.http"
+            | "std.http.HttpExchange"
+            | "std.http.HttpError"
+            | "std.http.HttpResponse"
+            | "std.http.HttpServer"
+            | "std.http.accept"
+            | "std.http.close_exchange"
+            | "std.http.close_server"
+            | "std.http.get"
+            | "std.http.listen"
+            | "std.http.post"
+            | "std.http.respond_string"
+            | "std.env"
+            | "std.env.args"
+            | "std.env.cwd"
+            | "std.env.get"
+            | "std.env.home_dir"
+            | "std.env.set"
+            | "std.env.temp_dir"
+            | "std.result"
+            | "std.result.Result"
+            | "std.result.is_ok"
+            | "std.result.is_err"
+            | "std.result.unwrap_or"
+            | "std.result.map"
+            | "std.result.map_err"
+            | "std.result.and_then"
+            | "std.option"
+            | "std.option.Option"
+            | "std.option.is_some"
+            | "std.option.is_none"
+            | "std.option.unwrap_or"
+            | "std.option.map"
+            | "std.option.and_then"
+            | "std.array"
+            | "std.array.Array"
+            | "std.array.new"
+            | "std.array.len"
+            | "std.array.push"
+            | "std.array.get"
+            | "std.array.set"
+            | "std.array.pop"
+            | "std.array.insert"
+            | "std.array.remove"
+            | "std.array.clear"
+            | "std.array.iter"
+            | "std.string"
+            | "std.string.len"
+            | "std.string.concat"
+            | "std.string.is_empty"
+            | "std.string.contains"
+            | "std.string.starts_with"
+            | "std.string.ends_with"
+            | "std.string.split"
+            | "std.string.trim"
+            | "std.string.to_lower"
+            | "std.string.to_upper"
+            | "std.char"
+            | "std.char.is_digit"
+            | "std.char.is_alpha"
+            | "std.char.is_whitespace"
+            | "std.char.to_string"
+            | "std.debug"
+            | "std.debug.print"
+            | "std.debug.println"
+            | "std.debug.panic"
+            | "std.debug.backtrace"
+            | "std.log"
+            | "std.log.debug"
+            | "std.log.info"
+            | "std.log.warn"
+            | "std.log.error"
+            | "std.log.enabled"
+            | "std.hash"
+            | "std.hash.HashState"
+            | "std.hash.bytes"
+            | "std.hash.new"
+            | "std.hash.string"
+            | "std.hash.write_bytes"
+            | "std.hash.write_string"
+            | "std.hash.finish"
+            | "std.crypto"
+            | "std.crypto.sha256"
+            | "std.crypto.sha512"
+            | "std.crypto.random_bytes"
+            | "std.json"
+            | "std.json.JsonValue"
+            | "std.json.JsonError"
+            | "std.json.parse"
+            | "std.json.stringify"
+            | "std.regex"
+            | "std.regex.Regex"
+            | "std.regex.RegexError"
+            | "std.regex.compile"
+            | "std.regex.is_match"
+            | "std.regex.captures"
+            | "std.collections"
+            | "std.collections.StringMap"
+            | "std.collections.StringSet"
+            | "std.collections.map_new"
+            | "std.collections.map_len"
+            | "std.collections.map_get"
+            | "std.collections.map_contains"
+            | "std.collections.map_set"
+            | "std.collections.map_remove"
+            | "std.collections.set_new"
+            | "std.collections.set_len"
+            | "std.collections.set_contains"
+            | "std.collections.set_insert"
+            | "std.collections.set_remove"
+            | "std.os"
+            | "std.os.platform"
+            | "std.os.arch"
+            | "std.os.path_separator"
+            | "std.os.line_ending"
+            | "std.time"
+            | "std.time.Duration"
+            | "std.time.duration_millis"
+            | "std.time.duration_seconds"
+            | "std.time.duration_as_millis"
+            | "std.time.format_duration"
+            | "std.time.sleep"
+            | "std.time.now_millis"
+            | "std.time.monotonic_millis"
+            | "std.time.sleep_millis"
+            | "std.testing"
+            | "std.testing.assert"
+            | "std.testing.assert_equal"
+            | "std.testing.assert_error"
+            | "std.process"
+            | "std.process.ProcessError"
+            | "std.process.ProcessOutput"
+            | "std.process.exit"
+            | "std.process.spawn"
+            | "std.process.status"
+            | "std.process.exec"
+            | "std.process.output"
+            | "std.num"
+            | "std.num.NumError"
+            | "std.num.parse_i64"
+            | "std.num.parse_u64"
+            | "std.num.parse_f64"
+            | "std.num.checked_add"
+            | "std.num.checked_sub"
+            | "std.num.checked_mul"
+            | "std.num.wrapping_add"
+            | "std.num.wrapping_sub"
+            | "std.num.wrapping_mul"
+            | "std.path"
+            | "std.path.join"
+            | "std.path.basename"
+            | "std.path.dirname"
+            | "std.path.extension"
+            | "std.path.normalize"
+            | "std.path.is_absolute"
+            | "std.math"
+            | "std.math.abs"
+            | "std.math.min"
+            | "std.math.max"
+            | "std.math.floor"
+            | "std.math.ceil"
+            | "std.math.round"
+            | "std.math.sqrt"
+            | "std.math.pow"
+            | "std.math.sin"
+            | "std.math.cos"
+    ) || is_supported_external_import(import, external_import_roots)
+}
+
+pub(super) fn is_supported_external_import(import: &str, external_import_roots: &[String]) -> bool {
+    let Some((root, _rest)) = import.split_once('.') else {
+        return false;
+    };
+    root != "std" && external_import_roots.iter().any(|alias| alias == root)
+}

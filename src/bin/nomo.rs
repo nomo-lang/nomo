@@ -18,30 +18,25 @@ use cli_common::{
     parse_optional_path, parse_path_json_workspace, parse_run_args, validate_project_package,
 };
 use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
-use cli_doc::parse_doc_args;
+use cli_doc::run_doc_command;
 use cli_fmt::{FormatError, format_path, parse_fmt_args};
 use cli_registry::{
     parse_add_args, parse_login_args, parse_owner_add_args, parse_owner_remove_args,
     parse_publish_args, parse_remove_args, parse_search_args, parse_yank_args,
 };
 use cli_test::{parse_test_args, print_test_reports, reports_have_failures, test_reports_json};
-use nomo::doc::{
-    collect_project_docs, generate_project_docs, generate_std_docs, render_packages_json,
-    std_doc_package, write_doc_index,
-};
 use nomo::project::{
     BuildError, ProjectTestOptions, add_registry_dependency, add_registry_package_owner,
     build_project_with_options, check_project, clean_dependency_cache, clean_project,
     create_project, dependency_tree_with_options, discover_project, discover_workspace,
-    login_registry, prepare_publish_package, project_package_id, publish_package_archive,
-    remove_dependency, remove_registry_package_owner, resolve_project_dependencies_with_options,
+    login_registry, prepare_publish_package, publish_package_archive, remove_dependency,
+    remove_registry_package_owner, resolve_project_dependencies_with_options,
     resolve_workspace_dependencies_with_options, run_project_tests_with_options,
     run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
     search_registry_packages, update_project_dependencies, update_workspace_dependencies,
     vendor_project_dependencies, vendor_workspace_dependencies, yank_registry_package,
 };
 use std::env;
-use std::path::{Path, PathBuf};
 use std::process;
 
 fn main() {
@@ -209,86 +204,7 @@ fn run() -> Result<(), String> {
                 Ok(())
             }
         }
-        "doc" => {
-            let (path, path_provided, workspace, package, include_std, open, json, output) =
-                parse_doc_args(args)?;
-            if json && open {
-                return Err("--open is not valid with --json".to_string());
-            }
-            let mut packages = Vec::new();
-            let mut output_root = output;
-            if workspace {
-                let workspace = discover_workspace(&path)?;
-                output_root = Some(output_root.unwrap_or_else(|| workspace.root.join("build/doc")));
-                let mut projects = workspace.members;
-                if let Some(package) = package.as_deref() {
-                    projects = filter_projects_by_package(projects, package)?;
-                }
-                for project in projects {
-                    let package_id = project_package_id(&project)?;
-                    if json {
-                        packages.push(
-                            collect_project_docs(&project, &package_id)
-                                .map_err(|err| err.human())?,
-                        );
-                    } else {
-                        packages.push(
-                            generate_project_docs(
-                                &project,
-                                output_root.as_ref().expect("doc output root"),
-                            )
-                            .map_err(|err| err.human())?,
-                        );
-                    }
-                }
-            } else if path_provided || !include_std {
-                let project = discover_project(&path)?;
-                if let Some(package) = package.as_deref() {
-                    validate_project_package(&project, package)?;
-                }
-                output_root = Some(output_root.unwrap_or_else(|| project.root.join("build/doc")));
-                let package_id = project_package_id(&project)?;
-                if json {
-                    packages.push(
-                        collect_project_docs(&project, &package_id).map_err(|err| err.human())?,
-                    );
-                } else {
-                    packages.push(
-                        generate_project_docs(
-                            &project,
-                            output_root.as_ref().expect("doc output root"),
-                        )
-                        .map_err(|err| err.human())?,
-                    );
-                }
-            }
-            if include_std {
-                output_root = Some(output_root.unwrap_or_else(|| {
-                    env::current_dir()
-                        .unwrap_or_else(|_| PathBuf::from("."))
-                        .join("build/doc")
-                }));
-                if json {
-                    packages.push(std_doc_package());
-                } else {
-                    packages.push(
-                        generate_std_docs(output_root.as_ref().expect("doc output root"))
-                            .map_err(|err| err.human())?,
-                    );
-                }
-            }
-            if json {
-                println!("{}", render_packages_json(&packages));
-                return Ok(());
-            }
-            let output_root = output_root.unwrap_or_else(|| path.join("build/doc"));
-            let docs = write_doc_index(&output_root, &packages).map_err(|err| err.human())?;
-            println!("documented {}", docs.display());
-            if open {
-                open_doc_index(&docs)?;
-            }
-            Ok(())
-        }
+        "doc" => run_doc_command(args),
         "clean" => {
             let path = parse_optional_path(args, "usage: nomo clean [path]")?;
             let project = discover_project(&path)?;
@@ -508,32 +424,6 @@ fn run() -> Result<(), String> {
             Ok(())
         }
         other => Err(format!("unknown command `{other}`")),
-    }
-}
-
-fn open_doc_index(path: &Path) -> Result<(), String> {
-    let index = path.join("index.html");
-    if !index.is_file() {
-        return Err(format!("failed to open missing {}", index.display()));
-    }
-    if env::var_os("NOMO_DOC_OPEN").as_deref() == Some(std::ffi::OsStr::new("0")) {
-        return Ok(());
-    }
-    let status = if cfg!(target_os = "macos") {
-        process::Command::new("open").arg(&index).status()
-    } else if cfg!(target_os = "windows") {
-        process::Command::new("cmd")
-            .args(["/C", "start", ""])
-            .arg(&index)
-            .status()
-    } else {
-        process::Command::new("xdg-open").arg(&index).status()
-    }
-    .map_err(|err| format!("failed to open {}: {err}", index.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!("failed to open {}", index.display()))
     }
 }
 

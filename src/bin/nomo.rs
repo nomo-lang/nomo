@@ -18,7 +18,7 @@ use cli_registry::{
     parse_add_args, parse_login_args, parse_owner_add_args, parse_owner_remove_args,
     parse_publish_args, parse_remove_args, parse_search_args, parse_yank_args,
 };
-use cli_test::{print_test_reports, reports_have_failures, test_reports_json};
+use cli_test::{parse_test_args, print_test_reports, reports_have_failures, test_reports_json};
 use nomo::doc::{
     collect_project_docs, generate_project_docs, generate_std_docs, render_packages_json,
     std_doc_package, write_doc_index,
@@ -621,78 +621,6 @@ fn parse_fmt_args(args: Vec<String>) -> Result<(PathBuf, bool, bool), String> {
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         check,
         json,
-    ))
-}
-
-fn parse_test_args(
-    args: Vec<String>,
-) -> Result<
-    (
-        PathBuf,
-        bool,
-        Option<String>,
-        Option<String>,
-        bool,
-        DependencyResolutionOptions,
-    ),
-    String,
-> {
-    let usage = "usage: nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]";
-    let mut workspace = false;
-    let mut package = None;
-    let mut filter = None;
-    let mut json = false;
-    let mut deps = DependencyResolutionOptions::default();
-    let mut path = None;
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        if arg == "--workspace" {
-            workspace = true;
-        } else if let Some(value) = arg.strip_prefix("--package=") {
-            if value.is_empty() {
-                return Err("--package requires a package id or name".to_string());
-            }
-            package = Some(value.to_string());
-        } else if arg == "--package" {
-            index += 1;
-            let Some(value) = args.get(index) else {
-                return Err("--package requires a package id or name".to_string());
-            };
-            package = Some(value.clone());
-        } else if let Some(value) = arg.strip_prefix("--filter=") {
-            if value.is_empty() {
-                return Err("--filter requires text".to_string());
-            }
-            filter = Some(value.to_string());
-        } else if arg == "--filter" {
-            index += 1;
-            let Some(value) = args.get(index) else {
-                return Err("--filter requires text".to_string());
-            };
-            filter = Some(value.clone());
-        } else if arg == "--json" {
-            json = true;
-        } else if arg == "--locked" {
-            deps.locked = true;
-        } else if arg == "--offline" {
-            deps.offline = true;
-        } else if arg == "--frozen" {
-            deps.locked = true;
-            deps.offline = true;
-        } else if path.is_none() {
-            path = Some(PathBuf::from(arg));
-        } else {
-            return Err(usage.to_string());
-        }
-        index += 1;
-    }
-    Ok((
-        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
-        workspace,
-        package,
-        filter,
-        json,
-        deps,
     ))
 }
 

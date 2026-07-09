@@ -106,6 +106,47 @@ pub(super) fn lower_question_result_ok_if_return(
 }
 
 #[allow(clippy::too_many_arguments)]
+pub(super) fn lower_question_match_return(
+    path: &Path,
+    value: &AstExpr,
+    arms: &[AstMatchArm],
+    scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    span: &Span,
+    out: &mut Vec<Statement>,
+) -> Result<(), Diagnostic> {
+    let (value, _) = extract_question_exprs(
+        path,
+        value,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        span,
+        out,
+    )?;
+    out.push(lower_tail_match_expr_as_statement(
+        path,
+        &value,
+        arms,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        span,
+    )?);
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
 pub(super) fn lower_question_result_ok_match_return(
     path: &Path,
     callee: &[String],

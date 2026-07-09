@@ -473,9 +473,10 @@ pub(super) fn lower_question_exprs_in_stmt_into(
             let AstExpr::Match { value, arms } = value else {
                 unreachable!("guard matched match expression");
             };
-            let (value, _) = extract_question_exprs(
+            lower_question_match_return(
                 path,
                 value,
+                arms,
                 scope,
                 imports,
                 signatures,
@@ -485,18 +486,6 @@ pub(super) fn lower_question_exprs_in_stmt_into(
                 span,
                 out,
             )?;
-            out.push(lower_tail_match_expr_as_statement(
-                path,
-                &value,
-                arms,
-                scope,
-                imports,
-                signatures,
-                structs,
-                enums,
-                return_type,
-                span,
-            )?);
             return Ok(true);
         }
         Stmt::Return {

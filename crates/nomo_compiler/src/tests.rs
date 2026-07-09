@@ -16,6 +16,8 @@ mod tests_result_option_question;
 mod tests_std_builtins;
 #[path = "tests_std_io_string_path.rs"]
 mod tests_std_io_string_path;
+#[path = "tests_std_json_http_regex.rs"]
+mod tests_std_json_http_regex;
 #[path = "tests_std_process_debug_crypto.rs"]
 mod tests_std_process_debug_crypto;
 

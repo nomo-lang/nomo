@@ -1,7 +1,4 @@
-use crate::ast::{
-    ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, ImplBlock,
-    InterfaceDef, Param, SourceFile, Span, StructDef, TypeRef,
-};
+use crate::ast::{EnumDef, ExternBlock, ImplBlock, InterfaceDef, SourceFile, Span, StructDef};
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
 use crate::parser::parse;
@@ -9,6 +6,14 @@ use crate::project::{Project, project_module_context, resolve_module_source_path
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
+
+mod signature;
+
+use signature::{
+    const_signature, enum_signature, extern_function_signature, field_signature,
+    function_signature, interface_method_signature, interface_signature, method_signature,
+    struct_signature, type_ref, variant_signature,
+};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TextPosition {
@@ -958,154 +963,6 @@ fn utf16_character_to_byte_index(line: &str, character: u32) -> usize {
 
 fn is_ident_byte(byte: u8) -> bool {
     byte.is_ascii_alphanumeric() || byte == b'_'
-}
-
-fn struct_signature(item: &StructDef) -> String {
-    format!(
-        "{}struct {}{}",
-        visibility_prefix(item.public),
-        item.name,
-        type_params(&item.type_params)
-    )
-}
-
-fn enum_signature(item: &EnumDef) -> String {
-    format!(
-        "{}enum {}{}",
-        visibility_prefix(item.public),
-        item.name,
-        type_params(&item.type_params)
-    )
-}
-
-fn interface_signature(item: &InterfaceDef) -> String {
-    format!("{}interface {}", visibility_prefix(item.public), item.name)
-}
-
-fn const_signature(item: &ConstDef) -> String {
-    format!(
-        "{}const {}: {}",
-        visibility_prefix(item.public),
-        item.name,
-        type_ref(&item.type_ref)
-    )
-}
-
-fn function_signature(function: &Function) -> String {
-    let params = function
-        .params
-        .iter()
-        .map(param)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "{}fn {}{}({}) -> {}",
-        visibility_prefix(function.public),
-        function.name,
-        type_params(&function.type_params),
-        params,
-        type_ref(&function.return_type)
-    )
-}
-
-fn method_signature(receiver: &str, function: &Function) -> String {
-    let params = function
-        .params
-        .iter()
-        .map(param)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "{}fn {receiver}.{}{}({}) -> {}",
-        visibility_prefix(function.public),
-        function.name,
-        type_params(&function.type_params),
-        params,
-        type_ref(&function.return_type)
-    )
-}
-
-fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String {
-    let params = function
-        .params
-        .iter()
-        .map(param)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "extern \"{}\" fn {}{}({}) -> {}",
-        abi,
-        function.name,
-        type_params(&function.type_params),
-        params,
-        type_ref(&function.return_type)
-    )
-}
-
-fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String {
-    let params = method
-        .params
-        .iter()
-        .map(param)
-        .collect::<Vec<_>>()
-        .join(", ");
-    format!(
-        "fn {owner}.{}{}({}) -> {}",
-        method.name,
-        type_params(&method.type_params),
-        params,
-        type_ref(&method.return_type)
-    )
-}
-
-fn field_signature(owner: &str, field: &Field) -> String {
-    format!(
-        "{}field {owner}.{}: {}",
-        visibility_prefix(field.public),
-        field.name,
-        type_ref(&field.type_ref)
-    )
-}
-
-fn variant_signature(owner: &str, variant: &EnumVariant) -> String {
-    match &variant.payload {
-        Some(payload) => format!("variant {owner}.{}({})", variant.name, type_ref(payload)),
-        None => format!("variant {owner}.{}", variant.name),
-    }
-}
-
-fn param(param: &Param) -> String {
-    let mutable = if param.mutable { "mut " } else { "" };
-    format!("{mutable}{}: {}", param.name, type_ref(&param.type_ref))
-}
-
-fn type_params(params: &[String]) -> String {
-    if params.is_empty() {
-        String::new()
-    } else {
-        format!("<{}>", params.join(", "))
-    }
-}
-
-fn type_ref(type_ref_value: &TypeRef) -> String {
-    let base = type_ref_value.path.join(".");
-    if type_ref_value.args.is_empty() {
-        base
-    } else {
-        format!(
-            "{base}<{}>",
-            type_ref_value
-                .args
-                .iter()
-                .map(type_ref)
-                .collect::<Vec<_>>()
-                .join(", ")
-        )
-    }
-}
-
-fn visibility_prefix(public: bool) -> &'static str {
-    if public { "pub " } else { "" }
 }
 
 #[derive(Debug, Default)]

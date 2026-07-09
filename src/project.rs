@@ -5,7 +5,6 @@ use crate::diagnostic::Diagnostic;
 #[cfg(test)]
 use nomo_lockfile::parse_lockfile_text;
 pub use nomo_lockfile::{DependencyGraph, ResolvedDependency};
-use nomo_lockfile::{render_lockfile, render_workspace_lockfile};
 #[cfg(test)]
 use nomo_manifest::parse_manifest_text;
 pub use nomo_manifest::{
@@ -24,6 +23,7 @@ mod git_cache;
 mod modules;
 mod package;
 mod registry_http;
+mod resolve;
 mod running;
 mod testing;
 mod update;
@@ -36,7 +36,7 @@ pub use build::{
 };
 use dependency_resolution::{
     dependency_graph_from_lockfile, locked_dependency_graph_and_source_base,
-    resolve_dependency_graph, resolve_dependency_graph_for_lock, validate_project_lock,
+    resolve_dependency_graph, resolve_dependency_graph_for_lock,
 };
 use dependency_tree::render_dependency_tree;
 use ffi::project_ffi_link_metadata_with_options;
@@ -51,6 +51,10 @@ pub use registry_http::{
     RegistryLogin, RegistrySearchResult, add_registry_package_owner, login_registry,
     publish_package_archive, remove_registry_package_owner, search_registry_packages,
     yank_registry_package,
+};
+pub use resolve::{
+    resolve_project_dependencies, resolve_project_dependencies_with_options,
+    resolve_workspace_dependencies, resolve_workspace_dependencies_with_options,
 };
 pub use running::{
     run_project, run_project_with_args, run_project_with_args_and_diagnostics,
@@ -177,54 +181,6 @@ fn find_manifest_root(start: &Path) -> Option<PathBuf> {
         }
     }
     None
-}
-
-pub fn resolve_project_dependencies(project: &Project) -> Result<PathBuf, String> {
-    resolve_project_dependencies_with_options(project, DependencyResolutionOptions::default())
-}
-
-pub fn resolve_project_dependencies_with_options(
-    project: &Project,
-    options: DependencyResolutionOptions,
-) -> Result<PathBuf, String> {
-    let lock_path = project.lock_root().join("nomo.lock");
-    if options.locked {
-        validate_project_lock(project)?;
-        return Ok(lock_path);
-    }
-    let graph = resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?;
-    let lock = render_lockfile(&graph);
-    fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
-    Ok(lock_path)
-}
-
-pub fn resolve_workspace_dependencies(workspace: &WorkspaceGraph) -> Result<PathBuf, String> {
-    resolve_workspace_dependencies_with_options(workspace, DependencyResolutionOptions::default())
-}
-
-pub fn resolve_workspace_dependencies_with_options(
-    workspace: &WorkspaceGraph,
-    options: DependencyResolutionOptions,
-) -> Result<PathBuf, String> {
-    let lock_path = workspace.root.join("nomo.lock");
-    if options.locked {
-        for project in &workspace.members {
-            validate_project_lock(project)?;
-        }
-        return Ok(lock_path);
-    }
-    let mut graphs = Vec::new();
-    for project in &workspace.members {
-        graphs.push(resolve_dependency_graph_for_lock(
-            &project.root,
-            Some(&workspace.root),
-            Some(&workspace.root),
-            options.offline,
-        )?);
-    }
-    let lock = render_workspace_lockfile(&graphs)?;
-    fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
-    Ok(lock_path)
 }
 
 pub fn vendor_project_dependencies(

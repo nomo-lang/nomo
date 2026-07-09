@@ -1,6 +1,7 @@
 use super::{
-    DependencyResolutionOptions, Project, dependency_module_root,
-    locked_dependency_graph_and_source_base, package_id, resolved_dependency_module_root,
+    DependencyResolutionOptions, Project, locked_dependency_graph_and_source_base,
+    modules::{dependency_module_root, resolved_dependency_module_root},
+    package_id,
 };
 use nomo_lockfile::ResolvedDependency;
 use nomo_manifest::{Dependency, FfiLinkMetadata, parse_manifest_at_root};

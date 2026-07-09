@@ -449,5 +449,8 @@ fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
 }
 
 #[cfg(test)]
+#[path = "parser_layout_tests.rs"]
+mod layout_tests;
+#[cfg(test)]
 #[path = "parser_tests.rs"]
 mod tests;

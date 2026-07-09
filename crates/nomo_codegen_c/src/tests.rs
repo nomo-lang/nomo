@@ -5,6 +5,8 @@ use nomo_ir::{EnumVariantType, MatchValueArm, Parameter, StructField, ValueExpr}
 mod tests_array_lifecycle;
 #[path = "tests_array_loop_lifecycle.rs"]
 mod tests_array_loop_lifecycle;
+#[path = "tests_array_question_lifecycle.rs"]
+mod tests_array_question_lifecycle;
 #[path = "tests_basic_io_symbols.rs"]
 mod tests_basic_io_symbols;
 #[path = "tests_defer_control.rs"]

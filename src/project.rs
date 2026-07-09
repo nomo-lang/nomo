@@ -3,10 +3,7 @@ use crate::diagnostic::Diagnostic;
 #[cfg(test)]
 use nomo_lockfile::parse_lockfile_text;
 pub use nomo_lockfile::{DependencyGraph, ResolvedDependency};
-use nomo_lockfile::{
-    parse_lockfile_root, render_lockfile, render_workspace_lockfile,
-    validate_locked_source_matches_manifest,
-};
+use nomo_lockfile::{render_lockfile, render_workspace_lockfile};
 #[cfg(test)]
 use nomo_manifest::parse_manifest_text;
 pub use nomo_manifest::{
@@ -14,19 +11,19 @@ pub use nomo_manifest::{
     parse_manifest_at_root,
 };
 use nomo_manifest::{
-    is_package_name, parse_manifest_document, relative_path, remove_dependency_from_manifest,
+    is_package_name, parse_manifest_document, remove_dependency_from_manifest,
     render_manifest_document, upsert_registry_dependency, validate_dependency_alias,
     validate_package_id, validate_version_like, workspace_root_for_package,
 };
 use nomo_resolver::{
-    archive_checksum, build_package_archive, package_archive_filename, package_checksum,
-    registry_cached_source_root, resolve_registry_source,
+    archive_checksum, build_package_archive, package_archive_filename, registry_cached_source_root,
+    resolve_registry_source,
 };
-use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
 mod build;
+mod dependency_resolution;
 mod dependency_tree;
 mod ffi;
 mod git_cache;
@@ -40,9 +37,15 @@ use build::configure_c_compile_command;
 pub use build::{
     build_project, build_project_with_diagnostics, build_project_with_options, clean_project,
 };
-use dependency_tree::{render_dependency_tree, source_description};
+use dependency_resolution::{
+    dependency_graph_from_lockfile, locked_dependency_graph_and_source_base,
+    resolve_dependency_graph, resolve_dependency_graph_for_lock,
+    resolve_dependency_graph_for_manifest, validate_project_lock,
+    validate_project_lock_direct_dependencies,
+};
+use dependency_tree::render_dependency_tree;
 use ffi::project_ffi_link_metadata_with_options;
-use git_cache::{git_head_rev, resolve_git_source, resolve_git_source_offline};
+use git_cache::{resolve_git_source, resolve_git_source_offline};
 use registry_http::registry_dependency_authorization;
 pub use registry_http::{
     RegistryLogin, RegistrySearchResult, add_registry_package_owner, login_registry,
@@ -853,383 +856,6 @@ fn precise_dependency_source(
             dependency.alias
         )),
     }
-}
-
-fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, String> {
-    resolve_dependency_graph_for_lock(root, None, None, false)
-}
-
-fn resolve_dependency_graph_for_lock(
-    root: &Path,
-    lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
-    offline: bool,
-) -> Result<DependencyGraph, String> {
-    let manifest = parse_manifest_at_root(&root)?;
-    resolve_dependency_graph_for_manifest(
-        &root,
-        manifest,
-        lock_source_base.as_deref(),
-        git_cache_base.as_deref(),
-        offline,
-    )
-}
-
-fn resolve_dependency_graph_for_manifest(
-    root: &Path,
-    manifest: Manifest,
-    lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
-    offline: bool,
-) -> Result<DependencyGraph, String> {
-    let root = fs::canonicalize(root).map_err(|err| err.to_string())?;
-    let lock_source_base = lock_source_base
-        .map(fs::canonicalize)
-        .transpose()
-        .map_err(|err| err.to_string())?;
-    let git_cache_base = git_cache_base
-        .map(fs::canonicalize)
-        .transpose()
-        .map_err(|err| err.to_string())?;
-    let mut package_sources = BTreeMap::new();
-    let mut path_stack = vec![root.clone()];
-    let dependencies = resolve_dependencies(
-        &manifest.dependencies,
-        &root,
-        &mut path_stack,
-        &mut package_sources,
-        lock_source_base.as_deref(),
-        git_cache_base.as_deref(),
-        offline,
-    )?;
-    Ok(DependencyGraph {
-        root: manifest.package,
-        dependencies,
-    })
-}
-
-fn resolve_dependencies(
-    dependencies: &[Dependency],
-    base_root: &Path,
-    path_stack: &mut Vec<PathBuf>,
-    package_sources: &mut BTreeMap<String, DependencySource>,
-    lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
-    offline: bool,
-) -> Result<Vec<ResolvedDependency>, String> {
-    let mut resolved = Vec::new();
-    for dependency in dependencies {
-        let (resolved_source, checksum, child_dependencies) = match &dependency.source {
-            DependencySource::Path { path } => {
-                let dep_root = fs::canonicalize(base_root.join(path)).map_err(|err| {
-                    format!(
-                        "failed to resolve path dependency `{}` at {}: {err}",
-                        dependency.alias,
-                        base_root.join(path).display()
-                    )
-                })?;
-                if path_stack.contains(&dep_root) {
-                    return Err(format!(
-                        "cyclic path dependency involving `{}` at {}",
-                        dependency.package,
-                        dep_root.display()
-                    ));
-                }
-
-                path_stack.push(dep_root.clone());
-                let dep_manifest = parse_manifest_at_root(&dep_root)?;
-                let actual_id = format!(
-                    "{}/{}",
-                    dep_manifest.package.namespace, dep_manifest.package.name
-                );
-                if actual_id != dependency.package {
-                    return Err(format!(
-                        "path dependency `{}` expected package `{}`, found `{}`",
-                        dependency.alias, dependency.package, actual_id
-                    ));
-                }
-                let child_dependencies = resolve_dependencies(
-                    &dep_manifest.dependencies,
-                    &dep_root,
-                    path_stack,
-                    package_sources,
-                    lock_source_base,
-                    git_cache_base,
-                    offline,
-                )?;
-                let checksum = package_checksum(&dep_root)?;
-                path_stack.pop();
-                let resolved_source = match lock_source_base {
-                    Some(lock_source_base) => DependencySource::Path {
-                        path: relative_path(lock_source_base, &dep_root)
-                            .unwrap_or_else(|| dep_root.clone())
-                            .to_string_lossy()
-                            .replace('\\', "/"),
-                    },
-                    None => dependency.source.clone(),
-                };
-                (resolved_source, Some(checksum), child_dependencies)
-            }
-            DependencySource::Git {
-                git,
-                branch,
-                tag,
-                rev,
-            } => {
-                let dep_root = if offline {
-                    resolve_git_source_offline(
-                        git_cache_base.unwrap_or(base_root),
-                        &dependency.alias,
-                        &dependency.package,
-                        git,
-                        branch.as_deref(),
-                        tag.as_deref(),
-                        rev.as_deref(),
-                    )?
-                } else {
-                    resolve_git_source(
-                        git_cache_base.unwrap_or(base_root),
-                        &dependency.alias,
-                        &dependency.package,
-                        git,
-                        branch.as_deref(),
-                        tag.as_deref(),
-                        rev.as_deref(),
-                    )?
-                };
-                if path_stack.contains(&dep_root) {
-                    return Err(format!(
-                        "cyclic git dependency involving `{}` at {}",
-                        dependency.package,
-                        dep_root.display()
-                    ));
-                }
-
-                path_stack.push(dep_root.clone());
-                let dep_manifest = parse_manifest_at_root(&dep_root)?;
-                let actual_id = format!(
-                    "{}/{}",
-                    dep_manifest.package.namespace, dep_manifest.package.name
-                );
-                if actual_id != dependency.package {
-                    return Err(format!(
-                        "git dependency `{}` expected package `{}`, found `{}`",
-                        dependency.alias, dependency.package, actual_id
-                    ));
-                }
-                let actual_rev = git_head_rev(&dep_root)?;
-                let child_dependencies = resolve_dependencies(
-                    &dep_manifest.dependencies,
-                    &dep_root,
-                    path_stack,
-                    package_sources,
-                    lock_source_base,
-                    git_cache_base,
-                    offline,
-                )?;
-                let checksum = package_checksum(&dep_root)?;
-                path_stack.pop();
-                (
-                    DependencySource::Git {
-                        git: git.clone(),
-                        branch: branch.clone(),
-                        tag: tag.clone(),
-                        rev: Some(actual_rev),
-                    },
-                    Some(checksum),
-                    child_dependencies,
-                )
-            }
-            DependencySource::Registry { version, registry } => {
-                let authorization = registry_dependency_authorization(registry.as_deref())?;
-                match resolve_registry_source(
-                    base_root,
-                    &dependency.alias,
-                    &dependency.package,
-                    version,
-                    registry.as_deref(),
-                    offline,
-                    authorization.as_deref(),
-                )? {
-                    Some(dep_root) => {
-                        if path_stack.contains(&dep_root) {
-                            return Err(format!(
-                                "cyclic registry dependency involving `{}` at {}",
-                                dependency.package,
-                                dep_root.display()
-                            ));
-                        }
-
-                        path_stack.push(dep_root.clone());
-                        let dep_manifest = parse_manifest_at_root(&dep_root)?;
-                        let actual_id = format!(
-                            "{}/{}",
-                            dep_manifest.package.namespace, dep_manifest.package.name
-                        );
-                        if actual_id != dependency.package {
-                            return Err(format!(
-                                "registry dependency `{}` expected package `{}`, found `{}`",
-                                dependency.alias, dependency.package, actual_id
-                            ));
-                        }
-                        let child_dependencies = resolve_dependencies(
-                            &dep_manifest.dependencies,
-                            &dep_root,
-                            path_stack,
-                            package_sources,
-                            lock_source_base,
-                            git_cache_base,
-                            offline,
-                        )?;
-                        let checksum = package_checksum(&dep_root)?;
-                        path_stack.pop();
-                        (
-                            dependency.source.clone(),
-                            Some(checksum),
-                            child_dependencies,
-                        )
-                    }
-                    None => (dependency.source.clone(), None, Vec::new()),
-                }
-            }
-        };
-        remember_package_source(package_sources, &dependency.package, &resolved_source)?;
-
-        resolved.push(ResolvedDependency {
-            alias: dependency.alias.clone(),
-            package: dependency.package.clone(),
-            source: resolved_source,
-            checksum,
-            dependencies: child_dependencies,
-        });
-    }
-    Ok(resolved)
-}
-
-fn remember_package_source(
-    package_sources: &mut BTreeMap<String, DependencySource>,
-    package: &str,
-    source: &DependencySource,
-) -> Result<(), String> {
-    if let Some(existing) = package_sources.get(package) {
-        if existing != source {
-            return Err(format!(
-                "package `{}` is required with conflicting sources: {} and {}",
-                package,
-                source_description(existing),
-                source_description(source)
-            ));
-        }
-    } else {
-        package_sources.insert(package.to_string(), source.clone());
-    }
-    Ok(())
-}
-
-fn dependency_graph_from_lockfile(
-    root: &Path,
-    lock_root: &Path,
-) -> Result<DependencyGraph, String> {
-    let (graph, _) = dependency_graph_and_source_base_from_lockfile(root, lock_root)?;
-    Ok(graph)
-}
-
-fn locked_dependency_graph_and_source_base(
-    project: &Project,
-) -> Result<(DependencyGraph, PathBuf), String> {
-    dependency_graph_and_source_base_from_lockfile(&project.root, &project.lock_root())
-}
-
-fn dependency_graph_and_source_base_from_lockfile(
-    root: &Path,
-    lock_root: &Path,
-) -> Result<(DependencyGraph, PathBuf), String> {
-    let manifest = parse_manifest_at_root(root)?;
-    let lock_path = lock_root.join("nomo.lock");
-    if !lock_path.is_file() {
-        return Err(format!(
-            "nomo.lock is required for locked mode at {}",
-            lock_path.display()
-        ));
-    }
-    let text = fs::read_to_string(&lock_path).map_err(|err| err.to_string())?;
-    let root_id = format!("{}/{}", manifest.package.namespace, manifest.package.name);
-    let parsed = parse_lockfile_root(&text, &root_id)?;
-    let checksum_base = if parsed.has_workspace_roots {
-        lock_root
-    } else {
-        root
-    };
-    let dependencies = parsed.dependencies;
-    verify_locked_source_checksums(checksum_base, &dependencies)?;
-    Ok((
-        DependencyGraph {
-            root: manifest.package,
-            dependencies,
-        },
-        checksum_base.to_path_buf(),
-    ))
-}
-
-fn validate_project_lock(project: &Project) -> Result<(), String> {
-    let (graph, _) = locked_dependency_graph_and_source_base(project)?;
-    validate_project_lock_direct_dependencies(project, &graph)
-}
-
-fn validate_project_lock_direct_dependencies(
-    project: &Project,
-    graph: &DependencyGraph,
-) -> Result<(), String> {
-    let manifest = parse_manifest_at_root(&project.root)?;
-    let locked_by_alias = graph
-        .dependencies
-        .iter()
-        .map(|dependency| (dependency.alias.as_str(), dependency))
-        .collect::<BTreeMap<_, _>>();
-    for dependency in manifest
-        .dependencies
-        .iter()
-        .filter(|dep| dep.alias != "std")
-    {
-        let locked = locked_by_alias
-            .get(dependency.alias.as_str())
-            .ok_or_else(|| {
-                format!(
-                    "nomo.lock is out of date: missing dependency `{}`",
-                    dependency.alias
-                )
-            })?;
-        if locked.package != dependency.package {
-            return Err(format!(
-                "nomo.lock is out of date: dependency `{}` expected package `{}`, found `{}`",
-                dependency.alias, dependency.package, locked.package
-            ));
-        }
-        validate_locked_source_matches_manifest(dependency, locked)?;
-    }
-    Ok(())
-}
-
-fn verify_locked_source_checksums(
-    base_root: &Path,
-    dependencies: &[ResolvedDependency],
-) -> Result<(), String> {
-    for dependency in dependencies {
-        let Some(dep_root) = locked_or_vendor_source_root(base_root, dependency)? else {
-            continue;
-        };
-        if let Some(expected) = &dependency.checksum {
-            let actual = package_checksum(&dep_root)?;
-            if &actual != expected {
-                return Err(format!(
-                    "checksum mismatch for locked package `{}`: expected {}, found {}",
-                    dependency.package, expected, actual
-                ));
-            }
-        }
-        verify_locked_source_checksums(&dep_root, &dependency.dependencies)?;
-    }
-    Ok(())
 }
 
 #[cfg(test)]

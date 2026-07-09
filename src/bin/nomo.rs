@@ -1,10 +1,13 @@
 #![allow(clippy::result_large_err, clippy::type_complexity)]
 
+#[path = "nomo_cli/deps.rs"]
+mod cli_deps;
 #[path = "nomo_cli/fmt.rs"]
 mod cli_fmt;
 #[path = "nomo_cli/test.rs"]
 mod cli_test;
 
+use cli_deps::{parse_deps_args, parse_deps_update_args, parse_deps_vendor_args};
 use cli_fmt::{FormatError, format_path};
 use cli_test::{print_test_reports, reports_have_failures, test_reports_json};
 use nomo::doc::{
@@ -12,12 +15,11 @@ use nomo::doc::{
     std_doc_package, write_doc_index,
 };
 use nomo::project::{
-    BuildError, DependencyAddSpec, DependencyResolutionOptions, DependencyUpdateOptions,
-    DependencyVendorOptions, ProjectTestOptions, add_registry_dependency,
-    add_registry_package_owner, build_project_with_options, check_project, clean_dependency_cache,
-    clean_project, create_project, dependency_tree_with_options, discover_project,
-    discover_workspace, login_registry, prepare_publish_package, project_package_id,
-    publish_package_archive, remove_dependency, remove_registry_package_owner,
+    BuildError, DependencyAddSpec, DependencyResolutionOptions, ProjectTestOptions,
+    add_registry_dependency, add_registry_package_owner, build_project_with_options, check_project,
+    clean_dependency_cache, clean_project, create_project, dependency_tree_with_options,
+    discover_project, discover_workspace, login_registry, prepare_publish_package,
+    project_package_id, publish_package_archive, remove_dependency, remove_registry_package_owner,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     run_project_tests_with_options, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics, search_registry_packages,
@@ -842,122 +844,6 @@ fn parse_publish_args(
         registry,
         output,
         json,
-    ))
-}
-
-fn parse_deps_args(
-    args: Vec<String>,
-    usage: &str,
-) -> Result<(PathBuf, bool, DependencyResolutionOptions), String> {
-    let mut workspace = false;
-    let mut deps = DependencyResolutionOptions::default();
-    let mut path = None;
-    for arg in args {
-        if arg == "--workspace" {
-            workspace = true;
-        } else if arg == "--locked" {
-            deps.locked = true;
-        } else if arg == "--offline" {
-            deps.offline = true;
-        } else if arg == "--frozen" {
-            deps.locked = true;
-            deps.offline = true;
-        } else if path.is_none() {
-            path = Some(PathBuf::from(arg));
-        } else {
-            return Err(usage.to_string());
-        }
-    }
-    Ok((
-        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
-        workspace,
-        deps,
-    ))
-}
-
-fn parse_deps_update_args(
-    args: Vec<String>,
-    usage: &str,
-) -> Result<(PathBuf, Option<String>, bool, DependencyUpdateOptions), String> {
-    let mut workspace = false;
-    let mut deps = DependencyUpdateOptions::default();
-    let mut values = Vec::new();
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        if arg == "--workspace" {
-            workspace = true;
-        } else if arg == "--offline" {
-            deps.resolution.offline = true;
-        } else if let Some(value) = arg.strip_prefix("--precise=") {
-            if value.is_empty() {
-                return Err("--precise requires a version or git revision".to_string());
-            }
-            deps.precise = Some(value.to_string());
-        } else if arg == "--precise" {
-            index += 1;
-            let Some(value) = args.get(index) else {
-                return Err("--precise requires a version or git revision".to_string());
-            };
-            deps.precise = Some(value.clone());
-        } else if arg == "--locked" || arg == "--frozen" {
-            return Err(format!("{arg} is not valid for nomo deps update"));
-        } else {
-            values.push(arg.clone());
-        }
-        index += 1;
-    }
-
-    let current_dir = || env::current_dir().map_err(|err| err.to_string());
-    match values.as_slice() {
-        [] => Ok((current_dir()?, None, workspace, deps)),
-        [one] => {
-            let candidate = PathBuf::from(one);
-            if candidate.exists() {
-                Ok((candidate, None, workspace, deps))
-            } else {
-                Ok((current_dir()?, Some(one.clone()), workspace, deps))
-            }
-        }
-        [path, target] => Ok((PathBuf::from(path), Some(target.clone()), workspace, deps)),
-        _ => Err(usage.to_string()),
-    }
-}
-
-fn parse_deps_vendor_args(
-    args: Vec<String>,
-    usage: &str,
-) -> Result<(PathBuf, bool, DependencyVendorOptions), String> {
-    let mut workspace = false;
-    let mut options = DependencyVendorOptions::default();
-    let mut path = None;
-    let mut index = 0;
-    while let Some(arg) = args.get(index) {
-        if arg == "--workspace" {
-            workspace = true;
-        } else if arg == "--sync" {
-            options.sync = true;
-        } else if let Some(value) = arg.strip_prefix("--dir=") {
-            if value.is_empty() {
-                return Err("--dir requires a vendor directory".to_string());
-            }
-            options.dir = PathBuf::from(value);
-        } else if arg == "--dir" {
-            index += 1;
-            let Some(value) = args.get(index) else {
-                return Err("--dir requires a vendor directory".to_string());
-            };
-            options.dir = PathBuf::from(value);
-        } else if path.is_none() {
-            path = Some(PathBuf::from(arg));
-        } else {
-            return Err(usage.to_string());
-        }
-        index += 1;
-    }
-    Ok((
-        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
-        workspace,
-        options,
     ))
 }
 

@@ -15,6 +15,8 @@ mod tests_defer_control;
 mod tests_expressions;
 #[path = "tests_host_helpers.rs"]
 mod tests_host_helpers;
+#[path = "tests_host_net_helpers.rs"]
+mod tests_host_net_helpers;
 #[path = "tests_nominal.rs"]
 mod tests_nominal;
 #[path = "tests_result_question.rs"]

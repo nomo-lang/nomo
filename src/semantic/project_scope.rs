@@ -1,14 +1,11 @@
 use crate::diagnostic::Diagnostic;
-use crate::lexer::lex;
-use crate::parser::parse;
 use crate::project::{Project, project_module_context, resolve_module_source_path};
-use std::collections::{BTreeMap, BTreeSet};
+use nomo_lsp_bridge::public_symbols_for_text;
+use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::docs::extract_doc_comments;
-use super::symbols::symbols_from_ast;
-use super::{SemanticSymbol, SemanticSymbolKind, symbols_for_text};
+use super::{SemanticSymbol, symbols_for_text};
 
 pub fn symbols_for_project_with_overrides(
     project: &Project,
@@ -167,72 +164,6 @@ fn import_path(line: &str) -> Option<Vec<String>> {
         .map(str::to_string)
         .collect::<Vec<_>>();
     (parts.len() >= 2).then_some(parts)
-}
-
-fn public_symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>, Diagnostic> {
-    let tokens = lex(path, source)?;
-    let ast = parse(path, &tokens)?;
-    let docs = extract_doc_comments(source);
-    let public_structs = ast
-        .structs
-        .iter()
-        .filter(|item| item.public)
-        .map(|item| item.name.as_str())
-        .collect::<BTreeSet<_>>();
-    let public_enums = ast
-        .enums
-        .iter()
-        .filter(|item| item.public)
-        .map(|item| item.name.as_str())
-        .collect::<BTreeSet<_>>();
-    let public_interfaces = ast
-        .interfaces
-        .iter()
-        .filter(|item| item.public)
-        .map(|item| item.name.as_str())
-        .collect::<BTreeSet<_>>();
-
-    Ok(symbols_from_ast(path, &ast, &docs)
-        .into_iter()
-        .filter(|symbol| {
-            public_dependency_symbol(symbol, &public_structs, &public_enums, &public_interfaces)
-        })
-        .collect())
-}
-
-fn public_dependency_symbol(
-    symbol: &SemanticSymbol,
-    public_structs: &BTreeSet<&str>,
-    public_enums: &BTreeSet<&str>,
-    public_interfaces: &BTreeSet<&str>,
-) -> bool {
-    match symbol.kind {
-        SemanticSymbolKind::Struct
-        | SemanticSymbolKind::Enum
-        | SemanticSymbolKind::Interface
-        | SemanticSymbolKind::Const
-        | SemanticSymbolKind::Function => symbol.signature.starts_with("pub "),
-        SemanticSymbolKind::ExternFunction => true,
-        SemanticSymbolKind::Method => symbol.signature.starts_with("pub "),
-        SemanticSymbolKind::Field => symbol
-            .signature
-            .strip_prefix("pub field ")
-            .and_then(|rest| rest.split_once(':'))
-            .and_then(|(path, _)| path.rsplit_once('.'))
-            .is_some_and(|(owner, _)| public_structs.contains(owner)),
-        SemanticSymbolKind::Variant => symbol
-            .signature
-            .strip_prefix("variant ")
-            .and_then(|rest| rest.split('(').next())
-            .and_then(|path| path.rsplit_once('.'))
-            .is_some_and(|(owner, _)| public_enums.contains(owner)),
-        SemanticSymbolKind::InterfaceMethod => symbol
-            .signature
-            .strip_prefix("fn ")
-            .and_then(|rest| rest.split('(').next())
-            .and_then(|path| path.rsplit_once('.'))
-            .is_some_and(|(owner, _)| public_interfaces.contains(owner)),
-    }
 }
 
 pub(super) fn overrides_with_current(

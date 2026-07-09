@@ -1,4 +1,6 @@
-use crate::ast::{EnumDef, ExternBlock, ImplBlock, InterfaceDef, SourceFile, Span, StructDef};
+use nomo_syntax::ast::{
+    EnumDef, ExternBlock, ImplBlock, InterfaceDef, SourceFile, Span, StructDef,
+};
 use std::path::Path;
 
 use super::docs::DocComments;

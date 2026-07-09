@@ -104,6 +104,7 @@ dependencies = [
  "nomo-compiler",
  "nomo-ir",
  "nomo-lockfile",
+ "nomo-lsp-bridge",
  "nomo-manifest",
  "nomo-resolver",
  "nomo-syntax",
@@ -140,6 +141,13 @@ dependencies = [
  "nomo-manifest",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "nomo-lsp-bridge"
+version = "0.1.0"
+dependencies = [
+ "nomo-syntax",
 ]
 
 [[package]]

@@ -24,11 +24,13 @@ pub(super) fn extract_doc_comments(source: &str) -> DocComments {
             index = next_index;
             continue;
         }
-        if !trimmed.is_empty() && !trimmed.starts_with("//") && !trimmed.starts_with("/*") {
-            if !pending.is_empty() {
-                comments.item_docs.insert(index + 1, pending.join("\n"));
-                pending.clear();
-            }
+        if !trimmed.is_empty()
+            && !trimmed.starts_with("//")
+            && !trimmed.starts_with("/*")
+            && !pending.is_empty()
+        {
+            comments.item_docs.insert(index + 1, pending.join("\n"));
+            pending.clear();
         }
         index += 1;
     }

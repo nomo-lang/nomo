@@ -1,5 +1,5 @@
-use crate::diagnostic::Diagnostic;
-use crate::lexer::{Token, TokenKind, lex};
+use nomo_syntax::diagnostic::Diagnostic;
+use nomo_syntax::lexer::{Token, TokenKind, lex};
 use std::path::Path;
 
 use super::range::{TextPosition, TextRange, range_contains, source_line_range, token_range};

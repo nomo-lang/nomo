@@ -1,18 +1,16 @@
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
-use crate::parser::parse;
 use crate::project::Project;
+use nomo_lsp_bridge::resolve_symbol_at_position;
+pub use nomo_lsp_bridge::{
+    SemanticLocation, SemanticSymbol, SemanticSymbolKind, TextPosition, TextRange,
+    definition_for_text, identifier_at_position, references_for_text, symbol_at_position,
+    symbols_for_text, token_range,
+};
 use std::path::{Path, PathBuf};
 
-mod docs;
-mod lookup;
 mod project_scope;
-mod range;
-mod signature;
-mod symbols;
 
-use docs::extract_doc_comments;
-use lookup::{resolve_symbol, symbol_lookup_preference};
 use project_scope::{
     accessible_symbols_for_document, is_project_nomo_source, overrides_with_current,
     project_sources,
@@ -20,66 +18,6 @@ use project_scope::{
 pub use project_scope::{
     dependency_symbols_for_project_with_overrides, symbols_for_project_with_overrides,
 };
-use range::token_range;
-pub use range::{TextPosition, TextRange, identifier_at_position};
-use symbols::symbols_from_ast;
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SemanticLocation {
-    pub path: PathBuf,
-    pub range: TextRange,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum SemanticSymbolKind {
-    Struct,
-    Enum,
-    Field,
-    Variant,
-    Interface,
-    InterfaceMethod,
-    Const,
-    Function,
-    ExternFunction,
-    Method,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct SemanticSymbol {
-    pub source_path: PathBuf,
-    pub name: String,
-    pub kind: SemanticSymbolKind,
-    pub signature: String,
-    pub docs: String,
-    pub line: usize,
-    pub range: TextRange,
-    pub selection_range: TextRange,
-}
-
-pub fn symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>, Diagnostic> {
-    let tokens = lex(path, source)?;
-    let ast = parse(path, &tokens)?;
-    let docs = extract_doc_comments(source);
-    Ok(symbols_from_ast(path, &ast, &docs))
-}
-
-pub fn symbol_at_position(
-    path: &Path,
-    source: &str,
-    position: TextPosition,
-) -> Result<Option<SemanticSymbol>, Diagnostic> {
-    let Some(name) = identifier_at_position(source, position) else {
-        return Ok(None);
-    };
-    let preference = symbol_lookup_preference(path, source, position)?;
-    Ok(resolve_symbol(
-        path,
-        position,
-        &name,
-        symbols_for_text(path, source)?,
-        &preference,
-    ))
-}
 
 pub fn symbol_at_project_position(
     project: &Project,
@@ -88,21 +26,9 @@ pub fn symbol_at_project_position(
     position: TextPosition,
     source_overrides: &[(PathBuf, String)],
 ) -> Result<Option<SemanticSymbol>, Diagnostic> {
-    let Some(name) = identifier_at_position(source, position) else {
-        return Ok(None);
-    };
     let overrides = overrides_with_current(path, source, source_overrides);
     let symbols = accessible_symbols_for_document(project, source, &overrides)?;
-    let preference = symbol_lookup_preference(path, source, position)?;
-    Ok(resolve_symbol(path, position, &name, symbols, &preference))
-}
-
-pub fn definition_for_text(
-    path: &Path,
-    source: &str,
-    position: TextPosition,
-) -> Result<Option<TextRange>, Diagnostic> {
-    Ok(symbol_at_position(path, source, position)?.map(|symbol| symbol.selection_range))
+    resolve_symbol_at_position(path, source, position, symbols)
 }
 
 pub fn definition_for_project_text(
@@ -120,36 +46,6 @@ pub fn definition_for_project_text(
             },
         ),
     )
-}
-
-pub fn references_for_text(
-    path: &Path,
-    source: &str,
-    position: TextPosition,
-    include_declaration: bool,
-) -> Result<Option<Vec<TextRange>>, Diagnostic> {
-    let Some(symbol) = symbol_at_position(path, source, position)? else {
-        return Ok(None);
-    };
-    let tokens = lex(path, source)?;
-    Ok(Some(
-        tokens
-            .iter()
-            .filter_map(|token| {
-                let TokenKind::Ident(name) = &token.kind else {
-                    return None;
-                };
-                if name != &symbol.name {
-                    return None;
-                }
-                let range = token_range(token.line, token.column, name);
-                if !include_declaration && range == symbol.selection_range {
-                    return None;
-                }
-                Some(range)
-            })
-            .collect(),
-    ))
 }
 
 pub fn references_for_project_text(

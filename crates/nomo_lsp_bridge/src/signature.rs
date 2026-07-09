@@ -1,4 +1,4 @@
-use crate::ast::{
+use nomo_syntax::ast::{
     ConstDef, EnumDef, EnumVariant, Field, Function, FunctionSignature, InterfaceDef, Param,
     StructDef, TypeRef,
 };

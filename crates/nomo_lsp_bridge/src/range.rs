@@ -63,7 +63,7 @@ pub(super) fn source_line_range(line: usize, text: &str) -> TextRange {
     }
 }
 
-pub(super) fn token_range(line: usize, column: usize, text: &str) -> TextRange {
+pub fn token_range(line: usize, column: usize, text: &str) -> TextRange {
     let line = line.saturating_sub(1) as u32;
     let start = column.saturating_sub(1) as u32;
     let end = start + text.encode_utf16().count() as u32;

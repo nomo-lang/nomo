@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-ir = { path = "../nomo_ir" }
+nomo-runtime = { path = "../nomo_runtime" }
 
 [lib]
 name = "nomo_codegen_c"

@@ -2,15 +2,7 @@ use super::*;
 
 pub fn emit_c(program: &Program) -> String {
     let mut out = String::new();
-    out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#ifdef _WIN32\n#define _CRT_RAND_S\n#endif\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\ntypedef SOCKET nomo_socket;\n#define NOMO_INVALID_SOCKET INVALID_SOCKET\n#define NOMO_SOCKET_CLOSE closesocket\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <netdb.h>\n#include <regex.h>\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <sys/types.h>\n#include <sys/wait.h>\n#include <unistd.h>\ntypedef int nomo_socket;\n#define NOMO_INVALID_SOCKET (-1)\n#define NOMO_SOCKET_CLOSE close\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
-    );
-    out.push_str("static void nomo_panic(const char *message) {\n");
-    out.push_str("    fputs(\"panic: \", stderr);\n");
-    out.push_str("    fputs(message, stderr);\n");
-    out.push_str("    fputc('\\n', stderr);\n");
-    out.push_str("    exit(1);\n");
-    out.push_str("}\n\n");
+    emit_c_prelude(&mut out);
     emit_operator_runtime(&mut out);
     out.push('\n');
     emit_math_runtime(&mut out);

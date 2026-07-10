@@ -19,6 +19,8 @@ This repository ships two binaries and reusable Rust crates:
   import validation, lowering, type checks and script entry synthesis.
 - `nomo-codegen-c` (lib crate) — the C99 backend that emits native C source from
   lowered Nomo IR.
+- `nomo-runtime` (lib crate) — the platform prelude and reusable C runtime
+  emitters for checked operators, strings, `CString`, paths and logging.
 - `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
   analysis and the C99 code generator.
 - `nomo-lockfile` (lib crate) — the `nomo.lock` model, TOML parsing, rendering
@@ -62,7 +64,8 @@ which owns `nomo.toml` parsing and editing, and
 `crates/nomo_compiler`, which owns source-to-IR compilation, and
 `crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
 `crates/nomo_resolver`, which owns package source/archive primitives, and
-`crates/nomo_codegen_c`, which owns the C99 backend.
+`crates/nomo_runtime`, which owns shared platform-aware C runtime emission, and
+`crates/nomo_codegen_c`, which owns the IR-specific C99 backend.
 
 ```bash
 cargo build --workspace --release

@@ -42,9 +42,8 @@ mod names;
 mod nominal_enum_instances;
 mod nominal_instances;
 mod result_option_helpers;
-mod runtime;
 mod runtime_crypto;
-mod runtime_path;
+mod runtime_hash;
 mod statement_bindings;
 mod statement_control;
 mod statement_function;
@@ -83,10 +82,13 @@ use instances::*;
 use names::*;
 use nominal_enum_instances::*;
 use nominal_instances::*;
+use nomo_runtime::{
+    emit_c_prelude, emit_log_enabled_helper, emit_math_runtime, emit_operator_runtime,
+    emit_string_runtime,
+};
 use result_option_helpers::*;
-use runtime::*;
 use runtime_crypto::*;
-use runtime_path::*;
+use runtime_hash::*;
 use statement_bindings::*;
 use statement_control::*;
 use statement_function::*;

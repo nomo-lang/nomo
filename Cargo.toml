@@ -17,6 +17,7 @@ members = [
     "crates/nomo_lockfile",
     "crates/nomo_manifest",
     "crates/nomo_resolver",
+    "crates/nomo_runtime",
     "crates/nomo_syntax",
     "crates/nomo_test",
     "libs/diagnostics",

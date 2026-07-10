@@ -1275,8 +1275,8 @@ fn main() -> void {
 }
 
 #[test]
-fn nomo_run_executes_signed_right_shift_portably() {
-    let root = temp_test_root("run-signed-right-shift");
+fn nomo_run_executes_signed_shifts_portably() {
+    let root = temp_test_root("run-signed-shifts");
     reset_dir(&root);
     let source = root.join("a.nomo");
     fs::write(
@@ -1293,9 +1293,13 @@ fn main() -> void {
     let first: i64 = negative >> 1
     let second: i64 = minus_one >> 63
     let third: i32 = negative32 >> 2
+    let fourth: i64 = negative << 2
+    let fifth: i32 = negative32 << 3
     io.println(num.to_string(first))
     io.println(num.to_string(second))
     io.println(num.to_string(third))
+    io.println(num.to_string(fourth))
+    io.println(num.to_string(fifth))
 }
 "#,
     )
@@ -1313,7 +1317,10 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "-4\n-1\n-2\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "-4\n-1\n-2\n-32\n-64\n"
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -7088,6 +7095,47 @@ fn main() -> void {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("panic: invalid shift amount"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_reports_signed_left_shift_overflow_panic_status() {
+    let root = temp_test_root("signed-left-shift-overflow-panic");
+    reset_dir(&root);
+    let project = root.join("shift_overflow_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"shift_overflow_panic\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+fn main() -> void {
+    let value: i64 = 4611686018427387904 << 1
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stdout.is_empty(), "{stdout}");
+    assert!(
+        stderr.contains("panic: signed integer overflow"),
+        "{stderr}"
+    );
     assert!(stderr.contains("program exited with status 1"), "{stderr}");
 
     fs::remove_dir_all(&root).unwrap();

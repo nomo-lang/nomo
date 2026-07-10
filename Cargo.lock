@@ -125,6 +125,7 @@ name = "nomo-codegen-c"
 version = "0.1.0"
 dependencies = [
  "nomo-ir",
+ "nomo-runtime",
 ]
 
 [[package]]
@@ -202,6 +203,10 @@ dependencies = [
  "nomo-manifest",
  "sha2",
 ]
+
+[[package]]
+name = "nomo-runtime"
+version = "0.1.0"
 
 [[package]]
 name = "nomo-spans"

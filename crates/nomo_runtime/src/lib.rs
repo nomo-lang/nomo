@@ -1,6 +1,22 @@
-use super::*;
+#![forbid(unsafe_code)]
 
-pub(super) fn emit_operator_runtime(out: &mut String) {
+mod path;
+
+use path::emit_path_runtime;
+
+pub fn emit_c_prelude(out: &mut String) {
+    out.push_str(
+        "#define _POSIX_C_SOURCE 200809L\n#ifdef _WIN32\n#define _CRT_RAND_S\n#endif\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\ntypedef SOCKET nomo_socket;\n#define NOMO_INVALID_SOCKET INVALID_SOCKET\n#define NOMO_SOCKET_CLOSE closesocket\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <netdb.h>\n#include <regex.h>\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <sys/types.h>\n#include <sys/wait.h>\n#include <unistd.h>\ntypedef int nomo_socket;\n#define NOMO_INVALID_SOCKET (-1)\n#define NOMO_SOCKET_CLOSE close\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+    );
+    out.push_str("static void nomo_panic(const char *message) {\n");
+    out.push_str("    fputs(\"panic: \", stderr);\n");
+    out.push_str("    fputs(message, stderr);\n");
+    out.push_str("    fputc('\\n', stderr);\n");
+    out.push_str("    exit(1);\n");
+    out.push_str("}\n\n");
+}
+
+pub fn emit_operator_runtime(out: &mut String) {
     out.push_str("static long long nomo_add_i64(long long left, long long right) {\n");
     out.push_str("    if ((right > 0 && left > LLONG_MAX - right) || (right < 0 && left < LLONG_MIN - right)) { nomo_panic(\"signed integer overflow\"); }\n");
     out.push_str("    return left + right;\n");
@@ -93,7 +109,17 @@ pub(super) fn emit_operator_runtime(out: &mut String) {
     out.push_str(
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
-    out.push_str("    return left << right;\n");
+    out.push_str("    if (right == 0 || left == 0) { return left; }\n");
+    out.push_str("    const uint64_t negative_limit = UINT64_C(1) << 63U;\n");
+    out.push_str("    if (left > 0) {\n");
+    out.push_str("        if ((uint64_t)left > ((uint64_t)LLONG_MAX >> right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("        return (long long)((uint64_t)left << right);\n");
+    out.push_str("    }\n");
+    out.push_str("    uint64_t magnitude = (uint64_t)(-(left + 1)) + 1U;\n");
+    out.push_str("    if (magnitude > (negative_limit >> right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    uint64_t shifted = magnitude << right;\n");
+    out.push_str("    if (shifted == negative_limit) { return LLONG_MIN; }\n");
+    out.push_str("    return -(long long)shifted;\n");
     out.push_str("}\n\n");
     out.push_str("static long long nomo_shr_i64(long long left, uint64_t right) {\n");
     out.push_str(
@@ -109,7 +135,17 @@ pub(super) fn emit_operator_runtime(out: &mut String) {
     out.push_str(
         "    if (right >= sizeof(left) * CHAR_BIT) { nomo_panic(\"invalid shift amount\"); }\n",
     );
-    out.push_str("    return left << right;\n");
+    out.push_str("    if (right == 0 || left == 0) { return left; }\n");
+    out.push_str("    const uint32_t negative_limit = UINT32_C(1) << 31U;\n");
+    out.push_str("    if (left > 0) {\n");
+    out.push_str("        if ((uint32_t)left > ((uint32_t)INT32_MAX >> right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("        return (int32_t)((uint32_t)left << right);\n");
+    out.push_str("    }\n");
+    out.push_str("    uint32_t magnitude = (uint32_t)(-(left + 1)) + 1U;\n");
+    out.push_str("    if (magnitude > (negative_limit >> right)) { nomo_panic(\"signed integer overflow\"); }\n");
+    out.push_str("    uint32_t shifted = magnitude << right;\n");
+    out.push_str("    if (shifted == negative_limit) { return INT32_MIN; }\n");
+    out.push_str("    return -(int32_t)shifted;\n");
     out.push_str("}\n\n");
     out.push_str("static int32_t nomo_shr_i32(int32_t left, uint64_t right) {\n");
     out.push_str(
@@ -191,7 +227,7 @@ pub(super) fn emit_operator_runtime(out: &mut String) {
     out.push_str("}\n");
 }
 
-pub(super) fn emit_math_runtime(out: &mut String) {
+pub fn emit_math_runtime(out: &mut String) {
     out.push_str("static int64_t nomo_math_abs_i64(int64_t value) {\n");
     out.push_str("    if (value == INT64_MIN) { nomo_panic(\"integer overflow\"); }\n");
     out.push_str("    return value < 0 ? -value : value;\n");
@@ -241,7 +277,7 @@ pub(super) fn emit_math_runtime(out: &mut String) {
     out.push_str("}\n");
 }
 
-pub(super) fn emit_string_runtime(out: &mut String) {
+pub fn emit_string_runtime(out: &mut String) {
     out.push_str("typedef struct nomo_string {\n");
     out.push_str("    const char *data;\n");
     out.push_str("    size_t *refcount;\n");
@@ -498,7 +534,7 @@ pub(super) fn emit_string_runtime(out: &mut String) {
     emit_path_runtime(out);
 }
 
-pub(super) fn emit_log_enabled_helper(out: &mut String) {
+pub fn emit_log_enabled_helper(out: &mut String) {
     out.push_str("static int32_t nomo_log_level_value(const char *level) {\n");
     out.push_str("    if (strcmp(level, \"debug\") == 0) { return 0; }\n");
     out.push_str("    if (strcmp(level, \"info\") == 0) { return 1; }\n");
@@ -517,75 +553,69 @@ pub(super) fn emit_log_enabled_helper(out: &mut String) {
     out.push_str("}\n");
 }
 
-pub(super) fn emit_hash_helpers(out: &mut String) {
-    let hash_state = c_type(&ValueType::Struct("HashState".to_string(), Vec::new()));
-    let value_field = c_member_ident("value");
-    out.push_str("static const uint64_t NOMO_HASH_OFFSET = UINT64_C(14695981039346656037);\n");
-    out.push_str("static const uint64_t NOMO_HASH_PRIME = UINT64_C(1099511628211);\n\n");
-    out.push_str("static uint64_t nomo_hash_write_cstr(uint64_t state, const char *data) {\n");
-    out.push_str("    const unsigned char *bytes = (const unsigned char *)data;\n");
-    out.push_str("    while (*bytes != '\\0') {\n");
-    out.push_str("        state ^= (uint64_t)(*bytes);\n");
-    out.push_str("        state *= NOMO_HASH_PRIME;\n");
-    out.push_str("        bytes += 1;\n");
-    out.push_str("    }\n");
-    out.push_str("    return state;\n");
-    out.push_str("}\n\n");
-    out.push_str(
-        "static uint64_t nomo_hash_write_array_u32(uint64_t state, nomo_array_u32 data) {\n",
-    );
-    out.push_str("    for (size_t i = 0; i < data.len; i += 1) {\n");
-    out.push_str("        state ^= (uint64_t)(data.data[i] & 0xffU);\n");
-    out.push_str("        state *= NOMO_HASH_PRIME;\n");
-    out.push_str("    }\n");
-    out.push_str("    return state;\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&hash_state);
-    out.push_str(" nomo_hash_new(void) {\n");
-    out.push_str("    return (");
-    out.push_str(&hash_state);
-    out.push_str("){.");
-    out.push_str(&value_field);
-    out.push_str(" = NOMO_HASH_OFFSET};\n");
-    out.push_str("}\n\n");
-    out.push_str("static uint64_t nomo_hash_string(nomo_string value) {\n");
-    out.push_str("    return nomo_hash_write_cstr(NOMO_HASH_OFFSET, value.data);\n");
-    out.push_str("}\n\n");
-    out.push_str("static uint64_t nomo_hash_bytes(nomo_array_u32 value) {\n");
-    out.push_str("    return nomo_hash_write_array_u32(NOMO_HASH_OFFSET, value);\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&hash_state);
-    out.push_str(" nomo_hash_write_string(");
-    out.push_str(&hash_state);
-    out.push_str(" state, nomo_string value) {\n");
-    out.push_str("    return (");
-    out.push_str(&hash_state);
-    out.push_str("){.");
-    out.push_str(&value_field);
-    out.push_str(" = nomo_hash_write_cstr(state.");
-    out.push_str(&value_field);
-    out.push_str(", value.data)};\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&hash_state);
-    out.push_str(" nomo_hash_write_bytes(");
-    out.push_str(&hash_state);
-    out.push_str(" state, nomo_array_u32 value) {\n");
-    out.push_str("    return (");
-    out.push_str(&hash_state);
-    out.push_str("){.");
-    out.push_str(&value_field);
-    out.push_str(" = nomo_hash_write_array_u32(state.");
-    out.push_str(&value_field);
-    out.push_str(", value)};\n");
-    out.push_str("}\n\n");
-    out.push_str("static uint64_t nomo_hash_finish(");
-    out.push_str(&hash_state);
-    out.push_str(" state) {\n");
-    out.push_str("    return state.");
-    out.push_str(&value_field);
-    out.push_str(";\n");
-    out.push_str("}\n");
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::process::Command;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn core_runtime_emits_c99_that_executes_checked_shifts_and_strings() {
+        let mut source = String::new();
+        emit_c_prelude(&mut source);
+        emit_operator_runtime(&mut source);
+        source.push('\n');
+        emit_math_runtime(&mut source);
+        source.push('\n');
+        emit_string_runtime(&mut source);
+        source.push_str(
+            "\nint main(void) {\n    nomo_string value = nomo_cstring_from_string(nomo_string_literal(\"ok\"));\n    int valid = nomo_shl_i64(-2, 1) == -4 && strcmp(value.data, \"ok\") == 0;\n    nomo_string_release(value);\n    return valid ? 0 : 1;\n}\n",
+        );
+
+        let nonce = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .expect("clock should be after epoch")
+            .as_nanos();
+        let root = std::env::temp_dir().join(format!("nomo-runtime-test-{nonce}"));
+        fs::create_dir_all(&root).unwrap();
+        let c_path = root.join("runtime.c");
+        let bin_path = root.join("runtime");
+        fs::write(&c_path, source).unwrap();
+
+        let compile = Command::new("cc")
+            .arg("-std=c99")
+            .arg(&c_path)
+            .arg("-lm")
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            compile.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&compile.stdout),
+            String::from_utf8_lossy(&compile.stderr)
+        );
+
+        let run = Command::new(&bin_path).output().unwrap();
+        assert!(
+            run.status.success(),
+            "{}",
+            String::from_utf8_lossy(&run.stderr)
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn runtime_surface_contains_platform_and_path_helpers() {
+        let mut emitted = String::new();
+        emit_c_prelude(&mut emitted);
+        emit_string_runtime(&mut emitted);
+
+        assert!(emitted.contains("#define _POSIX_C_SOURCE 200809L"));
+        assert!(emitted.contains("static void nomo_panic"));
+        assert!(emitted.contains("static nomo_string nomo_cstring_from_string"));
+        assert!(emitted.contains("static nomo_string nomo_path_normalize"));
+    }
 }

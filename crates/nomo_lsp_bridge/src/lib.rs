@@ -1,6 +1,7 @@
 #![allow(clippy::result_large_err)]
 
 use nomo_diagnostics::Diagnostic;
+use nomo_spans::SourceMap;
 use nomo_syntax::lexer::{TokenKind, lex};
 use nomo_syntax::parser::parse;
 use std::collections::BTreeSet;
@@ -14,7 +15,9 @@ mod symbols;
 
 use docs::extract_doc_comments;
 use lookup::{resolve_symbol, symbol_lookup_preference};
-pub use range::{TextPosition, TextRange, identifier_at_position, token_range};
+pub use range::{
+    TextPosition, TextRange, identifier_at_position, token_range, token_range_in_file,
+};
 use symbols::symbols_from_ast;
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -139,6 +142,11 @@ pub fn references_for_text(
         return Ok(None);
     };
     let tokens = lex(path, source)?;
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add_file(path, source);
+    let source_file = source_map
+        .file(file_id)
+        .expect("source file was just added to the source map");
     Ok(Some(
         tokens
             .iter()
@@ -149,7 +157,7 @@ pub fn references_for_text(
                 if name != &symbol.name {
                     return None;
                 }
-                let range = token_range(token.line, token.column, name);
+                let range = token_range_in_file(source_file, token.line, token.column, name);
                 if !include_declaration && range == symbol.selection_range {
                     return None;
                 }

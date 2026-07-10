@@ -110,6 +110,7 @@ dependencies = [
  "nomo-lsp-bridge",
  "nomo-manifest",
  "nomo-resolver",
+ "nomo-spans",
  "nomo-syntax",
  "nomo-test",
  "serde",
@@ -138,6 +139,9 @@ dependencies = [
 [[package]]
 name = "nomo-diagnostics"
 version = "0.1.0"
+dependencies = [
+ "nomo-spans",
+]
 
 [[package]]
 name = "nomo-doc"
@@ -173,6 +177,7 @@ name = "nomo-lsp-bridge"
 version = "0.1.0"
 dependencies = [
  "nomo-diagnostics",
+ "nomo-spans",
  "nomo-syntax",
 ]
 
@@ -192,10 +197,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "nomo-spans"
+version = "0.1.0"
+
+[[package]]
 name = "nomo-syntax"
 version = "0.1.0"
 dependencies = [
  "nomo-diagnostics",
+ "nomo-spans",
 ]
 
 [[package]]

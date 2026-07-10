@@ -3,6 +3,8 @@
 use std::fmt::Write;
 use std::path::Path;
 
+use nomo_spans::Span;
+
 pub const DIAGNOSTIC_DOCS_BASE_URL: &str =
     "https://github.com/nomo-lang/nomo/blob/main/docs/diagnostics";
 
@@ -81,6 +83,23 @@ impl Diagnostic {
         self.expected = Some(expected.into());
         self.found = Some(found.into());
         self
+    }
+
+    pub fn at_span(
+        code: &'static str,
+        message: impl Into<String>,
+        file: &Path,
+        span: &Span,
+    ) -> Self {
+        Self::new(
+            code,
+            message,
+            file,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        )
     }
 
     pub fn human(&self) -> String {
@@ -231,6 +250,18 @@ mod tests {
             diagnostic.json(),
             "{\"status\":\"error\",\"error_code\":\"E0404\",\"severity\":\"error\",\"message\":\"type mismatch\",\"source\":{\"file\":\"src/main.nomo\",\"line\":3,\"column\":9,\"length\":5,\"text\":\"let value: i32 = \\\"bad\\\"\"},\"expected\":\"i32\",\"found\":\"string\",\"suggestions\":[]}"
         );
+    }
+
+    #[test]
+    fn diagnostic_can_be_built_from_shared_span() {
+        let span = Span::new(4, 9, 3, "let value = bad");
+        let diagnostic =
+            Diagnostic::at_span("E0404", "type mismatch", Path::new("src/main.nomo"), &span);
+
+        assert_eq!(diagnostic.line, 4);
+        assert_eq!(diagnostic.column, 9);
+        assert_eq!(diagnostic.length, 3);
+        assert_eq!(diagnostic.text, "let value = bad");
     }
 
     #[test]

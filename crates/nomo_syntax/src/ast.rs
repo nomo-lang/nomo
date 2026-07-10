@@ -1,3 +1,5 @@
+pub use nomo_spans::Span;
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     pub package: Vec<String>,
@@ -311,12 +313,4 @@ pub enum BinaryOp {
     LessEqual,
     Greater,
     GreaterEqual,
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Span {
-    pub line: usize,
-    pub column: usize,
-    pub length: usize,
-    pub text: String,
 }

@@ -1,6 +1,5 @@
-use nomo_syntax::ast::{
-    EnumDef, ExternBlock, ImplBlock, InterfaceDef, SourceFile, Span, StructDef,
-};
+use nomo_spans::Span;
+use nomo_syntax::ast::{EnumDef, ExternBlock, ImplBlock, InterfaceDef, SourceFile, StructDef};
 use std::path::Path;
 
 use super::docs::DocComments;

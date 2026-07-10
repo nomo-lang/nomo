@@ -1,12 +1,13 @@
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{TokenKind, lex};
 use crate::project::Project;
-use nomo_lsp_bridge::resolve_symbol_at_position;
 pub use nomo_lsp_bridge::{
     SemanticLocation, SemanticSymbol, SemanticSymbolKind, TextPosition, TextRange,
     definition_for_text, identifier_at_position, references_for_text, symbol_at_position,
     symbols_for_text, token_range,
 };
+use nomo_lsp_bridge::{resolve_symbol_at_position, token_range_in_file};
+use nomo_spans::SourceMap;
 use std::path::{Path, PathBuf};
 
 mod project_scope;
@@ -69,6 +70,11 @@ pub fn references_for_project_text(
     let mut locations = Vec::new();
     for (source_path, source) in project_sources(project, &overrides)? {
         let tokens = lex(&source_path, &source)?;
+        let mut source_map = SourceMap::new();
+        let file_id = source_map.add_file(&source_path, &source);
+        let source_file = source_map
+            .file(file_id)
+            .expect("source file was just added to the source map");
         for token in &tokens {
             let TokenKind::Ident(name) = &token.kind else {
                 continue;
@@ -76,7 +82,7 @@ pub fn references_for_project_text(
             if name != &symbol.name {
                 continue;
             }
-            let range = token_range(token.line, token.column, name);
+            let range = token_range_in_file(source_file, token.line, token.column, name);
             if !include_declaration
                 && source_path == symbol.source_path
                 && range == symbol.selection_range

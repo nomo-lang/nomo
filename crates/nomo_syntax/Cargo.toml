@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-diagnostics.workspace = true
+nomo-spans.workspace = true
 
 [lib]
 name = "nomo_syntax"

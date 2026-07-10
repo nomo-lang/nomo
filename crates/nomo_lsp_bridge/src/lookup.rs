@@ -1,8 +1,11 @@
 use nomo_diagnostics::Diagnostic;
+use nomo_spans::{SourceFile, SourceMap};
 use nomo_syntax::lexer::{Token, TokenKind, lex};
 use std::path::Path;
 
-use super::range::{TextPosition, TextRange, range_contains, source_line_range, token_range};
+use super::range::{
+    TextPosition, TextRange, range_contains, source_line_range, token_range_in_file,
+};
 use super::{SemanticSymbol, SemanticSymbolKind};
 
 pub(super) fn resolve_symbol(
@@ -55,7 +58,12 @@ pub(super) fn symbol_lookup_preference(
     position: TextPosition,
 ) -> Result<Vec<SemanticSymbolKind>, Diagnostic> {
     let tokens = lex(path, source)?;
-    let Some(index) = ident_token_at_position(&tokens, position) else {
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add_file(path, source);
+    let source_file = source_map
+        .file(file_id)
+        .expect("source file was just added to the source map");
+    let Some(index) = ident_token_at_position(&tokens, source_file, position) else {
         return Ok(Vec::new());
     };
     let TokenKind::Ident(name) = &tokens[index].kind else {
@@ -111,16 +119,20 @@ fn prefer_symbol_kind(
     fallback
 }
 
-fn ident_token_at_position(tokens: &[Token], position: TextPosition) -> Option<usize> {
+fn ident_token_at_position(
+    tokens: &[Token],
+    source_file: &SourceFile,
+    position: TextPosition,
+) -> Option<usize> {
     tokens.iter().position(|token| {
         matches!(token.kind, TokenKind::Ident(_))
-            && range_contains(token_range_for_lookup(token), position)
+            && range_contains(token_range_for_lookup(source_file, token), position)
     })
 }
 
-fn token_range_for_lookup(token: &Token) -> TextRange {
+fn token_range_for_lookup(source_file: &SourceFile, token: &Token) -> TextRange {
     match &token.kind {
-        TokenKind::Ident(name) => token_range(token.line, token.column, name),
+        TokenKind::Ident(name) => token_range_in_file(source_file, token.line, token.column, name),
         _ => source_line_range(token.line, &token.text),
     }
 }

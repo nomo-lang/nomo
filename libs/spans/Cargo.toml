@@ -1,12 +1,9 @@
 [package]
-name = "nomo-diagnostics"
+name = "nomo-spans"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[dependencies]
-nomo-spans.workspace = true
-
 [lib]
-name = "nomo_diagnostics"
+name = "nomo_spans"
 path = "src/lib.rs"

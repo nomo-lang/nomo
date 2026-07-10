@@ -45,6 +45,8 @@ pub(super) fn ensure_supported_value_type(
             Ok(())
         }
         ValueType::String
+        | ValueType::CString
+        | ValueType::Opaque
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32
@@ -481,6 +483,8 @@ pub(super) fn generic_function_instance_name(name: &str, args: &[ValueType]) -> 
 pub(super) fn value_type_key_part(value_type: &ValueType) -> String {
     match value_type {
         ValueType::String => "string".to_string(),
+        ValueType::CString => "cstring".to_string(),
+        ValueType::Opaque => "opaque".to_string(),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),

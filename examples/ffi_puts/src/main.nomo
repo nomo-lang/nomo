@@ -1,11 +1,14 @@
 package app.main
 
+import std.ffi
+
 extern "C" {
-    fn puts(message: string) -> i32
+    fn puts(message: CString) -> i32
 }
 
 fn main() -> void {
+    let message: CString = CString.from_string("ffi puts ok")
     unsafe {
-        puts("ffi puts ok")
+        puts(message)
     }
 }

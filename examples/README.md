@@ -35,7 +35,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `deps_git`: local git dependency resolution through `nomo` project commands
 - `deps_vendor`: path plus git dependency vendoring and offline build fallback
 - `ffi_abs`: `extern "C"` primitive `i32` parameter and return value mapping
-- `ffi_puts`: minimal `extern "C"` declaration and `unsafe` call to C `puts`
+- `ffi_puts`: owned `CString` conversion and `const char *` extern parameter mapping
+- `ffi_opaque`: opaque `void *` handle round trip through a linked C fixture
 - `interface_display`: constrained generic `T: Interface` with a statically dispatched impl
 - `result_chain`: `Result` with `?`
 - `result_helpers`: `Result` predicates, fallback, map, map_err, and and_then helpers with `?`

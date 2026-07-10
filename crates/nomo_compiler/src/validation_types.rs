@@ -87,6 +87,8 @@ pub(super) fn collect_value_type_dependencies(
         }
         ValueType::Array(_) => {}
         ValueType::String
+        | ValueType::CString
+        | ValueType::Opaque
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32
@@ -160,6 +162,12 @@ pub(super) fn validate_standard_type_conflicts(
     }
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
+    }
+    if needs.ffi {
+        reject_user_std_struct(path, structs, "CString")?;
+        reject_user_std_struct(path, structs, "Opaque")?;
+        reject_user_std_enum(path, enums, "CString")?;
+        reject_user_std_enum(path, enums, "Opaque")?;
     }
     if needs.io || needs.fs || needs.net || needs.http || needs.num || needs.process || needs.result
     {

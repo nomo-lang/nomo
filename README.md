@@ -195,6 +195,7 @@ Projects and source dependencies can declare native linker metadata for C FFI:
 [ffi]
 libraries = ["sqlite3"]
 library_paths = ["native/lib"]
+sources = ["native/bridge.c"]
 frameworks = ["Security"]
 link_args = ["-Wl,-rpath,@loader_path"]
 ```
@@ -395,12 +396,14 @@ mutability and return type. Generic functions can constrain parameters with
 matching impl, type-check the generic body against the interface API, and
 monomorphize method calls with static dispatch. Dynamic
 dispatch, associated types, specialization and blanket impls are not part of
-the current model. `extern "C"` blocks plus `unsafe { ... }` support the initial
-C FFI path, currently including string
-calls to C `puts` and primitive integer/float/bool/char extern calls such as
-`abs(i32) -> i32`. Project manifests can use `[ffi]` linker metadata to pass
-native libraries, library search paths, macOS frameworks, and raw link arguments
-to project builds and tests.
+the current model. `extern "C"` blocks plus `unsafe { ... }` support the native
+FFI path. `import std.ffi` provides owned `CString` values for `const char *`
+parameters and non-dereferenceable `Opaque` handles for `void *` parameters and
+returns, alongside primitive integer/float/bool/char mappings such as
+`abs(i32) -> i32`. C functions cannot return `CString`; ownership-bearing C
+strings need an explicit wrapper. Project manifests can use `[ffi]` metadata to
+compile package-relative C source files and pass native libraries, library search
+paths, macOS frameworks, and raw link arguments to project builds and tests.
 
 `std.fs` provides filesystem helpers: `fs.read_to_string`,
 `fs.write_string`, `fs.read_bytes`, `fs.write_bytes`, `fs.exists`,

@@ -53,6 +53,14 @@ pub(super) fn validate_standard_type_imports(
             validate_stmt_type_imports(path, imports, stmt)?;
         }
     }
+    for block in &ast.extern_blocks {
+        for function in &block.functions {
+            for param in &function.params {
+                validate_type_ref_imports(path, imports, &param.type_ref, &function.span)?;
+            }
+            validate_type_ref_imports(path, imports, &function.return_type, &function.span)?;
+        }
+    }
     Ok(())
 }
 
@@ -241,6 +249,36 @@ pub(super) fn validate_type_ref_imports(
             &span.text,
         ));
     }
+    if type_ref.path == ["CString"]
+        && !imports
+            .iter()
+            .any(|item| item == "std.ffi" || item == "std.ffi.CString")
+    {
+        return Err(Diagnostic::new(
+            "E0301",
+            "`CString` requires `import std.ffi`",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    if type_ref.path == ["Opaque"]
+        && !imports
+            .iter()
+            .any(|item| item == "std.ffi" || item == "std.ffi.Opaque")
+    {
+        return Err(Diagnostic::new(
+            "E0301",
+            "`Opaque` requires `import std.ffi`",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
     for arg in &type_ref.args {
         validate_type_ref_imports(path, imports, arg, span)?;
     }
@@ -257,6 +295,9 @@ pub(super) fn is_supported_import(import: &str, external_import_roots: &[String]
             | "std.io.eprint"
             | "std.io.eprintln"
             | "std.fs"
+            | "std.ffi"
+            | "std.ffi.CString"
+            | "std.ffi.Opaque"
             | "std.fs.FsError"
             | "std.fs.File"
             | "std.fs.FileMetadata"

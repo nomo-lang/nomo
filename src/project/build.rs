@@ -77,6 +77,9 @@ pub(super) fn configure_c_compile_command(
     ffi_link_metadata: &FfiLinkMetadata,
 ) {
     command.arg("-std=c99").arg(c_path);
+    for source in &ffi_link_metadata.sources {
+        command.arg(source);
+    }
     for path in &ffi_link_metadata.library_paths {
         command.arg(format!("-L{}", path.display()));
     }

@@ -7,7 +7,7 @@ use nomo_lockfile::{
     DependencyGraph, ResolvedDependency, flatten_dependencies, lock_source_string,
 };
 use nomo_manifest::{DependencySource, parse_manifest_at_root};
-use nomo_resolver::{hex_lower, registry_cached_source_root};
+use nomo_resolver::{hex_lower, package_source_files, registry_cached_source_root};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
@@ -276,41 +276,29 @@ fn short_hash(value: &str) -> String {
 }
 
 fn copy_package_source(source_root: &Path, target: &Path) -> Result<(), String> {
+    let files = package_source_files(source_root)?;
     if target.exists() {
         fs::remove_dir_all(target).map_err(|err| err.to_string())?;
     }
     fs::create_dir_all(target).map_err(|err| err.to_string())?;
-    fs::copy(source_root.join("nomo.toml"), target.join("nomo.toml")).map_err(|err| {
-        format!(
-            "failed to copy {} to {}: {err}",
-            source_root.join("nomo.toml").display(),
-            target.join("nomo.toml").display()
-        )
-    })?;
-    let source_src = source_root.join("src");
-    if source_src.is_dir() {
-        copy_dir_recursive(&source_src, &target.join("src"))?;
-    }
-    Ok(())
-}
-
-fn copy_dir_recursive(source: &Path, target: &Path) -> Result<(), String> {
-    fs::create_dir_all(target).map_err(|err| err.to_string())?;
-    for entry in fs::read_dir(source).map_err(|err| err.to_string())? {
-        let entry = entry.map_err(|err| err.to_string())?;
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        if source_path.is_dir() {
-            copy_dir_recursive(&source_path, &target_path)?;
-        } else if source_path.is_file() {
-            fs::copy(&source_path, &target_path).map_err(|err| {
-                format!(
-                    "failed to copy {} to {}: {err}",
-                    source_path.display(),
-                    target_path.display()
-                )
-            })?;
+    for source in files {
+        let relative = source.strip_prefix(source_root).map_err(|_| {
+            format!(
+                "package source must be inside the package root: {}",
+                source.display()
+            )
+        })?;
+        let target_source = target.join(relative);
+        if let Some(parent) = target_source.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
         }
+        fs::copy(&source, &target_source).map_err(|err| {
+            format!(
+                "failed to copy {} to {}: {err}",
+                source.display(),
+                target_source.display()
+            )
+        })?;
     }
     Ok(())
 }

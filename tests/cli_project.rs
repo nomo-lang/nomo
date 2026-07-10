@@ -286,6 +286,8 @@ fn nomo_doc_generates_html_and_search_index() {
 
 package app.main
 
+import std.ffi
+
 /// Greets a caller.
 pub fn greet(name: string) -> string {
     return "hello"
@@ -315,7 +317,7 @@ pub interface Display {
 
 extern "C" {
     /// Writes a C string.
-    fn puts(message: string) -> i32
+    fn puts(message: CString) -> i32
 }
 "#,
     )
@@ -366,7 +368,7 @@ extern "C" {
     );
     assert!(module_html.contains("Converts to text."), "{module_html}");
     assert!(
-        module_html.contains("extern &quot;C&quot; fn puts(message: string) -&gt; i32"),
+        module_html.contains("extern &quot;C&quot; fn puts(message: CString) -&gt; i32"),
         "{module_html}"
     );
     assert!(module_html.contains("Writes a C string."), "{module_html}");
@@ -447,7 +449,7 @@ fn nomo_doc_json_reports_project_docs() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\n/// Display contract.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n",
+        "package app.main\n\nimport std.ffi\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\n/// Display contract.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n",
     )
     .unwrap();
 
@@ -507,7 +509,7 @@ fn nomo_doc_json_reports_project_docs() {
     assert!(stdout.contains("\"kind\":\"extern_function\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"puts\""), "{stdout}");
     assert!(
-        stdout.contains("\"signature\":\"extern \\\"C\\\" fn puts(message: string) -> i32\""),
+        stdout.contains("\"signature\":\"extern \\\"C\\\" fn puts(message: CString) -> i32\""),
         "{stdout}"
     );
     assert!(
@@ -624,6 +626,9 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("test assertion helpers"), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.debug\""), "{stdout}");
     assert!(stdout.contains("debug print and panic helpers"), "{stdout}");
+    assert!(stdout.contains("\"name\":\"std.ffi\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"CString\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Opaque\""), "{stdout}");
 }
 
 #[test]
@@ -2751,9 +2756,10 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
     let project = root.join("hello");
     let out_dir = root.join("packages");
     fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(project.join("native")).unwrap();
     fs::write(
         project.join("nomo.toml"),
-        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[ffi]\nsources = [\"native/bridge.c\"]\n",
     )
     .unwrap();
     fs::write(
@@ -2764,6 +2770,11 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
     fs::write(
         project.join("src/util.nomo"),
         "package app.util\n\npub fn answer() -> i64 {\n    return 42\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("native/bridge.c"),
+        "void nomo_example_bridge(void) {}\n",
     )
     .unwrap();
 
@@ -2812,6 +2823,51 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
     assert!(
         archive_text.contains("file src/util.nomo "),
         "{archive_text}"
+    );
+    assert!(
+        archive_text.contains("file native/bridge.c "),
+        "{archive_text}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn nomo_publish_rejects_package_file_symlink_escape() {
+    use std::os::unix::fs::symlink;
+
+    let root = temp_test_root("publish-source-symlink-escape");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(project.join("native")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[ffi]\nsources = [\"native/bridge.c\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    let outside = root.join("outside.c");
+    fs::write(&outside, "void outside(void) {}\n").unwrap();
+    symlink(&outside, project.join("native/bridge.c")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("escapes the package root through a symbolic link"),
+        "{stderr}"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -3526,13 +3582,15 @@ fn nomo_deps_vendor_copies_locked_path_and_git_sources() {
     );
     fs::create_dir_all(project.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
+    fs::create_dir_all(utils.join("native")).unwrap();
     fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
     fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
     fs::write(
         utils.join("nomo.toml"),
-        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[ffi]\nsources = [\"native/bridge.c\"]\n",
     )
     .unwrap();
+    fs::write(utils.join("native/bridge.c"), "void bridge(void) {}\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -3573,6 +3631,11 @@ fn nomo_deps_vendor_copies_locked_path_and_git_sources() {
             .exists()
     );
     assert!(project.join("vendor/fynn/utils/path/nomo.toml").exists());
+    assert!(
+        project
+            .join("vendor/fynn/utils/path/native/bridge.c")
+            .exists()
+    );
     assert!(
         !project
             .join(format!(

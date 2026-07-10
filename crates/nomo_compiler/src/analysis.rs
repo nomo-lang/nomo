@@ -63,6 +63,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
                     || item == "std.regex"
                     || item.starts_with("std.regex.")
             }),
+        ffi: imports
+            .iter()
+            .any(|item| item == "std.ffi" || item.starts_with("std.ffi.")),
     }
 }
 

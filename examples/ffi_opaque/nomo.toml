@@ -1,0 +1,6 @@
+[package]
+name = "ffi_opaque"
+version = "0.1.0"
+
+[ffi]
+sources = ["native/opaque.c"]

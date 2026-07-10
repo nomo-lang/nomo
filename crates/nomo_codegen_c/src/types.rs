@@ -268,6 +268,8 @@ fn collect_complete_type_dependencies(value_type: &ValueType, out: &mut BTreeSet
         }
         ValueType::Array(_) => {}
         ValueType::String
+        | ValueType::CString
+        | ValueType::Opaque
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32

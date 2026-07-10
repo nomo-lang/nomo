@@ -265,6 +265,9 @@ pub(super) fn emit_string_runtime(out: &mut String) {
     out.push_str("    memcpy(data, value, len + 1);\n");
     out.push_str("    return nomo_string_owned(data);\n");
     out.push_str("}\n\n");
+    out.push_str("static nomo_string nomo_cstring_from_string(nomo_string value) {\n");
+    out.push_str("    return nomo_string_from_cstr(value.data);\n");
+    out.push_str("}\n\n");
     out.push_str(
         "static nomo_string nomo_string_from_slice(const char *data, size_t start, size_t len) {\n",
     );

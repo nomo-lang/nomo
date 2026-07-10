@@ -729,14 +729,14 @@ mod tests {
 
     #[test]
     fn formats_interface_extern_impl_and_unsafe_blocks() {
-        let source = "package app.main\n\npub interface Display{\nfn to_string(self)->string\n}\n\nextern \"C\"{\nfn puts(message:string)->i32\n}\n\nstruct User{\nname:string\n}\n\nimpl Display for User{\nfn to_string(self)->string{\nreturn self.name\n}\n}\n\nfn main(){\nlet user:User=User{name:\"ok\"}\nunsafe{\nputs(user.to_string())\n}\n}\n";
+        let source = "package app.main\nimport std.ffi\n\npub interface Display{\nfn to_string(self)->string\n}\n\nextern \"C\"{\nfn puts(message:CString)->i32\n}\n\nstruct User{\nname:string\n}\n\nimpl Display for User{\nfn to_string(self)->string{\nreturn self.name\n}\n}\n\nfn main(){\nlet user:User=User{name:\"ok\"}\nlet message:CString=CString.from_string(user.to_string())\nunsafe{\nputs(message)\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
         assert_eq!(formatted, twice);
         assert_eq!(
             formatted,
-            "package app.main\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: string) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user: User = User { name: \"ok\" }\n    unsafe {\n        puts(user.to_string())\n    }\n}\n"
+            "package app.main\n\nimport std.ffi\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: CString) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user: User = User { name: \"ok\" }\n    let message: CString = CString.from_string(user.to_string())\n    unsafe {\n        puts(message)\n    }\n}\n"
         );
     }
 

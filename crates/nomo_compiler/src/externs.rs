@@ -35,9 +35,6 @@ pub(super) fn collect_extern_signatures(
                     &function.span.text,
                 ));
             }
-            if function.name == "puts" {
-                continue;
-            }
             let signature = extern_function_signature(path, function, structs, enums)?;
             extern_functions.push(ExternFunction {
                 symbol: function.name.clone(),
@@ -110,7 +107,12 @@ fn extern_function_signature(
                     &enum_names,
                 )
             })?;
-            ensure_supported_extern_type(path, &function.span, &value_type, false)?;
+            ensure_supported_extern_type(
+                path,
+                &function.span,
+                &value_type,
+                ExternTypePosition::Parameter,
+            )?;
             Ok(ParamSignature {
                 value_type,
                 mutable: false,
@@ -133,7 +135,12 @@ fn extern_function_signature(
             &enum_names,
         )
     })?;
-    ensure_supported_extern_type(path, &function.span, &return_type, true)?;
+    ensure_supported_extern_type(
+        path,
+        &function.span,
+        &return_type,
+        ExternTypePosition::Return,
+    )?;
     Ok(FunctionSignature {
         type_params: Vec::new(),
         params,
@@ -146,7 +153,7 @@ fn ensure_supported_extern_type(
     path: &Path,
     span: &Span,
     value_type: &ValueType,
-    allow_void: bool,
+    position: ExternTypePosition,
 ) -> Result<(), Diagnostic> {
     let supported = matches!(
         value_type,
@@ -157,19 +164,23 @@ fn ensure_supported_extern_type(
             | ValueType::Float
             | ValueType::Bool
             | ValueType::Char
-    ) || (allow_void && value_type == &ValueType::Void);
+            | ValueType::Opaque
+    ) || (position == ExternTypePosition::Parameter
+        && value_type == &ValueType::CString)
+        || (position == ExternTypePosition::Return && value_type == &ValueType::Void);
     if supported {
         Ok(())
     } else {
         Err(Diagnostic::new(
             "E1519",
             format!(
-                "extern \"C\" type `{}` is not supported; v0.1 supports primitive integer, float, bool, char{}",
+                "extern \"C\" {} type `{}` is not supported; current FFI supports primitive integer, float, bool, char, Opaque{}",
+                position.label(),
                 value_type.name(),
-                if allow_void {
-                    ", and void return types"
+                if position == ExternTypePosition::Parameter {
+                    ", and CString parameter types"
                 } else {
-                    ""
+                    ", and void return types; CString cannot be returned by C"
                 }
             ),
             path,
@@ -178,6 +189,21 @@ fn ensure_supported_extern_type(
             span.length,
             &span.text,
         ))
+    }
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum ExternTypePosition {
+    Parameter,
+    Return,
+}
+
+impl ExternTypePosition {
+    fn label(self) -> &'static str {
+        match self {
+            Self::Parameter => "parameter",
+            Self::Return => "return",
+        }
     }
 }
 

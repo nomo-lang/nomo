@@ -121,7 +121,7 @@ pub(super) fn emit_array_releases(out: &mut String, indent: usize, active_arrays
 
 pub(super) fn value_type_needs_release(value_type: &ValueType) -> bool {
     match value_type {
-        ValueType::String => true,
+        ValueType::String | ValueType::CString => true,
         ValueType::Array(element_type) => is_supported_array_element(element_type),
         ValueType::Struct(_, _) | ValueType::Enum(_, _) => true,
         _ => false,
@@ -149,7 +149,7 @@ pub(super) fn emit_value_release_in_place(
             emit_array_release_expr(out, element_type, c_value);
             out.push_str(";\n");
         }
-        ValueType::String => {
+        ValueType::String | ValueType::CString => {
             write_indent(out, indent);
             out.push_str("nomo_string_release(");
             out.push_str(c_value);
@@ -182,7 +182,7 @@ pub(super) fn emit_value_retain_in_place(
             out.push_str(c_value);
             out.push_str(");\n");
         }
-        ValueType::String => {
+        ValueType::String | ValueType::CString => {
             write_indent(out, indent);
             out.push_str(c_value);
             out.push_str(" = nomo_string_retain(");

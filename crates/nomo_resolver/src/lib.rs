@@ -1,4 +1,4 @@
-use nomo_manifest::PackageMetadata;
+use nomo_manifest::{PackageMetadata, parse_manifest_at_root};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::io::Read as _;
@@ -7,15 +7,7 @@ use std::net::TcpStream;
 use std::path::{Component, Path, PathBuf};
 
 pub fn package_checksum(root: &Path) -> Result<String, String> {
-    let mut files = Vec::new();
-    let manifest = root.join("nomo.toml");
-    if manifest.is_file() {
-        files.push(manifest);
-    }
-    let src = root.join("src");
-    if src.is_dir() {
-        collect_source_files(&src, &mut files)?;
-    }
+    let mut files = package_source_files(root)?;
     files.sort();
 
     let mut hasher = Sha256::new();
@@ -234,7 +226,13 @@ pub fn hex_lower(bytes: &[u8]) -> String {
     out
 }
 
-fn package_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+pub fn package_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
+    let canonical_root = fs::canonicalize(root).map_err(|err| {
+        format!(
+            "failed to resolve package root at {}: {err}",
+            root.display()
+        )
+    })?;
     let mut files = Vec::new();
     let manifest = root.join("nomo.toml");
     if !manifest.is_file() {
@@ -252,6 +250,38 @@ fn package_source_files(root: &Path) -> Result<Vec<PathBuf>, String> {
             src.display()
         ));
     }
+    let parsed = parse_manifest_at_root(root)?;
+    for source in parsed.ffi.sources {
+        if !source.is_file() {
+            return Err(format!(
+                "package FFI source is missing: {}",
+                source.display()
+            ));
+        }
+        source.strip_prefix(root).map_err(|_| {
+            format!(
+                "package FFI source must be inside the package root: {}",
+                source.display()
+            )
+        })?;
+        files.push(source);
+    }
+    for file in &files {
+        let canonical_file = fs::canonicalize(file).map_err(|err| {
+            format!(
+                "failed to resolve package file at {}: {err}",
+                file.display()
+            )
+        })?;
+        if canonical_file.strip_prefix(&canonical_root).is_err() {
+            return Err(format!(
+                "package file escapes the package root through a symbolic link: {}",
+                file.display()
+            ));
+        }
+    }
+    files.sort();
+    files.dedup();
     Ok(files)
 }
 

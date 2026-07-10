@@ -194,6 +194,8 @@ pub(super) fn num_wrapping_binary_helper_name(
 pub(super) fn c_type(value_type: &ValueType) -> String {
     match value_type {
         ValueType::String => "nomo_string".to_string(),
+        ValueType::CString => "nomo_string".to_string(),
+        ValueType::Opaque => "void *".to_string(),
         ValueType::Int => "long long".to_string(),
         ValueType::I32 => "int32_t".to_string(),
         ValueType::U32 => "uint32_t".to_string(),
@@ -213,6 +215,14 @@ pub(super) fn c_type(value_type: &ValueType) -> String {
         }
         ValueType::Void => "void".to_string(),
         ValueType::Never => "void".to_string(),
+    }
+}
+
+pub(super) fn c_extern_type(value_type: &ValueType) -> String {
+    match value_type {
+        ValueType::CString => "const char *".to_string(),
+        ValueType::Opaque => "void *".to_string(),
+        _ => c_type(value_type),
     }
 }
 
@@ -237,7 +247,8 @@ pub(super) fn c_payload_type(value_type: &ValueType) -> String {
 
 pub(super) fn c_zero_value(value_type: &ValueType) -> String {
     match value_type {
-        ValueType::String => "nomo_string_literal(\"\")".to_string(),
+        ValueType::String | ValueType::CString => "nomo_string_literal(\"\")".to_string(),
+        ValueType::Opaque => "NULL".to_string(),
         ValueType::Int => "0".to_string(),
         ValueType::I32 | ValueType::U32 | ValueType::U64 => "0".to_string(),
         ValueType::Float => "0.0".to_string(),
@@ -265,6 +276,8 @@ pub(super) fn c_type_suffix(args: &[ValueType]) -> String {
 pub(super) fn c_type_name_part(value_type: &ValueType) -> String {
     match value_type {
         ValueType::String => "string".to_string(),
+        ValueType::CString => "cstring".to_string(),
+        ValueType::Opaque => "opaque".to_string(),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),
@@ -389,7 +402,7 @@ pub(super) fn c_option_and_then_helper_ident(instance: &OptionAndThenInstance) -
 
 pub(super) fn c_retain_ident(value_type: &ValueType) -> String {
     match value_type {
-        ValueType::String => "nomo_string_retain".to_string(),
+        ValueType::String | ValueType::CString => "nomo_string_retain".to_string(),
         ValueType::Array(element_type) => format!("{}_retain", c_array_ident(element_type)),
         ValueType::Struct(name, args) => format!("{}_retain", c_struct_ident(name, args)),
         ValueType::Enum(name, args) => format!("{}_retain", c_enum_ident(name, args)),
@@ -402,7 +415,7 @@ pub(super) fn c_retain_ident(value_type: &ValueType) -> String {
 
 pub(super) fn c_release_ident(value_type: &ValueType) -> String {
     match value_type {
-        ValueType::String => "nomo_string_release".to_string(),
+        ValueType::String | ValueType::CString => "nomo_string_release".to_string(),
         ValueType::Array(element_type) => format!("{}_release", c_array_ident(element_type)),
         ValueType::Struct(name, args) => format!("{}_release", c_struct_ident(name, args)),
         ValueType::Enum(name, args) => format!("{}_release", c_enum_ident(name, args)),

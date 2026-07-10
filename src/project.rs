@@ -330,6 +330,7 @@ edition = "2026"
 [ffi]
 libraries = ["z"]
 library_paths = ["native/lib"]
+sources = ["native/bridge.c"]
 frameworks = ["Security"]
 link_args = ["-Wl,-rpath,@loader_path"]
 "#;
@@ -337,8 +338,26 @@ link_args = ["-Wl,-rpath,@loader_path"]
 
         assert_eq!(parsed.ffi.libraries, vec!["z"]);
         assert_eq!(parsed.ffi.library_paths, vec![root.join("native/lib")]);
+        assert_eq!(parsed.ffi.sources, vec![root.join("native/bridge.c")]);
         assert_eq!(parsed.ffi.frameworks, vec!["Security"]);
         assert_eq!(parsed.ffi.link_args, vec!["-Wl,-rpath,@loader_path"]);
+    }
+
+    #[test]
+    fn rejects_ffi_source_outside_package_root() {
+        let manifest = r#"[package]
+namespace = "local"
+name = "ffi-demo"
+version = "0.1.0"
+edition = "2026"
+
+[ffi]
+sources = ["../bridge.c"]
+"#;
+
+        let error = parse_manifest_text(manifest, Path::new("demo")).unwrap_err();
+
+        assert!(error.contains("must stay inside the package root"));
     }
 
     #[test]

@@ -13,6 +13,8 @@ mod tests_basic_io_symbols;
 mod tests_defer_control;
 #[path = "tests_expressions.rs"]
 mod tests_expressions;
+#[path = "tests_ffi.rs"]
+mod tests_ffi;
 #[path = "tests_host_helpers.rs"]
 mod tests_host_helpers;
 #[path = "tests_host_net_helpers.rs"]

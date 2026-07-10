@@ -31,16 +31,19 @@ Packages that declare `extern "C"` functions can add linker metadata:
 [ffi]
 libraries = ["sqlite3"]
 library_paths = ["native/lib"]
+sources = ["native/bridge.c"]
 frameworks = ["Security"]
 link_args = ["-Wl,-rpath,@loader_path"]
 ```
 
-`libraries` become `-l<name>`, `library_paths` become `-L<path>`, `frameworks`
-become macOS `-framework <name>` arguments, and `link_args` are passed through
-as raw `cc` arguments. Relative `library_paths` are resolved from the package
-root that declares them. `nomo build`, `nomo run`, and `nomo test` aggregate
-metadata from the root package and source dependencies; standalone script mode
-does not read a manifest and therefore does not use `[ffi]`.
+`libraries` become `-l<name>`, `library_paths` become `-L<path>`, package-relative
+`sources` are compiled by `cc`, `frameworks` become macOS `-framework <name>`
+arguments, and `link_args` are passed through as raw `cc` arguments. Relative
+paths are resolved from the package root that declares them. Declared FFI source
+files participate in package checksums, publish archives, and vendoring.
+`nomo build`, `nomo run`, and `nomo test` aggregate metadata from the root package
+and source dependencies; standalone script mode does not read a manifest and
+therefore does not use `[ffi]`.
 
 ## Dependencies
 
@@ -57,8 +60,8 @@ Each dependency must declare exactly one source kind:
 
 - `path`: local package source, resolved by reading the target `nomo.toml`.
 - `git`: git package source, cached under `.nomo/deps/git/`.
-- `version`: registry leaf source. Current v0.1 records it in the lockfile but
-  does not fetch registry archives.
+- `version`: registry source fetched from the configured file or HTTP registry
+  and cached under `.nomo/deps/registry/`.
 
 Project imports use dependency aliases:
 
@@ -126,9 +129,8 @@ with package ID, alias, source metadata, checksum, and dependency edges.
 Workspace lockfiles also include `[[root]]` entries mapping workspace member
 packages to direct dependency edges.
 
-Path and git dependencies are locked with a `sha256:` checksum over
-`nomo.toml` and `src/`. Registry leaves currently do not have archive checksums
-because registry fetching is not implemented in v0.1.
+Path, git, and registry dependencies are locked with a `sha256:` checksum over
+`nomo.toml`, `src/`, and any package-local C files declared by `[ffi].sources`.
 
 ## Git Cache
 

@@ -32,6 +32,8 @@ pub(super) fn parse_value_type_with_names(
 ) -> Option<ValueType> {
     match type_ref.path.as_slice() {
         [name] if name == "string" && type_ref.args.is_empty() => Some(ValueType::String),
+        [name] if name == "CString" && type_ref.args.is_empty() => Some(ValueType::CString),
+        [name] if name == "Opaque" && type_ref.args.is_empty() => Some(ValueType::Opaque),
         [name] if name == "i64" && type_ref.args.is_empty() => Some(ValueType::Int),
         [name] if name == "i32" && type_ref.args.is_empty() => Some(ValueType::I32),
         [name] if name == "u32" && type_ref.args.is_empty() => Some(ValueType::U32),

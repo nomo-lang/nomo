@@ -106,8 +106,9 @@ const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
 const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
 const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
-const BUILTIN_FFI_PUTS_EXPR: &str = "__nomo_ffi_puts";
 const EXTERN_CALL_PREFIX: &str = "__nomo_extern::";
+const BUILTIN_CSTRING_FROM_STRING_EXPR: &str = "__nomo_cstring_from_string";
+const BUILTIN_CSTRING_DATA_EXPR: &str = "__nomo_cstring_data";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
@@ -162,7 +163,7 @@ fn emit_extern_function_prototypes(out: &mut String, program: &Program) {
 
 fn emit_extern_function_prototype(out: &mut String, function: &ExternFunction) {
     out.push_str("extern ");
-    out.push_str(&c_type(&function.return_type));
+    out.push_str(&c_extern_type(&function.return_type));
     out.push(' ');
     out.push_str(&function.symbol);
     out.push('(');
@@ -173,7 +174,7 @@ fn emit_extern_function_prototype(out: &mut String, function: &ExternFunction) {
             if index > 0 {
                 out.push_str(", ");
             }
-            out.push_str(&c_type(param));
+            out.push_str(&c_extern_type(param));
         }
     }
     out.push_str(");\n");

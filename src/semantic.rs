@@ -108,7 +108,7 @@ mod tests {
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
-        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: string) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
+        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -192,7 +192,7 @@ mod tests {
         assert_eq!(symbols[8].kind, SemanticSymbolKind::ExternFunction);
         assert_eq!(
             symbols[8].signature,
-            "extern \"C\" fn puts(message: string) -> i32"
+            "extern \"C\" fn puts(message: CString) -> i32"
         );
         assert_eq!(symbols[8].docs, "Writes a C string.");
         assert_eq!(

@@ -6,6 +6,7 @@ use super::{
 };
 use nomo_lockfile::ResolvedDependency;
 use nomo_manifest::{Dependency, FfiLinkMetadata, parse_manifest_at_root};
+use nomo_resolver::package_source_files;
 use std::collections::BTreeSet;
 use std::path::Path;
 
@@ -14,6 +15,7 @@ pub(super) fn project_ffi_link_metadata_with_options(
     options: DependencyResolutionOptions,
 ) -> Result<FfiLinkMetadata, String> {
     let manifest = parse_manifest_at_root(&project.root)?;
+    package_source_files(&project.root)?;
     let mut metadata = FfiLinkMetadata::default();
     let mut seen = BTreeSet::new();
     let root_id = package_id(&manifest.package);
@@ -52,6 +54,7 @@ fn collect_current_dependency_ffi_metadata(
             continue;
         };
         let manifest = parse_manifest_at_root(&dep_root)?;
+        package_source_files(&dep_root)?;
         let package_id = package_id(&manifest.package);
         if !seen.insert(package_id) {
             continue;
@@ -74,6 +77,7 @@ fn collect_locked_dependency_ffi_metadata(
             continue;
         };
         let manifest = parse_manifest_at_root(&dep_root)?;
+        package_source_files(&dep_root)?;
         let package_id = package_id(&manifest.package);
         if seen.insert(package_id) {
             metadata.extend(manifest.ffi);

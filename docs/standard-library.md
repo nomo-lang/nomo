@@ -310,6 +310,25 @@ Use `defer http.close_exchange(exchange)` and
 streaming bodies, routing, and concurrent server helpers are out of scope for
 v0.1.
 
+## Native FFI Values
+
+`std.ffi` provides the value types used at explicit C boundaries:
+
+```nomo
+import std.ffi
+
+CString.from_string(value: string) -> CString
+```
+
+`CString` owns a NUL-terminated copy of the source string and maps to
+`const char *` when passed to an `extern "C"` function. C functions cannot
+return `CString`, because Nomo cannot infer ownership for a foreign pointer.
+`Opaque` maps to `void *`; it can be returned by an extern function, stored,
+passed through Nomo functions, and passed back to another extern function. It
+cannot be dereferenced, inspected, compared, or used in arithmetic. The owning
+C API remains responsible for providing and calling the matching release
+function.
+
 ## Testing, Debugging, And Logging
 
 `std.testing` supports `#[test]` functions:

@@ -8,6 +8,8 @@ mod tests_assignments;
 mod tests_enums_patterns;
 #[path = "tests_expressions.rs"]
 mod tests_expressions;
+#[path = "tests_ffi.rs"]
+mod tests_ffi;
 #[path = "tests_nominal_interfaces.rs"]
 mod tests_nominal_interfaces;
 #[path = "tests_option_helpers.rs"]

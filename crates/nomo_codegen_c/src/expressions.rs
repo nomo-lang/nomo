@@ -187,10 +187,12 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
                 out.push_str("(fputs(");
                 emit_string_data_expr(out, &args[0]);
                 out.push_str(", stderr), 0)");
-            } else if name == BUILTIN_FFI_PUTS_EXPR {
-                out.push_str("puts(");
-                emit_string_data_expr(out, &args[0]);
+            } else if name == BUILTIN_CSTRING_FROM_STRING_EXPR {
+                out.push_str("nomo_cstring_from_string(");
+                emit_expr(out, &args[0]);
                 out.push(')');
+            } else if name == BUILTIN_CSTRING_DATA_EXPR {
+                emit_string_data_expr(out, &args[0]);
             } else if let Some(symbol) = name.strip_prefix(EXTERN_CALL_PREFIX) {
                 out.push_str(symbol);
                 out.push('(');

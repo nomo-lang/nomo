@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::{Component, Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyAddSpec {
@@ -14,6 +14,7 @@ pub struct DependencyAddSpec {
 pub struct FfiLinkMetadata {
     pub libraries: Vec<String>,
     pub library_paths: Vec<PathBuf>,
+    pub sources: Vec<PathBuf>,
     pub frameworks: Vec<String>,
     pub link_args: Vec<String>,
 }
@@ -22,6 +23,7 @@ impl FfiLinkMetadata {
     pub fn extend(&mut self, other: FfiLinkMetadata) {
         self.libraries.extend(other.libraries);
         self.library_paths.extend(other.library_paths);
+        self.sources.extend(other.sources);
         self.frameworks.extend(other.frameworks);
         self.link_args.extend(other.link_args);
     }
@@ -308,6 +310,12 @@ fn parse_ffi_link_metadata(
         .into_iter()
         .map(|path| rebase_ffi_library_path(root, &path))
         .collect();
+    let raw_sources = optional_string_array_field(table, "ffi", "sources")?;
+    validate_non_empty_ffi_entries("ffi.sources", &raw_sources)?;
+    let sources = raw_sources
+        .into_iter()
+        .map(|path| rebase_ffi_source_path(root, &path))
+        .collect::<Result<Vec<_>, _>>()?;
     let frameworks = optional_string_array_field(table, "ffi", "frameworks")?;
     let link_args = optional_string_array_field(table, "ffi", "link_args")?;
     validate_non_empty_ffi_entries("ffi.libraries", &libraries)?;
@@ -316,6 +324,7 @@ fn parse_ffi_link_metadata(
     Ok(FfiLinkMetadata {
         libraries,
         library_paths,
+        sources,
         frameworks,
         link_args,
     })
@@ -335,6 +344,24 @@ fn rebase_ffi_library_path(root: &Path, path: &str) -> PathBuf {
     } else {
         root.join(path)
     }
+}
+
+fn rebase_ffi_source_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    if path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "manifest `ffi.sources` entry `{}` must stay inside the package root",
+            path.display()
+        ));
+    }
+    Ok(root.join(path))
 }
 
 fn workspace_context_for_manifest(

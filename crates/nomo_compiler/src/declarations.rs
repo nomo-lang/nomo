@@ -217,6 +217,7 @@ pub(super) struct StandardTypeNeeds {
     pub(super) result: bool,
     pub(super) option: bool,
     pub(super) array: bool,
+    pub(super) ffi: bool,
 }
 
 pub(super) fn function_signature(

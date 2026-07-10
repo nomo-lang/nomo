@@ -118,6 +118,7 @@ pub fn std_doc_package() -> DocPackage {
         ("std.json", "JSON parse and stringify helpers"),
         ("std.net", "blocking TCP and UDP helpers"),
         ("std.http", "blocking plain-HTTP client and server helpers"),
+        ("std.ffi", "C string and opaque native handle types"),
         ("std.collections", "string map and string set helpers"),
         ("std.char", "character helpers"),
         ("std.os", "target OS helpers"),
@@ -136,13 +137,52 @@ pub fn std_doc_package() -> DocPackage {
         name: name.to_string(),
         source: "toolchain std".to_string(),
         docs: docs.to_string(),
-        items: Vec::new(),
+        items: if name == "std.ffi" {
+            std_ffi_doc_items()
+        } else {
+            Vec::new()
+        },
     })
     .collect();
     DocPackage {
         package: "nomo-lang/std".to_string(),
         modules,
     }
+}
+
+fn std_ffi_doc_items() -> Vec<DocItem> {
+    [
+        (
+            "type",
+            "CString",
+            "pub type CString",
+            "Owned NUL-terminated string value passed to C as const char *.",
+        ),
+        (
+            "type",
+            "Opaque",
+            "pub type Opaque",
+            "Uninspectable native handle represented as void * at C boundaries.",
+        ),
+        (
+            "function",
+            "CString.from_string",
+            "pub fn CString.from_string(value: string) -> CString",
+            "Creates an owned C string copy from a Nomo string.",
+        ),
+    ]
+    .into_iter()
+    .map(|(kind, name, signature, docs)| DocItem {
+        kind: kind.to_string(),
+        name: name.to_string(),
+        signature: signature.to_string(),
+        visibility: "public".to_string(),
+        docs: docs.to_string(),
+        source: "toolchain std".to_string(),
+        line: 0,
+        children: Vec::new(),
+    })
+    .collect()
 }
 
 pub fn write_doc_index(output: &Path, packages: &[DocPackage]) -> Result<PathBuf, DocError> {

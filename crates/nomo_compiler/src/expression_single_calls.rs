@@ -138,56 +138,6 @@ pub(super) fn lower_single_segment_call_value_expr(
         }
     }
     let Some(template_signature) = signatures.get(name) else {
-        if name == "puts" {
-            if !type_args.is_empty() {
-                return Err(type_mismatch(
-                    path,
-                    span,
-                    "extern function `puts` does not accept type arguments",
-                ));
-            }
-            let [arg] = args else {
-                return Err(Diagnostic::new(
-                    "E1519",
-                    "extern function `puts` expects 1 argument",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                ));
-            };
-            let (arg_type, lowered) = lower_value_expr_with_expected(
-                path,
-                arg,
-                scope,
-                imports,
-                signatures,
-                structs,
-                enums,
-                Some(&ValueType::String),
-                span,
-            )?;
-            if arg_type != ValueType::String {
-                return Err(type_mismatch(
-                    path,
-                    span,
-                    "extern function `puts` expects a `string` argument",
-                ));
-            }
-            let return_type = if matches!(expected, Some(ValueType::Void)) {
-                ValueType::Void
-            } else {
-                ValueType::I32
-            };
-            return Ok((
-                return_type,
-                ValueExpr::Call {
-                    name: BUILTIN_FFI_PUTS_EXPR.to_string(),
-                    args: vec![lowered],
-                },
-            ));
-        }
         if scope.contains_key(name) {
             return Err(Diagnostic::new(
                 "E0305",
@@ -307,7 +257,7 @@ pub(super) fn lower_single_segment_call_value_expr(
     let mut lowered_args = Vec::new();
     let mut mutable_borrows = Vec::new();
     for (index, (arg, expected)) in args.iter().zip(signature.params.iter()).enumerate() {
-        lowered_args.push(lower_call_arg_for_param(
+        let lowered = lower_call_arg_for_param(
             path,
             arg,
             expected,
@@ -320,11 +270,27 @@ pub(super) fn lower_single_segment_call_value_expr(
             &call_name,
             index + 1,
             &mut mutable_borrows,
-        )?);
+        )?;
+        lowered_args.push(
+            if signature.extern_symbol.is_some() && expected.value_type == ValueType::CString {
+                ValueExpr::Call {
+                    name: BUILTIN_CSTRING_DATA_EXPR.to_string(),
+                    args: vec![lowered],
+                }
+            } else {
+                lowered
+            },
+        );
     }
 
+    let return_type =
+        if signature.extern_symbol.is_some() && matches!(expected, Some(ValueType::Void)) {
+            ValueType::Void
+        } else {
+            signature.return_type.clone()
+        };
     Ok((
-        signature.return_type.clone(),
+        return_type,
         ValueExpr::Call {
             name: signature
                 .extern_symbol

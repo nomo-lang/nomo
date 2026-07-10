@@ -222,6 +222,8 @@ pub enum NumBinaryFunction {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
+    CString,
+    Opaque,
     Int,
     I32,
     U32,
@@ -241,6 +243,8 @@ impl ValueType {
     pub fn name(&self) -> &str {
         match self {
             ValueType::String => "string",
+            ValueType::CString => "CString",
+            ValueType::Opaque => "Opaque",
             ValueType::Int => "i64",
             ValueType::I32 => "i32",
             ValueType::U32 => "u32",

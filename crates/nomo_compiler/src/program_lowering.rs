@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum EntryMode {
     MainFunctionRequired,
     ScriptFile,
+    LibraryModule,
 }
 
 pub(super) fn lower_program(
@@ -156,43 +157,45 @@ pub(super) fn lower_program(
         }
     }
 
-    let Some(main_signature) = signatures.get("main") else {
-        return Err(Diagnostic::new(
-            "E0201",
-            "expected `fn main() -> void { ... }`",
-            path,
-            1,
-            1,
-            1,
-            "",
-        ));
-    };
-    let valid_main_return = main_signature.return_type == ValueType::Void
-        || matches!(
-            result_parts(&main_signature.return_type),
-            Some((ValueType::Void, _))
-        );
-    if !main_signature.params.is_empty() || !valid_main_return {
-        return Err(Diagnostic::new(
-            "E0401",
-            "v0.1 `main` must return `void` or `Result<void, E>`",
-            path,
-            1,
-            1,
-            1,
-            "",
-        ));
-    }
-    if !main_signature.type_params.is_empty() {
-        return Err(Diagnostic::new(
-            "E0401",
-            "v0.1 `main` cannot be generic",
-            path,
-            1,
-            1,
-            1,
-            "",
-        ));
+    if entry_mode != EntryMode::LibraryModule {
+        let Some(main_signature) = signatures.get("main") else {
+            return Err(Diagnostic::new(
+                "E0201",
+                "expected `fn main() -> void { ... }`",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        };
+        let valid_main_return = main_signature.return_type == ValueType::Void
+            || matches!(
+                result_parts(&main_signature.return_type),
+                Some((ValueType::Void, _))
+            );
+        if !main_signature.params.is_empty() || !valid_main_return {
+            return Err(Diagnostic::new(
+                "E0401",
+                "v0.1 `main` must return `void` or `Result<void, E>`",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
+        if !main_signature.type_params.is_empty() {
+            return Err(Diagnostic::new(
+                "E0401",
+                "v0.1 `main` cannot be generic",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
     }
 
     let function_defs = ast
@@ -391,6 +394,13 @@ fn prepare_entry_point(
                 path,
                 ast,
                 "top-level script statements are only supported by `nomo run <source.nomo>`",
+            )?;
+        }
+        EntryMode::LibraryModule => {
+            reject_script_body(
+                path,
+                ast,
+                "top-level script statements are not supported in library modules",
             )?;
         }
         EntryMode::ScriptFile if has_main && !ast.script_body.is_empty() => {

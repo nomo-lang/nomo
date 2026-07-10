@@ -32,8 +32,9 @@ This repository ships two binaries and reusable Rust crates:
 - `nomo-resolver` (lib crate) — package source hashing and archive
   pack/unpack primitives used by dependency resolution, vendoring and registry
   cache flows.
-- `nomo-lsp-bridge` (lib crate) — shared symbol, local-binding, definition and
-  declaration-aware reference queries consumed by editor tooling.
+- `nomo-lsp-bridge` (lib crate) — shared symbol, local-binding, structured
+  member-owner, definition and declaration-aware reference queries consumed by
+  editor tooling.
 - `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
   shared by the compiler, formatter, docs and LSP semantic services.
 

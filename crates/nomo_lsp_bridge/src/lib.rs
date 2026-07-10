@@ -15,8 +15,9 @@ mod signature;
 mod symbols;
 
 use bindings::{
-    identifier_token_at_position, local_binding_token_mask, local_definition_at_position,
-    local_references_at_position, token_resolves_to_local_binding,
+    identifier_token_at_position, local_binding_declarations, local_binding_token_mask,
+    local_binding_uses, local_definition_at_position, local_references_at_position,
+    token_resolves_to_local_binding,
 };
 use docs::extract_doc_comments;
 use lookup::{resolve_symbol, symbol_lookup_preference, symbol_lookup_preference_for_token};
@@ -49,12 +50,33 @@ pub enum SemanticSymbolKind {
 pub struct SemanticSymbol {
     pub source_path: PathBuf,
     pub name: String,
+    pub container_name: Option<String>,
     pub kind: SemanticSymbolKind,
     pub signature: String,
     pub docs: String,
     pub line: usize,
     pub range: TextRange,
     pub selection_range: TextRange,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SemanticMemberOwner {
+    pub range: TextRange,
+    pub owner: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct LocalBindingDeclaration {
+    pub name: String,
+    pub range: TextRange,
+    pub callable_name: String,
+    pub callable_owner: Option<String>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LocalBindingUse {
+    pub range: TextRange,
+    pub declaration: TextRange,
 }
 
 pub fn symbols_for_text(path: &Path, source: &str) -> Result<Vec<SemanticSymbol>, Diagnostic> {
@@ -119,7 +141,14 @@ pub fn symbol_at_position(
     }
     let preference = symbol_lookup_preference(path, source, position)?;
     let symbols = symbols_for_text(path, source)?;
-    Ok(resolve_symbol(path, position, &name, &symbols, &preference))
+    Ok(resolve_symbol(
+        path,
+        position,
+        &name,
+        &symbols,
+        &preference,
+        None,
+    ))
 }
 
 pub fn resolve_symbol_at_position(
@@ -127,6 +156,16 @@ pub fn resolve_symbol_at_position(
     source: &str,
     position: TextPosition,
     symbols: Vec<SemanticSymbol>,
+) -> Result<Option<SemanticSymbol>, Diagnostic> {
+    resolve_symbol_at_position_with_owner(path, source, position, symbols, None)
+}
+
+pub fn resolve_symbol_at_position_with_owner(
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    symbols: Vec<SemanticSymbol>,
+    owner: Option<&str>,
 ) -> Result<Option<SemanticSymbol>, Diagnostic> {
     let Some(name) = identifier_at_position(source, position) else {
         return Ok(None);
@@ -143,7 +182,14 @@ pub fn resolve_symbol_at_position(
         return Ok(None);
     }
     let preference = symbol_lookup_preference(path, source, position)?;
-    Ok(resolve_symbol(path, position, &name, &symbols, &preference))
+    Ok(resolve_symbol(
+        path,
+        position,
+        &name,
+        &symbols,
+        &preference,
+        owner,
+    ))
 }
 
 pub fn definition_for_text(
@@ -169,6 +215,32 @@ pub fn local_definition_for_text(
         .file(file_id)
         .expect("source file was just added to the source map");
     Ok(local_definition_at_position(&tokens, source_file, position))
+}
+
+pub fn local_binding_declarations_for_text(
+    path: &Path,
+    source: &str,
+) -> Result<Vec<LocalBindingDeclaration>, Diagnostic> {
+    let tokens = lex(path, source)?;
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add_file(path, source);
+    let source_file = source_map
+        .file(file_id)
+        .expect("source file was just added to the source map");
+    Ok(local_binding_declarations(&tokens, source_file))
+}
+
+pub fn local_binding_uses_for_text(
+    path: &Path,
+    source: &str,
+) -> Result<Vec<LocalBindingUse>, Diagnostic> {
+    let tokens = lex(path, source)?;
+    let mut source_map = SourceMap::new();
+    let file_id = source_map.add_file(path, source);
+    let source_file = source_map
+        .file(file_id)
+        .expect("source file was just added to the source map");
+    Ok(local_binding_uses(&tokens, source_file))
 }
 
 pub fn references_for_text(
@@ -222,6 +294,24 @@ pub fn references_for_symbol_in_text(
     symbols: &[SemanticSymbol],
     include_declaration: bool,
 ) -> Result<Vec<TextRange>, Diagnostic> {
+    references_for_symbol_in_text_with_owners(
+        path,
+        source,
+        target,
+        symbols,
+        include_declaration,
+        &[],
+    )
+}
+
+pub fn references_for_symbol_in_text_with_owners(
+    path: &Path,
+    source: &str,
+    target: &SemanticSymbol,
+    symbols: &[SemanticSymbol],
+    include_declaration: bool,
+    member_owners: &[SemanticMemberOwner],
+) -> Result<Vec<TextRange>, Diagnostic> {
     let tokens = lex(path, source)?;
     let mut source_map = SourceMap::new();
     let file_id = source_map.add_file(path, source);
@@ -242,7 +332,12 @@ pub fn references_for_symbol_in_text(
             continue;
         }
         let preference = symbol_lookup_preference_for_token(&tokens, index, name);
-        let Some(resolved) = resolve_symbol(path, range.start, name, symbols, &preference) else {
+        let owner = member_owners
+            .iter()
+            .find(|member| member.range == range)
+            .map(|member| member.owner.as_str());
+        let Some(resolved) = resolve_symbol(path, range.start, name, symbols, &preference, owner)
+        else {
             continue;
         };
         if same_symbol(&resolved, target) {

@@ -69,6 +69,51 @@ fn rejects_missing_main() {
 }
 
 #[test]
+fn library_module_check_typechecks_without_main() {
+    let source = "package app.models\n\nstruct User {\n    name: string\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
+
+    let program = check_module_source_text_with_project_modules_and_overrides(
+        Path::new("models.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|function| function.name == "read")
+    );
+    assert!(
+        !program
+            .functions
+            .iter()
+            .any(|function| function.name == "main")
+    );
+}
+
+#[test]
+fn library_module_check_still_rejects_invalid_function_bodies() {
+    let source = "package app.models\n\nfn read() -> string {\n    return 1\n}\n";
+
+    let error = check_module_source_text_with_project_modules_and_overrides(
+        Path::new("models.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+        &[],
+    )
+    .unwrap_err();
+
+    assert_eq!(error.code, "E0404");
+}
+
+#[test]
 fn accepts_script_body_as_synthesized_main_in_script_mode() {
     let source = "package app.main\n\nlet value: i32 = 1\n";
     let program = check_script_source_text(Path::new("script.nomo"), source).unwrap();

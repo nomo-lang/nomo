@@ -1,16 +1,20 @@
 use crate::diagnostic::Diagnostic;
 use crate::project::Project;
-use nomo_lsp_bridge::resolve_symbol_at_position;
 pub use nomo_lsp_bridge::{
-    SemanticLocation, SemanticSymbol, SemanticSymbolKind, TextPosition, TextRange,
-    definition_for_text, identifier_at_position, local_definition_for_text,
-    local_references_for_text, references_for_symbol_in_text, references_for_text,
-    symbol_at_position, symbols_for_text, token_range,
+    SemanticLocation, SemanticMemberOwner, SemanticSymbol, SemanticSymbolKind, TextPosition,
+    TextRange, identifier_at_position, local_definition_for_text, local_references_for_text,
+    references_for_symbol_in_text, symbols_for_text, token_range,
+};
+use nomo_lsp_bridge::{
+    definition_for_text as bridge_definition_for_text, references_for_symbol_in_text_with_owners,
+    resolve_symbol_at_position_with_owner,
 };
 use std::path::{Path, PathBuf};
 
+mod member_resolution;
 mod project_scope;
 
+use member_resolution::{member_owners_for_document, member_owners_for_text};
 use project_scope::{
     accessible_symbols_for_document, is_project_nomo_source, overrides_with_current,
     project_sources,
@@ -18,6 +22,60 @@ use project_scope::{
 pub use project_scope::{
     dependency_symbols_for_project_with_overrides, symbols_for_project_with_overrides,
 };
+
+pub fn symbol_at_position(
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+) -> Result<Option<SemanticSymbol>, Diagnostic> {
+    let symbols = symbols_for_text(path, source)?;
+    let member_owners = member_owners_for_text(path, source).unwrap_or_default();
+    let owner = member_owners
+        .iter()
+        .find(|member| range_contains(member.range, position))
+        .map(|member| member.owner.as_str());
+    resolve_symbol_at_position_with_owner(path, source, position, symbols, owner)
+}
+
+pub fn definition_for_text(
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+) -> Result<Option<TextRange>, Diagnostic> {
+    if let Some(definition) = local_definition_for_text(path, source, position)? {
+        return Ok(Some(definition));
+    }
+    if let Some(symbol) = symbol_at_position(path, source, position)? {
+        return Ok(Some(symbol.selection_range));
+    }
+    bridge_definition_for_text(path, source, position)
+}
+
+pub fn references_for_text(
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    include_declaration: bool,
+) -> Result<Option<Vec<TextRange>>, Diagnostic> {
+    if let Some(references) =
+        local_references_for_text(path, source, position, include_declaration)?
+    {
+        return Ok(Some(references));
+    }
+    let Some(symbol) = symbol_at_position(path, source, position)? else {
+        return Ok(None);
+    };
+    let symbols = symbols_for_text(path, source)?;
+    let member_owners = member_owners_for_text(path, source).unwrap_or_default();
+    Ok(Some(references_for_symbol_in_text_with_owners(
+        path,
+        source,
+        &symbol,
+        &symbols,
+        include_declaration,
+        &member_owners,
+    )?))
+}
 
 pub fn symbol_at_project_position(
     project: &Project,
@@ -28,7 +86,13 @@ pub fn symbol_at_project_position(
 ) -> Result<Option<SemanticSymbol>, Diagnostic> {
     let overrides = overrides_with_current(path, source, source_overrides);
     let symbols = accessible_symbols_for_document(project, path, source, &overrides)?;
-    resolve_symbol_at_position(path, source, position, symbols)
+    let member_owners =
+        member_owners_for_document(project, path, source, &overrides).unwrap_or_default();
+    let owner = member_owners
+        .iter()
+        .find(|member| range_contains(member.range, position))
+        .map(|member| member.owner.as_str());
+    resolve_symbol_at_position_with_owner(path, source, position, symbols, owner)
 }
 
 pub fn definition_for_project_text(
@@ -90,12 +154,15 @@ pub fn references_for_project_text(
         else {
             continue;
         };
-        let Ok(ranges) = references_for_symbol_in_text(
+        let member_owners = member_owners_for_document(project, &source_path, &source, &overrides)
+            .unwrap_or_default();
+        let Ok(ranges) = references_for_symbol_in_text_with_owners(
             &source_path,
             &source,
             &symbol,
             &symbols,
             include_declaration,
+            &member_owners,
         ) else {
             continue;
         };
@@ -107,6 +174,13 @@ pub fn references_for_project_text(
         }
     }
     Ok(Some(locations))
+}
+
+fn range_contains(range: TextRange, position: TextPosition) -> bool {
+    (position.line > range.start.line
+        || (position.line == range.start.line && position.character >= range.start.character))
+        && (position.line < range.end.line
+            || (position.line == range.end.line && position.character <= range.end.character))
 }
 
 #[cfg(test)]
@@ -142,6 +216,7 @@ mod tests {
             ]
         );
         assert_eq!(symbols[1].kind, SemanticSymbolKind::Field);
+        assert_eq!(symbols[1].container_name.as_deref(), Some("User"));
         assert_eq!(symbols[1].signature, "pub field User.email: string");
         assert_eq!(symbols[1].docs, "User email address.");
         assert_eq!(
@@ -158,6 +233,7 @@ mod tests {
             }
         );
         assert_eq!(symbols[3].kind, SemanticSymbolKind::Variant);
+        assert_eq!(symbols[3].container_name.as_deref(), Some("Status"));
         assert_eq!(symbols[3].signature, "variant Status.Ready");
         assert_eq!(symbols[3].docs, "Ready state.");
         assert_eq!(symbols[4].signature, "variant Status.Done(i32)");
@@ -166,6 +242,7 @@ mod tests {
         assert_eq!(symbols[5].signature, "pub interface Display");
         assert_eq!(symbols[5].docs, "Displayable values.");
         assert_eq!(symbols[6].kind, SemanticSymbolKind::InterfaceMethod);
+        assert_eq!(symbols[6].container_name.as_deref(), Some("Display"));
         assert_eq!(
             symbols[6].signature,
             "fn Display.to_string(self: Self) -> string"
@@ -223,6 +300,7 @@ mod tests {
             symbols[9].signature,
             "pub fn User.email(self: User) -> string"
         );
+        assert_eq!(symbols[9].container_name.as_deref(), Some("User"));
     }
 
     #[test]
@@ -317,7 +395,7 @@ mod tests {
     }
 
     #[test]
-    fn definition_does_not_guess_between_ambiguous_fields() {
+    fn standalone_definition_resolves_ambiguous_fields_by_receiver_type() {
         let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
 
         let definition = definition_for_text(
@@ -328,9 +406,11 @@ mod tests {
                 character: 17,
             },
         )
+        .unwrap()
         .unwrap();
 
-        assert!(definition.is_none());
+        assert_eq!(definition.start.line, 3);
+        assert_eq!(definition.start.character, 4);
     }
 
     #[test]
@@ -795,6 +875,232 @@ mod tests {
     }
 
     #[test]
+    fn project_navigation_resolves_fields_and_methods_by_receiver_type() {
+        let project = test_project("semantic_receiver_type_navigation");
+        let main = project.root.join("src/main.nomo");
+        let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user = User { name: \"Ada\" }\n    let team: Team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
+        write_source(&main, source);
+
+        let user_field = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.name", 0, "name"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let team_field = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "team.name", 0, "name"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let user_method = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.label", 0, "label"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let team_method = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "team.label", 0, "label"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let user_literal_field = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "User { name", 0, "name"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(user_field.range.start.line, 3);
+        assert_eq!(team_field.range.start.line, 7);
+        assert_eq!(user_method.range.start.line, 11);
+        assert_eq!(team_method.range.start.line, 17);
+        assert_eq!(user_literal_field.range.start.line, 3);
+
+        let user_field_references = references_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.name", 0, "name"),
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let user_method_references = references_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.label", 0, "label"),
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(user_field_references.len(), 4, "{user_field_references:?}");
+        assert!(
+            user_field_references
+                .iter()
+                .all(|location| !matches!(location.range.start.line, 7 | 18 | 24 | 26))
+        );
+        assert_eq!(
+            user_method_references.len(),
+            2,
+            "{user_method_references:?}"
+        );
+        assert!(
+            user_method_references
+                .iter()
+                .all(|location| !matches!(location.range.start.line, 17 | 28))
+        );
+    }
+
+    #[test]
+    fn project_navigation_uses_receiver_types_across_modules() {
+        let project = test_project("semantic_cross_module_receiver_type");
+        let main = project.root.join("src/main.nomo");
+        let models = project.root.join("src/models.nomo");
+        let main_source = "package app.main\n\nimport app.models\n\nstruct Team {\n    name: string\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user = User { name: \"Ada\" }\n    let team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
+        let models_source = "package app.models\n\npub struct User {\n    pub name: string\n}\n\nimpl User {\n    pub fn label(self) -> string {\n        return self.name\n    }\n}\n";
+        write_source(&main, main_source);
+        write_source(&models, models_source);
+
+        let field_definition = definition_for_project_text(
+            &project,
+            &main,
+            main_source,
+            position_of(main_source, "user.name", 0, "name"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let method_definition = definition_for_project_text(
+            &project,
+            &main,
+            main_source,
+            position_of(main_source, "user.label", 0, "label"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let references = references_for_project_text(
+            &project,
+            &main,
+            main_source,
+            position_of(main_source, "user.name", 0, "name"),
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(field_definition.path, models);
+        assert_eq!(field_definition.range.start.line, 3);
+        assert_eq!(method_definition.path, models);
+        assert_eq!(method_definition.range.start.line, 7);
+        assert_eq!(references.len(), 4, "{references:?}");
+        assert_eq!(
+            references
+                .iter()
+                .filter(|location| location.path == models)
+                .count(),
+            2
+        );
+        assert!(references.iter().all(|location| {
+            location.path != main || !matches!(location.range.start.line, 5 | 10 | 16 | 18)
+        }));
+    }
+
+    #[test]
+    fn project_navigation_resolves_pattern_binding_member_types() {
+        let project = test_project("semantic_pattern_receiver_type");
+        let main = project.root.join("src/main.nomo");
+        let source = "package app.main\n\nimport std.option\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(maybe: Option<User>) -> string {\n    let Some(user) = maybe else {\n        panic(\"missing\")\n    }\n    return user.name\n}\n\nfn main() -> void {\n}\n";
+        write_source(&main, source);
+
+        let definition = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.name", 0, "name"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let references = references_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "user.name", 0, "name"),
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(definition.range.start.line, 5);
+        assert_eq!(references.len(), 2, "{references:?}");
+        assert!(
+            references
+                .iter()
+                .all(|location| location.range.start.line != 9)
+        );
+    }
+
+    #[test]
+    fn project_navigation_resolves_constrained_generic_methods_to_the_interface() {
+        let project = test_project("semantic_interface_receiver_type");
+        let main = project.root.join("src/main.nomo");
+        let source = "package app.main\n\ninterface Display {\n    fn label(self) -> string\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.label()\n}\n\nfn main() -> void {\n}\n";
+        write_source(&main, source);
+
+        let definition = definition_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "value.label", 0, "label"),
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+        let references = references_for_project_text(
+            &project,
+            &main,
+            source,
+            position_of(source, "value.label", 0, "label"),
+            true,
+            &[],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert_eq!(definition.range.start.line, 3);
+        assert_eq!(references.len(), 2, "{references:?}");
+        assert!(
+            references
+                .iter()
+                .all(|location| location.range.start.line != 11)
+        );
+    }
+
+    #[test]
     fn project_symbols_use_source_overlays() {
         let project = test_project("semantic_overlays");
         let main = project.root.join("src/main.nomo");
@@ -848,6 +1154,26 @@ mod tests {
             name: "main".to_string(),
             workspace_root: None,
         }
+    }
+
+    fn position_of(
+        source: &str,
+        occurrence: &str,
+        occurrence_index: usize,
+        identifier: &str,
+    ) -> TextPosition {
+        let byte_offset = source
+            .match_indices(occurrence)
+            .nth(occurrence_index)
+            .map(|(offset, _)| offset)
+            .unwrap();
+        let identifier_offset = occurrence.find(identifier).unwrap();
+        let absolute = byte_offset + identifier_offset;
+        let before = &source[..absolute];
+        let line = before.bytes().filter(|byte| *byte == b'\n').count() as u32;
+        let line_start = before.rfind('\n').map_or(0, |index| index + 1);
+        let character = source[line_start..absolute].encode_utf16().count() as u32;
+        TextPosition { line, character }
     }
 
     fn write_source(path: &Path, source: &str) {

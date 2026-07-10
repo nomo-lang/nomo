@@ -20,6 +20,7 @@ pub(super) fn symbols_from_ast(
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
             name: item.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::Struct,
             signature: struct_signature(item),
             docs: docs
@@ -37,6 +38,7 @@ pub(super) fn symbols_from_ast(
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
             name: item.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::Enum,
             signature: enum_signature(item),
             docs: docs
@@ -54,6 +56,7 @@ pub(super) fn symbols_from_ast(
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
             name: item.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::Interface,
             signature: interface_signature(item),
             docs: docs
@@ -71,6 +74,7 @@ pub(super) fn symbols_from_ast(
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
             name: item.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::Const,
             signature: const_signature(item),
             docs: docs
@@ -87,6 +91,7 @@ pub(super) fn symbols_from_ast(
         symbols.push(SemanticSymbol {
             source_path: path.to_path_buf(),
             name: item.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::Function,
             signature: function_signature(item),
             docs: docs
@@ -114,6 +119,7 @@ fn field_symbols(path: &Path, item: &StructDef, docs: &DocComments) -> Vec<Seman
         .map(|field| SemanticSymbol {
             source_path: path.to_path_buf(),
             name: field.name.clone(),
+            container_name: Some(item.name.clone()),
             kind: SemanticSymbolKind::Field,
             signature: field_signature(&item.name, field),
             docs: docs
@@ -134,6 +140,7 @@ fn variant_symbols(path: &Path, item: &EnumDef, docs: &DocComments) -> Vec<Seman
         .map(|variant| SemanticSymbol {
             source_path: path.to_path_buf(),
             name: variant.name.clone(),
+            container_name: Some(item.name.clone()),
             kind: SemanticSymbolKind::Variant,
             signature: variant_signature(&item.name, variant),
             docs: docs
@@ -158,6 +165,7 @@ fn interface_method_symbols(
         .map(|method| SemanticSymbol {
             source_path: path.to_path_buf(),
             name: method.name.clone(),
+            container_name: Some(item.name.clone()),
             kind: SemanticSymbolKind::InterfaceMethod,
             signature: interface_method_signature(&item.name, method),
             docs: docs
@@ -180,6 +188,7 @@ fn method_symbols(path: &Path, impl_block: &ImplBlock, docs: &DocComments) -> Ve
         .map(|method| SemanticSymbol {
             source_path: path.to_path_buf(),
             name: method.name.clone(),
+            container_name: Some(receiver.clone()),
             kind: SemanticSymbolKind::Method,
             signature: method_signature(&receiver, method),
             docs: docs
@@ -205,6 +214,7 @@ fn extern_function_symbols(
         .map(|function| SemanticSymbol {
             source_path: path.to_path_buf(),
             name: function.name.clone(),
+            container_name: None,
             kind: SemanticSymbolKind::ExternFunction,
             signature: extern_function_signature(&block.abi, function),
             docs: docs

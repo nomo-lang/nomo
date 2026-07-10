@@ -2,6 +2,7 @@ use nomo_spans::SourceFile;
 use nomo_syntax::lexer::{Token, TokenKind};
 
 use super::range::{TextPosition, TextRange, range_contains, token_range_in_file};
+use super::{LocalBindingDeclaration, LocalBindingUse};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct LocalBinding {
@@ -64,6 +65,46 @@ pub(super) fn local_binding_token_mask(tokens: &[Token]) -> Vec<bool> {
         .collect()
 }
 
+pub(super) fn local_binding_declarations(
+    tokens: &[Token],
+    source_file: &SourceFile,
+) -> Vec<LocalBindingDeclaration> {
+    let bindings = collect_local_bindings(tokens);
+    let brace_pairs = matching_pairs(tokens, is_lbrace, is_rbrace);
+    let paren_pairs = matching_pairs(tokens, is_lparen, is_rparen);
+    bindings
+        .iter()
+        .filter_map(|binding| {
+            let (callable_name, callable_owner) =
+                enclosing_callable(tokens, &brace_pairs, &paren_pairs, binding.declaration)?;
+            Some(LocalBindingDeclaration {
+                name: binding.name.clone(),
+                range: identifier_range(source_file, &tokens[binding.declaration]),
+                callable_name,
+                callable_owner,
+            })
+        })
+        .collect()
+}
+
+pub(super) fn local_binding_uses(
+    tokens: &[Token],
+    source_file: &SourceFile,
+) -> Vec<LocalBindingUse> {
+    let bindings = collect_local_bindings(tokens);
+    tokens
+        .iter()
+        .enumerate()
+        .filter_map(|(index, token)| {
+            let binding = resolve_local_binding(tokens, &bindings, index)?;
+            Some(LocalBindingUse {
+                range: identifier_range(source_file, token),
+                declaration: identifier_range(source_file, &tokens[binding.declaration]),
+            })
+        })
+        .collect()
+}
+
 pub(super) fn identifier_token_at_position(
     tokens: &[Token],
     source_file: &SourceFile,
@@ -89,6 +130,81 @@ fn collect_local_bindings(tokens: &[Token]) -> Vec<LocalBinding> {
     bindings.sort_by_key(|binding| (binding.declaration, binding.visible_start));
     bindings.dedup_by_key(|binding| binding.declaration);
     bindings
+}
+
+fn enclosing_callable(
+    tokens: &[Token],
+    brace_pairs: &[Option<usize>],
+    paren_pairs: &[Option<usize>],
+    declaration: usize,
+) -> Option<(String, Option<String>)> {
+    let mut selected = None;
+    for (fn_index, token) in tokens.iter().enumerate().take(declaration) {
+        if !matches!(token.kind, TokenKind::Fn) {
+            continue;
+        }
+        let Some(name_index) = next_significant(tokens, fn_index) else {
+            continue;
+        };
+        let TokenKind::Ident(name) = &tokens[name_index].kind else {
+            continue;
+        };
+        let Some(open_paren) = find_kind(tokens, name_index + 1, declaration, is_lparen) else {
+            continue;
+        };
+        let Some(close_paren) = paren_pairs[open_paren] else {
+            continue;
+        };
+        let Some(body_open) = next_function_body_open(tokens, close_paren) else {
+            continue;
+        };
+        let Some(body_close) = brace_pairs[body_open] else {
+            continue;
+        };
+        if (open_paren < declaration && declaration < close_paren)
+            || (body_open < declaration && declaration < body_close)
+        {
+            selected = Some((
+                name.clone(),
+                enclosing_impl_owner(tokens, brace_pairs, fn_index),
+            ));
+        }
+    }
+    selected
+}
+
+fn enclosing_impl_owner(
+    tokens: &[Token],
+    brace_pairs: &[Option<usize>],
+    fn_index: usize,
+) -> Option<String> {
+    let mut owner = None;
+    for (impl_index, token) in tokens.iter().enumerate().take(fn_index) {
+        if !matches!(token.kind, TokenKind::Impl) {
+            continue;
+        }
+        let Some(body_open) = find_kind(tokens, impl_index + 1, fn_index, is_lbrace) else {
+            continue;
+        };
+        let Some(body_close) = brace_pairs[body_open] else {
+            continue;
+        };
+        if fn_index >= body_close {
+            continue;
+        }
+        let target = find_kind(tokens, impl_index + 1, body_open, |kind| {
+            matches!(kind, TokenKind::For)
+        })
+        .and_then(|index| next_significant(tokens, index))
+        .or_else(|| next_significant(tokens, impl_index));
+        let Some(target) = target else {
+            continue;
+        };
+        if let TokenKind::Ident(name) = &tokens[target].kind {
+            owner = Some(name.clone());
+        }
+    }
+    owner
 }
 
 fn collect_parameter_bindings(
@@ -594,5 +710,29 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec![6, 7, 9]
         );
+    }
+
+    #[test]
+    fn binding_facts_keep_their_enclosing_function_and_impl_owner() {
+        let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
+        let path = Path::new("main.nomo");
+        let tokens = lex(path, source).unwrap();
+        let mut source_map = SourceMap::new();
+        let file_id = source_map.add_file(path, source);
+        let source_file = source_map.file(file_id).unwrap();
+
+        let declarations = local_binding_declarations(&tokens, source_file);
+        let uses = local_binding_uses(&tokens, source_file);
+
+        assert_eq!(declarations.len(), 2);
+        assert_eq!(declarations[0].name, "self");
+        assert_eq!(declarations[0].callable_name, "label");
+        assert_eq!(declarations[0].callable_owner.as_deref(), Some("User"));
+        assert_eq!(declarations[1].name, "user");
+        assert_eq!(declarations[1].callable_name, "read");
+        assert_eq!(declarations[1].callable_owner, None);
+        assert_eq!(uses.len(), 4);
+        assert_eq!(uses[0].declaration, uses[1].declaration);
+        assert_eq!(uses[2].declaration, uses[3].declaration);
     }
 }

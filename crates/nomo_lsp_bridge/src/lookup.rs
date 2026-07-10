@@ -14,10 +14,12 @@ pub(super) fn resolve_symbol(
     name: &str,
     symbols: &[SemanticSymbol],
     preference: &[SemanticSymbolKind],
+    owner: Option<&str>,
 ) -> Option<SemanticSymbol> {
     let mut matches = symbols
         .iter()
         .filter(|symbol| symbol.name == name)
+        .filter(|symbol| owner.is_none_or(|owner| symbol.container_name.as_deref() == Some(owner)))
         .cloned()
         .collect::<Vec<_>>();
     matches.sort_by(|left, right| {
@@ -104,7 +106,11 @@ pub(super) fn symbol_lookup_preference_for_token(
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot))
         && next.is_some_and(|token| matches!(token.kind, TokenKind::LParen))
     {
-        return vec![SemanticSymbolKind::Method, SemanticSymbolKind::Function];
+        return vec![
+            SemanticSymbolKind::Method,
+            SemanticSymbolKind::InterfaceMethod,
+            SemanticSymbolKind::Function,
+        ];
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) {
         return vec![SemanticSymbolKind::Field, SemanticSymbolKind::Method];

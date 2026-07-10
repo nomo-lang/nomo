@@ -104,6 +104,30 @@ pub fn check_source_text_with_project_modules_and_overrides(
     )
 }
 
+pub fn check_module_source_text_with_project_modules_and_overrides(
+    path: &Path,
+    source: &str,
+    local_source_root: Option<&Path>,
+    external_import_roots: &[String],
+    external_modules: &[ExternalModule],
+    module_source_overrides: &[(PathBuf, String)],
+) -> Result<Program, Diagnostic> {
+    let (ast, _, local_import_root) = load_project_modules(
+        path,
+        source,
+        local_source_root,
+        external_modules,
+        module_source_overrides,
+    )?;
+    lower_program(
+        path,
+        ast,
+        external_import_roots,
+        local_import_root.as_deref(),
+        EntryMode::LibraryModule,
+    )
+}
+
 pub fn build_module_graph(
     path: &Path,
     source: &str,

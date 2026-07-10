@@ -110,6 +110,7 @@ dependencies = [
  "nomo-manifest",
  "nomo-resolver",
  "nomo-syntax",
+ "nomo-test",
  "serde",
  "serde_json",
  "sha2",
@@ -183,6 +184,10 @@ dependencies = [
 
 [[package]]
 name = "nomo-syntax"
+version = "0.1.0"
+
+[[package]]
+name = "nomo-test"
 version = "0.1.0"
 
 [[package]]

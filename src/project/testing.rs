@@ -7,6 +7,7 @@ use crate::compiler::compile_source_text_to_c_with_project_modules;
 use crate::diagnostic::Diagnostic;
 use crate::{lexer, parser};
 use nomo_manifest::{FfiLinkMetadata, parse_manifest_at_root};
+use nomo_test::{TestCaseResult, TestReport, TestStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -18,38 +19,10 @@ pub struct ProjectTestOptions {
     pub resolution: DependencyResolutionOptions,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectTestReport {
-    pub project: String,
-    pub tests: Vec<ProjectTestCaseResult>,
-}
-
-impl ProjectTestReport {
-    pub fn has_failures(&self) -> bool {
-        self.tests
-            .iter()
-            .any(|test| test.status == ProjectTestStatus::Failed)
-    }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct ProjectTestCaseResult {
-    pub name: String,
-    pub status: ProjectTestStatus,
-    pub duration_ms: u128,
-    pub message: Option<String>,
-}
-
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum ProjectTestStatus {
-    Ok,
-    Failed,
-}
-
 pub fn run_project_tests_with_options(
     project: &Project,
     options: ProjectTestOptions,
-) -> Result<ProjectTestReport, BuildError> {
+) -> Result<TestReport, BuildError> {
     let manifest = parse_manifest_at_root(&project.root).map_err(BuildError::Message)?;
     let project_id = package_id(&manifest.package);
     let context = project_module_context_with_options(project, options.resolution)
@@ -80,22 +53,22 @@ pub fn run_project_tests_with_options(
         );
         let duration_ms = started.elapsed().as_millis();
         match result {
-            Ok(()) => results.push(ProjectTestCaseResult {
+            Ok(()) => results.push(TestCaseResult {
                 name: test.name,
-                status: ProjectTestStatus::Ok,
+                status: TestStatus::Ok,
                 duration_ms,
                 message: None,
             }),
-            Err(message) => results.push(ProjectTestCaseResult {
+            Err(message) => results.push(TestCaseResult {
                 name: test.name,
-                status: ProjectTestStatus::Failed,
+                status: TestStatus::Failed,
                 duration_ms,
                 message: Some(message),
             }),
         }
     }
 
-    Ok(ProjectTestReport {
+    Ok(TestReport {
         project: project_id,
         tests: results,
     })

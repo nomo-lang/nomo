@@ -1,0 +1,9 @@
+[package]
+name = "nomo-test"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[lib]
+name = "nomo_test"
+path = "src/lib.rs"

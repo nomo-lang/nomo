@@ -42,6 +42,10 @@ pub use modules::{
     ProjectModuleContext, project_module_context, project_module_context_with_options,
     resolve_module_source_path,
 };
+pub use nomo_test::{
+    TestCaseResult as ProjectTestCaseResult, TestReport as ProjectTestReport,
+    TestStatus as ProjectTestStatus,
+};
 pub use package::{
     PublishPackage, add_registry_dependency, prepare_publish_package, remove_dependency,
 };
@@ -58,10 +62,7 @@ pub use running::{
     run_project, run_project_with_args, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
 };
-pub use testing::{
-    ProjectTestCaseResult, ProjectTestOptions, ProjectTestReport, ProjectTestStatus,
-    run_project_tests_with_options,
-};
+pub use testing::{ProjectTestOptions, run_project_tests_with_options};
 pub use update::{update_project_dependencies, update_workspace_dependencies};
 pub use vendor::{vendor_project_dependencies, vendor_workspace_dependencies};
 pub use workspace::{WorkspaceGraph, discover_workspace};

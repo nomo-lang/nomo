@@ -18,6 +18,7 @@ members = [
     "crates/nomo_manifest",
     "crates/nomo_resolver",
     "crates/nomo_syntax",
+    "crates/nomo_test",
 ]
 
 [workspace.package]
@@ -42,6 +43,7 @@ nomo-lockfile = { path = "crates/nomo_lockfile" }
 nomo-manifest = { path = "crates/nomo_manifest" }
 nomo-resolver = { path = "crates/nomo_resolver" }
 nomo-syntax = { path = "crates/nomo_syntax" }
+nomo-test = { path = "crates/nomo_test" }
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true

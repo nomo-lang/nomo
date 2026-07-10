@@ -70,7 +70,10 @@ pub use running::{
 pub use testing::{ProjectTestOptions, run_project_tests_with_options};
 pub use update::{update_project_dependencies, update_workspace_dependencies};
 pub use vendor::{vendor_project_dependencies, vendor_workspace_dependencies};
-pub use workspace::{WorkspaceGraph, discover_workspace};
+pub use workspace::{
+    WorkspaceGraph, WorkspaceMember, build_workspace_graph, build_workspace_graph_with_options,
+    discover_workspace,
+};
 
 #[derive(Debug, Clone)]
 pub struct Project {

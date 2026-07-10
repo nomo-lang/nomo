@@ -266,6 +266,15 @@ root. `nomo check --workspace`, `nomo build --workspace`,
 workspace root, expand `members` minus `exclude`, and visit each member package
 in stable path order.
 
+The library-level `WorkspaceGraph` records canonical member identities,
+versions, default members, the root lockfile, inherited workspace dependencies,
+and dependency-first member ordering. Member path cycles and duplicate package
+identities are rejected during discovery. `discover_workspace` remains a
+manifest-only operation; `build_workspace_graph` (or its options variant)
+explicitly resolves and attaches one `PackageGraph` per workspace member. Its
+workspace-wide package index de-duplicates shared packages and rejects members
+that resolve the same external package identity to conflicting sources.
+
 `nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
 `nomo deps resolve --workspace [path]` writes a single workspace-root lockfile
 that records each member as a `[[root]]` entry and stores shared locked package
@@ -550,6 +559,8 @@ order. `project_package_graph` builds the resolved package layer with canonical
 package identities, versions, sources, dependency aliases, dependency-first
 ordering, available source roots, and each source package's public semantic API;
 `project_package_graph_with_options` applies locked/offline resolution rules.
+`build_workspace_graph` adds the workspace layer and aggregates those package
+graphs while preserving member/default-member topology and workspace metadata.
 The library also exposes the `lexer`, `parser`, `ast`, `compiler`, `codegen`,
 `diagnostic`, `semantic`, and `project` modules. The `semantic` module provides
 current-document symbol queries plus project-aware hover, definition, and

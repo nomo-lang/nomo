@@ -33,6 +33,7 @@ pub use nomo_graph as graph;
 pub use nomo_spans as spans;
 pub use nomo_syntax::{ast, lexer, parser};
 pub use project::{
-    PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, project_package_graph,
-    project_package_graph_with_options,
+    PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, WorkspaceGraph,
+    WorkspaceMember, build_workspace_graph, build_workspace_graph_with_options,
+    project_package_graph, project_package_graph_with_options,
 };

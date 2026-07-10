@@ -53,8 +53,10 @@ server in turn. Language decisions are tracked in the
 This repository is a Cargo workspace. Package metadata and shared dependencies
 are centralized at the workspace level so `crates/*` members inherit the same
 settings. Split-out members include `crates/nomo_syntax`, which owns the AST,
-diagnostics, lexer and parser, `crates/nomo_ir`, which owns the lowered compiler
-IR, `crates/nomo_manifest`, which owns `nomo.toml` parsing and editing, and
+lexer and parser, `libs/diagnostics`, which owns the shared diagnostic model,
+rendering contract and error-code registry, `crates/nomo_ir`, which owns the
+lowered compiler IR, `crates/nomo_manifest`, which owns `nomo.toml` parsing and
+editing, and
 `crates/nomo_compiler`, which owns source-to-IR compilation, and
 `crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
 `crates/nomo_resolver`, which owns package source/archive primitives, and

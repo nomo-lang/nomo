@@ -102,6 +102,7 @@ version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
  "nomo-compiler",
+ "nomo-diagnostics",
  "nomo-doc",
  "nomo-fmt",
  "nomo-ir",
@@ -129,14 +130,20 @@ name = "nomo-compiler"
 version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
+ "nomo-diagnostics",
  "nomo-ir",
  "nomo-syntax",
 ]
 
 [[package]]
+name = "nomo-diagnostics"
+version = "0.1.0"
+
+[[package]]
 name = "nomo-doc"
 version = "0.1.0"
 dependencies = [
+ "nomo-diagnostics",
  "nomo-syntax",
 ]
 
@@ -144,6 +151,7 @@ dependencies = [
 name = "nomo-fmt"
 version = "0.1.0"
 dependencies = [
+ "nomo-diagnostics",
  "nomo-syntax",
 ]
 
@@ -164,6 +172,7 @@ dependencies = [
 name = "nomo-lsp-bridge"
 version = "0.1.0"
 dependencies = [
+ "nomo-diagnostics",
  "nomo-syntax",
 ]
 
@@ -185,6 +194,9 @@ dependencies = [
 [[package]]
 name = "nomo-syntax"
 version = "0.1.0"
+dependencies = [
+ "nomo-diagnostics",
+]
 
 [[package]]
 name = "nomo-test"

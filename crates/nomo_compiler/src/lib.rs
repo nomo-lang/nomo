@@ -8,7 +8,8 @@
     clippy::too_many_arguments
 )]
 
-pub use nomo_syntax::{ast, diagnostic, lexer, parser};
+pub use nomo_diagnostics as diagnostic;
+pub use nomo_syntax::{ast, lexer, parser};
 
 use crate::ast::{
     AssignOp, BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,

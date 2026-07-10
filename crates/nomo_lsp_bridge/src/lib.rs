@@ -1,6 +1,6 @@
 #![allow(clippy::result_large_err)]
 
-use nomo_syntax::diagnostic::Diagnostic;
+use nomo_diagnostics::Diagnostic;
 use nomo_syntax::lexer::{TokenKind, lex};
 use nomo_syntax::parser::parse;
 use std::collections::BTreeSet;

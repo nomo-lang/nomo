@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-codegen-c = { path = "../nomo_codegen_c" }
+nomo-diagnostics.workspace = true
 nomo-ir = { path = "../nomo_ir" }
 nomo-syntax = { path = "../nomo_syntax" }
 

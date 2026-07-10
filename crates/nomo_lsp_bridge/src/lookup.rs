@@ -1,4 +1,4 @@
-use nomo_syntax::diagnostic::Diagnostic;
+use nomo_diagnostics::Diagnostic;
 use nomo_syntax::lexer::{Token, TokenKind, lex};
 use std::path::Path;
 

@@ -1,12 +1,9 @@
 [package]
-name = "nomo-syntax"
+name = "nomo-diagnostics"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
 
-[dependencies]
-nomo-diagnostics.workspace = true
-
 [lib]
-name = "nomo_syntax"
+name = "nomo_diagnostics"
 path = "src/lib.rs"

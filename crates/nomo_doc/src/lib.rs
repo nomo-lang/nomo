@@ -1,10 +1,10 @@
 #![allow(clippy::result_large_err)]
 
+use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
     ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, InterfaceDef,
     Param, SourceFile, StructDef, TypeRef,
 };
-use nomo_syntax::diagnostic::Diagnostic;
 use nomo_syntax::lexer::lex;
 use nomo_syntax::parser::parse;
 use std::collections::BTreeMap;

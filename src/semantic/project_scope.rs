@@ -1,11 +1,12 @@
+use crate::compiler::build_module_graph_with_overrides;
 use crate::diagnostic::Diagnostic;
-use crate::project::{Project, project_module_context, resolve_module_source_path};
-use nomo_lsp_bridge::public_symbols_for_text;
+use crate::project::{Project, project_module_context};
+use nomo_lsp_bridge::{public_symbols_for_text, symbols_for_text};
 use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Path, PathBuf};
 
-use super::{SemanticSymbol, symbols_for_text};
+use super::SemanticSymbol;
 
 pub fn symbols_for_project_with_overrides(
     project: &Project,
@@ -72,98 +73,61 @@ pub fn dependency_symbols_for_project_with_overrides(
 
 pub(super) fn accessible_symbols_for_document(
     project: &Project,
+    path: &Path,
     source: &str,
     source_overrides: &[(PathBuf, String)],
 ) -> Result<Vec<SemanticSymbol>, Diagnostic> {
-    let mut symbols = symbols_for_project_with_overrides(project, source_overrides)?;
-    symbols.extend(dependency_symbols_for_document(
-        project,
+    let context = project_module_context(project).map_err(|message| {
+        Diagnostic::new(
+            "E0901",
+            message,
+            &project.root.join("nomo.toml"),
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let graph = build_module_graph_with_overrides(
+        path,
         source,
+        Some(&context.local_source_root),
+        &context.external_modules,
         source_overrides,
-    )?);
-    Ok(symbols)
-}
-
-fn dependency_symbols_for_document(
-    project: &Project,
-    source: &str,
-    source_overrides: &[(PathBuf, String)],
-) -> Result<Vec<SemanticSymbol>, Diagnostic> {
-    let Ok(context) = project_module_context(project) else {
-        return Ok(Vec::new());
-    };
-    let Some(local_root) = package_root(source) else {
-        return Ok(Vec::new());
-    };
-    let external_roots = context
-        .external_modules
-        .iter()
-        .map(|module| module.source_root.as_path())
-        .collect::<Vec<_>>();
-    let mut files = source
-        .lines()
-        .filter_map(import_path)
-        .filter(|import| {
-            import
-                .first()
-                .is_some_and(|root| root != "std" && root != &local_root)
-        })
-        .filter_map(|import| resolve_module_source_path(&context, &local_root, &import))
-        .filter(|path| {
-            external_roots
-                .iter()
-                .any(|source_root| path.starts_with(source_root))
-        })
-        .collect::<Vec<_>>();
-    files.sort();
-    files.dedup();
-
+    )?;
     let overrides = source_overrides
         .iter()
         .map(|(path, source)| (path.clone(), source.clone()))
         .collect::<BTreeMap<_, _>>();
-
     let mut symbols = Vec::new();
-    for path in files {
-        let source = match overrides.get(&path) {
-            Some(source) => source.clone(),
-            None => fs::read_to_string(&path).map_err(|err| {
+    for module in graph.modules() {
+        let module_source = if module.source_path == path {
+            source.to_string()
+        } else if let Some(source) = overrides.get(&module.source_path) {
+            source.clone()
+        } else {
+            fs::read_to_string(&module.source_path).map_err(|err| {
                 Diagnostic::new(
                     "E0902",
-                    format!("failed to read {}: {err}", path.display()),
-                    &path,
+                    format!("failed to read {}: {err}", module.source_path.display()),
+                    &module.source_path,
                     1,
                     1,
                     1,
                     "",
                 )
-            })?,
+            })?
         };
-        symbols.extend(public_symbols_for_text(&path, &source)?);
+        if module.source_path == path {
+            symbols.extend(symbols_for_text(&module.source_path, &module_source)?);
+        } else {
+            symbols.extend(public_symbols_for_text(
+                &module.source_path,
+                &module_source,
+            )?);
+        }
     }
     Ok(symbols)
-}
-
-fn package_root(source: &str) -> Option<String> {
-    source.lines().find_map(|line| {
-        let package = line.trim().strip_prefix("package ")?;
-        package
-            .split('.')
-            .next()
-            .filter(|segment| !segment.is_empty())
-            .map(str::to_string)
-    })
-}
-
-fn import_path(line: &str) -> Option<Vec<String>> {
-    let import = line.trim().strip_prefix("import ")?;
-    let path = import.split_whitespace().next()?;
-    let parts = path
-        .split('.')
-        .filter(|part| !part.is_empty())
-        .map(str::to_string)
-        .collect::<Vec<_>>();
-    (parts.len() >= 2).then_some(parts)
 }
 
 pub(super) fn overrides_with_current(

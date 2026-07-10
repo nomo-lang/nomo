@@ -1,4 +1,4 @@
-use crate::compiler::check_source_text_with_project_modules;
+use crate::compiler::check_source_text_with_project_modules_and_overrides;
 #[cfg(test)]
 use crate::compiler::{ExternalModule, ModuleId};
 use crate::diagnostic::Diagnostic;
@@ -199,6 +199,13 @@ impl Project {
 }
 
 pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
+    check_project_with_overrides(project, &[])
+}
+
+pub fn check_project_with_overrides(
+    project: &Project,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<(), Diagnostic> {
     let context = project_module_context(project).map_err(|message| {
         Diagnostic::new(
             "E0901",
@@ -210,23 +217,31 @@ pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
             "",
         )
     })?;
-    let source = fs::read_to_string(&project.main).map_err(|err| {
-        Diagnostic::new(
-            "E0001",
-            format!("failed to read source file: {err}"),
-            &project.main,
-            1,
-            1,
-            1,
-            "",
-        )
-    })?;
-    check_source_text_with_project_modules(
+    let source = if let Some((_, source)) = source_overrides
+        .iter()
+        .find(|(path, _)| path == &project.main)
+    {
+        source.clone()
+    } else {
+        fs::read_to_string(&project.main).map_err(|err| {
+            Diagnostic::new(
+                "E0001",
+                format!("failed to read source file: {err}"),
+                &project.main,
+                1,
+                1,
+                1,
+                "",
+            )
+        })?
+    };
+    check_source_text_with_project_modules_and_overrides(
         &project.main,
         &source,
         Some(&context.local_source_root),
         &context.external_import_roots,
         &context.external_modules,
+        source_overrides,
     )
     .map(|_| ())
 }

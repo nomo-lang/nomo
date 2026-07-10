@@ -12,12 +12,13 @@ pub(super) fn resolve_symbol(
     path: &Path,
     position: TextPosition,
     name: &str,
-    symbols: Vec<SemanticSymbol>,
+    symbols: &[SemanticSymbol],
     preference: &[SemanticSymbolKind],
 ) -> Option<SemanticSymbol> {
     let mut matches = symbols
-        .into_iter()
+        .iter()
         .filter(|symbol| symbol.name == name)
+        .cloned()
         .collect::<Vec<_>>();
     matches.sort_by(|left, right| {
         left.source_path
@@ -36,20 +37,23 @@ pub(super) fn resolve_symbol(
                     .cmp(&right.selection_range.start.character),
             )
     });
-    let fallback = matches
+    if let Some(exact) = matches.iter().find(|symbol| {
+        symbol.source_path == path && range_contains(symbol.selection_range, position)
+    }) {
+        return Some(exact.clone());
+    }
+
+    let local_matches = matches
         .iter()
-        .find(|symbol| {
-            symbol.source_path == path && range_contains(symbol.selection_range, position)
-        })
+        .filter(|symbol| symbol.source_path == path)
         .cloned()
-        .or_else(|| {
-            matches
-                .iter()
-                .find(|symbol| symbol.source_path == path)
-                .cloned()
-        })
-        .or_else(|| matches.first().cloned());
-    prefer_symbol_kind(fallback, &matches, preference)
+        .collect::<Vec<_>>();
+    let candidates = if local_matches.is_empty() {
+        matches.as_slice()
+    } else {
+        local_matches.as_slice()
+    };
+    prefer_symbol_kind(candidates.first().cloned(), candidates, preference)
 }
 
 pub(super) fn symbol_lookup_preference(
@@ -69,41 +73,46 @@ pub(super) fn symbol_lookup_preference(
     let TokenKind::Ident(name) = &tokens[index].kind else {
         return Ok(Vec::new());
     };
-    let previous = previous_significant_token(&tokens, index);
-    let next = next_significant_index(&tokens, index, tokens.len()).map(|index| &tokens[index]);
+    Ok(symbol_lookup_preference_for_token(&tokens, index, name))
+}
+
+pub(super) fn symbol_lookup_preference_for_token(
+    tokens: &[Token],
+    index: usize,
+    name: &str,
+) -> Vec<SemanticSymbolKind> {
+    let previous = previous_significant_token(tokens, index);
+    let next = next_significant_index(tokens, index, tokens.len()).map(|index| &tokens[index]);
     let starts_upper = name
         .chars()
         .next()
         .is_some_and(|ch| ch.is_ascii_uppercase());
 
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Fn)) {
-        return Ok(vec![
+        return vec![
             SemanticSymbolKind::InterfaceMethod,
             SemanticSymbolKind::Method,
             SemanticSymbolKind::Function,
-        ]);
+        ];
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Interface)) {
-        return Ok(vec![SemanticSymbolKind::Interface]);
+        return vec![SemanticSymbolKind::Interface];
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) && starts_upper {
-        return Ok(vec![SemanticSymbolKind::Variant, SemanticSymbolKind::Field]);
+        return vec![SemanticSymbolKind::Variant, SemanticSymbolKind::Field];
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot))
         && next.is_some_and(|token| matches!(token.kind, TokenKind::LParen))
     {
-        return Ok(vec![
-            SemanticSymbolKind::Method,
-            SemanticSymbolKind::Function,
-        ]);
+        return vec![SemanticSymbolKind::Method, SemanticSymbolKind::Function];
     }
     if previous.is_some_and(|token| matches!(token.kind, TokenKind::Dot)) {
-        return Ok(vec![SemanticSymbolKind::Field, SemanticSymbolKind::Method]);
+        return vec![SemanticSymbolKind::Field, SemanticSymbolKind::Method];
     }
     if next.is_some_and(|token| matches!(token.kind, TokenKind::Colon)) {
-        return Ok(vec![SemanticSymbolKind::Field]);
+        return vec![SemanticSymbolKind::Field];
     }
-    Ok(Vec::new())
+    Vec::new()
 }
 
 fn prefer_symbol_kind(
@@ -112,11 +121,16 @@ fn prefer_symbol_kind(
     preference: &[SemanticSymbolKind],
 ) -> Option<SemanticSymbol> {
     for kind in preference {
-        if let Some(symbol) = matches.iter().find(|symbol| symbol.kind == *kind) {
+        let mut preferred = matches.iter().filter(|symbol| symbol.kind == *kind);
+        let symbol = preferred.next();
+        if preferred.next().is_some() {
+            return None;
+        }
+        if let Some(symbol) = symbol {
             return Some(symbol.clone());
         }
     }
-    fallback
+    (matches.len() == 1).then_some(fallback).flatten()
 }
 
 fn ident_token_at_position(

@@ -1,5 +1,5 @@
 use crate::diagnostic::Diagnostic;
-use crate::project::Project;
+use crate::project::{Project, WorkspaceGraph};
 pub use nomo_lsp_bridge::{
     SemanticLocation, SemanticMemberOwner, SemanticSymbol, SemanticSymbolKind, TextPosition,
     TextRange, identifier_at_position, local_definition_for_text, local_references_for_text,
@@ -126,6 +126,46 @@ pub fn references_for_project_text(
     include_declaration: bool,
     source_overrides: &[(PathBuf, String)],
 ) -> Result<Option<Vec<SemanticLocation>>, Diagnostic> {
+    references_for_projects_text(
+        std::slice::from_ref(project),
+        project,
+        path,
+        source,
+        position,
+        include_declaration,
+        source_overrides,
+    )
+}
+
+pub fn references_for_workspace_text(
+    workspace: &WorkspaceGraph,
+    project: &Project,
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    include_declaration: bool,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Option<Vec<SemanticLocation>>, Diagnostic> {
+    references_for_projects_text(
+        &workspace.members,
+        project,
+        path,
+        source,
+        position,
+        include_declaration,
+        source_overrides,
+    )
+}
+
+fn references_for_projects_text(
+    editable_projects: &[Project],
+    project: &Project,
+    path: &Path,
+    source: &str,
+    position: TextPosition,
+    include_declaration: bool,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<Option<Vec<SemanticLocation>>, Diagnostic> {
     if let Some(ranges) = local_references_for_text(path, source, position, include_declaration)? {
         return Ok(Some(
             ranges
@@ -137,43 +177,80 @@ pub fn references_for_project_text(
                 .collect(),
         ));
     }
-    let Some(symbol) =
+    let Some(mut symbol) =
         symbol_at_project_position(project, path, source, position, source_overrides)?
     else {
         return Ok(None);
     };
-    let local_source_root = project.root.join("src");
-    if !is_project_nomo_source(&local_source_root, &symbol.source_path) {
+    let Some(source_path) = editable_source_path(editable_projects, &symbol.source_path) else {
         return Ok(None);
-    }
+    };
+    symbol.source_path = source_path;
     let overrides = overrides_with_current(path, source, source_overrides);
     let mut locations = Vec::new();
-    for (source_path, source) in project_sources(project, &overrides)? {
-        let Ok(symbols) =
-            accessible_symbols_for_document(project, &source_path, &source, &overrides)
-        else {
-            continue;
-        };
-        let member_owners = member_owners_for_document(project, &source_path, &source, &overrides)
-            .unwrap_or_default();
-        let Ok(ranges) = references_for_symbol_in_text_with_owners(
-            &source_path,
-            &source,
-            &symbol,
-            &symbols,
-            include_declaration,
-            &member_owners,
-        ) else {
-            continue;
-        };
-        for range in ranges {
-            locations.push(SemanticLocation {
-                path: source_path.clone(),
-                range,
-            });
+    for editable_project in editable_projects {
+        for (source_path, source) in project_sources(editable_project, &overrides)? {
+            let Ok(mut symbols) = accessible_symbols_for_document(
+                editable_project,
+                &source_path,
+                &source,
+                &overrides,
+            ) else {
+                continue;
+            };
+            for candidate in &mut symbols {
+                if let Some(path) = editable_source_path(editable_projects, &candidate.source_path)
+                {
+                    candidate.source_path = path;
+                }
+            }
+            let member_owners =
+                member_owners_for_document(editable_project, &source_path, &source, &overrides)
+                    .unwrap_or_default();
+            let Ok(ranges) = references_for_symbol_in_text_with_owners(
+                &source_path,
+                &source,
+                &symbol,
+                &symbols,
+                include_declaration,
+                &member_owners,
+            ) else {
+                continue;
+            };
+            for range in ranges {
+                let location = SemanticLocation {
+                    path: source_path.clone(),
+                    range,
+                };
+                if !locations.contains(&location) {
+                    locations.push(location);
+                }
+            }
         }
     }
     Ok(Some(locations))
+}
+
+fn editable_source_path(projects: &[Project], path: &Path) -> Option<PathBuf> {
+    for project in projects {
+        let source_root = project.root.join("src");
+        if is_project_nomo_source(&source_root, path) {
+            return Some(path.to_path_buf());
+        }
+        let Ok(canonical_root) = std::fs::canonicalize(&source_root) else {
+            continue;
+        };
+        let Ok(canonical_path) = std::fs::canonicalize(path) else {
+            continue;
+        };
+        let Ok(relative) = canonical_path.strip_prefix(canonical_root) else {
+            continue;
+        };
+        if path.extension().and_then(|extension| extension.to_str()) == Some("nomo") {
+            return Some(source_root.join(relative));
+        }
+    }
+    None
 }
 
 fn range_contains(range: TextRange, position: TextPosition) -> bool {
@@ -1132,6 +1209,135 @@ mod tests {
 
         assert_eq!(definition.path, math);
         assert_eq!(definition.range.start.line, 2);
+    }
+
+    #[test]
+    fn workspace_references_include_dependent_members_and_canonical_overlays() {
+        let root = env::temp_dir().join(format!(
+            "nomo_semantic_workspace_references_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let core = root.join("packages/core");
+        let cli = root.join("apps/cli");
+        fs::create_dir_all(core.join("src")).unwrap();
+        fs::create_dir_all(cli.join("src")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            core.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"core\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        fs::write(
+            cli.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"cli\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ncore = { package = \"fynn/core\", path = \"../../packages/core\" }\n",
+        )
+        .unwrap();
+        let core_main = core.join("src/main.nomo");
+        let cli_main = cli.join("src/main.nomo");
+        write_source(
+            &core_main,
+            "package core.main\n\npub fn sub(a: i64, b: i64) -> i64 {\n    return a - b\n}\n\nfn main() -> void {\n}\n",
+        );
+        write_source(
+            &cli_main,
+            "package cli.main\n\nimport core.main\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+        );
+        let core_overlay = "package core.main\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() -> void {\n}\n";
+        let project = crate::project::discover_project(&core_main).unwrap();
+        let workspace = crate::project::discover_workspace(&core_main).unwrap();
+
+        let references = references_for_workspace_text(
+            &workspace,
+            &project,
+            &core_main,
+            core_overlay,
+            TextPosition {
+                line: 2,
+                character: 8,
+            },
+            true,
+            &[(core_main.clone(), core_overlay.to_string())],
+        )
+        .unwrap()
+        .unwrap();
+
+        assert!(references.iter().any(|location| {
+            location.path == core_main
+                && location.range.start
+                    == TextPosition {
+                        line: 2,
+                        character: 7,
+                    }
+        }));
+        assert!(references.iter().any(|location| {
+            location.path == cli_main
+                && location.range.start
+                    == TextPosition {
+                        line: 5,
+                        character: 21,
+                    }
+        }));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn workspace_references_keep_external_dependencies_read_only() {
+        let root = env::temp_dir().join(format!(
+            "nomo_semantic_workspace_external_references_{}",
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let app = root.join("app");
+        let external = root.join("external");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::create_dir_all(external.join("src")).unwrap();
+        fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\"app\"]\n").unwrap();
+        fs::write(
+            app.join("nomo.toml"),
+            "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nexternal = { package = \"other/external\", path = \"../external\" }\n",
+        )
+        .unwrap();
+        fs::write(
+            external.join("nomo.toml"),
+            "[package]\nnamespace = \"other\"\nname = \"external\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        let app_main = app.join("src/main.nomo");
+        let external_main = external.join("src/main.nomo");
+        let app_source = "package app.main\n\nimport external.main\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n";
+        write_source(&app_main, app_source);
+        write_source(
+            &external_main,
+            "package external.main\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        );
+        let project = crate::project::discover_project(&app_main).unwrap();
+        let workspace = crate::project::discover_workspace(&app_main).unwrap();
+
+        let references = references_for_workspace_text(
+            &workspace,
+            &project,
+            &app_main,
+            app_source,
+            TextPosition {
+                line: 5,
+                character: 23,
+            },
+            true,
+            &[],
+        )
+        .unwrap();
+
+        assert!(references.is_none());
+        fs::remove_dir_all(root).unwrap();
     }
 
     fn test_project(name: &str) -> Project {

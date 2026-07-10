@@ -1,6 +1,6 @@
 use crate::compiler::build_module_graph_with_overrides;
 use crate::diagnostic::Diagnostic;
-use crate::project::{Project, project_module_context};
+use crate::project::{Project, project_module_context, source_overrides_with_canonical_aliases};
 use nomo_lsp_bridge::{public_symbols_for_text, symbols_for_text};
 use std::collections::BTreeMap;
 use std::fs;
@@ -77,6 +77,7 @@ pub(super) fn accessible_symbols_for_document(
     source: &str,
     source_overrides: &[(PathBuf, String)],
 ) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let source_overrides = source_overrides_with_canonical_aliases(source_overrides);
     let context = project_module_context(project).map_err(|message| {
         Diagnostic::new(
             "E0901",
@@ -93,7 +94,7 @@ pub(super) fn accessible_symbols_for_document(
         source,
         Some(&context.local_source_root),
         &context.external_modules,
-        source_overrides,
+        &source_overrides,
     )?;
     let overrides = source_overrides
         .iter()

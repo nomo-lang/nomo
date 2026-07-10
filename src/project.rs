@@ -206,6 +206,7 @@ pub fn check_project_with_overrides(
     project: &Project,
     source_overrides: &[(PathBuf, String)],
 ) -> Result<(), Diagnostic> {
+    let source_overrides = source_overrides_with_canonical_aliases(source_overrides);
     let context = project_module_context(project).map_err(|message| {
         Diagnostic::new(
             "E0901",
@@ -241,9 +242,51 @@ pub fn check_project_with_overrides(
         Some(&context.local_source_root),
         &context.external_import_roots,
         &context.external_modules,
-        source_overrides,
+        &source_overrides,
     )
     .map(|_| ())
+}
+
+pub fn check_workspace(workspace: &WorkspaceGraph) -> Result<(), Diagnostic> {
+    check_workspace_with_overrides(workspace, &[])
+}
+
+pub fn check_workspace_with_overrides(
+    workspace: &WorkspaceGraph,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<(), Diagnostic> {
+    for project in &workspace.members {
+        check_project_with_overrides(project, source_overrides)?;
+    }
+    Ok(())
+}
+
+pub(crate) fn source_overrides_with_canonical_aliases(
+    source_overrides: &[(PathBuf, String)],
+) -> Vec<(PathBuf, String)> {
+    let mut expanded = Vec::new();
+    for (path, source) in source_overrides {
+        replace_source_override(&mut expanded, path.clone(), source.clone());
+        if let Ok(canonical) = fs::canonicalize(path) {
+            replace_source_override(&mut expanded, canonical, source.clone());
+        }
+    }
+    expanded
+}
+
+fn replace_source_override(
+    source_overrides: &mut Vec<(PathBuf, String)>,
+    path: PathBuf,
+    source: String,
+) {
+    if let Some((_, existing)) = source_overrides
+        .iter_mut()
+        .find(|(candidate, _)| candidate == &path)
+    {
+        *existing = source;
+    } else {
+        source_overrides.push((path, source));
+    }
 }
 
 pub fn project_package_id(project: &Project) -> Result<String, String> {

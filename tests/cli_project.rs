@@ -629,6 +629,10 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("\"name\":\"std.ffi\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"CString\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Opaque\""), "{stdout}");
+    assert!(
+        stdout.contains("\"source\":\"std/src/ffi.nomo\""),
+        "{stdout}"
+    );
 }
 
 #[test]

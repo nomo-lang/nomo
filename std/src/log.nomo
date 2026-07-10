@@ -1,0 +1,2 @@
+//! Leveled logging helpers.
+package std.log

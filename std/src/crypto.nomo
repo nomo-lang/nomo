@@ -1,0 +1,2 @@
+//! Cryptographic digest helpers.
+package std.crypto

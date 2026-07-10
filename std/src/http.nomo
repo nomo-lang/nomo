@@ -1,0 +1,2 @@
+//! Blocking plain-HTTP client and server helpers.
+package std.http

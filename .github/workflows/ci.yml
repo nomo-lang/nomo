@@ -33,6 +33,9 @@ jobs:
       - name: Check Example Formatting
         run: cargo run --bin nomo -- fmt --check examples
 
+      - name: Check Standard Library Formatting
+        run: cargo run --bin nomo -- fmt --check std
+
       - name: Check Workspace Example
         run: cargo run --bin nomo -- check --workspace examples/workspace_basic
 

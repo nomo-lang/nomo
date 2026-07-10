@@ -21,6 +21,8 @@ This repository ships two binaries and reusable Rust crates:
   lowered Nomo IR.
 - `nomo-runtime` (lib crate) — the platform prelude and reusable C runtime
   emitters for checked operators, strings, `CString`, paths and logging.
+- `nomo-std` (toolchain package) — the reserved `nomo-lang/std` package,
+  standard module sources and shared compiler/doc/LSP import registry.
 - `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
   analysis and the C99 code generator.
 - `nomo-lockfile` (lib crate) — the `nomo.lock` model, TOML parsing, rendering
@@ -65,7 +67,12 @@ which owns `nomo.toml` parsing and editing, and
 `crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
 `crates/nomo_resolver`, which owns package source/archive primitives, and
 `crates/nomo_runtime`, which owns shared platform-aware C runtime emission, and
-`crates/nomo_codegen_c`, which owns the IR-specific C99 backend.
+`crates/nomo_codegen_c`, which owns the IR-specific C99 backend. The `std/`
+workspace member owns the toolchain standard-library package identity, module
+source inventory and public import metadata used across compiler tooling.
+The current module files establish package/module identity and documentation
+roots; builtin bodies continue to lower through compiler intrinsics and the
+native runtime while public implementations migrate into Nomo source.
 
 ```bash
 cargo build --workspace --release

@@ -1,0 +1,2 @@
+//! Printing and terminal I/O.
+package std.io

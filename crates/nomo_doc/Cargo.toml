@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-diagnostics.workspace = true
+nomo-std.workspace = true
 nomo-syntax = { path = "../nomo_syntax" }
 
 [lib]

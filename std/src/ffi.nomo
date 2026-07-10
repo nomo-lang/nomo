@@ -1,0 +1,2 @@
+//! C string and opaque native handle types.
+package std.ffi

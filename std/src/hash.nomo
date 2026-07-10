@@ -1,0 +1,2 @@
+//! Stable non-cryptographic hashing helpers.
+package std.hash

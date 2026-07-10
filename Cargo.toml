@@ -23,6 +23,7 @@ members = [
     "libs/diagnostics",
     "libs/graph",
     "libs/spans",
+    "std",
 ]
 
 [workspace.package]
@@ -34,6 +35,7 @@ license = "MIT"
 nomo-diagnostics = { path = "libs/diagnostics" }
 nomo-graph = { path = "libs/graph" }
 nomo-spans = { path = "libs/spans" }
+nomo-std = { path = "std" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
@@ -52,6 +54,7 @@ nomo-lockfile = { path = "crates/nomo_lockfile" }
 nomo-manifest = { path = "crates/nomo_manifest" }
 nomo-resolver = { path = "crates/nomo_resolver" }
 nomo-spans.workspace = true
+nomo-std.workspace = true
 nomo-syntax = { path = "crates/nomo_syntax" }
 nomo-test = { path = "crates/nomo_test" }
 serde.workspace = true

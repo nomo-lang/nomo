@@ -105,84 +105,35 @@ pub fn generate_std_docs(output: &Path) -> Result<DocPackage, DocError> {
 }
 
 pub fn std_doc_package() -> DocPackage {
-    let modules = [
-        ("std.io", "printing and terminal I/O"),
-        ("std.fs", "filesystem helpers"),
-        ("std.env", "process environment helpers"),
-        ("std.path", "path manipulation helpers"),
-        ("std.math", "numeric helpers"),
-        ("std.num", "numeric parsing and conversion helpers"),
-        ("std.hash", "stable non-cryptographic hashing helpers"),
-        ("std.crypto", "cryptographic digest helpers"),
-        ("std.regex", "regular expression helpers"),
-        ("std.json", "JSON parse and stringify helpers"),
-        ("std.net", "blocking TCP and UDP helpers"),
-        ("std.http", "blocking plain-HTTP client and server helpers"),
-        ("std.ffi", "C string and opaque native handle types"),
-        ("std.collections", "string map and string set helpers"),
-        ("std.char", "character helpers"),
-        ("std.os", "target OS helpers"),
-        ("std.time", "clock and sleep helpers"),
-        ("std.process", "process helpers"),
-        ("std.testing", "test assertion helpers"),
-        ("std.debug", "debug print and panic helpers"),
-        ("std.log", "leveled logging helpers"),
-        ("std.option", "Option carrier helpers"),
-        ("std.result", "Result carrier helpers"),
-        ("std.array", "Array helpers"),
-        ("std.string", "string helpers"),
-    ]
-    .into_iter()
-    .map(|(name, docs)| DocModule {
-        name: name.to_string(),
-        source: "toolchain std".to_string(),
-        docs: docs.to_string(),
-        items: if name == "std.ffi" {
-            std_ffi_doc_items()
-        } else {
-            Vec::new()
-        },
-    })
-    .collect();
+    let modules = nomo_std::modules()
+        .iter()
+        .map(|module| DocModule {
+            name: module.path.to_string(),
+            source: "toolchain std".to_string(),
+            docs: module.docs.to_string(),
+            items: module
+                .doc_items
+                .iter()
+                .map(|item| DocItem {
+                    kind: item.kind.to_string(),
+                    name: item.name.to_string(),
+                    signature: item.signature.to_string(),
+                    visibility: "public".to_string(),
+                    docs: item.docs.to_string(),
+                    source: Path::new("std/src")
+                        .join(nomo_std::module_source_relative_path(module))
+                        .display()
+                        .to_string(),
+                    line: 0,
+                    children: Vec::new(),
+                })
+                .collect(),
+        })
+        .collect();
     DocPackage {
-        package: "nomo-lang/std".to_string(),
+        package: nomo_std::PACKAGE_ID.to_string(),
         modules,
     }
-}
-
-fn std_ffi_doc_items() -> Vec<DocItem> {
-    [
-        (
-            "type",
-            "CString",
-            "pub type CString",
-            "Owned NUL-terminated string value passed to C as const char *.",
-        ),
-        (
-            "type",
-            "Opaque",
-            "pub type Opaque",
-            "Uninspectable native handle represented as void * at C boundaries.",
-        ),
-        (
-            "function",
-            "CString.from_string",
-            "pub fn CString.from_string(value: string) -> CString",
-            "Creates an owned C string copy from a Nomo string.",
-        ),
-    ]
-    .into_iter()
-    .map(|(kind, name, signature, docs)| DocItem {
-        kind: kind.to_string(),
-        name: name.to_string(),
-        signature: signature.to_string(),
-        visibility: "public".to_string(),
-        docs: docs.to_string(),
-        source: "toolchain std".to_string(),
-        line: 0,
-        children: Vec::new(),
-    })
-    .collect()
 }
 
 pub fn write_doc_index(output: &Path, packages: &[DocPackage]) -> Result<PathBuf, DocError> {

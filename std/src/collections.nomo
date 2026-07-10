@@ -1,0 +1,2 @@
+//! String map and string set helpers.
+package std.collections

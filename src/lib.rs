@@ -31,6 +31,7 @@ pub use nomo_diagnostics as diagnostic;
 pub use nomo_diagnostics::{Diagnostic, Suggestion};
 pub use nomo_graph as graph;
 pub use nomo_spans as spans;
+pub use nomo_std as standard_library;
 pub use nomo_syntax::{ast, lexer, parser};
 pub use project::{
     PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, WorkspaceGraph,

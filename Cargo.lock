@@ -112,6 +112,7 @@ dependencies = [
  "nomo-manifest",
  "nomo-resolver",
  "nomo-spans",
+ "nomo-std",
  "nomo-syntax",
  "nomo-test",
  "serde",
@@ -136,6 +137,7 @@ dependencies = [
  "nomo-diagnostics",
  "nomo-graph",
  "nomo-ir",
+ "nomo-std",
  "nomo-syntax",
 ]
 
@@ -151,6 +153,7 @@ name = "nomo-doc"
 version = "0.1.0"
 dependencies = [
  "nomo-diagnostics",
+ "nomo-std",
  "nomo-syntax",
 ]
 
@@ -210,6 +213,10 @@ version = "0.1.0"
 
 [[package]]
 name = "nomo-spans"
+version = "0.1.0"
+
+[[package]]
+name = "nomo-std"
 version = "0.1.0"
 
 [[package]]

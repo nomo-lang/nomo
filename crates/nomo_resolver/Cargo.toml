@@ -7,6 +7,11 @@ license.workspace = true
 [dependencies]
 nomo-manifest = { path = "../nomo_manifest" }
 sha2.workspace = true
+ureq.workspace = true
+
+[dev-dependencies]
+rcgen = "0.14.8"
+rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12"] }
 
 [lib]
 name = "nomo_resolver"

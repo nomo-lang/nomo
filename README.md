@@ -109,11 +109,11 @@ nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] 
 nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
 nomo clean [path]                 # remove generated build artifacts
 nomo login --registry <url> --token <token> # store a registry bearer token in $NOMO_HOME/credentials.toml
-nomo owner add <owner/package> <user> --registry <url> # add a package owner through an http:// registry
-nomo owner remove <owner/package> <user> --registry <url> # remove a package owner through an http:// registry
+nomo owner add <owner/package> <user> --registry <url> # add a package owner through an HTTP/HTTPS registry
+nomo owner remove <owner/package> <user> --registry <url> # remove a package owner through an HTTP/HTTPS registry
 nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
 nomo remove <alias> [path]        # remove a dependency from nomo.toml
-nomo search <query> --registry <url> # query an http:// registry package index
+nomo search <query> --registry <url> # query an HTTP/HTTPS registry package index
 nomo yank <owner/package> <version> --registry <url> # mark a published registry version as yanked
 nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors] # validate, package, or upload a package archive
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
@@ -325,25 +325,27 @@ requested `branch`, `tag`, or `rev`. Branch sources also run `git pull
 and locked to the actual `HEAD` revision. Resolved `path`, `git`, and fetched
 registry packages include a `sha256:` checksum over `nomo.toml` and `src/`
 contents. Registry sources without an explicit endpoint remain leaf lockfile
-entries. Registry sources with a `file://` or `http://` endpoint read
+entries. Registry sources with a `file://`, `http://`, or `https://` endpoint read
 `/api/v1/packages/<owner>/<package>/<version>/download`, unpack the
 deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
-provide imported public API to project builds. `nomo add` and `nomo remove` edit
-the registry dependency entries in `nomo.toml`; HTTPS/TLS registry download,
-auth, search, and full version solving are separate registry slices. `nomo publish --dry-run`
+provide imported public API to project builds. HTTP and HTTPS registry requests
+share one transport with platform certificate verification, proxy environment
+support, response size limits, and optional bearer authentication. `nomo add`
+and `nomo remove` edit the registry dependency entries in `nomo.toml`; full
+version solving remains a separate registry slice. `nomo publish --dry-run`
 validates the selected package with `nomo check`, packages `nomo.toml` plus
 `src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
 checksum and byte size. `nomo publish --registry <url>` prepares the same
 archive and uploads it with `PUT /api/v1/packages/<owner>/<package>/<version>`
-to an `http://` registry endpoint. `nomo search <query> --registry <url>` calls
+to an HTTP or HTTPS registry endpoint. `nomo search <query> --registry <url>` calls
 `GET /api/v1/packages?query=<encoded>` and expects a JSON array of objects with
 `package`, optional `version`, and optional `description`. `nomo yank
 <owner/package> <version> --registry <url>` marks a published version as yanked
 with `POST /api/v1/packages/<owner>/<package>/<version>/yank`; yanked versions
 remain buildable from existing lockfiles. `nomo login --registry <url> --token
-<token>` stores an HTTP registry bearer token in `$NOMO_HOME/credentials.toml`
-(or `$HOME/.nomo/credentials.toml` when `NOMO_HOME` is unset). Subsequent HTTP
-registry download, publish, and yank requests to the same endpoint include
+<token>` stores a registry bearer token in `$NOMO_HOME/credentials.toml` (or
+`$HOME/.nomo/credentials.toml` when `NOMO_HOME` is unset). Subsequent HTTP or
+HTTPS download, search, publish, yank, and owner requests to the same endpoint include
 `Authorization: Bearer <token>`. `nomo owner add <owner/package> <user>
 --registry <url>` adds a package owner with `PUT
 /api/v1/packages/<owner>/<package>/owners/<user>`, and `nomo owner remove`

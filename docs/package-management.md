@@ -60,8 +60,8 @@ Each dependency must declare exactly one source kind:
 
 - `path`: local package source, resolved by reading the target `nomo.toml`.
 - `git`: git package source, cached under `.nomo/deps/git/`.
-- `version`: registry source fetched from the configured file or HTTP registry
-  and cached under `.nomo/deps/registry/`.
+- `version`: registry source fetched from the configured file, HTTP, or HTTPS registry
+  and cached under `.nomo/cache/registry/`.
 
 Project imports use dependency aliases:
 
@@ -148,9 +148,9 @@ lockfile. A manifest may specify only one git checkout selector.
 `--locked` requires an existing lockfile and rejects missing or out-of-date
 direct dependency entries without rewriting `nomo.lock`.
 
-`--offline` prevents git clone/fetch. It uses existing lockfiles, git cache
-checkouts, or vendored dependency sources. Without a lockfile, uncached git
-dependencies fail.
+`--offline` prevents git clone/fetch and registry downloads. It uses existing
+lockfiles, source caches, or vendored dependency sources. Without a lockfile,
+uncached network dependencies fail.
 
 `--frozen` is equivalent to `--locked --offline`.
 
@@ -190,10 +190,10 @@ nomo deps vendor --dir third_party/nomo
 nomo deps vendor --sync
 ```
 
-`--sync` removes the vendor directory before copying. Registry dependencies are
-recorded as skipped until registry archive fetching exists. Locked or offline
-project builds fall back to the default `vendor/` directory when the original
-locked path source or git cache checkout is missing.
+`--sync` removes the vendor directory before copying. Cached registry package
+sources are copied alongside path and git sources; uncached registry leaves are
+recorded as skipped. Locked or offline project builds fall back to the default
+`vendor/` directory when the original source or cache entry is missing.
 
 ## Cache Cleanup
 

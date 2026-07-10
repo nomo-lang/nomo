@@ -1,10 +1,15 @@
 use nomo_manifest::{PackageMetadata, parse_manifest_at_root};
 use sha2::{Digest, Sha256};
 use std::fs;
-use std::io::Read as _;
 use std::io::Write as _;
-use std::net::TcpStream;
 use std::path::{Component, Path, PathBuf};
+
+mod registry_transport;
+
+pub use registry_transport::{
+    RegistryHttpMethod, RegistryHttpRequest, RegistryHttpResponse, is_registry_http_endpoint,
+    send_registry_http_request, validate_registry_http_endpoint,
+};
 
 pub fn package_checksum(root: &Path) -> Result<String, String> {
     let mut files = package_source_files(root)?;
@@ -350,129 +355,44 @@ fn read_registry_archive(
             )
         });
     }
-    if registry.starts_with("http://") {
-        return fetch_http_registry_archive(
-            alias,
-            registry,
-            package,
-            version,
-            authorization_header,
-        )
-        .map(Some);
+    if is_registry_http_endpoint(registry) {
+        return fetch_registry_archive(alias, registry, package, version, authorization_header)
+            .map(Some);
     }
     Ok(None)
 }
 
-fn fetch_http_registry_archive(
+fn fetch_registry_archive(
     alias: &str,
     registry: &str,
     package: &str,
     version: &str,
     authorization_header: Option<&str>,
 ) -> Result<Vec<u8>, String> {
-    let request = http_registry_request(registry, package, version)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` for dependency `{alias}`: {err}",
-            request.authority
-        )
-    })?;
-    let request_text = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Accept: application/octet-stream\r\nConnection: close\r\n\r\n",
-        request.path,
-        request.authority,
-        authorization_header.unwrap_or_default()
-    );
-    stream
-        .write_all(request_text.as_bytes())
-        .map_err(|err| format!("failed to request registry dependency `{alias}`: {err}"))?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|err| format!("failed to read registry response for `{alias}`: {err}"))?;
-    parse_http_registry_response(alias, registry, &response)
-}
-
-struct HttpRegistryRequest {
-    host: String,
-    port: u16,
-    authority: String,
-    path: String,
-}
-
-fn http_registry_request(
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<HttpRegistryRequest, String> {
-    let (host, port, authority, base_path) = http_registry_base(registry)?;
     let (owner, name) = package.split_once('/').ok_or_else(|| {
         format!("registry package `{package}` must use canonical owner/package form")
     })?;
-    Ok(HttpRegistryRequest {
-        host,
-        port,
-        authority,
-        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}/download"),
+    let path = format!("/api/v1/packages/{owner}/{name}/{version}/download");
+    let authorization = authorization_header
+        .map(str::trim)
+        .filter(|value| !value.is_empty());
+    let response = send_registry_http_request(RegistryHttpRequest {
+        endpoint: registry,
+        path: &path,
+        method: RegistryHttpMethod::Get,
+        accept: "application/octet-stream",
+        content_type: None,
+        authorization,
+        body: &[],
     })
-}
-
-fn http_registry_base(registry: &str) -> Result<(String, u16, String, String), String> {
-    let rest = registry
-        .strip_prefix("http://")
-        .ok_or_else(|| format!("registry endpoint `{registry}` must start with http://"))?;
-    let (authority, base_path) = rest
-        .split_once('/')
-        .map(|(authority, path)| (authority, format!("/{path}")))
-        .unwrap_or((rest, String::new()));
-    if authority.is_empty() {
-        return Err("registry endpoint is missing a host".to_string());
-    }
-    let (host, port) = parse_http_authority(authority)?;
-    Ok((
-        host,
-        port,
-        authority.to_string(),
-        base_path.trim_end_matches('/').to_string(),
-    ))
-}
-
-fn parse_http_authority(authority: &str) -> Result<(String, u16), String> {
-    let Some((host, port)) = authority.rsplit_once(':') else {
-        return Ok((authority.to_string(), 80));
-    };
-    if host.is_empty() || port.is_empty() || host.contains(']') {
-        return Ok((authority.to_string(), 80));
-    }
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| format!("registry endpoint `{authority}` has invalid port"))?;
-    Ok((host.to_string(), port))
-}
-
-fn parse_http_registry_response(
-    alias: &str,
-    registry: &str,
-    response: &[u8],
-) -> Result<Vec<u8>, String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
+    .map_err(|err| format!("failed to fetch registry dependency `{alias}`: {err}"))?;
+    if response.status != 200 {
         return Err(format!(
-            "registry `{registry}` returned a malformed response for dependency `{alias}`"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!("registry `{registry}` returned non-UTF-8 headers for dependency `{alias}`")
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty response"))?;
-    if !status.starts_with("HTTP/1.1 200 ") && !status.starts_with("HTTP/1.0 200 ") {
-        return Err(format!(
-            "registry `{registry}` failed to fetch dependency `{alias}`: {status}"
+            "registry `{registry}` failed to fetch dependency `{alias}`: HTTP {}",
+            response.status
         ));
     }
-    Ok(response[header_end + 4..].to_vec())
+    Ok(response.body)
 }
 
 fn expect_archive_line(archive: &[u8], cursor: &mut usize, expected: &str) -> Result<(), String> {

@@ -10,6 +10,13 @@ const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo chec
 
 const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
 
+fn http_header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
+    headers.lines().find_map(|line| {
+        let (actual_name, value) = line.split_once(':')?;
+        actual_name.eq_ignore_ascii_case(name).then(|| value.trim())
+    })
+}
+
 #[test]
 fn nomo_help_prints_command_summary() {
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -1924,6 +1931,7 @@ fn nomo_deps_resolve_records_explicit_registry_source() {
         .arg("deps")
         .arg("resolve")
         .arg(&project)
+        .arg("--offline")
         .output()
         .unwrap();
 
@@ -1943,6 +1951,7 @@ fn nomo_deps_resolve_records_explicit_registry_source() {
         .arg("deps")
         .arg("tree")
         .arg(&project)
+        .arg("--offline")
         .output()
         .unwrap();
 
@@ -2231,6 +2240,7 @@ fn nomo_add_and_remove_edit_registry_dependency_manifest() {
         .arg("deps")
         .arg("tree")
         .arg(&project)
+        .arg("--offline")
         .output()
         .unwrap();
 
@@ -2335,10 +2345,7 @@ fn nomo_search_queries_http_registry() {
             request.starts_with("GET /api/v1/packages?query=json%20lib HTTP/1.1\r\n"),
             "{request}"
         );
-        assert!(
-            request.contains("Accept: application/json\r\n"),
-            "{request}"
-        );
+        assert_eq!(http_header(&request, "Accept"), Some("application/json"));
         let body = r#"[{"package":"nomo-lang/json","version":"0.1.0","description":"JSON parser"},{"package":"fynn/json-tools","version":"0.2.0"}]"#;
         let response = format!(
             "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
@@ -2433,6 +2440,44 @@ fn nomo_login_writes_registry_credentials() {
 }
 
 #[test]
+fn nomo_login_accepts_https_registry_credentials() {
+    let root = temp_test_root("registry-login-https");
+    reset_dir(&root);
+    let nomo_home = root.join("nomo-home");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg("https://packages.example.test/api/")
+        .arg("--token")
+        .arg("secret-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stdout)
+            .contains("logged in https://packages.example.test/api\n")
+    );
+    let credentials = fs::read_to_string(nomo_home.join("credentials.toml")).unwrap();
+    assert!(
+        credentials.contains("endpoint = \"https://packages.example.test/api\""),
+        "{credentials}"
+    );
+    assert!(
+        credentials.contains("token = \"secret-token\""),
+        "{credentials}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_owner_add_uses_logged_in_registry_token() {
     let root = temp_test_root("registry-owner-add");
     reset_dir(&root);
@@ -2473,11 +2518,11 @@ fn nomo_owner_add_uses_logged_in_registry_token() {
             request.starts_with("PUT /api/v1/packages/fynn/hello/owners/alice HTTP/1.1\r\n"),
             "{request}"
         );
-        assert!(
-            request.contains("Authorization: Bearer owner-token\r\n"),
-            "{request}"
+        assert_eq!(
+            http_header(&request, "Authorization"),
+            Some("Bearer owner-token")
         );
-        assert!(request.contains("Content-Length: 0\r\n"), "{request}");
+        assert_eq!(http_header(&request, "Content-Length"), Some("0"));
         stream
             .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .unwrap();
@@ -2571,11 +2616,11 @@ fn nomo_owner_remove_uses_logged_in_registry_token() {
             request.starts_with("DELETE /api/v1/packages/fynn/hello/owners/alice HTTP/1.1\r\n"),
             "{request}"
         );
-        assert!(
-            request.contains("Authorization: Bearer owner-token\r\n"),
-            "{request}"
+        assert_eq!(
+            http_header(&request, "Authorization"),
+            Some("Bearer owner-token")
         );
-        assert!(request.contains("Content-Length: 0\r\n"), "{request}");
+        assert_eq!(http_header(&request, "Content-Length"), Some("0"));
         stream
             .write_all(b"HTTP/1.1 202 Accepted\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .unwrap();
@@ -2649,7 +2694,7 @@ fn nomo_yank_marks_http_registry_package_version() {
             request.starts_with("POST /api/v1/packages/fynn/hello/0.1.0/yank HTTP/1.1\r\n"),
             "{request}"
         );
-        assert!(request.contains("Content-Length: 0\r\n"), "{request}");
+        assert_eq!(http_header(&request, "Content-Length"), Some("0"));
         stream
             .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
             .unwrap();
@@ -2715,9 +2760,9 @@ fn nomo_yank_uses_logged_in_registry_token() {
             }
         }
         let request = String::from_utf8_lossy(&request);
-        assert!(
-            request.contains("Authorization: Bearer secret-token\r\n"),
-            "{request}"
+        assert_eq!(
+            http_header(&request, "Authorization"),
+            Some("Bearer secret-token")
         );
         stream
             .write_all(b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n")
@@ -2971,17 +3016,15 @@ fn nomo_publish_uploads_archive_to_http_registry() {
             headers.starts_with("PUT /api/v1/packages/fynn/hello/0.1.0 HTTP/1.1\r\n"),
             "{headers}"
         );
-        assert!(
-            headers.contains("Content-Type: application/octet-stream\r\n"),
-            "{headers}"
+        assert_eq!(
+            http_header(&headers, "Content-Type"),
+            Some("application/octet-stream")
         );
-        assert!(
-            headers.contains("Authorization: Bearer publish-token\r\n"),
-            "{headers}"
+        assert_eq!(
+            http_header(&headers, "Authorization"),
+            Some("Bearer publish-token")
         );
-        let content_length = headers
-            .lines()
-            .find_map(|line| line.strip_prefix("Content-Length: "))
+        let content_length = http_header(&headers, "Content-Length")
             .and_then(|value| value.parse::<usize>().ok())
             .expect("missing Content-Length");
         let body_start = header_end + 4;
@@ -3313,6 +3356,7 @@ fn nomo_deps_update_precise_rewrites_registry_lockfile() {
         .arg("json")
         .arg("--precise")
         .arg("0.2.0")
+        .arg("--offline")
         .output()
         .unwrap();
 

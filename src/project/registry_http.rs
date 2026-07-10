@@ -1,10 +1,12 @@
 use super::{BuildError, Project, PublishPackage, prepare_publish_package};
 use nomo_manifest::{validate_package_id, validate_package_segment, validate_version_like};
+use nomo_resolver::{
+    RegistryHttpMethod, RegistryHttpRequest, RegistryHttpResponse, is_registry_http_endpoint,
+    send_registry_http_request, validate_registry_http_endpoint,
+};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
-use std::io::{Read, Write};
-use std::net::TcpStream;
 use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -32,7 +34,7 @@ pub fn publish_package_archive(
             package.archive_path.display()
         ))
     })?;
-    upload_http_registry_archive(registry, &package.package, &package.version, &archive)
+    upload_registry_archive(registry, &package.package, &package.version, &archive)
         .map_err(BuildError::Message)?;
     Ok(package)
 }
@@ -44,38 +46,22 @@ pub fn search_registry_packages(
     if query.trim().is_empty() {
         return Err("nomo search requires a non-empty query".to_string());
     }
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry search currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
-    let request = http_registry_search_request(registry, query)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` for search: {err}",
-            request.authority
-        )
-    })?;
-    let request_text = format!(
-        "GET {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\nAccept: application/json\r\nConnection: close\r\n\r\n",
-        request.path, request.authority
-    );
-    stream
-        .write_all(request_text.as_bytes())
-        .map_err(|err| format!("failed to request registry search: {err}"))?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|err| format!("failed to read registry search response: {err}"))?;
-    parse_http_registry_search_response(registry, &response)
+    let path = format!("/api/v1/packages?query={}", percent_encode_query(query));
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Get,
+        "application/json",
+        None,
+        &[],
+    )
+    .map_err(|err| format!("failed to request registry search: {err}"))?;
+    ensure_registry_status(registry, "search", response.status, &[200])?;
+    parse_registry_search_response(registry, &response.body)
 }
 
 pub fn login_registry(registry: &str, token: &str) -> Result<RegistryLogin, String> {
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry login currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
+    validate_registry_http_endpoint(registry)?;
     validate_registry_token(token)?;
     let endpoint = canonical_registry_endpoint(registry);
     let credentials_path = registry_credentials_path()?;
@@ -91,31 +77,22 @@ pub fn login_registry(registry: &str, token: &str) -> Result<RegistryLogin, Stri
 pub fn add_registry_package_owner(registry: &str, package: &str, user: &str) -> Result<(), String> {
     validate_package_id(package)?;
     validate_package_segment("registry owner user", user)?;
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry owner management currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
-    let request = http_registry_owner_add_request(registry, package, user)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` to add owner `{user}` for `{package}`: {err}",
-            request.authority
-        )
-    })?;
-    let authorization = registry_authorization_header(registry)?;
-    let request_text = format!(
-        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
-        request.path, request.authority, authorization
-    );
-    stream.write_all(request_text.as_bytes()).map_err(|err| {
-        format!("failed to request owner add for `{package}` user `{user}`: {err}")
-    })?;
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).map_err(|err| {
-        format!("failed to read registry owner response for `{package}` user `{user}`: {err}")
-    })?;
-    parse_http_registry_owner_add_response(registry, package, user, &response)
+    let path = registry_owner_path(package, user)?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Put,
+        "application/json",
+        None,
+        &[],
+    )
+    .map_err(|err| format!("failed to request owner add for `{package}` user `{user}`: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("add owner `{user}` for `{package}`"),
+        response.status,
+        &[200, 201, 204],
+    )
 }
 
 pub fn remove_registry_package_owner(
@@ -125,235 +102,130 @@ pub fn remove_registry_package_owner(
 ) -> Result<(), String> {
     validate_package_id(package)?;
     validate_package_segment("registry owner user", user)?;
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry owner management currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
-    let request = http_registry_owner_request(registry, package, user)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` to remove owner `{user}` from `{package}`: {err}",
-            request.authority
-        )
-    })?;
-    let authorization = registry_authorization_header(registry)?;
-    let request_text = format!(
-        "DELETE {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
-        request.path, request.authority, authorization
-    );
-    stream.write_all(request_text.as_bytes()).map_err(|err| {
+    let path = registry_owner_path(package, user)?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Delete,
+        "application/json",
+        None,
+        &[],
+    )
+    .map_err(|err| {
         format!("failed to request owner remove for `{package}` user `{user}`: {err}")
     })?;
-    let mut response = Vec::new();
-    stream.read_to_end(&mut response).map_err(|err| {
-        format!("failed to read registry owner response for `{package}` user `{user}`: {err}")
-    })?;
-    parse_http_registry_owner_remove_response(registry, package, user, &response)
+    ensure_registry_status(
+        registry,
+        &format!("remove owner `{user}` from `{package}`"),
+        response.status,
+        &[200, 202, 204],
+    )
 }
 
 pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Result<(), String> {
     validate_package_id(package)?;
     validate_version_like("package version", version)?;
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry yank currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
-    let request = http_registry_yank_request(registry, package, version)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` to yank `{package}` {version}: {err}",
-            request.authority
-        )
-    })?;
-    let authorization = registry_authorization_header(registry)?;
-    let request_text = format!(
-        "POST {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Length: 0\r\nConnection: close\r\n\r\n",
-        request.path, request.authority, authorization
-    );
-    stream
-        .write_all(request_text.as_bytes())
-        .map_err(|err| format!("failed to request yank for `{package}` {version}: {err}"))?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|err| format!("failed to read registry yank response for `{package}`: {err}"))?;
-    parse_http_registry_yank_response(registry, package, version, &response)
+    let path = registry_package_version_path(package, version, "/yank")?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Post,
+        "application/json",
+        None,
+        &[],
+    )
+    .map_err(|err| format!("failed to request yank for `{package}` {version}: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("yank `{package}` {version}"),
+        response.status,
+        &[200, 202, 204],
+    )
 }
 
-fn upload_http_registry_archive(
+fn upload_registry_archive(
     registry: &str,
     package: &str,
     version: &str,
     archive: &[u8],
 ) -> Result<(), String> {
-    if !registry.starts_with("http://") {
-        return Err(format!(
-            "registry upload currently supports only http:// endpoints, got `{registry}`"
-        ));
-    }
-    let request = http_registry_upload_request(registry, package, version)?;
-    let mut stream = TcpStream::connect((&*request.host, request.port)).map_err(|err| {
-        format!(
-            "failed to connect to registry `{}` for package `{package}`: {err}",
-            request.authority
-        )
-    })?;
-    let authorization = registry_authorization_header(registry)?;
-    let request_text = format!(
-        "PUT {} HTTP/1.1\r\nHost: {}\r\nUser-Agent: nomo/0.1\r\n{}Content-Type: application/octet-stream\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-        request.path,
-        request.authority,
-        authorization,
-        archive.len()
-    );
-    stream
-        .write_all(request_text.as_bytes())
-        .and_then(|_| stream.write_all(archive))
-        .map_err(|err| format!("failed to upload package `{package}`: {err}"))?;
-    let mut response = Vec::new();
-    stream
-        .read_to_end(&mut response)
-        .map_err(|err| format!("failed to read registry upload response for `{package}`: {err}"))?;
-    parse_http_registry_upload_response(registry, package, version, &response)
+    let path = registry_package_version_path(package, version, "")?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Put,
+        "application/json",
+        Some("application/octet-stream"),
+        archive,
+    )
+    .map_err(|err| format!("failed to upload package `{package}`: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("publish `{package}` {version}"),
+        response.status,
+        &[200, 201, 204],
+    )
 }
 
-struct HttpRegistryRequest {
-    host: String,
-    port: u16,
-    authority: String,
-    path: String,
-}
-
-fn http_registry_upload_request(
+fn registry_request(
     registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<HttpRegistryRequest, String> {
-    http_registry_api_request(registry, package, version, "")
+    path: &str,
+    method: RegistryHttpMethod,
+    accept: &str,
+    content_type: Option<&str>,
+    body: &[u8],
+) -> Result<RegistryHttpResponse, String> {
+    validate_registry_http_endpoint(registry)?;
+    let authorization = registry_authorization_value(registry)?;
+    send_registry_http_request(RegistryHttpRequest {
+        endpoint: registry,
+        path,
+        method,
+        accept,
+        content_type,
+        authorization: authorization.as_deref(),
+        body,
+    })
 }
 
-fn http_registry_yank_request(
-    registry: &str,
-    package: &str,
-    version: &str,
-) -> Result<HttpRegistryRequest, String> {
-    http_registry_api_request(registry, package, version, "/yank")
-}
-
-fn http_registry_owner_add_request(
-    registry: &str,
-    package: &str,
-    user: &str,
-) -> Result<HttpRegistryRequest, String> {
-    http_registry_owner_request(registry, package, user)
-}
-
-fn http_registry_owner_request(
-    registry: &str,
-    package: &str,
-    user: &str,
-) -> Result<HttpRegistryRequest, String> {
-    let (host, port, authority, base_path) = http_registry_base(registry)?;
+fn registry_owner_path(package: &str, user: &str) -> Result<String, String> {
     let (owner, name) = package.split_once('/').ok_or_else(|| {
         format!("registry package `{package}` must use canonical owner/package form")
     })?;
-    Ok(HttpRegistryRequest {
-        host,
-        port,
-        authority,
-        path: format!("{base_path}/api/v1/packages/{owner}/{name}/owners/{user}"),
-    })
+    Ok(format!("/api/v1/packages/{owner}/{name}/owners/{user}"))
 }
 
-fn http_registry_search_request(
-    registry: &str,
-    query: &str,
-) -> Result<HttpRegistryRequest, String> {
-    let (host, port, authority, base_path) = http_registry_base(registry)?;
-    Ok(HttpRegistryRequest {
-        host,
-        port,
-        authority,
-        path: format!(
-            "{}/api/v1/packages?query={}",
-            base_path.trim_end_matches('/'),
-            percent_encode_query(query)
-        ),
-    })
-}
-
-fn http_registry_api_request(
-    registry: &str,
+fn registry_package_version_path(
     package: &str,
     version: &str,
     suffix: &str,
-) -> Result<HttpRegistryRequest, String> {
-    let (host, port, authority, base_path) = http_registry_base(registry)?;
+) -> Result<String, String> {
     let (owner, name) = package.split_once('/').ok_or_else(|| {
         format!("registry package `{package}` must use canonical owner/package form")
     })?;
-    Ok(HttpRegistryRequest {
-        host,
-        port,
-        authority,
-        path: format!("{base_path}/api/v1/packages/{owner}/{name}/{version}{suffix}"),
-    })
+    Ok(format!("/api/v1/packages/{owner}/{name}/{version}{suffix}"))
 }
 
-fn http_registry_base(registry: &str) -> Result<(String, u16, String, String), String> {
-    let rest = registry
-        .strip_prefix("http://")
-        .ok_or_else(|| format!("registry endpoint `{registry}` must start with http://"))?;
-    let (authority, base_path) = rest
-        .split_once('/')
-        .map(|(authority, path)| (authority, format!("/{path}")))
-        .unwrap_or((rest, String::new()));
-    if authority.is_empty() {
-        return Err("registry endpoint is missing a host".to_string());
-    }
-    let (host, port) = parse_http_authority(authority)?;
-    Ok((
-        host,
-        port,
-        authority.to_string(),
-        base_path.trim_end_matches('/').to_string(),
-    ))
-}
-
-fn parse_http_authority(authority: &str) -> Result<(String, u16), String> {
-    let Some((host, port)) = authority.rsplit_once(':') else {
-        return Ok((authority.to_string(), 80));
-    };
-    if host.is_empty() || port.is_empty() || host.contains(']') {
-        return Ok((authority.to_string(), 80));
-    }
-    let port = port
-        .parse::<u16>()
-        .map_err(|_| format!("registry endpoint `{authority}` has invalid port"))?;
-    Ok((host.to_string(), port))
-}
-
-fn parse_http_registry_search_response(
+fn ensure_registry_status(
     registry: &str,
-    response: &[u8],
-) -> Result<Vec<RegistrySearchResult>, String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed search response"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec())
-        .map_err(|_| format!("registry `{registry}` returned non-UTF-8 search headers"))?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty search response"))?;
-    if !status.starts_with("HTTP/1.1 200 ") && !status.starts_with("HTTP/1.0 200 ") {
-        return Err(format!("registry `{registry}` failed to search: {status}"));
+    operation: &str,
+    status: u16,
+    expected: &[u16],
+) -> Result<(), String> {
+    if expected.contains(&status) {
+        Ok(())
+    } else {
+        Err(format!(
+            "registry `{registry}` failed to {operation}: HTTP {status}"
+        ))
     }
-    let response: RegistrySearchResponse = serde_json::from_slice(&response[header_end + 4..])
+}
+
+fn parse_registry_search_response(
+    registry: &str,
+    body: &[u8],
+) -> Result<Vec<RegistrySearchResult>, String> {
+    let response: RegistrySearchResponse = serde_json::from_slice(body)
         .map_err(|err| format!("registry `{registry}` returned invalid search JSON: {err}"))?;
     let results = match response {
         RegistrySearchResponse::Items(items) => items,
@@ -395,138 +267,6 @@ struct RegistrySearchItem {
     description: Option<String>,
 }
 
-fn parse_http_registry_upload_response(
-    registry: &str,
-    package: &str,
-    version: &str,
-    response: &[u8],
-) -> Result<(), String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed upload response for `{package}` {version}"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!("registry `{registry}` returned non-UTF-8 upload headers for `{package}` {version}")
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty upload response"))?;
-    if !status.starts_with("HTTP/1.1 200 ")
-        && !status.starts_with("HTTP/1.1 201 ")
-        && !status.starts_with("HTTP/1.1 204 ")
-        && !status.starts_with("HTTP/1.0 200 ")
-        && !status.starts_with("HTTP/1.0 201 ")
-        && !status.starts_with("HTTP/1.0 204 ")
-    {
-        return Err(format!(
-            "registry `{registry}` failed to publish `{package}` {version}: {status}"
-        ));
-    }
-    Ok(())
-}
-
-fn parse_http_registry_yank_response(
-    registry: &str,
-    package: &str,
-    version: &str,
-    response: &[u8],
-) -> Result<(), String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed yank response for `{package}` {version}"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!("registry `{registry}` returned non-UTF-8 yank headers for `{package}` {version}")
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty yank response"))?;
-    if !status.starts_with("HTTP/1.1 200 ")
-        && !status.starts_with("HTTP/1.1 202 ")
-        && !status.starts_with("HTTP/1.1 204 ")
-        && !status.starts_with("HTTP/1.0 200 ")
-        && !status.starts_with("HTTP/1.0 202 ")
-        && !status.starts_with("HTTP/1.0 204 ")
-    {
-        return Err(format!(
-            "registry `{registry}` failed to yank `{package}` {version}: {status}"
-        ));
-    }
-    Ok(())
-}
-
-fn parse_http_registry_owner_add_response(
-    registry: &str,
-    package: &str,
-    user: &str,
-    response: &[u8],
-) -> Result<(), String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed owner response for `{package}` user `{user}`"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!(
-            "registry `{registry}` returned non-UTF-8 owner headers for `{package}` user `{user}`"
-        )
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty owner response"))?;
-    if !status.starts_with("HTTP/1.1 200 ")
-        && !status.starts_with("HTTP/1.1 201 ")
-        && !status.starts_with("HTTP/1.1 204 ")
-        && !status.starts_with("HTTP/1.0 200 ")
-        && !status.starts_with("HTTP/1.0 201 ")
-        && !status.starts_with("HTTP/1.0 204 ")
-    {
-        return Err(format!(
-            "registry `{registry}` failed to add owner `{user}` for `{package}`: {status}"
-        ));
-    }
-    Ok(())
-}
-
-fn parse_http_registry_owner_remove_response(
-    registry: &str,
-    package: &str,
-    user: &str,
-    response: &[u8],
-) -> Result<(), String> {
-    let Some(header_end) = response.windows(4).position(|window| window == b"\r\n\r\n") else {
-        return Err(format!(
-            "registry `{registry}` returned a malformed owner response for `{package}` user `{user}`"
-        ));
-    };
-    let headers = String::from_utf8(response[..header_end].to_vec()).map_err(|_| {
-        format!(
-            "registry `{registry}` returned non-UTF-8 owner headers for `{package}` user `{user}`"
-        )
-    })?;
-    let status = headers
-        .lines()
-        .next()
-        .ok_or_else(|| format!("registry `{registry}` returned an empty owner response"))?;
-    if !status.starts_with("HTTP/1.1 200 ")
-        && !status.starts_with("HTTP/1.1 202 ")
-        && !status.starts_with("HTTP/1.1 204 ")
-        && !status.starts_with("HTTP/1.0 200 ")
-        && !status.starts_with("HTTP/1.0 202 ")
-        && !status.starts_with("HTTP/1.0 204 ")
-    {
-        return Err(format!(
-            "registry `{registry}` failed to remove owner `{user}` from `{package}`: {status}"
-        ));
-    }
-    Ok(())
-}
-
 #[derive(Debug, Default, Deserialize, Serialize)]
 struct RegistryCredentialsDocument {
     #[serde(default)]
@@ -539,11 +279,8 @@ struct RegistryCredentialEntry {
     token: String,
 }
 
-fn registry_authorization_header(registry: &str) -> Result<String, String> {
-    let Some(token) = registry_token(registry)? else {
-        return Ok(String::new());
-    };
-    Ok(format!("Authorization: Bearer {token}\r\n"))
+fn registry_authorization_value(registry: &str) -> Result<Option<String>, String> {
+    Ok(registry_token(registry)?.map(|token| format!("Bearer {token}")))
 }
 
 pub(super) fn registry_dependency_authorization(
@@ -552,10 +289,10 @@ pub(super) fn registry_dependency_authorization(
     let Some(registry) = registry else {
         return Ok(None);
     };
-    if !registry.starts_with("http://") {
+    if !is_registry_http_endpoint(registry) {
         return Ok(None);
     }
-    registry_authorization_header(registry).map(Some)
+    registry_authorization_value(registry)
 }
 
 fn registry_token(registry: &str) -> Result<Option<String>, String> {

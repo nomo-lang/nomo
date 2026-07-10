@@ -597,7 +597,9 @@ pages live under [`docs/diagnostics/`](docs/diagnostics/index.md). User-facing
 docs start at [`docs/index.md`](docs/index.md), including the
 [`standard-library`](docs/standard-library.md) reference and
 [`package-management`](docs/package-management.md) guide for manifests,
-workspaces, lockfiles, vendoring, and offline builds.
+workspaces, lockfiles, vendoring, and offline builds. The
+[`editor-integrations`](docs/editor-integrations.md) guide covers installing the
+shared language server and the VS Code, Zed, and JetBrains clients.
 
 ## Library crate
 

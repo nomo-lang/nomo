@@ -546,10 +546,14 @@ workspaces, lockfiles, vendoring, and offline builds.
 The `nomo` library exposes the compiler pipeline for embedding. Key entry points
 include `check_source`, `check_source_text`, `compile_source_to_c`, and
 `build_module_graph` for querying loaded module nodes, imports, and dependency
-order. The library also exposes the `lexer`, `parser`, `ast`, `compiler`,
-`codegen`, `diagnostic`, `semantic`, and `project` modules. The `semantic`
-module provides current-document symbol queries plus project-aware hover,
-definition, and reference queries over local `src/**/*.nomo` modules.
+order. `project_package_graph` builds the resolved package layer with canonical
+package identities, versions, sources, dependency aliases, dependency-first
+ordering, available source roots, and each source package's public semantic API;
+`project_package_graph_with_options` applies locked/offline resolution rules.
+The library also exposes the `lexer`, `parser`, `ast`, `compiler`, `codegen`,
+`diagnostic`, `semantic`, and `project` modules. The `semantic` module provides
+current-document symbol queries plus project-aware hover, definition, and
+reference queries over local `src/**/*.nomo` modules.
 
 ## Tests and examples
 

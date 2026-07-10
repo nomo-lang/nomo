@@ -19,7 +19,12 @@ pub fn resolve_project_dependencies_with_options(
         validate_project_lock(project)?;
         return Ok(lock_path);
     }
-    let graph = resolve_dependency_graph_for_lock(&project.root, None, None, options.offline)?;
+    let graph = resolve_dependency_graph_for_lock(
+        &project.root,
+        Some(&project.root),
+        Some(&project.root),
+        options.offline,
+    )?;
     let lock = render_lockfile(&graph);
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)

@@ -34,8 +34,8 @@ pub fn update_project_dependencies(
     let graph = resolve_dependency_graph_for_manifest(
         &project.root,
         manifest,
-        None,
-        None,
+        Some(&project.root),
+        Some(&project.root),
         options.resolution.offline,
     )?;
     let lock = render_lockfile(&graph);

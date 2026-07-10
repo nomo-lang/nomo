@@ -22,6 +22,7 @@ mod ffi;
 mod git_cache;
 mod modules;
 mod package;
+mod package_graph;
 mod registry_http;
 mod resolve;
 mod running;
@@ -48,6 +49,10 @@ pub use nomo_test::{
 };
 pub use package::{
     PublishPackage, add_registry_dependency, prepare_publish_package, remove_dependency,
+};
+pub use package_graph::{
+    PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, project_package_graph,
+    project_package_graph_with_options,
 };
 pub use registry_http::{
     RegistryLogin, RegistrySearchResult, add_registry_package_owner, login_registry,

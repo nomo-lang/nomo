@@ -25,18 +25,24 @@ pub(super) fn resolve_dependency_graph(root: &Path) -> Result<DependencyGraph, S
 pub(super) fn resolve_dependency_graph_for_lock(
     root: &Path,
     lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
+    dependency_cache_base: Option<&Path>,
     offline: bool,
 ) -> Result<DependencyGraph, String> {
     let manifest = parse_manifest_at_root(root)?;
-    resolve_dependency_graph_for_manifest(root, manifest, lock_source_base, git_cache_base, offline)
+    resolve_dependency_graph_for_manifest(
+        root,
+        manifest,
+        lock_source_base,
+        dependency_cache_base,
+        offline,
+    )
 }
 
 pub(super) fn resolve_dependency_graph_for_manifest(
     root: &Path,
     manifest: Manifest,
     lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
+    dependency_cache_base: Option<&Path>,
     offline: bool,
 ) -> Result<DependencyGraph, String> {
     let root = fs::canonicalize(root).map_err(|err| err.to_string())?;
@@ -44,7 +50,7 @@ pub(super) fn resolve_dependency_graph_for_manifest(
         .map(fs::canonicalize)
         .transpose()
         .map_err(|err| err.to_string())?;
-    let git_cache_base = git_cache_base
+    let dependency_cache_base = dependency_cache_base
         .map(fs::canonicalize)
         .transpose()
         .map_err(|err| err.to_string())?;
@@ -59,7 +65,7 @@ pub(super) fn resolve_dependency_graph_for_manifest(
         &mut package_graph,
         &mut package_sources,
         lock_source_base.as_deref(),
-        git_cache_base.as_deref(),
+        dependency_cache_base.as_deref(),
         offline,
     )?;
     Ok(DependencyGraph {
@@ -128,7 +134,7 @@ fn resolve_dependencies(
     package_graph: &mut DirectedGraph<String>,
     package_sources: &mut BTreeMap<String, DependencySource>,
     lock_source_base: Option<&Path>,
-    git_cache_base: Option<&Path>,
+    dependency_cache_base: Option<&Path>,
     offline: bool,
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
@@ -172,7 +178,7 @@ fn resolve_dependencies(
                     package_graph,
                     package_sources,
                     lock_source_base,
-                    git_cache_base,
+                    dependency_cache_base,
                     offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
@@ -195,7 +201,7 @@ fn resolve_dependencies(
             } => {
                 let dep_root = if offline {
                     resolve_git_source_offline(
-                        git_cache_base.unwrap_or(base_root),
+                        dependency_cache_base.unwrap_or(base_root),
                         &dependency.alias,
                         &dependency.package,
                         git,
@@ -205,7 +211,7 @@ fn resolve_dependencies(
                     )?
                 } else {
                     resolve_git_source(
-                        git_cache_base.unwrap_or(base_root),
+                        dependency_cache_base.unwrap_or(base_root),
                         &dependency.alias,
                         &dependency.package,
                         git,
@@ -233,7 +239,7 @@ fn resolve_dependencies(
                     package_graph,
                     package_sources,
                     lock_source_base,
-                    git_cache_base,
+                    dependency_cache_base,
                     offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
@@ -251,7 +257,7 @@ fn resolve_dependencies(
             DependencySource::Registry { version, registry } => {
                 let authorization = registry_dependency_authorization(registry.as_deref())?;
                 match resolve_registry_source(
-                    base_root,
+                    dependency_cache_base.unwrap_or(base_root),
                     &dependency.alias,
                     &dependency.package,
                     version,
@@ -278,7 +284,7 @@ fn resolve_dependencies(
                             package_graph,
                             package_sources,
                             lock_source_base,
-                            git_cache_base,
+                            dependency_cache_base,
                             offline,
                         )?;
                         let checksum = package_checksum(&dep_root)?;

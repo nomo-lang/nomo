@@ -83,6 +83,20 @@ cargo build --workspace --release
 cargo install --path .
 ```
 
+Tagged releases publish `nomo` and `nomoc` archives for Linux x86-64, macOS
+x86-64 and Apple silicon, and Windows x86-64. Every release also publishes a
+`SHA256SUMS` file consumed by the `setup-nomo` action. CI workflows can install
+the latest preview toolchain with:
+
+```yaml
+- uses: nomo-lang/setup-nomo@main
+  with:
+    version: latest
+```
+
+The action still requires a system C compiler because Nomo's native backend
+compiles generated C99 code on the runner.
+
 ## Using `nomo` (project manager)
 
 ```bash

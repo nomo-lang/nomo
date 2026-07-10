@@ -68,6 +68,7 @@ pub struct ExternBlock {
 pub struct FunctionSignature {
     pub name: String,
     pub type_params: Vec<String>,
+    pub type_param_bounds: Vec<TypeParamBound>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub span: Span,
@@ -96,6 +97,7 @@ pub struct Function {
     pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,
+    pub type_param_bounds: Vec<TypeParamBound>,
     pub params: Vec<Param>,
     pub return_type: TypeRef,
     pub body: Vec<Stmt>,
@@ -113,6 +115,12 @@ pub struct Param {
 pub struct TypeRef {
     pub path: Vec<String>,
     pub args: Vec<TypeRef>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TypeParamBound {
+    pub parameter: String,
+    pub interface: TypeRef,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

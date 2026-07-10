@@ -1,6 +1,6 @@
 use nomo_syntax::ast::{
     ConstDef, EnumDef, EnumVariant, Field, Function, FunctionSignature, InterfaceDef, Param,
-    StructDef, TypeRef,
+    StructDef, TypeParamBound, TypeRef,
 };
 
 pub(super) fn struct_signature(item: &StructDef) -> String {
@@ -45,7 +45,7 @@ pub(super) fn function_signature(function: &Function) -> String {
         "{}fn {}{}({}) -> {}",
         visibility_prefix(function.public),
         function.name,
-        type_params(&function.type_params),
+        type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
         type_ref(&function.return_type)
     )
@@ -62,7 +62,7 @@ pub(super) fn method_signature(receiver: &str, function: &Function) -> String {
         "{}fn {receiver}.{}{}({}) -> {}",
         visibility_prefix(function.public),
         function.name,
-        type_params(&function.type_params),
+        type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
         type_ref(&function.return_type)
     )
@@ -79,7 +79,7 @@ pub(super) fn extern_function_signature(abi: &str, function: &FunctionSignature)
         "extern \"{}\" fn {}{}({}) -> {}",
         abi,
         function.name,
-        type_params(&function.type_params),
+        type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
         type_ref(&function.return_type)
     )
@@ -95,7 +95,7 @@ pub(super) fn interface_method_signature(owner: &str, method: &FunctionSignature
     format!(
         "fn {owner}.{}{}({}) -> {}",
         method.name,
-        type_params(&method.type_params),
+        type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
         type_ref(&method.return_type)
     )
@@ -128,6 +128,23 @@ fn type_params(params: &[String]) -> String {
     } else {
         format!("<{}>", params.join(", "))
     }
+}
+
+fn type_params_with_bounds(params: &[String], bounds: &[TypeParamBound]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let params = params
+        .iter()
+        .map(|parameter| {
+            bounds
+                .iter()
+                .find(|bound| &bound.parameter == parameter)
+                .map(|bound| format!("{parameter}: {}", type_ref(&bound.interface)))
+                .unwrap_or_else(|| parameter.clone())
+        })
+        .collect::<Vec<_>>();
+    format!("<{}>", params.join(", "))
 }
 
 pub(super) fn type_ref(type_ref_value: &TypeRef) -> String {

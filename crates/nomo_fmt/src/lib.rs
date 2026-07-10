@@ -3,7 +3,7 @@
 use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
     ConstDef, EnumDef, ExternBlock, Field, ForVariant, Function, FunctionSignature, ImplBlock,
-    InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef,
+    InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeParamBound,
 };
 use nomo_syntax::lexer::{Token, lex};
 use nomo_syntax::parser::parse;
@@ -216,7 +216,7 @@ impl<'a> Formatter<'a> {
             &format!(
                 "fn {}{}({}) -> {}",
                 signature.name,
-                type_params(&signature.type_params),
+                type_params_with_bounds(&signature.type_params, &signature.type_param_bounds),
                 params(&signature.params, in_interface),
                 type_ref(&signature.return_type)
             ),
@@ -277,7 +277,7 @@ impl<'a> Formatter<'a> {
             &format!(
                 "{prefix}fn {}{}({}) -> {} {{",
                 function.name,
-                type_params(&function.type_params),
+                type_params_with_bounds(&function.type_params, &function.type_param_bounds),
                 params(&function.params, in_impl),
                 type_ref(&function.return_type)
             ),
@@ -554,6 +554,23 @@ fn type_params(params: &[String]) -> String {
     }
 }
 
+fn type_params_with_bounds(params: &[String], bounds: &[TypeParamBound]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let params = params
+        .iter()
+        .map(|parameter| {
+            bounds
+                .iter()
+                .find(|bound| &bound.parameter == parameter)
+                .map(|bound| format!("{parameter}: {}", type_ref(&bound.interface)))
+                .unwrap_or_else(|| parameter.clone())
+        })
+        .collect::<Vec<_>>();
+    format!("<{}>", params.join(", "))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -720,6 +737,22 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: string) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user: User = User { name: \"ok\" }\n    unsafe {\n        puts(user.to_string())\n    }\n}\n"
+        );
+    }
+
+    #[test]
+    fn preserves_generic_interface_bounds() {
+        let source = "package app.main\n\ninterface Display{\nfn to_string(self)->string\n}\n\nfn render<T:Display>(value:T)->string{\nreturn value.to_string()\n}\n";
+
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
         );
     }
 }

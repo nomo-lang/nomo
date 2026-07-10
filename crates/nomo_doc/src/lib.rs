@@ -3,7 +3,7 @@
 use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
     ConstDef, EnumDef, EnumVariant, ExternBlock, Field, Function, FunctionSignature, InterfaceDef,
-    Param, SourceFile, StructDef, TypeRef,
+    Param, SourceFile, StructDef, TypeParamBound, TypeRef,
 };
 use nomo_syntax::lexer::lex;
 use nomo_syntax::parser::parse;
@@ -439,7 +439,7 @@ fn function_signature(function: &Function) -> String {
         "{}fn {}{}({}) -> {}",
         visibility_prefix(function.public),
         function.name,
-        type_params(&function.type_params),
+        type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
         type_ref(&function.return_type)
     )
@@ -456,7 +456,7 @@ fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String 
         "extern \"{}\" fn {}{}({}) -> {}",
         abi,
         function.name,
-        type_params(&function.type_params),
+        type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
         type_ref(&function.return_type)
     )
@@ -472,7 +472,7 @@ fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String
     format!(
         "fn {owner}.{}{}({}) -> {}",
         method.name,
-        type_params(&method.type_params),
+        type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
         type_ref(&method.return_type)
     )
@@ -489,6 +489,23 @@ fn type_params(params: &[String]) -> String {
     } else {
         format!("<{}>", params.join(", "))
     }
+}
+
+fn type_params_with_bounds(params: &[String], bounds: &[TypeParamBound]) -> String {
+    if params.is_empty() {
+        return String::new();
+    }
+    let params = params
+        .iter()
+        .map(|parameter| {
+            bounds
+                .iter()
+                .find(|bound| &bound.parameter == parameter)
+                .map(|bound| format!("{parameter}: {}", type_ref(&bound.interface)))
+                .unwrap_or_else(|| parameter.clone())
+        })
+        .collect::<Vec<_>>();
+    format!("<{}>", params.join(", "))
 }
 
 fn type_ref(type_ref_value: &TypeRef) -> String {

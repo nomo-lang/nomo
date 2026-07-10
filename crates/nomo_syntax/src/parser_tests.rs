@@ -685,6 +685,20 @@ fn parses_generic_function_call() {
 }
 
 #[test]
+fn parses_generic_function_interface_bound() {
+    let source = "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n\nfn main() -> void {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let render = &ast.functions[0];
+    assert_eq!(render.type_params, ["T"]);
+    assert_eq!(render.type_param_bounds.len(), 1);
+    assert_eq!(render.type_param_bounds[0].parameter, "T");
+    assert_eq!(render.type_param_bounds[0].interface.path, ["Display"]);
+    assert!(render.type_param_bounds[0].interface.args.is_empty());
+}
+
+#[test]
 fn keeps_less_than_as_comparison_after_name() {
     let source = "package app.main\n\nfn main() -> void {\n    let left: i32 = 1\n    let right: i32 = 2\n    let ok: bool = left < right\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -900,6 +914,7 @@ fn parser_ast_golden_snapshot() {
             ],
             name: "label",
             type_params: [],
+            type_param_bounds: [],
             params: [
                 Param {
                     name: "value",

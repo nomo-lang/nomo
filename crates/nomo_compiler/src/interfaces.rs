@@ -1,5 +1,186 @@
 use super::*;
 
+pub(super) fn collect_generic_interface_bounds(
+    path: &Path,
+    functions: &[AstFunction],
+    interfaces: &HashMap<String, &AstInterfaceDef>,
+) -> Result<HashMap<String, Vec<GenericInterfaceBound>>, Diagnostic> {
+    let mut out = HashMap::new();
+    for function in functions {
+        let mut bounds = Vec::new();
+        for bound in &function.type_param_bounds {
+            let [interface] = bound.interface.path.as_slice() else {
+                return Err(generic_interface_bound_error(
+                    path,
+                    function,
+                    "generic interface bounds must name one interface",
+                ));
+            };
+            if !bound.interface.args.is_empty() {
+                return Err(generic_interface_bound_error(
+                    path,
+                    function,
+                    "generic interface bounds cannot take type arguments",
+                ));
+            }
+            if !interfaces.contains_key(interface) {
+                return Err(generic_interface_bound_error(
+                    path,
+                    function,
+                    format!("unknown interface bound `{interface}`"),
+                ));
+            }
+            let type_param_index = function
+                .type_params
+                .iter()
+                .position(|parameter| parameter == &bound.parameter)
+                .expect("parser bound must refer to its declared type parameter");
+            bounds.push(GenericInterfaceBound {
+                type_param_index,
+                type_param: bound.parameter.clone(),
+                interface: interface.clone(),
+            });
+        }
+        if !bounds.is_empty() {
+            out.insert(function.name.clone(), bounds);
+        }
+    }
+    Ok(out)
+}
+
+pub(super) fn reject_method_interface_bounds(
+    path: &Path,
+    method: &AstFunction,
+) -> Result<(), Diagnostic> {
+    if method.type_param_bounds.is_empty() {
+        Ok(())
+    } else {
+        Err(generic_interface_bound_error(
+            path,
+            method,
+            "generic interface bounds are currently supported on top-level functions only",
+        ))
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(super) fn validate_generic_interface_bound_bodies(
+    path: &Path,
+    functions: &[AstFunction],
+    bounds: &HashMap<String, Vec<GenericInterfaceBound>>,
+    interfaces: &HashMap<String, &AstInterfaceDef>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    consts: &[(String, ValueType)],
+) -> Result<(), Diagnostic> {
+    for function in functions {
+        let Some(function_bounds) = bounds.get(&function.name) else {
+            continue;
+        };
+        let mut validation_structs = structs.clone();
+        let mut validation_signatures = signatures.clone();
+        let mut type_args = function
+            .type_params
+            .iter()
+            .map(|parameter| ValueType::TypeParam(parameter.clone()))
+            .collect::<Vec<_>>();
+        let mut synthetic_bounds = Vec::new();
+
+        for bound in function_bounds {
+            let synthetic_name = format!("__nomo_bound_{}_{}", function.name, bound.type_param);
+            validation_structs.insert(
+                synthetic_name.clone(),
+                StructType {
+                    package: function.package.join("."),
+                    name: synthetic_name.clone(),
+                    type_params: Vec::new(),
+                    fields: Vec::new(),
+                },
+            );
+            type_args[bound.type_param_index] =
+                ValueType::Struct(synthetic_name.clone(), Vec::new());
+            synthetic_bounds.push((synthetic_name, bound));
+        }
+
+        for (synthetic_name, bound) in &synthetic_bounds {
+            let interface = interfaces
+                .get(&bound.interface)
+                .expect("generic interface bound must refer to a known interface");
+            for method in &interface.methods {
+                validation_signatures.insert(
+                    method_internal_name(synthetic_name, &method.name),
+                    interface_method_signature(
+                        path,
+                        method,
+                        synthetic_name,
+                        &validation_structs,
+                        enums,
+                    )?,
+                );
+            }
+        }
+
+        let instance_name = generic_function_instance_name(&function.name, &type_args);
+        let template = signatures
+            .get(&function.name)
+            .expect("generic function signature must be collected before validation");
+        validation_signatures.insert(
+            instance_name.clone(),
+            instantiate_function_signature(template, &type_args),
+        );
+        if let Err(error) = lower_function_as(
+            path,
+            function,
+            &instance_name,
+            imports,
+            &validation_signatures,
+            &validation_structs,
+            enums,
+            consts,
+        ) {
+            for (synthetic_name, bound) in &synthetic_bounds {
+                if error.message.contains(synthetic_name) {
+                    return Err(Diagnostic::new(
+                        "E1506",
+                        format!(
+                            "generic function `{}` uses an operation unavailable through `{}: {}`: {}",
+                            function.name,
+                            bound.type_param,
+                            bound.interface,
+                            error.message.replace(synthetic_name, &bound.type_param)
+                        ),
+                        path,
+                        error.line,
+                        error.column,
+                        error.length,
+                        error.text,
+                    ));
+                }
+            }
+            return Err(error);
+        }
+    }
+    Ok(())
+}
+
+fn generic_interface_bound_error(
+    path: &Path,
+    function: &AstFunction,
+    message: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(
+        "E1506",
+        message,
+        path,
+        function.span.line,
+        function.span.column,
+        function.span.length,
+        &function.span.text,
+    )
+}
+
 pub(super) fn collect_interfaces<'a>(
     path: &Path,
     interfaces: &'a [AstInterfaceDef],

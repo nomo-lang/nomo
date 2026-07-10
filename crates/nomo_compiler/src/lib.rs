@@ -188,6 +188,13 @@ struct FunctionSignature {
     extern_symbol: Option<String>,
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct GenericInterfaceBound {
+    type_param_index: usize,
+    type_param: String,
+    interface: String,
+}
+
 #[derive(Debug, Clone)]
 struct ParamSignature {
     value_type: ValueType,

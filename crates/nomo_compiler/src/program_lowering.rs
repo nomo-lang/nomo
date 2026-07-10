@@ -37,6 +37,8 @@ pub(super) fn lower_program(
         .map(|item| (item.name.clone(), item.clone()))
         .collect::<HashMap<_, _>>();
     let interface_map = collect_interfaces(path, &ast.interfaces)?;
+    let generic_interface_bounds =
+        collect_generic_interface_bounds(path, &ast.functions, &interface_map)?;
     let mut signatures = HashMap::new();
     for function in &ast.functions {
         if signatures.contains_key(&function.name) {
@@ -63,6 +65,7 @@ pub(super) fn lower_program(
         .iter()
         .map(|item| item.name.as_str())
         .collect::<HashSet<_>>();
+    let mut interface_impls = HashSet::new();
     for impl_block in &ast.impls {
         let impl_target = impl_block.type_name.path.join(".");
         if !impl_block
@@ -125,8 +128,14 @@ pub(super) fn lower_program(
                 &enum_map,
                 &interface_map,
             )?;
+            let interface_name = interface_name
+                .path
+                .first()
+                .expect("validated interface impl must have one path segment");
+            interface_impls.insert((interface_name.clone(), owner_name.clone()));
         }
         for method in &impl_block.methods {
+            reject_method_interface_bounds(path, method)?;
             validate_method_self(path, method, &owner_name, &struct_map, &enum_map)?;
             let lowered_name = method_internal_name(&owner_name, &method.name);
             if signatures.contains_key(&lowered_name) {
@@ -198,6 +207,12 @@ pub(super) fn lower_program(
         &signatures,
         &struct_map,
         &enum_map,
+    )?;
+    validate_generic_interface_bound_instances(
+        path,
+        &generic_instances,
+        &generic_interface_bounds,
+        &interface_impls,
     )?;
     for instance in &generic_instances {
         let signature = signatures
@@ -292,6 +307,18 @@ pub(super) fn lower_program(
         });
     }
 
+    validate_generic_interface_bound_bodies(
+        path,
+        &ast.functions,
+        &generic_interface_bounds,
+        &interface_map,
+        &imports,
+        &signatures,
+        &struct_map,
+        &enum_map,
+        &const_types,
+    )?;
+
     let mut functions = Vec::new();
     for function in &ast.functions {
         if !function.type_params.is_empty() {
@@ -381,6 +408,7 @@ fn prepare_entry_point(
                 package: ast.package.clone(),
                 name: "main".to_string(),
                 type_params: Vec::new(),
+                type_param_bounds: Vec::new(),
                 params: Vec::new(),
                 return_type: AstTypeRef {
                     path: vec!["void".to_string()],

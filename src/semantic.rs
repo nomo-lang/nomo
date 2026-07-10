@@ -229,6 +229,23 @@ mod tests {
     }
 
     #[test]
+    fn symbols_preserve_generic_interface_bounds() {
+        let source = "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\n/// Renders a display value.\npub fn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n";
+
+        let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
+        let render = symbols
+            .iter()
+            .find(|symbol| symbol.name == "render")
+            .unwrap();
+
+        assert_eq!(
+            render.signature,
+            "pub fn render<T: Display>(value: T) -> string"
+        );
+        assert_eq!(render.docs, "Renders a display value.");
+    }
+
+    #[test]
     fn definition_returns_declaration_range() {
         let source = "package app.main\n\nfn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n";
 

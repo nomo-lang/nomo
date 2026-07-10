@@ -16,7 +16,11 @@ impl Display for User {
     }
 }
 
+fn display<T: Display>(value: T) -> void {
+    io.println(value.to_string())
+}
+
 fn main() -> void {
     let user: User = User { name: "interface display ok" }
-    io.println(user.to_string())
+    display<User>(user)
 }

@@ -390,9 +390,13 @@ Nomo includes minimal boundary syntax for native integration and static
 abstractions. `interface` declarations and `impl Interface for Type` blocks are
 accepted for statically dispatched methods. The compiler checks that an
 interface impl provides every required method with matching parameters,
-mutability and return type; full generic constraints, dynamic dispatch,
-associated types and blanket impls are not part of v0.1. `extern "C"` blocks
-plus `unsafe { ... }` support the initial C FFI path, currently including string
+mutability and return type. Generic functions can constrain parameters with
+`T: Interface`; explicit concrete calls such as `render<User>(user)` verify the
+matching impl, type-check the generic body against the interface API, and
+monomorphize method calls with static dispatch. Dynamic
+dispatch, associated types, specialization and blanket impls are not part of
+the current model. `extern "C"` blocks plus `unsafe { ... }` support the initial
+C FFI path, currently including string
 calls to C `puts` and primitive integer/float/bool/char extern calls such as
 `abs(i32) -> i32`. Project manifests can use `[ffi]` linker metadata to pass
 native libraries, library search paths, macOS frameworks, and raw link arguments

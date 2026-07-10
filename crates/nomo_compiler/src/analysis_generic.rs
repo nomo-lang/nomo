@@ -25,6 +25,46 @@ pub(super) fn collect_generic_function_instances(
     Ok(out)
 }
 
+pub(super) fn validate_generic_interface_bound_instances(
+    path: &Path,
+    instances: &[FunctionInstance],
+    bounds: &HashMap<String, Vec<GenericInterfaceBound>>,
+    implementations: &HashSet<(String, String)>,
+) -> Result<(), Diagnostic> {
+    for instance in instances {
+        let Some(function_bounds) = bounds.get(&instance.name) else {
+            continue;
+        };
+        for bound in function_bounds {
+            let concrete_type = &instance.args[bound.type_param_index];
+            let implements_bound = match concrete_type {
+                ValueType::Struct(name, args) if args.is_empty() => {
+                    implementations.contains(&(bound.interface.clone(), name.clone()))
+                }
+                _ => false,
+            };
+            if !implements_bound {
+                return Err(Diagnostic::new(
+                    "E1506",
+                    format!(
+                        "type `{}` does not implement interface `{}` required by `{}<{}>`",
+                        concrete_type.name(),
+                        bound.interface,
+                        instance.name,
+                        bound.type_param
+                    ),
+                    path,
+                    1,
+                    1,
+                    1,
+                    "",
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
 fn collect_stmt_generic_function_instances(
     path: &Path,
     stmt: &Stmt,

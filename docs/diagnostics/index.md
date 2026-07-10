@@ -163,6 +163,7 @@ the same code.
 - [E1503](E1503.md) - invalid interface member
 - [E1504](E1504.md) - expected interface method
 - [E1505](E1505.md) - missing interface method parameters
+- [E1506](E1506.md) - unsatisfied generic interface bound
 - [E1510](E1510.md) - expected extern declaration
 - [E1511](E1511.md) - unsupported extern ABI
 - [E1512](E1512.md) - missing extern block body

@@ -245,6 +245,142 @@ fn main() -> void {
 }
 
 #[test]
+fn accepts_constrained_generic_static_dispatch() {
+    let source = r#"package app.main
+
+interface Display {
+    fn to_string(self) -> string
+}
+
+struct User {
+    name: string
+}
+
+impl Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+fn render<T: Display>(value: T) -> string {
+    return value.to_string()
+}
+
+fn main() -> void {
+    let user: User = User { name: "bounded" }
+    let label: string = render<User>(user)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let render = program
+        .functions
+        .iter()
+        .find(|function| function.name == "render_struct_User")
+        .unwrap();
+    assert_eq!(
+        render.params[0].value_type,
+        ValueType::Struct("User".to_string(), Vec::new())
+    );
+    assert!(matches!(
+        render.body[0],
+        Statement::Return(Some(ValueExpr::Call { ref name, .. })) if name == "User_to_string"
+    ));
+}
+
+#[test]
+fn rejects_constrained_generic_type_without_interface_impl() {
+    let source = r#"package app.main
+
+interface Display {
+    fn to_string(self) -> string
+}
+
+struct User {
+    name: string
+}
+
+fn render<T: Display>(value: T) -> string {
+    return "unused"
+}
+
+fn main() -> void {
+    let user: User = User { name: "missing" }
+    let label: string = render<User>(user)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E1506");
+    assert!(
+        error
+            .message
+            .contains("type `User` does not implement interface `Display`")
+    );
+    assert!(error.message.contains("render<T>"));
+}
+
+#[test]
+fn rejects_unknown_constrained_generic_interface() {
+    let source = r#"package app.main
+
+fn render<T: Display>(value: T) -> T {
+    return value
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E1506");
+    assert!(error.message.contains("unknown interface bound `Display`"));
+}
+
+#[test]
+fn rejects_concrete_method_outside_generic_interface_bound() {
+    let source = r#"package app.main
+
+interface Display {
+    fn to_string(self) -> string
+}
+
+struct User {
+    name: string
+}
+
+impl Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+impl User {
+    fn secret(self) -> string {
+        return self.name
+    }
+}
+
+fn render<T: Display>(value: T) -> string {
+    return value.secret()
+}
+
+fn main() -> void {
+    let user: User = User { name: "private ability" }
+    let label: string = render<User>(user)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E1506");
+    assert!(error.message.contains("unavailable through `T: Display`"));
+    assert!(error.message.contains("has no method `secret`"));
+}
+
+#[test]
 fn accepts_extern_c_primitive_call_inside_unsafe() {
     let source = r#"package app.main
 

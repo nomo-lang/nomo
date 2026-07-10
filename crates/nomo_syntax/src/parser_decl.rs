@@ -1,4 +1,10 @@
 use super::*;
+use crate::ast::TypeParamBound;
+
+struct ParsedTypeParams {
+    names: Vec<String>,
+    bounds: Vec<TypeParamBound>,
+}
 
 impl Parser<'_> {
     pub(super) fn parse_test_attribute(&mut self) -> Result<bool, Diagnostic> {
@@ -30,7 +36,7 @@ impl Parser<'_> {
         let enum_token = self.peek().clone();
         self.expect_kind(TokenKind::Enum, "E0226", "expected `enum`")?;
         let name = self.expect_ident("expected enum name")?;
-        let type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params(false)?.names;
         self.expect_kind(
             TokenKind::LBrace,
             "E0227",
@@ -93,22 +99,40 @@ impl Parser<'_> {
         })
     }
 
-    fn parse_type_params(&mut self) -> Result<Vec<String>, Diagnostic> {
+    fn parse_type_params(&mut self, allow_bounds: bool) -> Result<ParsedTypeParams, Diagnostic> {
         if !matches!(self.peek().kind, TokenKind::Less) {
-            return Ok(Vec::new());
+            return Ok(ParsedTypeParams {
+                names: Vec::new(),
+                bounds: Vec::new(),
+            });
         }
         self.advance();
-        let mut params = Vec::new();
+        let mut names = Vec::new();
+        let mut bounds = Vec::new();
         loop {
             let name = self.expect_ident("expected generic type parameter name")?;
-            if params.iter().any(|param| param == &name) {
+            if names.iter().any(|param| param == &name) {
                 return Err(self.error(
                     "E0237",
                     format!("generic type parameter `{name}` is already defined"),
                     self.peek().length(),
                 ));
             }
-            params.push(name);
+            names.push(name.clone());
+            if matches!(self.peek().kind, TokenKind::Colon) {
+                if !allow_bounds {
+                    return Err(self.error(
+                        "E0235",
+                        "interface bounds are only supported on generic functions",
+                        self.peek().length(),
+                    ));
+                }
+                self.advance();
+                bounds.push(TypeParamBound {
+                    parameter: name,
+                    interface: self.parse_type_ref()?,
+                });
+            }
             match self.peek().kind {
                 TokenKind::Comma => {
                     self.advance();
@@ -126,14 +150,14 @@ impl Parser<'_> {
                 }
             }
         }
-        Ok(params)
+        Ok(ParsedTypeParams { names, bounds })
     }
 
     pub(super) fn parse_struct(&mut self, public: bool) -> Result<StructDef, Diagnostic> {
         let struct_token = self.peek().clone();
         self.expect_kind(TokenKind::Struct, "E0218", "expected `struct`")?;
         let name = self.expect_ident("expected struct name")?;
-        let type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params(false)?.names;
         self.expect_kind(
             TokenKind::LBrace,
             "E0219",
@@ -193,7 +217,7 @@ impl Parser<'_> {
         let function_token = self.peek().clone();
         self.expect_kind(TokenKind::Fn, "E0202", "expected `fn`")?;
         let name = self.expect_ident("expected function name")?;
-        let type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params(true)?;
         self.expect_kind(
             TokenKind::LParen,
             "E0203",
@@ -240,7 +264,8 @@ impl Parser<'_> {
             is_test,
             package: Vec::new(),
             name,
-            type_params,
+            type_params: type_params.names,
+            type_param_bounds: type_params.bounds,
             params,
             return_type,
             body,
@@ -432,7 +457,7 @@ impl Parser<'_> {
         let function_token = self.peek().clone();
         self.expect_kind(TokenKind::Fn, fn_code, fn_message)?;
         let name = self.expect_ident(name_message)?;
-        let type_params = self.parse_type_params()?;
+        let type_params = self.parse_type_params(false)?;
         self.expect_kind(TokenKind::LParen, paren_code, paren_message)?;
         let params = self.parse_params_with_bare_self(allow_bare_self)?;
         let return_type = if matches!(self.peek().kind, TokenKind::Arrow) {
@@ -443,7 +468,8 @@ impl Parser<'_> {
         };
         Ok(FunctionSignature {
             name,
-            type_params,
+            type_params: type_params.names,
+            type_param_bounds: type_params.bounds,
             params,
             return_type,
             span: token_span(&function_token),

@@ -19,7 +19,6 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Suggestion};
 use nomo_codegen_c as codegen;
-use nomo_graph::DirectedGraph;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -66,6 +65,7 @@ mod import_diagnostics;
 mod import_resolution;
 mod imports;
 mod interfaces;
+mod module_graph;
 mod modules;
 mod program_lowering;
 mod question_assignments;
@@ -112,11 +112,11 @@ use builtins_string::*;
 use builtins_time::*;
 use declarations::*;
 pub use driver::{
-    check_script_source_text, check_source, check_source_text,
-    check_source_text_with_external_imports, check_source_text_with_project_modules,
-    check_source_text_with_project_modules_and_overrides, check_source_with_external_imports,
-    check_source_with_external_modules, compile_script_source_to_c,
-    compile_source_text_to_c_with_project_modules, compile_source_to_c,
+    build_module_graph, build_module_graph_with_overrides, check_script_source_text, check_source,
+    check_source_text, check_source_text_with_external_imports,
+    check_source_text_with_project_modules, check_source_text_with_project_modules_and_overrides,
+    check_source_with_external_imports, check_source_with_external_modules,
+    compile_script_source_to_c, compile_source_text_to_c_with_project_modules, compile_source_to_c,
     compile_source_to_c_with_external_imports, compile_source_to_c_with_external_modules,
     compile_source_to_c_with_project_modules,
 };
@@ -134,6 +134,7 @@ use import_diagnostics::*;
 use import_resolution::*;
 use imports::*;
 use interfaces::*;
+pub use module_graph::{ModuleGraph, ModuleId, ModuleNode};
 use modules::merge_imported_public_api;
 use program_lowering::{EntryMode, lower_program, reject_script_body};
 use question_assignments::*;

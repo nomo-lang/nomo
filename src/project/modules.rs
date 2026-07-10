@@ -7,7 +7,10 @@ use super::{
     registry_http::registry_dependency_authorization,
     vendor::{locked_or_vendor_source_root, vendored_source_root},
 };
-use crate::compiler::ExternalModule;
+use crate::compiler::{
+    ExternalModule, ModuleGraph, build_module_graph_with_overrides as compiler_module_graph,
+};
+use crate::diagnostic::Diagnostic;
 use nomo_lockfile::ResolvedDependency;
 use nomo_manifest::{Dependency, DependencySource, parse_manifest_at_root};
 use nomo_resolver::{registry_cached_source_root, resolve_registry_source};
@@ -23,6 +26,51 @@ pub struct ProjectModuleContext {
 
 pub fn project_module_context(project: &Project) -> Result<ProjectModuleContext, String> {
     project_module_context_with_options(project, DependencyResolutionOptions::default())
+}
+
+pub fn project_module_graph(project: &Project) -> Result<ModuleGraph, Diagnostic> {
+    project_module_graph_with_overrides(project, &[])
+}
+
+pub fn project_module_graph_with_overrides(
+    project: &Project,
+    source_overrides: &[(PathBuf, String)],
+) -> Result<ModuleGraph, Diagnostic> {
+    let context = project_module_context(project).map_err(|message| {
+        Diagnostic::new(
+            "E0901",
+            message,
+            &project.root.join("nomo.toml"),
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let source = match source_overrides
+        .iter()
+        .find(|(path, _)| path == &project.main)
+    {
+        Some((_, source)) => source.clone(),
+        None => fs::read_to_string(&project.main).map_err(|err| {
+            Diagnostic::new(
+                "E0001",
+                format!("failed to read source file: {err}"),
+                &project.main,
+                1,
+                1,
+                1,
+                "",
+            )
+        })?,
+    };
+    compiler_module_graph(
+        &project.main,
+        &source,
+        Some(&context.local_source_root),
+        &context.external_modules,
+        source_overrides,
+    )
 }
 
 pub fn resolve_module_source_path(

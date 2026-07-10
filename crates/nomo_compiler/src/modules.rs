@@ -7,8 +7,7 @@ pub(super) fn merge_imported_public_api(
     local_import_root: Option<&str>,
     external_modules: &[ExternalModule],
     module_source_overrides: &[(PathBuf, String)],
-    visited: &mut HashSet<Vec<String>>,
-    module_graph: &mut DirectedGraph<Vec<String>>,
+    module_graph: &mut ModuleGraph,
 ) -> Result<(), Diagnostic> {
     let imports = ast.imports.clone();
     for import in imports {
@@ -76,17 +75,23 @@ pub(super) fn merge_imported_public_api(
                 module_ast.package.join("."),
             ));
         }
-        module_graph.add_edge(ast.package.clone(), module_ast.package.clone());
-        if let Some(cycle) = module_graph.find_cycle() {
-            let cycle_path = cycle
-                .path()
+        let importer_id = ModuleId::from(ast.package.clone());
+        let imported_id = ModuleId::from(module_ast.package.clone());
+        let already_loaded = module_graph.contains(&imported_id);
+        module_graph.add_module(ModuleNode::new(
+            imported_id.clone(),
+            source_path.clone(),
+            module_ast
+                .imports
                 .iter()
-                .map(|package| package.join("."))
-                .collect::<Vec<_>>()
-                .join(" -> ");
+                .cloned()
+                .map(ModuleId::from)
+                .collect(),
+        ));
+        if let Some(cycle) = module_graph.add_dependency(importer_id, imported_id) {
             return Err(Diagnostic::new(
                 "E0607",
-                format!("cyclic module import: {cycle_path}"),
+                format!("cyclic module import: {cycle}"),
                 importer_path,
                 1,
                 1,
@@ -94,7 +99,7 @@ pub(super) fn merge_imported_public_api(
                 import.join("."),
             ));
         }
-        if !visited.insert(module_ast.package.clone()) {
+        if already_loaded {
             continue;
         }
         merge_imported_public_api(
@@ -104,7 +109,6 @@ pub(super) fn merge_imported_public_api(
             local_import_root,
             external_modules,
             module_source_overrides,
-            visited,
             module_graph,
         )?;
         merge_public_items(ast, module_ast);

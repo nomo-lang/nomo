@@ -1,6 +1,6 @@
-#[cfg(test)]
-use crate::compiler::ExternalModule;
 use crate::compiler::check_source_text_with_project_modules;
+#[cfg(test)]
+use crate::compiler::{ExternalModule, ModuleId};
 use crate::diagnostic::Diagnostic;
 #[cfg(test)]
 use nomo_lockfile::parse_lockfile_text;
@@ -40,7 +40,7 @@ pub use dependency_tree::{
 use ffi::project_ffi_link_metadata_with_options;
 pub use modules::{
     ProjectModuleContext, project_module_context, project_module_context_with_options,
-    resolve_module_source_path,
+    project_module_graph, project_module_graph_with_overrides, resolve_module_source_path,
 };
 pub use nomo_test::{
     TestCaseResult as ProjectTestCaseResult, TestReport as ProjectTestReport,
@@ -686,6 +686,63 @@ fn main() -> void {
         assert_eq!(
             resolve_module_source_path(&context, "app", &["std".to_string(), "io".to_string()]),
             None
+        );
+        fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn builds_public_module_graph_with_dependency_first_order() {
+        let root = temp_test_root("module-graph");
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(&root).unwrap();
+        let project = create_project(&root, "module-graph-demo").unwrap();
+        fs::write(
+            &project.main,
+            "package app.main\n\nimport app.math\n\nfn main() -> void {\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            project.root.join("src/math.nomo"),
+            "package app.math\n\nimport app.util\n\npub fn math() -> i64 {\n    return util()\n}\n",
+        )
+        .unwrap();
+        fs::write(
+            project.root.join("src/util.nomo"),
+            "package app.util\n\npub fn util() -> i64 {\n    return 1\n}\n",
+        )
+        .unwrap();
+
+        let graph = project_module_graph(&project).unwrap();
+
+        assert_eq!(graph.root().dotted(), "app.main");
+        assert_eq!(graph.module_count(), 3);
+        assert_eq!(
+            graph
+                .topological_order()
+                .iter()
+                .map(ModuleId::dotted)
+                .collect::<Vec<_>>(),
+            vec!["app.util", "app.math", "app.main"]
+        );
+        let math = ModuleId::new(vec!["app".to_string(), "math".to_string()]);
+        let math_node = graph.module(&math).unwrap();
+        assert_eq!(math_node.source_path, project.root.join("src/math.nomo"));
+        assert_eq!(
+            math_node
+                .imports
+                .iter()
+                .map(ModuleId::dotted)
+                .collect::<Vec<_>>(),
+            vec!["app.util"]
+        );
+        assert_eq!(
+            graph
+                .dependencies(&math)
+                .map(ModuleId::dotted)
+                .collect::<Vec<_>>(),
+            vec!["app.util"]
         );
         fs::remove_dir_all(&root).unwrap();
     }

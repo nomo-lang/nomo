@@ -10,6 +10,7 @@ members = [
     ".",
     "crates/nomo_compiler",
     "crates/nomo_codegen_c",
+    "crates/nomo_doc",
     "crates/nomo_ir",
     "crates/nomo_fmt",
     "crates/nomo_lsp_bridge",
@@ -33,6 +34,7 @@ toml = "0.8"
 [dependencies]
 nomo-codegen-c = { path = "crates/nomo_codegen_c" }
 nomo-compiler = { path = "crates/nomo_compiler" }
+nomo-doc = { path = "crates/nomo_doc" }
 nomo-ir = { path = "crates/nomo_ir" }
 nomo-fmt = { path = "crates/nomo_fmt" }
 nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }

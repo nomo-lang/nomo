@@ -4,8 +4,13 @@ use std::fs;
 use std::io::Write as _;
 use std::path::{Component, Path, PathBuf};
 
+mod registry_metadata;
 mod registry_transport;
 
+pub use registry_metadata::{
+    RegistryPackageMetadata, RegistryVersionMetadata, RegistryVersionSummary,
+    load_registry_package_metadata, load_registry_version_metadata,
+};
 pub use registry_transport::{
     RegistryHttpMethod, RegistryHttpRequest, RegistryHttpResponse, is_registry_http_endpoint,
     send_registry_http_request, validate_registry_http_endpoint,
@@ -162,7 +167,37 @@ pub fn resolve_registry_source(
     offline: bool,
     authorization_header: Option<&str>,
 ) -> Result<Option<PathBuf>, String> {
+    let metadata = match registry {
+        Some(registry) if !offline || registry.starts_with("file://") => {
+            load_registry_version_metadata(registry, package, version, authorization_header)?
+        }
+        _ => None,
+    };
+    if metadata.as_ref().is_some_and(|metadata| metadata.yanked) {
+        return Err(format!(
+            "registry dependency `{alias}` package `{package}` version `{version}` is yanked; an existing lockfile may continue to use it"
+        ));
+    }
     if let Some(source_root) = registry_cached_source_root(base_root, package, version, registry)? {
+        if let Some(metadata) = &metadata {
+            let archive_path = registry_cache_root(base_root, package, version, registry)
+                .join("package.nomo-package");
+            if archive_path.is_file() {
+                let archive = fs::read(&archive_path).map_err(|err| {
+                    format!(
+                        "failed to read cached registry dependency `{alias}` archive at {}: {err}",
+                        archive_path.display()
+                    )
+                })?;
+                verify_registry_archive_checksum(alias, metadata, &archive)?;
+                unpack_package_archive(&archive, package, version, &source_root)?;
+            } else {
+                return Err(format!(
+                    "cached registry dependency `{alias}` is missing its verified archive at {}",
+                    archive_path.display()
+                ));
+            }
+        }
         return Ok(Some(source_root));
     }
     if offline {
@@ -176,6 +211,9 @@ pub fn resolve_registry_source(
     else {
         return Ok(None);
     };
+    if let Some(metadata) = &metadata {
+        verify_registry_archive_checksum(alias, metadata, &archive)?;
+    }
     let cache_root = registry_cache_root(base_root, package, version, Some(registry));
     fs::create_dir_all(&cache_root).map_err(|err| err.to_string())?;
     let archive_path = cache_root.join("package.nomo-package");
@@ -188,6 +226,40 @@ pub fn resolve_registry_source(
     let source_root = cache_root.join("source");
     unpack_package_archive(&archive, package, version, &source_root)?;
     Ok(Some(source_root))
+}
+
+fn verify_registry_archive_checksum(
+    alias: &str,
+    metadata: &RegistryVersionMetadata,
+    archive: &[u8],
+) -> Result<(), String> {
+    let actual = archive_checksum(archive);
+    if actual == metadata.checksum {
+        Ok(())
+    } else {
+        Err(format!(
+            "registry dependency `{alias}` archive checksum mismatch: expected {}, found {actual}",
+            metadata.checksum
+        ))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RegistryVersionMetadata, verify_registry_archive_checksum};
+
+    #[test]
+    fn rejects_registry_archive_checksum_mismatch() {
+        let metadata = RegistryVersionMetadata {
+            package: "fynn/utils".to_string(),
+            version: "0.1.0".to_string(),
+            checksum: format!("sha256:{}", "0".repeat(64)),
+            yanked: false,
+        };
+        let error =
+            verify_registry_archive_checksum("utils", &metadata, b"not-the-archive").unwrap_err();
+        assert!(error.contains("archive checksum mismatch"), "{error}");
+    }
 }
 
 pub fn registry_cached_source_root(

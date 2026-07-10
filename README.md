@@ -352,6 +352,19 @@ HTTPS download, search, publish, yank, and owner requests to the same endpoint i
 removes one with `DELETE /api/v1/packages/<owner>/<package>/owners/<user>`;
 both use the stored Bearer token when present. A dependency must specify exactly
 one source among `path`, `git`, and `version`.
+Fresh online resolution of an explicit HTTP or HTTPS registry dependency first
+queries `GET /api/v1/packages/<owner>/<package>/<version>`. The JSON response
+contains `package`, `version`, the `.nomo-package` archive `checksum`, and a
+`yanked` flag. Nomo rejects yanked versions during fresh resolution and verifies
+the downloaded archive against that checksum before unpacking it. Existing
+lockfiles may continue to use a yanked version from a verified cache or vendor
+directory without consulting registry metadata. The package-index form
+`GET /api/v1/packages/<owner>/<package>` returns `package` plus a `versions`
+array using the same `version`, `checksum`, and `yanked` fields. File registries
+may provide equivalent `index.json` and per-version `metadata.json` files;
+metadata remains optional for legacy local fixtures. v0.1 dependency manifests
+still use exact version values; package metadata does not introduce version
+range or latest-version selection.
 If the same canonical package ID resolves to conflicting sources or versions,
 v0.1 reports an error instead of trying to solve multiple versions.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and

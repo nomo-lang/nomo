@@ -3139,6 +3139,16 @@ pub fn make_segment(value: i64) -> Segment {
         &registry_download,
     )
     .unwrap();
+    let archive = fs::read(&registry_download).unwrap();
+    let archive_checksum = nomo_resolver::archive_checksum(&archive);
+    let registry_metadata = registry_download.parent().unwrap().join("metadata.json");
+    fs::write(
+        &registry_metadata,
+        format!(
+            "{{\"package\":\"fynn/utils\",\"version\":\"0.1.0\",\"checksum\":\"{archive_checksum}\",\"yanked\":false}}\n"
+        ),
+    )
+    .unwrap();
 
     fs::write(
         project.join("nomo.toml"),
@@ -3203,6 +3213,26 @@ fn main() -> void {
     );
     assert!(lockfile.contains("checksum = \"sha256:"), "{lockfile}");
 
+    fs::write(
+        &registry_metadata,
+        format!(
+            "{{\"package\":\"fynn/utils\",\"version\":\"0.1.0\",\"checksum\":\"{archive_checksum}\",\"yanked\":true}}\n"
+        ),
+    )
+    .unwrap();
+    let locked_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--locked")
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        locked_build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_build.stderr)
+    );
+
     let vendor_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("deps")
         .arg("vendor")
@@ -3220,6 +3250,20 @@ fn main() -> void {
             .is_file()
     );
 
+    fs::remove_file(project.join("nomo.lock")).unwrap();
+    let fresh_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(!fresh_build.status.success());
+    let stderr = String::from_utf8_lossy(&fresh_build.stderr);
+    assert!(
+        stderr.contains("package `fynn/utils` version `0.1.0` is yanked"),
+        "{stderr}"
+    );
+
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -3230,6 +3274,7 @@ fn nomo_project_commands_use_http_registry_dependency_module_public_api() {
     let package = root.join("utils");
     let archive_out = root.join("archive-out");
     let project = root.join("hello");
+    let nomo_home = root.join("nomo-home");
     let source = project.join("src/main.nomo");
     let c_path = project.join("build/c/main.c");
     fs::create_dir_all(package.join("src")).unwrap();
@@ -3269,40 +3314,79 @@ pub fn join(a: i64, b: i64) -> i64 {
         String::from_utf8_lossy(&publish_output.stderr)
     );
     let archive = fs::read(archive_out.join("fynn-utils-0.1.0.nomo-package")).unwrap();
+    let archive_checksum = nomo_resolver::archive_checksum(&archive);
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let registry_addr = listener.local_addr().unwrap();
+    let registry = format!("http://{registry_addr}");
+    let login = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("login")
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--token")
+        .arg("dependency-token")
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        login.status.success(),
+        "{}",
+        String::from_utf8_lossy(&login.stderr)
+    );
     let server = thread::spawn(move || {
-        let (mut stream, _) = listener.accept().unwrap();
-        let mut request = Vec::new();
-        let mut buffer = [0u8; 1024];
-        loop {
-            let read = stream.read(&mut buffer).unwrap();
-            if read == 0 {
-                break;
+        for request_index in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
             }
-            request.extend_from_slice(&buffer[..read]);
-            if request.windows(4).any(|window| window == b"\r\n\r\n") {
-                break;
+            let request = String::from_utf8_lossy(&request);
+            assert_eq!(
+                http_header(&request, "Authorization"),
+                Some("Bearer dependency-token")
+            );
+            if request_index != 1 {
+                assert!(
+                    request.starts_with("GET /api/v1/packages/fynn/utils/0.1.0 HTTP/1.1\r\n"),
+                    "{request}"
+                );
+                assert_eq!(http_header(&request, "Accept"), Some("application/json"));
+                let body = format!(
+                    "{{\"package\":\"fynn/utils\",\"version\":\"0.1.0\",\"checksum\":\"{archive_checksum}\",\"yanked\":false}}"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                    body.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+            } else {
+                assert!(
+                    request
+                        .starts_with("GET /api/v1/packages/fynn/utils/0.1.0/download HTTP/1.1\r\n"),
+                    "{request}"
+                );
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    archive.len()
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.write_all(&archive).unwrap();
             }
         }
-        let request = String::from_utf8_lossy(&request);
-        assert!(
-            request.starts_with("GET /api/v1/packages/fynn/utils/0.1.0/download HTTP/1.1\r\n"),
-            "{request}"
-        );
-        let response = format!(
-            "HTTP/1.1 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
-            archive.len()
-        );
-        stream.write_all(response.as_bytes()).unwrap();
-        stream.write_all(&archive).unwrap();
     });
 
     fs::write(
         project.join("nomo.toml"),
         format!(
-            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = {{ package = \"fynn/utils\", version = \"0.1.0\", registry = \"http://{}\" }}\n",
-            registry_addr
+            "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = {{ package = \"fynn/utils\", version = \"0.1.0\", registry = \"{}\" }}\n",
+            registry
         ),
     )
     .unwrap();
@@ -3323,6 +3407,7 @@ fn main() -> void {
         .arg("build")
         .arg(&project)
         .arg("--emit-c")
+        .env("NOMO_HOME", &nomo_home)
         .output()
         .unwrap();
 

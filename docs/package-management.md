@@ -154,6 +154,32 @@ uncached network dependencies fail.
 
 `--frozen` is equivalent to `--locked --offline`.
 
+## Registry Metadata
+
+An explicit HTTP or HTTPS registry exposes package metadata at:
+
+```text
+GET /api/v1/packages/<owner>/<package>
+GET /api/v1/packages/<owner>/<package>/<version>
+```
+
+The package response contains the canonical `package` ID and a `versions` array.
+Each version contains `version`, the `sha256:` checksum of the downloadable
+`.nomo-package` archive, and `yanked`. The exact-version response contains the
+same fields plus the canonical `package` ID.
+
+Fresh online resolution fetches exact-version metadata before downloading an
+archive, rejects a yanked version, and verifies the archive checksum before
+unpacking. A lockfile stores a separate checksum over unpacked package sources;
+locked or frozen builds use that checksum and may continue to use a yanked
+version from cache or vendor without a metadata request. A file registry may
+provide package metadata at `api/v1/packages/<owner>/<package>/index.json` and
+version metadata at
+`api/v1/packages/<owner>/<package>/<version>/metadata.json`. These files are
+optional for compatibility with existing local file registries.
+Dependency manifests continue to use exact version values. Metadata validation
+does not select a newer version or interpret version ranges.
+
 These flags are accepted by build and dependency commands that need dependency
 resolution:
 

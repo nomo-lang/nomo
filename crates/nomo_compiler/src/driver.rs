@@ -93,6 +93,8 @@ pub fn check_source_text_with_project_modules_and_overrides(
     let local_import_root = local_source_root.and_then(|_| ast.package.first().cloned());
     let mut visited = HashSet::new();
     visited.insert(ast.package.clone());
+    let mut module_graph = DirectedGraph::new();
+    module_graph.add_node(ast.package.clone());
     merge_imported_public_api(
         path,
         &mut ast,
@@ -101,6 +103,7 @@ pub fn check_source_text_with_project_modules_and_overrides(
         external_modules,
         module_source_overrides,
         &mut visited,
+        &mut module_graph,
     )?;
     lower_program(
         path,

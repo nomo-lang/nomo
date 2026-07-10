@@ -8,6 +8,7 @@ pub(super) fn merge_imported_public_api(
     external_modules: &[ExternalModule],
     module_source_overrides: &[(PathBuf, String)],
     visited: &mut HashSet<Vec<String>>,
+    module_graph: &mut DirectedGraph<Vec<String>>,
 ) -> Result<(), Diagnostic> {
     let imports = ast.imports.clone();
     for import in imports {
@@ -75,6 +76,24 @@ pub(super) fn merge_imported_public_api(
                 module_ast.package.join("."),
             ));
         }
+        module_graph.add_edge(ast.package.clone(), module_ast.package.clone());
+        if let Some(cycle) = module_graph.find_cycle() {
+            let cycle_path = cycle
+                .path()
+                .iter()
+                .map(|package| package.join("."))
+                .collect::<Vec<_>>()
+                .join(" -> ");
+            return Err(Diagnostic::new(
+                "E0607",
+                format!("cyclic module import: {cycle_path}"),
+                importer_path,
+                1,
+                1,
+                import.join(".").len().max(1),
+                import.join("."),
+            ));
+        }
         if !visited.insert(module_ast.package.clone()) {
             continue;
         }
@@ -86,6 +105,7 @@ pub(super) fn merge_imported_public_api(
             external_modules,
             module_source_overrides,
             visited,
+            module_graph,
         )?;
         merge_public_items(ast, module_ast);
     }

@@ -1,3 +1,4 @@
+use nomo_graph::DirectedGraph;
 use nomo_manifest::{
     Dependency, DependencySource, PackageMetadata, validate_dependency_alias, validate_package_id,
     validate_version_like,
@@ -101,6 +102,7 @@ pub fn parse_lockfile_root(lockfile: &str, root_id: &str) -> Result<ParsedLockfi
         .into_iter()
         .map(LockPackage::into_resolved)
         .collect::<Result<Vec<_>, _>>()?;
+    validate_locked_dependency_graph(&packages)?;
     let dependencies = match root_edges {
         Some(edges) => build_locked_dependencies_from_edges(&edges, &packages)?,
         None if has_workspace_roots => {
@@ -121,7 +123,7 @@ pub fn parse_lockfile_root(lockfile: &str, root_id: &str) -> Result<ParsedLockfi
             packages
                 .iter()
                 .filter(|package| !referenced_packages.contains(&package.package))
-                .map(|package| build_locked_dependency(package, &packages, &mut Vec::new()))
+                .map(|package| build_locked_dependency(package, &packages))
                 .collect::<Result<Vec<_>, _>>()?
         }
     };
@@ -350,16 +352,7 @@ impl LockPackage {
 fn build_locked_dependency(
     dependency: &ResolvedDependency,
     packages: &[ResolvedDependency],
-    stack: &mut Vec<String>,
 ) -> Result<ResolvedDependency, String> {
-    if stack.contains(&dependency.package) {
-        return Err(format!(
-            "cyclic dependency in nomo.lock involving `{}`",
-            dependency.package
-        ));
-    }
-
-    stack.push(dependency.package.clone());
     let mut children = Vec::new();
     for child in &dependency.dependencies {
         let locked_child = packages
@@ -376,9 +369,8 @@ fn build_locked_dependency(
                     child.alias, child.package
                 )
             })?;
-        children.push(build_locked_dependency(locked_child, packages, stack)?);
+        children.push(build_locked_dependency(locked_child, packages)?);
     }
-    stack.pop();
 
     Ok(ResolvedDependency {
         alias: dependency.alias.clone(),
@@ -387,6 +379,28 @@ fn build_locked_dependency(
         checksum: dependency.checksum.clone(),
         dependencies: children,
     })
+}
+
+fn validate_locked_dependency_graph(packages: &[ResolvedDependency]) -> Result<(), String> {
+    let mut graph = DirectedGraph::new();
+    for package in packages {
+        graph.add_node(package.package.clone());
+        for dependency in &package.dependencies {
+            graph.add_edge(package.package.clone(), dependency.package.clone());
+        }
+    }
+    if let Some(cycle) = graph.find_cycle() {
+        return Err(format!(
+            "cyclic dependency in nomo.lock: {}",
+            cycle
+                .path()
+                .iter()
+                .map(String::as_str)
+                .collect::<Vec<_>>()
+                .join(" -> ")
+        ));
+    }
+    Ok(())
 }
 
 fn build_locked_dependencies_from_edges(
@@ -410,9 +424,42 @@ fn build_locked_dependencies_from_edges(
                         edge.alias, edge.package
                     )
                 })?;
-            build_locked_dependency(locked_child, packages, &mut Vec::new())
+            build_locked_dependency(locked_child, packages)
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lockfile_cycle_reports_full_package_path() {
+        let lockfile = r#"[[root]]
+id = "app/root"
+dependencies = ["a -> app/a"]
+
+[[package]]
+id = "app/a"
+alias = "a"
+version = "1.0.0"
+source = "registry+app/a"
+dependencies = ["b -> app/b"]
+
+[[package]]
+id = "app/b"
+alias = "b"
+version = "1.0.0"
+source = "registry+app/b"
+dependencies = ["a -> app/a"]
+"#;
+
+        let error = parse_lockfile_root(lockfile, "app/root").unwrap_err();
+        assert_eq!(
+            error,
+            "cyclic dependency in nomo.lock: app/a -> app/b -> app/a"
+        );
+    }
 }
 
 fn parse_lock_dependency_entry(entry: &str) -> Result<DependencyEdge, String> {

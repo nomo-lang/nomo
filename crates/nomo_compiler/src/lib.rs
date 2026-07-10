@@ -19,6 +19,7 @@ use crate::ast::{
 };
 use crate::diagnostic::{Diagnostic, Suggestion};
 use nomo_codegen_c as codegen;
+use nomo_graph::DirectedGraph;
 use std::collections::{HashMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};

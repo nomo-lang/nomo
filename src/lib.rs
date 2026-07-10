@@ -28,5 +28,6 @@ pub use lexer::{Token, TokenKind, lex};
 pub use nomo_codegen_c as codegen;
 pub use nomo_diagnostics as diagnostic;
 pub use nomo_diagnostics::{Diagnostic, Suggestion};
+pub use nomo_graph as graph;
 pub use nomo_spans as spans;
 pub use nomo_syntax::{ast, lexer, parser};

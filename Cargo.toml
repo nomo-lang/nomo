@@ -20,6 +20,7 @@ members = [
     "crates/nomo_syntax",
     "crates/nomo_test",
     "libs/diagnostics",
+    "libs/graph",
     "libs/spans",
 ]
 
@@ -30,6 +31,7 @@ license = "MIT"
 
 [workspace.dependencies]
 nomo-diagnostics = { path = "libs/diagnostics" }
+nomo-graph = { path = "libs/graph" }
 nomo-spans = { path = "libs/spans" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
@@ -43,6 +45,7 @@ nomo-diagnostics.workspace = true
 nomo-doc = { path = "crates/nomo_doc" }
 nomo-ir = { path = "crates/nomo_ir" }
 nomo-fmt = { path = "crates/nomo_fmt" }
+nomo-graph.workspace = true
 nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }
 nomo-lockfile = { path = "crates/nomo_lockfile" }
 nomo-manifest = { path = "crates/nomo_manifest" }

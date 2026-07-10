@@ -5,6 +5,7 @@ use super::{
     registry_http::registry_dependency_authorization,
     vendor::locked_or_vendor_source_root,
 };
+use nomo_graph::DirectedGraph;
 use nomo_lockfile::{
     DependencyGraph, ResolvedDependency, parse_lockfile_root,
     validate_locked_source_matches_manifest,
@@ -48,11 +49,14 @@ pub(super) fn resolve_dependency_graph_for_manifest(
         .transpose()
         .map_err(|err| err.to_string())?;
     let mut package_sources = BTreeMap::new();
-    let mut path_stack = vec![root.clone()];
+    let root_package = format!("{}/{}", manifest.package.namespace, manifest.package.name);
+    let mut package_graph = DirectedGraph::new();
+    package_graph.add_node(root_package.clone());
     let dependencies = resolve_dependencies(
         &manifest.dependencies,
         &root,
-        &mut path_stack,
+        &root_package,
+        &mut package_graph,
         &mut package_sources,
         lock_source_base.as_deref(),
         git_cache_base.as_deref(),
@@ -120,7 +124,8 @@ pub(super) fn validate_project_lock_direct_dependencies(
 fn resolve_dependencies(
     dependencies: &[Dependency],
     base_root: &Path,
-    path_stack: &mut Vec<PathBuf>,
+    current_package: &str,
+    package_graph: &mut DirectedGraph<String>,
     package_sources: &mut BTreeMap<String, DependencySource>,
     lock_source_base: Option<&Path>,
     git_cache_base: Option<&Path>,
@@ -128,6 +133,18 @@ fn resolve_dependencies(
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
     for dependency in dependencies {
+        package_graph.add_edge(current_package.to_string(), dependency.package.clone());
+        if let Some(cycle) = package_graph.find_cycle() {
+            return Err(format!(
+                "cyclic package dependency: {}",
+                cycle
+                    .path()
+                    .iter()
+                    .map(String::as_str)
+                    .collect::<Vec<_>>()
+                    .join(" -> ")
+            ));
+        }
         let (resolved_source, checksum, child_dependencies) = match &dependency.source {
             DependencySource::Path { path } => {
                 let dep_root = fs::canonicalize(base_root.join(path)).map_err(|err| {
@@ -137,15 +154,6 @@ fn resolve_dependencies(
                         base_root.join(path).display()
                     )
                 })?;
-                if path_stack.contains(&dep_root) {
-                    return Err(format!(
-                        "cyclic path dependency involving `{}` at {}",
-                        dependency.package,
-                        dep_root.display()
-                    ));
-                }
-
-                path_stack.push(dep_root.clone());
                 let dep_manifest = parse_manifest_at_root(&dep_root)?;
                 let actual_id = format!(
                     "{}/{}",
@@ -160,14 +168,14 @@ fn resolve_dependencies(
                 let child_dependencies = resolve_dependencies(
                     &dep_manifest.dependencies,
                     &dep_root,
-                    path_stack,
+                    &dependency.package,
+                    package_graph,
                     package_sources,
                     lock_source_base,
                     git_cache_base,
                     offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
-                path_stack.pop();
                 let resolved_source = match lock_source_base {
                     Some(lock_source_base) => DependencySource::Path {
                         path: relative_path(lock_source_base, &dep_root)
@@ -206,15 +214,6 @@ fn resolve_dependencies(
                         rev.as_deref(),
                     )?
                 };
-                if path_stack.contains(&dep_root) {
-                    return Err(format!(
-                        "cyclic git dependency involving `{}` at {}",
-                        dependency.package,
-                        dep_root.display()
-                    ));
-                }
-
-                path_stack.push(dep_root.clone());
                 let dep_manifest = parse_manifest_at_root(&dep_root)?;
                 let actual_id = format!(
                     "{}/{}",
@@ -230,14 +229,14 @@ fn resolve_dependencies(
                 let child_dependencies = resolve_dependencies(
                     &dep_manifest.dependencies,
                     &dep_root,
-                    path_stack,
+                    &dependency.package,
+                    package_graph,
                     package_sources,
                     lock_source_base,
                     git_cache_base,
                     offline,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
-                path_stack.pop();
                 (
                     DependencySource::Git {
                         git: git.clone(),
@@ -261,15 +260,6 @@ fn resolve_dependencies(
                     authorization.as_deref(),
                 )? {
                     Some(dep_root) => {
-                        if path_stack.contains(&dep_root) {
-                            return Err(format!(
-                                "cyclic registry dependency involving `{}` at {}",
-                                dependency.package,
-                                dep_root.display()
-                            ));
-                        }
-
-                        path_stack.push(dep_root.clone());
                         let dep_manifest = parse_manifest_at_root(&dep_root)?;
                         let actual_id = format!(
                             "{}/{}",
@@ -284,14 +274,14 @@ fn resolve_dependencies(
                         let child_dependencies = resolve_dependencies(
                             &dep_manifest.dependencies,
                             &dep_root,
-                            path_stack,
+                            &dependency.package,
+                            package_graph,
                             package_sources,
                             lock_source_base,
                             git_cache_base,
                             offline,
                         )?;
                         let checksum = package_checksum(&dep_root)?;
-                        path_stack.pop();
                         (
                             dependency.source.clone(),
                             Some(checksum),

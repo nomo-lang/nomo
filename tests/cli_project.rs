@@ -3856,6 +3856,43 @@ fn nomo_deps_resolve_and_tree_include_transitive_path_dependencies() {
 }
 
 #[test]
+fn nomo_deps_resolve_reports_full_package_cycle() {
+    let root = temp_test_root("deps-path-cycle");
+    reset_dir(&root);
+    let app = root.join("app");
+    let utils = root.join("utils");
+    fs::create_dir_all(app.join("src")).unwrap();
+    fs::create_dir_all(utils.join("src")).unwrap();
+    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nutils = { package = \"fynn/utils\", path = \"../utils\" }\n",
+    )
+    .unwrap();
+    fs::write(
+        utils.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\napp = { package = \"fynn/app\", path = \"../app\" }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&app)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains("cyclic package dependency: fynn/app -> fynn/utils -> fynn/app"),
+        "{stderr}"
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_deps_tree_reads_existing_lockfile() {
     let root = temp_test_root("deps-tree-lockfile");
     reset_dir(&root);
@@ -4557,7 +4594,7 @@ fn nomo_project_commands_reject_module_package_mismatch() {
 }
 
 #[test]
-fn nomo_project_commands_handle_local_module_import_cycles() {
+fn nomo_project_commands_reject_local_module_import_cycles() {
     let root = temp_test_root("local-module-cycle");
     reset_dir(&root);
     let project = root.join("hello");
@@ -4610,11 +4647,10 @@ pub fn b() -> i64 {
         .output()
         .unwrap();
 
-    assert!(
-        output.status.success(),
-        "{}",
-        String::from_utf8_lossy(&output.stderr)
-    );
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E0607"), "{stderr}");
+    assert!(stderr.contains("app.a -> app.b -> app.a"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();
 }
 

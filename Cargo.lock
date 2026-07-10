@@ -105,6 +105,7 @@ dependencies = [
  "nomo-diagnostics",
  "nomo-doc",
  "nomo-fmt",
+ "nomo-graph",
  "nomo-ir",
  "nomo-lockfile",
  "nomo-lsp-bridge",
@@ -132,6 +133,7 @@ version = "0.1.0"
 dependencies = [
  "nomo-codegen-c",
  "nomo-diagnostics",
+ "nomo-graph",
  "nomo-ir",
  "nomo-syntax",
 ]
@@ -160,6 +162,10 @@ dependencies = [
 ]
 
 [[package]]
+name = "nomo-graph"
+version = "0.1.0"
+
+[[package]]
 name = "nomo-ir"
 version = "0.1.0"
 
@@ -167,6 +173,7 @@ version = "0.1.0"
 name = "nomo-lockfile"
 version = "0.1.0"
 dependencies = [
+ "nomo-graph",
  "nomo-manifest",
  "serde",
  "toml",

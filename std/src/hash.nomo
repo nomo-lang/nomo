@@ -1,2 +1,39 @@
 //! Stable non-cryptographic hashing helpers.
 package std.hash
+
+import std.hash
+
+/// Incremental FNV-1a hash state.
+pub struct HashState {
+    value: u64
+}
+
+/// Creates a new hash state.
+pub fn new() -> HashState {
+    return hash.new()
+}
+
+/// Hashes a string with FNV-1a.
+pub fn string(value: string) -> u64 {
+    return hash.string(value)
+}
+
+/// Hashes byte values with FNV-1a.
+pub fn bytes(value: Array<u32>) -> u64 {
+    return hash.bytes(value)
+}
+
+/// Adds a string to a hash state.
+pub fn write_string(state: HashState, value: string) -> HashState {
+    return hash.write_string(state, value)
+}
+
+/// Adds byte values to a hash state.
+pub fn write_bytes(state: HashState, value: Array<u32>) -> HashState {
+    return hash.write_bytes(state, value)
+}
+
+/// Returns the final hash value.
+pub fn finish(state: HashState) -> u64 {
+    return hash.finish(state)
+}

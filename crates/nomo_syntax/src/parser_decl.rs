@@ -216,7 +216,7 @@ impl Parser<'_> {
     ) -> Result<Function, Diagnostic> {
         let function_token = self.peek().clone();
         self.expect_kind(TokenKind::Fn, "E0202", "expected `fn`")?;
-        let name = self.expect_ident("expected function name")?;
+        let name = self.expect_function_name()?;
         let type_params = self.parse_type_params(true)?;
         self.expect_kind(
             TokenKind::LParen,
@@ -386,6 +386,23 @@ impl Parser<'_> {
         )?;
         self.expect_newline("expected newline after extern function declaration")
             .map(|_| signature)
+    }
+
+    fn expect_function_name(&mut self) -> Result<String, Diagnostic> {
+        match self.peek().kind.clone() {
+            TokenKind::Ident(value) => {
+                self.advance();
+                Ok(value)
+            }
+            // `panic` is an expression keyword but is also a standard-library
+            // function name in `std.debug`; accept it only in this declaration
+            // position, keeping ordinary identifier validation unchanged.
+            TokenKind::Panic => {
+                self.advance();
+                Ok("panic".to_string())
+            }
+            _ => Err(self.error("E0300", "expected function name", self.peek().length())),
+        }
     }
 
     pub(super) fn parse_impl(&mut self) -> Result<ImplBlock, Diagnostic> {

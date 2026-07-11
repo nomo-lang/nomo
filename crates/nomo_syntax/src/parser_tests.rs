@@ -18,6 +18,16 @@ fn parses_v0_1_ast() {
 }
 
 #[test]
+fn accepts_panic_as_a_contextual_function_name() {
+    let source =
+        "package std.debug\n\npub fn panic(message: string) -> void {\n    panic(message)\n}\n";
+    let tokens = lex(Path::new("debug.nomo"), source).unwrap();
+    let ast = parse(Path::new("debug.nomo"), &tokens).unwrap();
+
+    assert_eq!(ast.functions[0].name, "panic");
+}
+
+#[test]
 fn rejects_wildcard_imports_in_v0_1() {
     let source = "package app.main\n\nimport std.io.*\n\nfn main() -> void {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

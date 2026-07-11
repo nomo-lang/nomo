@@ -1,2 +1,70 @@
 //! String map and string set helpers.
 package std.collections
+
+import std.collections
+
+/// A string-to-string map with value semantics.
+pub struct StringMap {
+    keys: Array<string>
+    values: Array<string>
+}
+
+/// A set of unique strings with value semantics.
+pub struct StringSet {
+    values: Array<string>
+}
+
+/// Creates an empty string map.
+pub fn map_new() -> StringMap {
+    return collections.map_new()
+}
+
+/// Returns the number of entries in a string map.
+pub fn map_len(map: StringMap) -> u64 {
+    return collections.map_len(map)
+}
+
+/// Returns a map value when the key is present.
+pub fn map_get(map: StringMap, key: string) -> Option<string> {
+    return collections.map_get(map, key)
+}
+
+/// Reports whether a map contains a key.
+pub fn map_contains(map: StringMap, key: string) -> bool {
+    return collections.map_contains(map, key)
+}
+
+/// Returns a map with a key updated to a value.
+pub fn map_set(map: StringMap, key: string, value: string) -> StringMap {
+    return collections.map_set(map, key, value)
+}
+
+/// Returns a map with a key removed.
+pub fn map_remove(map: StringMap, key: string) -> StringMap {
+    return collections.map_remove(map, key)
+}
+
+/// Creates an empty string set.
+pub fn set_new() -> StringSet {
+    return collections.set_new()
+}
+
+/// Returns the number of entries in a string set.
+pub fn set_len(set: StringSet) -> u64 {
+    return collections.set_len(set)
+}
+
+/// Reports whether a set contains a value.
+pub fn set_contains(set: StringSet, value: string) -> bool {
+    return collections.set_contains(set, value)
+}
+
+/// Returns a set with a value inserted.
+pub fn set_insert(set: StringSet, value: string) -> StringSet {
+    return collections.set_insert(set, value)
+}
+
+/// Returns a set with a value removed.
+pub fn set_remove(set: StringSet, value: string) -> StringSet {
+    return collections.set_remove(set, value)
+}

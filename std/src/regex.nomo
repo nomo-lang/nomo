@@ -1,2 +1,30 @@
 //! Regular expression helpers.
 package std.regex
+
+import std.regex
+
+/// A compiled regular expression.
+pub struct Regex {
+    pattern: string
+}
+
+/// Error returned when a regular expression cannot be compiled.
+pub struct RegexError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// Compiles a regular expression pattern.
+pub fn compile(pattern: string) -> Result<Regex, RegexError> {
+    return regex.compile(pattern)
+}
+
+/// Reports whether a regular expression matches a string.
+pub fn is_match(regex: Regex, value: string) -> bool {
+    return regex.is_match(regex, value)
+}
+
+/// Returns the full match and capture groups when a pattern matches.
+pub fn captures(regex: Regex, value: string) -> Option<Array<string>> {
+    return regex.captures(regex, value)
+}

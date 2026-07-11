@@ -600,11 +600,11 @@ The canonical `std/src/array.nomo` source declares this public surface and
 delegates representation-sensitive operations to the compiler/runtime array
 ABI. The intrinsic manifest pins that ABI as `array-header`.
 
-The core `std/src/io.nomo`, `fs.nomo`, `path.nomo`, `env.nomo`, `process.nomo`,
-`time.nomo`, `num.nomo`, `math.nomo`, `char.nomo`, and `os.nomo` files likewise
-declare their public signatures and doc comments. Host-sensitive behavior
-continues to use the compiler/runtime builtin backing during the source API
-migration.
+The core and extension `std/src/*.nomo` files likewise declare public
+signatures and doc comments for IO, filesystem, paths, environment, processes,
+time, numeric helpers, collections, hashing, crypto, JSON, regex, debug, log,
+and testing. Host-sensitive behavior continues to use the compiler/runtime
+builtin backing during the source API migration.
 
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,

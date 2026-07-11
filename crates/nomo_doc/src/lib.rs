@@ -686,5 +686,29 @@ mod tests {
         let join = path.items.iter().find(|item| item.name == "join").unwrap();
         assert_eq!(join.source, "std/src/path.nomo");
         assert!(join.docs.contains("Joins two path strings"));
+
+        let json = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.json")
+            .unwrap();
+        let parse = json.items.iter().find(|item| item.name == "parse").unwrap();
+        assert_eq!(parse.source, "std/src/json.nomo");
+        assert_eq!(
+            parse.signature,
+            "pub fn parse(value: string) -> Result<JsonValue, JsonError>"
+        );
+
+        let debug = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.debug")
+            .unwrap();
+        let panic = debug
+            .items
+            .iter()
+            .find(|item| item.name == "panic")
+            .unwrap();
+        assert_eq!(panic.source, "std/src/debug.nomo");
     }
 }

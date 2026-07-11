@@ -1,2 +1,29 @@
 //! Leveled logging helpers.
 package std.log
+
+import std.log
+
+/// Reports whether a log level is enabled.
+pub fn enabled(level: string) -> bool {
+    return log.enabled(level)
+}
+
+/// Writes a debug-level message.
+pub fn debug(message: string) -> void {
+    log.debug(message)
+}
+
+/// Writes an info-level message.
+pub fn info(message: string) -> void {
+    log.info(message)
+}
+
+/// Writes a warning-level message.
+pub fn warn(message: string) -> void {
+    log.warn(message)
+}
+
+/// Writes an error-level message.
+pub fn error(message: string) -> void {
+    log.error(message)
+}

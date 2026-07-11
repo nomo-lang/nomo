@@ -1,2 +1,19 @@
 //! Test assertion helpers.
 package std.testing
+
+import std.testing
+
+/// Panics when a boolean condition is false.
+pub fn assert(condition: bool, message: string) -> void {
+    testing.assert(condition, message)
+}
+
+/// Panics when two comparable values differ.
+pub fn assert_equal<T>(left: T, right: T) -> void {
+    testing.assert_equal(left, right)
+}
+
+/// Panics when a result is successful instead of an error.
+pub fn assert_error<T, E>(value: Result<T, E>) -> void {
+    testing.assert_error(value)
+}

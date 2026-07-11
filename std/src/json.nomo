@@ -1,2 +1,25 @@
 //! JSON parse and stringify helpers.
 package std.json
+
+import std.json
+
+/// A validated JSON document stored as raw text.
+pub struct JsonValue {
+    raw: string
+}
+
+/// Error returned when JSON parsing fails.
+pub struct JsonError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// Parses and validates a JSON document.
+pub fn parse(value: string) -> Result<JsonValue, JsonError> {
+    return json.parse(value)
+}
+
+/// Returns the validated JSON text.
+pub fn stringify(value: JsonValue) -> string {
+    return json.stringify(value)
+}

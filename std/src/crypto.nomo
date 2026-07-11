@@ -1,2 +1,19 @@
 //! Cryptographic digest helpers.
 package std.crypto
+
+import std.crypto
+
+/// Returns a lowercase SHA-256 digest for a string.
+pub fn sha256(value: string) -> string {
+    return crypto.sha256(value)
+}
+
+/// Returns a lowercase SHA-512 digest for a string.
+pub fn sha512(value: string) -> string {
+    return crypto.sha512(value)
+}
+
+/// Returns OS-generated random bytes as u32 values.
+pub fn random_bytes(count: u64) -> Array<u32> {
+    return crypto.random_bytes(count)
+}

@@ -1,2 +1,24 @@
 //! Debug print and panic helpers.
 package std.debug
+
+import std.debug
+
+/// Writes a debug message to standard error without a newline.
+pub fn print(message: string) -> void {
+    debug.print(message)
+}
+
+/// Writes a debug message to standard error with a newline.
+pub fn println(message: string) -> void {
+    debug.println(message)
+}
+
+/// Panics with a debug message.
+pub fn panic(message: string) -> void {
+    debug.panic(message)
+}
+
+/// Returns a stable placeholder backtrace string.
+pub fn backtrace() -> string {
+    return debug.backtrace()
+}

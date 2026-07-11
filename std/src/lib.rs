@@ -6,6 +6,7 @@ use nomo_syntax::parser::parse;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::env;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 pub const PACKAGE_ID: &str = "nomo-lang/std";
@@ -136,6 +137,7 @@ const NUM_ITEMS: &[&str] = &[
     "parse_f64",
     "parse_i64",
     "parse_u64",
+    "to_string",
     "wrapping_add",
     "wrapping_mul",
     "wrapping_sub",
@@ -555,6 +557,23 @@ pub const MODULES: &[StandardModule] = &[
     },
 ];
 
+const SOURCE_DEFINED_MODULES: &[&str] = &[
+    "std.array",
+    "std.char",
+    "std.env",
+    "std.fs",
+    "std.io",
+    "std.math",
+    "std.num",
+    "std.option",
+    "std.os",
+    "std.path",
+    "std.process",
+    "std.result",
+    "std.string",
+    "std.time",
+];
+
 pub fn modules() -> &'static [StandardModule] {
     MODULES
 }
@@ -573,7 +592,8 @@ pub fn parse_intrinsic_manifest(source: &str) -> Result<IntrinsicManifest, Strin
 
 pub fn validate_intrinsic_manifest() -> Result<(), String> {
     validate_intrinsic_manifest_source(INTRINSIC_MANIFEST_SOURCE)?;
-    validate_intrinsic_source_contract()
+    validate_intrinsic_source_contract()?;
+    validate_source_api_surface()
 }
 
 pub fn validate_intrinsic_manifest_source(source: &str) -> Result<(), String> {
@@ -853,6 +873,78 @@ pub fn validate_intrinsic_source_contract() -> Result<(), String> {
     Ok(())
 }
 
+pub fn validate_source_api_surface() -> Result<(), String> {
+    for module_path in SOURCE_DEFINED_MODULES {
+        let module = module(module_path)
+            .ok_or_else(|| format!("source-defined standard module `{module_path}` is unknown"))?;
+        let path = module_source_path(module);
+        let source = fs::read_to_string(&path)
+            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+        let ast = parse_source_contract(&path.display().to_string(), &source)?;
+        validate_package(&ast, module_path)?;
+
+        let mut actual = BTreeSet::new();
+        actual.extend(
+            ast.structs
+                .iter()
+                .filter(|item| item.public)
+                .map(|item| item.name.as_str()),
+        );
+        actual.extend(
+            ast.enums
+                .iter()
+                .filter(|item| item.public)
+                .map(|item| item.name.as_str()),
+        );
+        actual.extend(
+            ast.interfaces
+                .iter()
+                .filter(|item| item.public)
+                .map(|item| item.name.as_str()),
+        );
+        actual.extend(
+            ast.consts
+                .iter()
+                .filter(|item| item.public)
+                .map(|item| item.name.as_str()),
+        );
+        actual.extend(
+            ast.functions
+                .iter()
+                .filter(|item| item.public)
+                .map(|item| item.name.as_str()),
+        );
+
+        let mut expected = module.items.iter().copied().collect::<BTreeSet<_>>();
+        if *module_path == "std.array" {
+            // Array's layout remains compiler-owned during the source migration.
+            expected.remove("Array");
+        }
+        if *module_path == "std.io" {
+            // IoError is an implicit compiler type, not an importable item.
+            actual.remove("IoError");
+        }
+        if *module_path == "std.option" {
+            // Higher-order helpers remain compiler-backed until function values exist.
+            expected.remove("map");
+            expected.remove("and_then");
+        }
+        if *module_path == "std.result" {
+            // Higher-order helpers remain compiler-backed until function values exist.
+            expected.remove("map");
+            expected.remove("map_err");
+            expected.remove("and_then");
+        }
+        if actual != expected {
+            return Err(format!(
+                "source API for `{module_path}` does not match the standard registry: expected {:?}, found {:?}",
+                expected, actual
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn parse_source_contract(path: &str, source: &str) -> Result<SourceFile, String> {
     let path = Path::new(path);
     let tokens = lex(path, source).map_err(|error| format!("{path:?}: {}", error.message))?;
@@ -1023,10 +1115,11 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 198);
+        assert_eq!(imports.len(), 199);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
+        assert!(is_supported_import("std.num.to_string"));
         assert!(!is_supported_import("std.io.flush"));
     }
 
@@ -1059,6 +1152,11 @@ mod tests {
                     .is_file()
             );
         }
+    }
+
+    #[test]
+    fn source_defined_modules_match_the_standard_registry() {
+        validate_source_api_surface().unwrap();
     }
 
     #[test]

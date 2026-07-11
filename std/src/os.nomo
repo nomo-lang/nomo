@@ -1,2 +1,24 @@
 //! Target OS helpers.
 package std.os
+
+import std.os
+
+/// Returns the target operating system name.
+pub fn platform() -> string {
+    return os.platform()
+}
+
+/// Returns the target CPU architecture name.
+pub fn arch() -> string {
+    return os.arch()
+}
+
+/// Returns the host path separator.
+pub fn path_separator() -> string {
+    return os.path_separator()
+}
+
+/// Returns the host line ending.
+pub fn line_ending() -> string {
+    return os.line_ending()
+}

@@ -1,2 +1,49 @@
 //! Clock and sleep helpers.
 package std.time
+
+import std.time
+
+/// A duration represented by a signed millisecond count.
+pub struct Duration {
+    millis: i64
+}
+
+/// Returns the current wall-clock time in milliseconds.
+pub fn now_millis() -> i64 {
+    return time.now_millis()
+}
+
+/// Returns a monotonic clock value in milliseconds.
+pub fn monotonic_millis() -> i64 {
+    return time.monotonic_millis()
+}
+
+/// Creates a duration from milliseconds.
+pub fn duration_millis(value: i64) -> Duration {
+    return time.duration_millis(value)
+}
+
+/// Creates a duration from seconds.
+pub fn duration_seconds(value: i64) -> Duration {
+    return time.duration_seconds(value)
+}
+
+/// Returns a duration's millisecond count.
+pub fn duration_as_millis(value: Duration) -> i64 {
+    return time.duration_as_millis(value)
+}
+
+/// Formats a duration as a stable human-readable string.
+pub fn format_duration(value: Duration) -> string {
+    return time.format_duration(value)
+}
+
+/// Sleeps for a duration.
+pub fn sleep(value: Duration) -> void {
+    time.sleep(value)
+}
+
+/// Sleeps for a signed millisecond count.
+pub fn sleep_millis(value: i64) -> void {
+    time.sleep_millis(value)
+}

@@ -32,6 +32,12 @@ Some modules also support specific imports and value-method syntax, such as
 `value.is_some()` for `Option<T>` helpers and `file.read_to_string()` for
 `File` methods.
 
+The public API for the core modules is declared in the canonical
+`std/src/*.nomo` files. The compiler continues to lower the representation- and
+host-sensitive calls through its builtin/runtime backing while this source
+migration is in progress; the source files are the documentation and semantic
+surface for signatures and visibility.
+
 ## Propagation Carriers
 
 `std.option` and `std.result` define the two standard carriers used by postfix

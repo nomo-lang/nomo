@@ -1,2 +1,59 @@
 //! Numeric parsing and conversion helpers.
 package std.num
+
+import std.num
+
+/// Error returned when numeric parsing fails.
+pub struct NumError {
+    pub message: string
+}
+
+/// Parses a signed 64-bit integer.
+pub fn parse_i64(value: string) -> Result<i64, NumError> {
+    return num.parse_i64(value)
+}
+
+/// Parses an unsigned 64-bit integer.
+pub fn parse_u64(value: string) -> Result<u64, NumError> {
+    return num.parse_u64(value)
+}
+
+/// Parses a 64-bit floating-point number.
+pub fn parse_f64(value: string) -> Result<f64, NumError> {
+    return num.parse_f64(value)
+}
+
+/// Converts a supported numeric value to a string.
+pub fn to_string(value: i64) -> string {
+    return num.to_string(value)
+}
+
+/// Adds two integers and returns None on overflow.
+pub fn checked_add(left: i64, right: i64) -> Option<i64> {
+    return num.checked_add(left, right)
+}
+
+/// Subtracts two integers and returns None on overflow.
+pub fn checked_sub(left: i64, right: i64) -> Option<i64> {
+    return num.checked_sub(left, right)
+}
+
+/// Multiplies two integers and returns None on overflow.
+pub fn checked_mul(left: i64, right: i64) -> Option<i64> {
+    return num.checked_mul(left, right)
+}
+
+/// Adds two integers with wrapping arithmetic.
+pub fn wrapping_add(left: i64, right: i64) -> i64 {
+    return num.wrapping_add(left, right)
+}
+
+/// Subtracts two integers with wrapping arithmetic.
+pub fn wrapping_sub(left: i64, right: i64) -> i64 {
+    return num.wrapping_sub(left, right)
+}
+
+/// Multiplies two integers with wrapping arithmetic.
+pub fn wrapping_mul(left: i64, right: i64) -> i64 {
+    return num.wrapping_mul(left, right)
+}

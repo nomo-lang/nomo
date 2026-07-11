@@ -628,7 +628,7 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"package\":\"nomo-lang/std\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.io\""), "{stdout}");
-    assert!(stdout.contains("printing and terminal I/O"), "{stdout}");
+    assert!(stdout.contains("Printing and terminal I/O."), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Option\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Result\""), "{stdout}");

@@ -1,2 +1,45 @@
 //! Process helpers.
 package std.process
+
+import std.process
+
+/// Error returned when a process operation fails.
+pub struct ProcessError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// Captured process output.
+pub struct ProcessOutput {
+    /// Exit status returned by the process.
+    pub status: i32
+    /// Captured standard output.
+    pub stdout: string
+    /// Captured standard error.
+    pub stderr: string
+}
+
+/// Exits the current process with a status code.
+pub fn exit(code: i64) -> void {
+    process.exit(code)
+}
+
+/// Starts a command and returns its status code.
+pub fn spawn(command: string) -> Result<i32, ProcessError> {
+    return process.spawn(command)
+}
+
+/// Runs a command and returns its exit status.
+pub fn status(command: string) -> Result<i32, ProcessError> {
+    return process.status(command)
+}
+
+/// Runs a command and returns its standard output.
+pub fn exec(command: string) -> Result<string, ProcessError> {
+    return process.exec(command)
+}
+
+/// Runs a command and captures its output streams.
+pub fn output(command: string) -> Result<ProcessOutput, ProcessError> {
+    return process.output(command)
+}

@@ -1,2 +1,54 @@
 //! Numeric helpers.
 package std.math
+
+import std.math
+
+/// Returns the absolute value of a numeric value.
+pub fn abs(value: i64) -> i64 {
+    return math.abs(value)
+}
+
+/// Returns the smaller of two matching numeric values.
+pub fn min(left: i64, right: i64) -> i64 {
+    return math.min(left, right)
+}
+
+/// Returns the larger of two matching numeric values.
+pub fn max(left: i64, right: i64) -> i64 {
+    return math.max(left, right)
+}
+
+/// Rounds an f64 down to the nearest integer value.
+pub fn floor(value: f64) -> f64 {
+    return math.floor(value)
+}
+
+/// Rounds an f64 up to the nearest integer value.
+pub fn ceil(value: f64) -> f64 {
+    return math.ceil(value)
+}
+
+/// Rounds an f64 to the nearest integer value.
+pub fn round(value: f64) -> f64 {
+    return math.round(value)
+}
+
+/// Returns the square root of an f64.
+pub fn sqrt(value: f64) -> f64 {
+    return math.sqrt(value)
+}
+
+/// Raises an f64 to an f64 power.
+pub fn pow(value: f64, exponent: f64) -> f64 {
+    return math.pow(value, exponent)
+}
+
+/// Returns the sine of an f64 in radians.
+pub fn sin(value: f64) -> f64 {
+    return math.sin(value)
+}
+
+/// Returns the cosine of an f64 in radians.
+pub fn cos(value: f64) -> f64 {
+    return math.cos(value)
+}

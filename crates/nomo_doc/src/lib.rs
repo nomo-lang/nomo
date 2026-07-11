@@ -668,5 +668,23 @@ mod tests {
             .unwrap();
         assert_eq!(split.source, "std/src/string.nomo");
         assert!(split.docs.contains("Splits a string"));
+
+        let io = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.io")
+            .unwrap();
+        let println = io.items.iter().find(|item| item.name == "println").unwrap();
+        assert_eq!(println.source, "std/src/io.nomo");
+        assert_eq!(println.signature, "pub fn println(value: string) -> void");
+
+        let path = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.path")
+            .unwrap();
+        let join = path.items.iter().find(|item| item.name == "join").unwrap();
+        assert_eq!(join.source, "std/src/path.nomo");
+        assert!(join.docs.contains("Joins two path strings"));
     }
 }

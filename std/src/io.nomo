@@ -1,2 +1,35 @@
 //! Printing and terminal I/O.
 package std.io
+
+import std.io
+
+/// Writes a string to standard output without a trailing newline.
+pub fn print(value: string) -> void {
+    io.print(value)
+}
+
+/// Writes a string to standard output followed by a newline.
+pub fn println(value: string) -> void {
+    io.println(value)
+}
+
+/// Writes a string to standard error without a trailing newline.
+pub fn eprint(value: string) -> void {
+    io.eprint(value)
+}
+
+/// Writes a string to standard error followed by a newline.
+pub fn eprintln(value: string) -> void {
+    io.eprintln(value)
+}
+
+/// Error returned when reading a line from standard input fails.
+pub struct IoError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// Reads one line from standard input.
+pub fn read_line() -> Result<string, IoError> {
+    return io.read_line()
+}

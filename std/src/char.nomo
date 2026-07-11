@@ -1,2 +1,24 @@
 //! Character helpers.
 package std.char
+
+import std.char
+
+/// Reports whether a character is an ASCII digit.
+pub fn is_digit(value: char) -> bool {
+    return char.is_digit(value)
+}
+
+/// Reports whether a character is an ASCII letter.
+pub fn is_alpha(value: char) -> bool {
+    return char.is_alpha(value)
+}
+
+/// Reports whether a character is ASCII whitespace.
+pub fn is_whitespace(value: char) -> bool {
+    return char.is_whitespace(value)
+}
+
+/// Converts a character to a UTF-8 string.
+pub fn to_string(value: char) -> string {
+    return char.to_string(value)
+}

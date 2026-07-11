@@ -257,17 +257,6 @@ fn collect_struct_field_lines(tokens: &[Token], start: usize) -> (Vec<usize>, us
                     lines.push(token.line);
                 }
             }
-            TokenKind::Pub if depth == 1 => {
-                if matches!(
-                    (
-                        tokens.get(index + 1).map(|token| &token.kind),
-                        tokens.get(index + 2).map(|token| &token.kind),
-                    ),
-                    (Some(TokenKind::Ident(_)), Some(TokenKind::Colon))
-                ) {
-                    lines.push(token.line);
-                }
-            }
             _ => {}
         }
         index += 1;

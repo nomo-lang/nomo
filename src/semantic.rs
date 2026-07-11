@@ -83,6 +83,10 @@ pub fn standard_library_symbols_for_imports(
         })?;
         let mut module_symbols =
             nomo_lsp_bridge::public_symbols_for_text(&source_path, &module_source)?;
+        module_symbols.retain(|symbol| {
+            let registry_path = format!("{}.{}", module.path, symbol.name);
+            nomo_std::is_supported_import(&registry_path) || symbol.container_name.is_some()
+        });
         if module.path == "std.array" {
             module_symbols.push(synthetic_standard_type_symbol(
                 &source_path,

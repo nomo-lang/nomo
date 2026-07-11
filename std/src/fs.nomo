@@ -1,2 +1,92 @@
 //! Filesystem helpers.
 package std.fs
+
+import std.fs
+
+/// Error returned when a filesystem operation fails.
+pub struct FsError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// Opaque handle for an opened file.
+pub struct File {
+    handle: u64
+}
+
+/// Metadata returned for a filesystem path.
+pub struct FileMetadata {
+    /// Whether the path refers to a regular file.
+    pub is_file: bool
+    /// Whether the path refers to a directory.
+    pub is_dir: bool
+    /// File size in bytes.
+    pub size: u64
+}
+
+/// Reads a UTF-8 file into a string.
+pub fn read_to_string(path: string) -> Result<string, FsError> {
+    return fs.read_to_string(path)
+}
+
+/// Writes a string to a file, replacing its contents.
+pub fn write_string(path: string, content: string) -> Result<void, FsError> {
+    return fs.write_string(path, content)
+}
+
+/// Reads a file into byte values.
+pub fn read_bytes(path: string) -> Result<Array<u32>, FsError> {
+    return fs.read_bytes(path)
+}
+
+/// Writes byte values to a file.
+pub fn write_bytes(path: string, bytes: Array<u32>) -> Result<void, FsError> {
+    return fs.write_bytes(path, bytes)
+}
+
+/// Reports whether a path exists.
+pub fn exists(path: string) -> bool {
+    return fs.exists(path)
+}
+
+/// Returns metadata for a path.
+pub fn metadata(path: string) -> Result<FileMetadata, FsError> {
+    return fs.metadata(path)
+}
+
+/// Creates a directory.
+pub fn create_dir(path: string) -> Result<void, FsError> {
+    return fs.create_dir(path)
+}
+
+/// Removes an empty directory.
+pub fn remove_dir(path: string) -> Result<void, FsError> {
+    return fs.remove_dir(path)
+}
+
+/// Returns the names in a directory.
+pub fn read_dir(path: string) -> Result<Array<string>, FsError> {
+    return fs.read_dir(path)
+}
+
+/// Opens a file for reading and writing.
+pub fn open(path: string) -> Result<File, FsError> {
+    return fs.open(path)
+}
+
+impl File {
+    /// Closes an opened file.
+    pub fn close(self) -> void {
+        self.close()
+    }
+
+    /// Reads the remaining file contents as a string.
+    pub fn read_to_string(self) -> Result<string, FsError> {
+        return self.read_to_string()
+    }
+
+    /// Writes a string at the current file position.
+    pub fn write_string(mut self, content: string) -> Result<void, FsError> {
+        return self.write_string(content)
+    }
+}

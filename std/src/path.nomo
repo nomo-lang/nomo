@@ -1,2 +1,34 @@
 //! Path manipulation helpers.
 package std.path
+
+import std.path
+
+/// Joins two path strings using the host platform separator.
+pub fn join(left: string, right: string) -> string {
+    return path.join(left, right)
+}
+
+/// Returns the final component of a path.
+pub fn basename(value: string) -> string {
+    return path.basename(value)
+}
+
+/// Returns the parent component of a path.
+pub fn dirname(value: string) -> string {
+    return path.dirname(value)
+}
+
+/// Returns the final extension of a path.
+pub fn extension(value: string) -> string {
+    return path.extension(value)
+}
+
+/// Normalizes separators and dot components in a path.
+pub fn normalize(value: string) -> string {
+    return path.normalize(value)
+}
+
+/// Reports whether a path is absolute on the host platform.
+pub fn is_absolute(value: string) -> bool {
+    return path.is_absolute(value)
+}

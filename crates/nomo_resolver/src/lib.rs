@@ -244,24 +244,6 @@ fn verify_registry_archive_checksum(
     }
 }
 
-#[cfg(test)]
-mod tests {
-    use super::{RegistryVersionMetadata, verify_registry_archive_checksum};
-
-    #[test]
-    fn rejects_registry_archive_checksum_mismatch() {
-        let metadata = RegistryVersionMetadata {
-            package: "fynn/utils".to_string(),
-            version: "0.1.0".to_string(),
-            checksum: format!("sha256:{}", "0".repeat(64)),
-            yanked: false,
-        };
-        let error =
-            verify_registry_archive_checksum("utils", &metadata, b"not-the-archive").unwrap_err();
-        assert!(error.contains("archive checksum mismatch"), "{error}");
-    }
-}
-
 pub fn registry_cached_source_root(
     base_root: &Path,
     package: &str,
@@ -545,4 +527,22 @@ fn archive_output_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
         }
     }
     Ok(output)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{RegistryVersionMetadata, verify_registry_archive_checksum};
+
+    #[test]
+    fn rejects_registry_archive_checksum_mismatch() {
+        let metadata = RegistryVersionMetadata {
+            package: "fynn/utils".to_string(),
+            version: "0.1.0".to_string(),
+            checksum: format!("sha256:{}", "0".repeat(64)),
+            yanked: false,
+        };
+        let error =
+            verify_registry_archive_checksum("utils", &metadata, b"not-the-archive").unwrap_err();
+        assert!(error.contains("archive checksum mismatch"), "{error}");
+    }
 }

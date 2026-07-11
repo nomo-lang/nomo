@@ -429,39 +429,6 @@ fn build_locked_dependencies_from_edges(
         .collect()
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn lockfile_cycle_reports_full_package_path() {
-        let lockfile = r#"[[root]]
-id = "app/root"
-dependencies = ["a -> app/a"]
-
-[[package]]
-id = "app/a"
-alias = "a"
-version = "1.0.0"
-source = "registry+app/a"
-dependencies = ["b -> app/b"]
-
-[[package]]
-id = "app/b"
-alias = "b"
-version = "1.0.0"
-source = "registry+app/b"
-dependencies = ["a -> app/a"]
-"#;
-
-        let error = parse_lockfile_root(lockfile, "app/root").unwrap_err();
-        assert_eq!(
-            error,
-            "cyclic dependency in nomo.lock: app/a -> app/b -> app/a"
-        );
-    }
-}
-
 fn parse_lock_dependency_entry(entry: &str) -> Result<DependencyEdge, String> {
     let Some((alias, package)) = entry.split_once(" -> ") else {
         return Err(format!(
@@ -594,4 +561,37 @@ fn remember_package_source(
 
 fn package_id(package: &PackageMetadata) -> String {
     format!("{}/{}", package.namespace, package.name)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn lockfile_cycle_reports_full_package_path() {
+        let lockfile = r#"[[root]]
+id = "app/root"
+dependencies = ["a -> app/a"]
+
+[[package]]
+id = "app/a"
+alias = "a"
+version = "1.0.0"
+source = "registry+app/a"
+dependencies = ["b -> app/b"]
+
+[[package]]
+id = "app/b"
+alias = "b"
+version = "1.0.0"
+source = "registry+app/b"
+dependencies = ["a -> app/a"]
+"#;
+
+        let error = parse_lockfile_root(lockfile, "app/root").unwrap_err();
+        assert_eq!(
+            error,
+            "cyclic dependency in nomo.lock: app/a -> app/b -> app/a"
+        );
+    }
 }

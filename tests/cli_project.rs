@@ -1573,7 +1573,7 @@ fn nomo_deps_resolve_writes_lockfile_for_namespace_first_manifest() {
     .unwrap();
     fs::write(
         project.join("nomo.toml"),
-        &format!(
+        format!(
             "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nstd = {{ package = \"nomo-lang/std\", version = \"0.1.0\" }}\njson = {{ package = \"nomo-lang/json\", git = \"{}\", rev = \"{}\" }}\nlocal_utils = {{ package = \"fynn/utils\", path = \"../utils\" }}\n",
             json.display(),
             json_rev

@@ -895,7 +895,7 @@ fn array_parameters_are_retained_and_released_by_value_but_not_mut_borrows() {
 
 #[test]
 fn emits_array_helpers_for_all_v0_1_primitive_elements() {
-    let elements = vec![
+    let elements = [
         ValueType::String,
         ValueType::Int,
         ValueType::I32,

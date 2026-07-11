@@ -53,7 +53,8 @@ jobs:
           cp "target/${{ matrix.target }}/release/nomo" release/
           cp "target/${{ matrix.target }}/release/nomoc" release/
           cp README.md LICENSE release/
-          tar -C release -czf "$ASSET_NAME" nomo nomoc README.md LICENSE
+          cp -R std release/std
+          tar -C release -czf "$ASSET_NAME" nomo nomoc README.md LICENSE std
 
       - name: Package Windows binaries
         if: runner.os == 'Windows'
@@ -63,6 +64,7 @@ jobs:
           Copy-Item "target/${{ matrix.target }}/release/nomo.exe" release/
           Copy-Item "target/${{ matrix.target }}/release/nomoc.exe" release/
           Copy-Item README.md, LICENSE release/
+          Copy-Item std release/std -Recurse
           Compress-Archive -Path release/* -DestinationPath $env:ASSET_NAME
 
       - name: Upload release archive

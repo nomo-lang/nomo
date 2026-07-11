@@ -9,6 +9,9 @@ use nomo_lsp_bridge::{
     definition_for_text as bridge_definition_for_text, references_for_symbol_in_text_with_owners,
     resolve_symbol_at_position_with_owner,
 };
+use nomo_syntax::lexer::lex;
+use nomo_syntax::parser::parse;
+use std::fs;
 use std::path::{Path, PathBuf};
 
 mod member_resolution;
@@ -23,12 +26,141 @@ pub use project_scope::{
     dependency_symbols_for_project_with_overrides, symbols_for_project_with_overrides,
 };
 
+pub fn standard_library_symbols() -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let mut symbols = Vec::new();
+    for module in nomo_std::modules() {
+        let path = nomo_std::module_source_path(module);
+        let source = fs::read_to_string(&path).map_err(|error| {
+            Diagnostic::new(
+                "E0902",
+                format!("failed to read {}: {error}", path.display()),
+                &path,
+                1,
+                1,
+                1,
+                "",
+            )
+        })?;
+        symbols.extend(nomo_lsp_bridge::public_symbols_for_text(&path, &source)?);
+        if module.path == "std.array" {
+            symbols.push(synthetic_standard_type_symbol(
+                &path,
+                &source,
+                "Array",
+                "pub type Array<T>",
+            ));
+        }
+    }
+    Ok(symbols)
+}
+
+pub fn standard_library_symbols_for_imports(
+    path: &Path,
+    source: &str,
+) -> Result<Vec<SemanticSymbol>, Diagnostic> {
+    let tokens = lex(path, source)?;
+    let ast = parse(path, &tokens)?;
+    let mut symbols = Vec::new();
+    for import in ast.imports {
+        if import.first().map(String::as_str) != Some("std") || import.len() < 2 {
+            continue;
+        }
+        let module_name = import[..2].join(".");
+        let Some(module) = nomo_std::module(&module_name) else {
+            continue;
+        };
+        let source_path = nomo_std::module_source_path(module);
+        let module_source = fs::read_to_string(&source_path).map_err(|error| {
+            Diagnostic::new(
+                "E0902",
+                format!("failed to read {}: {error}", source_path.display()),
+                &source_path,
+                1,
+                1,
+                1,
+                "",
+            )
+        })?;
+        let mut module_symbols =
+            nomo_lsp_bridge::public_symbols_for_text(&source_path, &module_source)?;
+        if module.path == "std.array" {
+            module_symbols.push(synthetic_standard_type_symbol(
+                &source_path,
+                &module_source,
+                "Array",
+                "pub type Array<T>",
+            ));
+        }
+        if import.len() > 2 {
+            let item = import[2..].join(".");
+            module_symbols.retain(|symbol| symbol.name == item);
+        }
+        symbols.extend(module_symbols);
+    }
+    symbols.sort_by(|left, right| {
+        left.name
+            .cmp(&right.name)
+            .then(left.source_path.cmp(&right.source_path))
+            .then(
+                left.selection_range
+                    .start
+                    .line
+                    .cmp(&right.selection_range.start.line),
+            )
+    });
+    symbols.dedup_by(|left, right| {
+        left.name == right.name
+            && left.source_path == right.source_path
+            && left.selection_range == right.selection_range
+    });
+    Ok(symbols)
+}
+
+pub fn standard_library_module_source_path(module: &str) -> Option<PathBuf> {
+    nomo_std::module(module).map(nomo_std::module_source_path)
+}
+
+fn synthetic_standard_type_symbol(
+    path: &Path,
+    source: &str,
+    name: &str,
+    signature: &str,
+) -> SemanticSymbol {
+    let line = source
+        .lines()
+        .position(|line| line.starts_with("package "))
+        .unwrap_or(0);
+    let width = source.lines().nth(line).map_or(1, str::len);
+    let range = TextRange {
+        start: TextPosition {
+            line: line as u32,
+            character: 0,
+        },
+        end: TextPosition {
+            line: line as u32,
+            character: width as u32,
+        },
+    };
+    SemanticSymbol {
+        source_path: path.to_path_buf(),
+        name: name.to_string(),
+        container_name: None,
+        kind: SemanticSymbolKind::Struct,
+        signature: signature.to_string(),
+        docs: "Value-semantics dynamic array with compiler/runtime-backed layout.".to_string(),
+        line,
+        range,
+        selection_range: range,
+    }
+}
+
 pub fn symbol_at_position(
     path: &Path,
     source: &str,
     position: TextPosition,
 ) -> Result<Option<SemanticSymbol>, Diagnostic> {
-    let symbols = symbols_for_text(path, source)?;
+    let mut symbols = symbols_for_text(path, source)?;
+    symbols.extend(standard_library_symbols_for_imports(path, source)?);
     let member_owners = member_owners_for_text(path, source).unwrap_or_default();
     let owner = member_owners
         .iter()
@@ -65,7 +197,8 @@ pub fn references_for_text(
     let Some(symbol) = symbol_at_position(path, source, position)? else {
         return Ok(None);
     };
-    let symbols = symbols_for_text(path, source)?;
+    let mut symbols = symbols_for_text(path, source)?;
+    symbols.extend(standard_library_symbols_for_imports(path, source)?);
     let member_owners = member_owners_for_text(path, source).unwrap_or_default();
     Ok(Some(references_for_symbol_in_text_with_owners(
         path,
@@ -267,6 +400,24 @@ mod tests {
     use std::fs;
     use std::path::Path;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn standard_library_symbols_use_canonical_source_files() {
+        let source = "package app.main\n\nimport std.array\nimport std.string.split\n\nfn main() -> void {\n}\n";
+        let symbols = standard_library_symbols_for_imports(Path::new("main.nomo"), source).unwrap();
+        let array = symbols
+            .iter()
+            .find(|symbol| symbol.name == "Array")
+            .unwrap();
+        assert!(array.source_path.ends_with("std/src/array.nomo"));
+        assert_eq!(array.signature, "pub type Array<T>");
+        let split = symbols
+            .iter()
+            .find(|symbol| symbol.name == "split")
+            .unwrap();
+        assert!(split.source_path.ends_with("std/src/string.nomo"));
+        assert!(split.docs.contains("Splits a string"));
+    }
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {

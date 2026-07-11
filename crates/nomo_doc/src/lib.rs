@@ -105,29 +105,45 @@ pub fn generate_std_docs(output: &Path) -> Result<DocPackage, DocError> {
 }
 
 pub fn std_doc_package() -> DocPackage {
+    let source_root = nomo_std::source_root();
+    let project_root = source_root
+        .parent()
+        .and_then(Path::parent)
+        .unwrap_or(source_root.as_path());
+    let source_modules = collect_source_docs(project_root, &source_root, nomo_std::PACKAGE_ID)
+        .ok()
+        .map(|package| package.modules)
+        .unwrap_or_default();
     let modules = nomo_std::modules()
         .iter()
-        .map(|module| DocModule {
-            name: module.path.to_string(),
-            source: "toolchain std".to_string(),
-            docs: module.docs.to_string(),
-            items: module
-                .doc_items
+        .map(|module| {
+            source_modules
                 .iter()
-                .map(|item| DocItem {
-                    kind: item.kind.to_string(),
-                    name: item.name.to_string(),
-                    signature: item.signature.to_string(),
-                    visibility: "public".to_string(),
-                    docs: item.docs.to_string(),
-                    source: Path::new("std/src")
-                        .join(nomo_std::module_source_relative_path(module))
-                        .display()
-                        .to_string(),
-                    line: 0,
-                    children: Vec::new(),
+                .find(|source_module| source_module.name == module.path)
+                .filter(|source_module| !source_module.items.is_empty())
+                .cloned()
+                .unwrap_or_else(|| DocModule {
+                    name: module.path.to_string(),
+                    source: "toolchain std".to_string(),
+                    docs: module.docs.to_string(),
+                    items: module
+                        .doc_items
+                        .iter()
+                        .map(|item| DocItem {
+                            kind: item.kind.to_string(),
+                            name: item.name.to_string(),
+                            signature: item.signature.to_string(),
+                            visibility: "public".to_string(),
+                            docs: item.docs.to_string(),
+                            source: Path::new("std/src")
+                                .join(nomo_std::module_source_relative_path(module))
+                                .display()
+                                .to_string(),
+                            line: 0,
+                            children: Vec::new(),
+                        })
+                        .collect(),
                 })
-                .collect(),
         })
         .collect();
     DocPackage {
@@ -621,4 +637,36 @@ fn update_block_comment_depth(line: &str, mut depth: usize) -> usize {
         }
     }
     depth
+}
+
+#[cfg(test)]
+mod tests {
+    use super::std_doc_package;
+
+    #[test]
+    fn standard_docs_use_source_items_when_available() {
+        let package = std_doc_package();
+        let array = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.array")
+            .unwrap();
+        let new = array.items.iter().find(|item| item.name == "new").unwrap();
+        assert_eq!(new.source, "std/src/array.nomo");
+        assert!(new.line > 0);
+        assert_eq!(new.signature, "pub fn new<T>() -> Array<T>");
+
+        let string = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.string")
+            .unwrap();
+        let split = string
+            .items
+            .iter()
+            .find(|item| item.name == "split")
+            .unwrap();
+        assert_eq!(split.source, "std/src/string.nomo");
+        assert!(split.docs.contains("Splits a string"));
+    }
 }

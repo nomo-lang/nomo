@@ -5,6 +5,7 @@ use nomo_syntax::lexer::lex;
 use nomo_syntax::parser::parse;
 use serde::Deserialize;
 use std::collections::BTreeSet;
+use std::env;
 use std::path::{Path, PathBuf};
 
 pub const PACKAGE_ID: &str = "nomo-lang/std";
@@ -980,7 +981,25 @@ pub fn manifest_path() -> PathBuf {
 }
 
 pub fn source_root() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
+    if let Some(root) = env::var_os("NOMO_STD_SOURCE_ROOT") {
+        return PathBuf::from(root);
+    }
+
+    let compiled_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+    if compiled_root.is_dir() {
+        return compiled_root;
+    }
+
+    if let Ok(executable) = env::current_exe() {
+        for ancestor in executable.ancestors() {
+            let installed_root = ancestor.join("std/src");
+            if installed_root.is_dir() {
+                return installed_root;
+            }
+        }
+    }
+
+    compiled_root
 }
 
 pub fn module_source_path(module: &StandardModule) -> PathBuf {

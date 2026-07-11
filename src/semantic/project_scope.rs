@@ -128,6 +128,7 @@ pub(super) fn accessible_symbols_for_document(
             )?);
         }
     }
+    symbols.extend(super::standard_library_symbols_for_imports(path, source)?);
     Ok(symbols)
 }
 

@@ -43,3 +43,9 @@ same `0.1.x` compatibility line. A tagged `nomo-lsp` release checks out the
 matching `nomo` tag, and each editor release workflow verifies that its tag
 matches its package or extension version. Grammar consumers pin a Git commit so
 highlighting changes remain reproducible independently of npm publication.
+
+The language server resolves source-defined standard-library symbols to the
+canonical `std/src/*.nomo` files. This makes hover and go-to-definition useful
+for imported `std.option`, `std.result`, `std.array`, and `std.string` APIs while
+leaving representation-only `Array` layout navigation anchored to its source
+module during the intrinsic migration.

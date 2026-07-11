@@ -151,6 +151,7 @@ the same code.
 - [E0511](E0511.md) - continue outside loop
 - [E0521](E0521.md) - non-diverging let-else body
 - [E0607](E0607.md) - cyclic module import
+- [E0800](E0800.md) - invalid standard-library intrinsic manifest
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error
 - [E0903](E0903.md) - module not found

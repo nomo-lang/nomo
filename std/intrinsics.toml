@@ -1,0 +1,56 @@
+schema = 1
+package = "nomo-lang/std"
+
+[[binding]]
+id = "option"
+module = "std.option"
+declaration = "Option"
+kind = "carrier"
+abi = "enum-carrier"
+source = "src/option.nomo"
+required = true
+
+[[binding]]
+id = "result"
+module = "std.result"
+declaration = "Result"
+kind = "carrier"
+abi = "enum-carrier"
+source = "src/result.nomo"
+required = true
+
+[[binding]]
+id = "question"
+module = "std.option"
+declaration = "?"
+kind = "operator"
+abi = "carrier-propagation"
+source = "src/option.nomo"
+required = true
+
+[[binding]]
+id = "array"
+module = "std.array"
+declaration = "Array"
+kind = "layout"
+abi = "array-header"
+source = "src/array.nomo"
+required = false
+
+[[binding]]
+id = "string"
+module = "std.string"
+declaration = "string"
+kind = "layout"
+abi = "string-header"
+source = "src/string.nomo"
+required = false
+
+[[binding]]
+id = "cstring"
+module = "std.ffi"
+declaration = "CString"
+kind = "ffi"
+abi = "const-char-pointer"
+source = "src/ffi.nomo"
+required = false

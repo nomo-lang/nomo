@@ -193,6 +193,10 @@ dependency sources rather than language-level package names. The namespaces
 `std`, `nomo`, and `core` are reserved for the language and standard tooling.
 `std` is built in: projects can import `std.*` modules without declaring a
 `std` dependency in `nomo.toml`, and `std` is not written to `nomo.lock`.
+The toolchain-owned [`std/intrinsics.toml`](std/intrinsics.toml) records the
+small set of compiler/runtime-controlled identities. `nomo check`, `nomo build`,
+`nomo run`, and `nomo doc --std` validate that manifest before using the shared
+standard-library registry; a malformed manifest is reported as `E0800`.
 
 New projects use this manifest shape:
 

@@ -14,6 +14,17 @@ pub(super) fn lower_program(
     local_import_root: Option<&str>,
     entry_mode: EntryMode,
 ) -> Result<Program, Diagnostic> {
+    nomo_std::validate_intrinsic_manifest().map_err(|message| {
+        Diagnostic::new(
+            "E0800",
+            format!("standard library intrinsic manifest is invalid: {message}"),
+            path,
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
     let imports = ast
         .imports
         .iter()

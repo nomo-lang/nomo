@@ -1,9 +1,32 @@
 #![forbid(unsafe_code)]
 
+use serde::Deserialize;
+use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 
 pub const PACKAGE_ID: &str = "nomo-lang/std";
 pub const IMPORT_ROOT: &str = "std";
+pub const INTRINSIC_MANIFEST_SCHEMA: u32 = 1;
+pub const INTRINSIC_MANIFEST_SOURCE: &str = include_str!("../intrinsics.toml");
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct IntrinsicManifest {
+    pub schema: u32,
+    pub package: String,
+    #[serde(rename = "binding")]
+    pub bindings: Vec<IntrinsicBinding>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+pub struct IntrinsicBinding {
+    pub id: String,
+    pub module: String,
+    pub declaration: String,
+    pub kind: String,
+    pub abi: String,
+    pub source: String,
+    pub required: bool,
+}
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct StandardModule {
@@ -352,6 +375,136 @@ pub fn module(path: &str) -> Option<&'static StandardModule> {
     MODULES.iter().find(|module| module.path == path)
 }
 
+pub fn intrinsic_manifest() -> Result<IntrinsicManifest, String> {
+    parse_intrinsic_manifest(INTRINSIC_MANIFEST_SOURCE)
+}
+
+pub fn parse_intrinsic_manifest(source: &str) -> Result<IntrinsicManifest, String> {
+    toml::from_str(source).map_err(|error| format!("failed to parse std intrinsics.toml: {error}"))
+}
+
+pub fn validate_intrinsic_manifest() -> Result<(), String> {
+    validate_intrinsic_manifest_source(INTRINSIC_MANIFEST_SOURCE)
+}
+
+pub fn validate_intrinsic_manifest_source(source: &str) -> Result<(), String> {
+    let manifest = parse_intrinsic_manifest(source)?;
+    if manifest.schema != INTRINSIC_MANIFEST_SCHEMA {
+        return Err(format!(
+            "unsupported std intrinsic manifest schema {}; expected {}",
+            manifest.schema, INTRINSIC_MANIFEST_SCHEMA
+        ));
+    }
+    if manifest.package != PACKAGE_ID {
+        return Err(format!(
+            "std intrinsic manifest package `{}` does not match canonical package `{PACKAGE_ID}`",
+            manifest.package
+        ));
+    }
+    if manifest.bindings.is_empty() {
+        return Err("std intrinsic manifest must declare at least one binding".to_string());
+    }
+
+    let mut ids = BTreeSet::new();
+    let mut declarations = BTreeSet::new();
+    let mut required = BTreeSet::new();
+    for binding in &manifest.bindings {
+        if binding.id.trim().is_empty()
+            || binding.module.trim().is_empty()
+            || binding.declaration.trim().is_empty()
+            || binding.kind.trim().is_empty()
+            || binding.abi.trim().is_empty()
+            || binding.source.trim().is_empty()
+        {
+            return Err("std intrinsic bindings must have non-empty fields".to_string());
+        }
+        if !ids.insert(binding.id.as_str()) {
+            return Err(format!(
+                "duplicate std intrinsic binding id `{}`",
+                binding.id
+            ));
+        }
+        if !declarations.insert((binding.module.as_str(), binding.declaration.as_str())) {
+            return Err(format!(
+                "duplicate std intrinsic declaration `{}::{}`",
+                binding.module, binding.declaration
+            ));
+        }
+        let module = module(&binding.module).ok_or_else(|| {
+            format!(
+                "std intrinsic `{}` references unknown module `{}`",
+                binding.id, binding.module
+            )
+        })?;
+        let expected_source = format!("src/{}", module_source_relative_path(module).display());
+        if binding.source != expected_source {
+            return Err(format!(
+                "std intrinsic `{}` source `{}` does not match `{expected_source}`",
+                binding.id, binding.source
+            ));
+        }
+        match binding.kind.as_str() {
+            "carrier" | "ffi" | "layout" | "operator" | "runtime" => {}
+            other => {
+                return Err(format!(
+                    "std intrinsic `{}` has unsupported binding kind `{other}`",
+                    binding.id
+                ));
+            }
+        }
+        if binding.kind == "carrier"
+            && !module.items.iter().any(|item| *item == binding.declaration)
+        {
+            return Err(format!(
+                "std carrier `{}` is not present in module registry `{}`",
+                binding.declaration, binding.module
+            ));
+        }
+        if binding.kind == "operator" && binding.declaration != "?" {
+            return Err(format!(
+                "std operator binding `{}` must name `?`",
+                binding.id
+            ));
+        }
+        if binding.required {
+            required.insert(binding.id.as_str());
+        }
+    }
+
+    for (id, expected_module, expected_declaration, expected_kind, expected_abi) in [
+        ("option", "std.option", "Option", "carrier", "enum-carrier"),
+        ("result", "std.result", "Result", "carrier", "enum-carrier"),
+        (
+            "question",
+            "std.option",
+            "?",
+            "operator",
+            "carrier-propagation",
+        ),
+    ] {
+        let Some(binding) = manifest.bindings.iter().find(|binding| binding.id == id) else {
+            return Err(format!(
+                "std intrinsic manifest is missing required binding `{id}`"
+            ));
+        };
+        if !required.contains(id) {
+            return Err(format!(
+                "std intrinsic binding `{id}` must be marked required"
+            ));
+        }
+        if binding.module != expected_module
+            || binding.declaration != expected_declaration
+            || binding.kind != expected_kind
+            || binding.abi != expected_abi
+        {
+            return Err(format!(
+                "std intrinsic binding `{id}` does not match the required canonical identity"
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub fn is_supported_import(import: &str) -> bool {
     MODULES.iter().any(|module| {
         import == module.path
@@ -431,6 +584,48 @@ mod tests {
                 path.display()
             );
         }
+    }
+
+    #[test]
+    fn intrinsic_manifest_is_valid_and_points_at_canonical_sources() {
+        validate_intrinsic_manifest().unwrap();
+        let manifest = intrinsic_manifest().unwrap();
+        for binding in manifest.bindings {
+            assert!(
+                Path::new(env!("CARGO_MANIFEST_DIR"))
+                    .join(binding.source)
+                    .is_file()
+            );
+        }
+    }
+
+    #[test]
+    fn intrinsic_manifest_rejects_duplicate_binding_ids() {
+        let source = INTRINSIC_MANIFEST_SOURCE.replace("id = \"result\"", "id = \"option\"");
+        let error = validate_intrinsic_manifest_source(&source).unwrap_err();
+        assert!(
+            error.contains("duplicate std intrinsic binding id `option`"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn intrinsic_manifest_rejects_unknown_modules() {
+        let source = INTRINSIC_MANIFEST_SOURCE
+            .replace("module = \"std.result\"", "module = \"std.missing\"");
+        let error = validate_intrinsic_manifest_source(&source).unwrap_err();
+        assert!(error.contains("unknown module `std.missing`"), "{error}");
+    }
+
+    #[test]
+    fn intrinsic_manifest_rejects_required_identity_drift() {
+        let source = INTRINSIC_MANIFEST_SOURCE
+            .replace("abi = \"carrier-propagation\"", "abi = \"enum-carrier\"");
+        let error = validate_intrinsic_manifest_source(&source).unwrap_err();
+        assert!(
+            error.contains("binding `question` does not match the required canonical identity"),
+            "{error}"
+        );
     }
 
     #[test]

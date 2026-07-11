@@ -52,6 +52,9 @@ pub(super) fn run_doc_command(args: Vec<String>) -> Result<(), String> {
         }
     }
     if include_std {
+        nomo::standard_library::validate_intrinsic_manifest().map_err(|message| {
+            format!("error[E0800]: standard library intrinsic manifest is invalid: {message}")
+        })?;
         output_root = Some(output_root.unwrap_or_else(|| {
             env::current_dir()
                 .unwrap_or_else(|_| PathBuf::from("."))

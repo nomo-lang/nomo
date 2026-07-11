@@ -514,6 +514,10 @@ version = "0.1.0"
 [[package]]
 name = "nomo-std"
 version = "0.1.0"
+dependencies = [
+ "serde",
+ "toml",
+]
 
 [[package]]
 name = "nomo-syntax"

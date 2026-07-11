@@ -5,6 +5,12 @@ import standard modules directly; `std` does not need to be listed in
 `nomo.toml`, cannot be used as a dependency alias, and is not written as a
 normal package entry in `nomo.lock`.
 
+The toolchain-owned [`std/intrinsics.toml`](../std/intrinsics.toml) binds the
+small set of identities that still require compiler or runtime support. The
+compiler and `nomo doc --std` validate its schema, canonical package, source
+mapping, and required `Option`/`Result`/`?` bindings. A broken binding reports
+`E0800`; user packages cannot override this manifest.
+
 ```nomo
 package app.main
 

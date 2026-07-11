@@ -7,3 +7,7 @@ license.workspace = true
 [lib]
 name = "nomo_std"
 path = "src/lib.rs"
+
+[dependencies]
+serde.workspace = true
+toml.workspace = true

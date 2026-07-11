@@ -564,6 +564,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.crypto",
     "std.debug",
     "std.env",
+    "std.ffi",
     "std.fs",
     "std.hash",
     "std.http",

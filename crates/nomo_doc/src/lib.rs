@@ -735,5 +735,26 @@ mod tests {
         let get = http.items.iter().find(|item| item.name == "get").unwrap();
         assert_eq!(get.source, "std/src/http.nomo");
         assert!(get.docs.contains("blocking HTTP GET"));
+
+        let ffi = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.ffi")
+            .unwrap();
+        let cstring = ffi
+            .items
+            .iter()
+            .find(|item| item.name == "CString")
+            .unwrap();
+        assert_eq!(cstring.source, "std/src/ffi.nomo");
+        let from_string = ffi
+            .items
+            .iter()
+            .find(|item| item.name == "CString.from_string")
+            .unwrap();
+        assert_eq!(
+            from_string.signature,
+            "pub fn from_string(value: string) -> CString"
+        );
     }
 }

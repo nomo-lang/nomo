@@ -39,7 +39,7 @@ migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
 `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
 `collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
-`net`, and `http`.
+`net`, `http`, and `ffi`.
 
 ## Propagation Carriers
 
@@ -338,7 +338,8 @@ v0.1.
 
 ## Native FFI Values
 
-`std.ffi` provides the value types used at explicit C boundaries:
+`std.ffi` declares the value types used at explicit C boundaries in
+`std/src/ffi.nomo`; their layout and ownership rules remain compiler-owned:
 
 ```nomo
 import std.ffi

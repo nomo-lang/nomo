@@ -1,2 +1,23 @@
 //! C string and opaque native handle types.
 package std.ffi
+
+/// An owned NUL-terminated string for a C boundary.
+///
+/// The compiler owns the representation and enforces that C functions may only
+/// accept this value, not return it.
+pub struct CString {
+}
+
+/// An opaque native pointer for a C boundary.
+///
+/// The compiler owns the representation and does not allow dereferencing or
+/// arithmetic on this value.
+pub struct Opaque {
+}
+
+impl CString {
+    /// Creates an owned C string from a Nomo string.
+    pub fn from_string(value: string) -> CString {
+        return CString.from_string(value)
+    }
+}

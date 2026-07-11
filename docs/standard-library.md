@@ -37,6 +37,12 @@ Some modules also support specific imports and value-method syntax, such as
 `std.option` and `std.result` define the two standard carriers used by postfix
 `?`.
 
+Their canonical source files define the `Option<T>` and `Result<T, E>` enum
+shapes plus the pure predicate and `unwrap_or` helpers. The compiler checks
+those source contracts but keeps the existing injected carrier layout and
+runtime ABI as a compatibility path. `map`, `map_err`, and `and_then` remain
+controlled intrinsics until Nomo has function values.
+
 - `Result.Ok(value)?` evaluates to `value`.
 - `Result.Err(error)?` returns `Err(error)` from the current `Result` function.
 - `Option.Some(value)?` evaluates to `value`.

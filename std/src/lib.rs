@@ -1,5 +1,8 @@
 #![forbid(unsafe_code)]
 
+use nomo_syntax::ast::{SourceFile, TypeRef};
+use nomo_syntax::lexer::lex;
+use nomo_syntax::parser::parse;
 use serde::Deserialize;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -8,6 +11,8 @@ pub const PACKAGE_ID: &str = "nomo-lang/std";
 pub const IMPORT_ROOT: &str = "std";
 pub const INTRINSIC_MANIFEST_SCHEMA: u32 = 1;
 pub const INTRINSIC_MANIFEST_SOURCE: &str = include_str!("../intrinsics.toml");
+const OPTION_SOURCE: &str = include_str!("option.nomo");
+const RESULT_SOURCE: &str = include_str!("result.nomo");
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct IntrinsicManifest {
@@ -214,6 +219,60 @@ const FFI_DOC_ITEMS: &[StandardDocItem] = &[
     },
 ];
 
+const OPTION_DOC_ITEMS: &[StandardDocItem] = &[
+    StandardDocItem {
+        kind: "enum",
+        name: "Option",
+        signature: "pub enum Option<T>",
+        docs: "A value that may be present or absent.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "is_some",
+        signature: "pub fn is_some<T>(value: Option<T>) -> bool",
+        docs: "Reports whether an option contains a value.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "is_none",
+        signature: "pub fn is_none<T>(value: Option<T>) -> bool",
+        docs: "Reports whether an option is absent.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "unwrap_or",
+        signature: "pub fn unwrap_or<T>(value: Option<T>, fallback: T) -> T",
+        docs: "Returns the contained value or a fallback.",
+    },
+];
+
+const RESULT_DOC_ITEMS: &[StandardDocItem] = &[
+    StandardDocItem {
+        kind: "enum",
+        name: "Result",
+        signature: "pub enum Result<T, E>",
+        docs: "A successful value or an error.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "is_ok",
+        signature: "pub fn is_ok<T, E>(value: Result<T, E>) -> bool",
+        docs: "Reports whether a result is successful.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "is_err",
+        signature: "pub fn is_err<T, E>(value: Result<T, E>) -> bool",
+        docs: "Reports whether a result contains an error.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "unwrap_or",
+        signature: "pub fn unwrap_or<T, E>(value: Result<T, E>, fallback: T) -> T",
+        docs: "Returns the successful value or a fallback.",
+    },
+];
+
 pub const MODULES: &[StandardModule] = &[
     StandardModule {
         path: "std.array",
@@ -315,7 +374,7 @@ pub const MODULES: &[StandardModule] = &[
         path: "std.option",
         docs: "Option carrier helpers",
         items: OPTION_ITEMS,
-        doc_items: &[],
+        doc_items: OPTION_DOC_ITEMS,
     },
     StandardModule {
         path: "std.os",
@@ -345,7 +404,7 @@ pub const MODULES: &[StandardModule] = &[
         path: "std.result",
         docs: "Result carrier helpers",
         items: RESULT_ITEMS,
-        doc_items: &[],
+        doc_items: RESULT_DOC_ITEMS,
     },
     StandardModule {
         path: "std.string",
@@ -384,7 +443,8 @@ pub fn parse_intrinsic_manifest(source: &str) -> Result<IntrinsicManifest, Strin
 }
 
 pub fn validate_intrinsic_manifest() -> Result<(), String> {
-    validate_intrinsic_manifest_source(INTRINSIC_MANIFEST_SOURCE)
+    validate_intrinsic_manifest_source(INTRINSIC_MANIFEST_SOURCE)?;
+    validate_intrinsic_source_contract()
 }
 
 pub fn validate_intrinsic_manifest_source(source: &str) -> Result<(), String> {
@@ -503,6 +563,160 @@ pub fn validate_intrinsic_manifest_source(source: &str) -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+pub fn validate_intrinsic_source_contract() -> Result<(), String> {
+    let option = parse_source_contract("std/src/option.nomo", OPTION_SOURCE)?;
+    validate_package(&option, "std.option")?;
+    validate_carrier(&option, "Option", 1, &[("Some", Some("T")), ("None", None)])?;
+    validate_function(
+        &option,
+        "is_some",
+        &["T"],
+        &[("Option", &["T"][..])],
+        &["bool"],
+    )?;
+    validate_function(
+        &option,
+        "is_none",
+        &["T"],
+        &[("Option", &["T"][..])],
+        &["bool"],
+    )?;
+    validate_function(
+        &option,
+        "unwrap_or",
+        &["T"],
+        &[("Option", &["T"][..]), ("T", &[][..])],
+        &["T"],
+    )?;
+
+    let result = parse_source_contract("std/src/result.nomo", RESULT_SOURCE)?;
+    validate_package(&result, "std.result")?;
+    validate_carrier(
+        &result,
+        "Result",
+        2,
+        &[("Ok", Some("T")), ("Err", Some("E"))],
+    )?;
+    validate_function(
+        &result,
+        "is_ok",
+        &["T", "E"],
+        &[("Result", &["T", "E"][..])],
+        &["bool"],
+    )?;
+    validate_function(
+        &result,
+        "is_err",
+        &["T", "E"],
+        &[("Result", &["T", "E"][..])],
+        &["bool"],
+    )?;
+    validate_function(
+        &result,
+        "unwrap_or",
+        &["T", "E"],
+        &[("Result", &["T", "E"][..]), ("T", &[][..])],
+        &["T"],
+    )?;
+    Ok(())
+}
+
+fn parse_source_contract(path: &str, source: &str) -> Result<SourceFile, String> {
+    let path = Path::new(path);
+    let tokens = lex(path, source).map_err(|error| format!("{path:?}: {}", error.message))?;
+    parse(path, &tokens).map_err(|error| format!("{path:?}: {}", error.message))
+}
+
+fn validate_package(source: &SourceFile, expected: &str) -> Result<(), String> {
+    let actual = source.package.join(".");
+    if actual == expected {
+        Ok(())
+    } else {
+        Err(format!(
+            "std source package `{actual}` does not match `{expected}`"
+        ))
+    }
+}
+
+fn validate_carrier(
+    source: &SourceFile,
+    name: &str,
+    type_parameter_count: usize,
+    variants: &[(&str, Option<&str>)],
+) -> Result<(), String> {
+    let Some(carrier) = source.enums.iter().find(|item| item.name == name) else {
+        return Err(format!("std source is missing carrier enum `{name}`"));
+    };
+    if !carrier.public || carrier.type_params.len() != type_parameter_count {
+        return Err(format!(
+            "std carrier `{name}` has the wrong visibility or generic shape"
+        ));
+    }
+    if carrier.variants.len() != variants.len()
+        || carrier.variants.iter().zip(variants).any(
+            |(actual, (expected_name, expected_payload))| {
+                actual.name != *expected_name
+                    || actual
+                        .payload
+                        .as_ref()
+                        .and_then(|payload| payload.path.first())
+                        .map(String::as_str)
+                        != *expected_payload
+            },
+        )
+    {
+        return Err(format!("std carrier `{name}` has the wrong variant shape"));
+    }
+    Ok(())
+}
+
+fn validate_function(
+    source: &SourceFile,
+    name: &str,
+    type_parameters: &[&str],
+    parameters: &[(&str, &[&str])],
+    return_type: &[&str],
+) -> Result<(), String> {
+    let Some(function) = source.functions.iter().find(|item| item.name == name) else {
+        return Err(format!("std source is missing pure helper `{name}`"));
+    };
+    if !function.public
+        || !function
+            .type_params
+            .iter()
+            .map(String::as_str)
+            .eq(type_parameters.iter().copied())
+    {
+        return Err(format!(
+            "std helper `{name}` has the wrong visibility or generic parameters"
+        ));
+    }
+    if function.params.len() != parameters.len()
+        || function
+            .params
+            .iter()
+            .zip(parameters)
+            .any(|(actual, (expected_name, expected_args))| {
+                !type_ref_matches(&actual.type_ref, expected_name, expected_args)
+            })
+        || !type_ref_matches(&function.return_type, return_type[0], &return_type[1..])
+    {
+        return Err(format!("std helper `{name}` has the wrong type signature"));
+    }
+    Ok(())
+}
+
+fn type_ref_matches(type_ref: &TypeRef, name: &str, args: &[&str]) -> bool {
+    type_ref.path.len() == 1
+        && type_ref.path[0] == name
+        && type_ref.args.len() == args.len()
+        && type_ref
+            .args
+            .iter()
+            .zip(args)
+            .all(|(actual, expected)| type_ref_matches(actual, expected, &[]))
 }
 
 pub fn is_supported_import(import: &str) -> bool {

@@ -424,6 +424,11 @@ Cross-layer `Result` error conversion is written explicitly as
 
 `std.option` provides carrier helpers as module functions, specific imports, and
 value methods: `is_some`, `is_none`, `unwrap_or`, `map`, and `and_then`.
+The canonical source package now defines the `Option<T>` carrier and the pure
+`is_some`, `is_none`, and `unwrap_or` helpers; the compiler validates and
+type-checks that source while retaining its injected ABI as the compatibility
+path. `map` and `and_then` remain controlled intrinsics until function values
+are part of the language.
 `Option.map` and `Option.and_then` accept named, unqualified, non-generic
 converter functions in v0.1.
 
@@ -432,6 +437,9 @@ imports, and value methods: `is_ok`, `is_err`, `unwrap_or`, `map`, `map_err`,
 and `and_then`. `Result.map`, `Result.map_err`, and `Result.and_then` accept
 named, unqualified, non-generic converter functions in v0.1; `and_then`
 requires the converter to return the same error type.
+The canonical source package likewise defines `Result<T, E>` plus the pure
+`is_ok`, `is_err`, and `unwrap_or` helpers. `map`, `map_err`, and `and_then`
+remain intrinsic-backed during this migration.
 
 Nomo includes minimal boundary syntax for native integration and static
 abstractions. `interface` declarations and `impl Interface for Type` blocks are

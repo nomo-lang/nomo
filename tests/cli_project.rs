@@ -630,6 +630,12 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("\"name\":\"std.io\""), "{stdout}");
     assert!(stdout.contains("printing and terminal I/O"), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Option\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Result\""), "{stdout}");
+    assert!(
+        stdout.contains("pub fn unwrap_or<T>(value: Option<T>, fallback: T) -> T"),
+        "{stdout}"
+    );
     assert!(stdout.contains("test assertion helpers"), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.debug\""), "{stdout}");
     assert!(stdout.contains("debug print and panic helpers"), "{stdout}");

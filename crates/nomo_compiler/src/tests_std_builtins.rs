@@ -1,6 +1,70 @@
 use super::*;
 
 #[test]
+fn source_carrier_contract_matches_compiler_injected_carriers() {
+    nomo_std::validate_intrinsic_source_contract().unwrap();
+    let source = r#"package app.main
+
+import std.option
+import std.result
+
+fn main() -> void {
+    let option: Option<i64> = Some(1)
+    let result: Result<i64, string> = Ok(1)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let option = program
+        .enums
+        .iter()
+        .find(|item| item.name == "Option")
+        .unwrap();
+    assert_eq!(option.type_params, vec!["T"]);
+    assert_eq!(
+        option
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Some", "None"]
+    );
+    let result = program
+        .enums
+        .iter()
+        .find(|item| item.name == "Result")
+        .unwrap();
+    assert_eq!(result.type_params, vec!["T", "E"]);
+    assert_eq!(
+        result
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        vec!["Ok", "Err"]
+    );
+}
+
+#[test]
+fn source_carrier_helpers_typecheck_as_library_modules() {
+    for module_name in ["std.option", "std.result"] {
+        let module = nomo_std::module(module_name).unwrap();
+        let path = nomo_std::module_source_path(module);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let program = check_module_source_text_with_project_modules_and_overrides(
+            &path,
+            &source,
+            None,
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(program.package, module_name);
+    }
+}
+
+#[test]
 fn rejects_unknown_std_import() {
     let source = r#"package app.main
 

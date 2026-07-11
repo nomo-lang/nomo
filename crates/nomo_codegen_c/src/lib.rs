@@ -17,46 +17,92 @@ use nomo_ir::{
 };
 use std::collections::BTreeSet;
 
+// Core C emission, naming, and nominal type support.
+#[path = "core/array_helpers.rs"]
 mod array_helpers;
+#[path = "core/driver.rs"]
 mod driver;
+// Expression emission.
+#[path = "expressions/expression_arrays.rs"]
 mod expression_arrays;
+#[path = "expressions/expression_collections.rs"]
 mod expression_collections;
+#[path = "expressions/expression_result_option.rs"]
 mod expression_result_option;
+#[path = "expressions/expression_std_misc.rs"]
 mod expression_std_misc;
+#[path = "expressions/expression_string_char.rs"]
 mod expression_string_char;
+#[path = "expressions/expressions.rs"]
 mod expressions;
+// Runtime and host helper emission.
+#[path = "runtime/host_env_process_helpers.rs"]
 mod host_env_process_helpers;
+#[path = "runtime/host_file_helpers.rs"]
 mod host_file_helpers;
+#[path = "runtime/host_fs_helpers.rs"]
 mod host_fs_helpers;
+#[path = "runtime/host_http_helpers.rs"]
 mod host_http_helpers;
+#[path = "runtime/host_http_server_helpers.rs"]
 mod host_http_server_helpers;
+#[path = "runtime/host_io_helpers.rs"]
 mod host_io_helpers;
+#[path = "runtime/host_json_helpers.rs"]
 mod host_json_helpers;
+#[path = "runtime/host_net_helpers.rs"]
 mod host_net_helpers;
+#[path = "runtime/host_num_checked_helpers.rs"]
 mod host_num_checked_helpers;
+#[path = "runtime/host_num_parse_helpers.rs"]
 mod host_num_parse_helpers;
+#[path = "runtime/host_regex_helpers.rs"]
 mod host_regex_helpers;
+#[path = "runtime/host_udp_helpers.rs"]
 mod host_udp_helpers;
+#[path = "core/instances.rs"]
 mod instances;
+#[path = "core/names.rs"]
 mod names;
+#[path = "core/nominal_enum_instances.rs"]
 mod nominal_enum_instances;
+#[path = "core/nominal_instances.rs"]
 mod nominal_instances;
+#[path = "runtime/result_option_helpers.rs"]
 mod result_option_helpers;
+#[path = "runtime/runtime_crypto.rs"]
 mod runtime_crypto;
+#[path = "runtime/runtime_hash.rs"]
 mod runtime_hash;
+// Statement emission.
+#[path = "statements/statement_bindings.rs"]
 mod statement_bindings;
+#[path = "statements/statement_control.rs"]
 mod statement_control;
+#[path = "statements/statement_function.rs"]
 mod statement_function;
+#[path = "statements/statement_lifecycle.rs"]
 mod statement_lifecycle;
+#[path = "statements/statement_question.rs"]
 mod statement_question;
+#[path = "statements/statements.rs"]
 mod statements;
+#[path = "core/types.rs"]
 mod types;
+// Program usage scans used to select runtime support.
+#[path = "usage/usage.rs"]
 mod usage;
+#[path = "usage/usage_array_elements.rs"]
 mod usage_array_elements;
+#[path = "usage/usage_env_scans.rs"]
 mod usage_env_scans;
+#[path = "usage/usage_expr_walk.rs"]
 mod usage_expr_walk;
+#[path = "usage/usage_fs_open_scans.rs"]
 mod usage_fs_open_scans;
+#[path = "usage/usage_fs_read_scans.rs"]
 mod usage_fs_read_scans;
+#[path = "usage/usage_fs_write_scans.rs"]
 mod usage_fs_write_scans;
 use array_helpers::*;
 pub use driver::emit_c;

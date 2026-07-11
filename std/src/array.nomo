@@ -1,2 +1,55 @@
 //! Array helpers.
 package std.array
+
+import std.array
+import std.option
+
+/// Creates an empty value-semantics array.
+pub fn new<T>() -> Array<T> {
+    return Array.new<T>()
+}
+
+/// Returns the number of elements in an array.
+pub fn len<T>(self: Array<T>) -> u64 {
+    return self.len()
+}
+
+/// Appends an element to an array.
+pub fn push<T>(mut self: Array<T>, value: T) -> void {
+    self.push(value)
+}
+
+/// Returns an element when the index is in bounds.
+pub fn get<T>(self: Array<T>, index: u64) -> Option<T> {
+    return self.get(index)
+}
+
+/// Replaces an element at an index.
+pub fn set<T>(mut self: Array<T>, index: u64, value: T) -> void {
+    self.set(index, value)
+}
+
+/// Inserts an element at an index.
+pub fn insert<T>(mut self: Array<T>, index: u64, value: T) -> void {
+    self.insert(index, value)
+}
+
+/// Removes and returns the final element.
+pub fn pop<T>(mut self: Array<T>) -> Option<T> {
+    return self.pop()
+}
+
+/// Removes and returns an element at an index.
+pub fn remove<T>(mut self: Array<T>, index: u64) -> Option<T> {
+    return self.remove(index)
+}
+
+/// Removes all elements from an array.
+pub fn clear<T>(mut self: Array<T>) -> void {
+    self.clear()
+}
+
+/// Returns a value snapshot suitable for iteration.
+pub fn iter<T>(self: Array<T>) -> Array<T> {
+    return self.iter()
+}

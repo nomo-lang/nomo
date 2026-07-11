@@ -595,6 +595,9 @@ and `stringify` returns the stored JSON text.
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,
 and `remove` return `Option<T>`; `set` and `insert` panic when their index is
 out of bounds. `iter` returns a snapshot value accepted by `for ... in`.
+The canonical `std/src/array.nomo` source declares this public surface and
+delegates representation-sensitive operations to the compiler/runtime array
+ABI. The intrinsic manifest pins that ABI as `array-header`.
 
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
@@ -602,6 +605,8 @@ out of bounds. `iter` returns a snapshot value accepted by `for ... in`.
 The helpers operate on UTF-8 byte strings; `trim` and case conversion use ASCII
 character classes in v0.1. `string.split(value, separator)` returns
 `Array<string>` and panics if the separator is empty.
+The canonical `std/src/string.nomo` source declares these helpers while the
+runtime retains the immutable reference-counted `string-header` representation.
 
 Diagnostics use stable `E`-prefixed error codes across human output, JSON
 output, LSP diagnostics, and editor quick fixes. The first diagnostic reference

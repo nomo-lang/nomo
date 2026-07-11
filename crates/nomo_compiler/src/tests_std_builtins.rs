@@ -65,6 +65,25 @@ fn source_carrier_helpers_typecheck_as_library_modules() {
 }
 
 #[test]
+fn source_string_and_array_modules_typecheck_as_library_modules() {
+    for module_name in ["std.array", "std.string"] {
+        let module = nomo_std::module(module_name).unwrap();
+        let path = nomo_std::module_source_path(module);
+        let source = std::fs::read_to_string(&path).unwrap();
+        let program = check_module_source_text_with_project_modules_and_overrides(
+            &path,
+            &source,
+            None,
+            &[],
+            &[],
+            &[],
+        )
+        .unwrap();
+        assert_eq!(program.package, module_name);
+    }
+}
+
+#[test]
 fn rejects_unknown_std_import() {
     let source = r#"package app.main
 

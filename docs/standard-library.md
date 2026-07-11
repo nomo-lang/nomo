@@ -106,6 +106,9 @@ Array.iter(self) -> Array<T>
 `get`, `pop`, and `remove` return `Option<T>`. `set` and `insert` panic when
 the index is out of bounds. `iter` returns a snapshot value accepted by
 `for ... in`.
+The canonical `std/src/array.nomo` file declares this public API. Its
+representation-sensitive bodies remain compiler/runtime-backed, and
+`std/intrinsics.toml` pins the `array-header` ABI during the migration.
 
 `std.string` provides string value helpers:
 
@@ -124,6 +127,8 @@ string.to_upper(value: string) -> string
 
 Strings are UTF-8 byte strings in v0.1. `trim` and case conversion use ASCII
 character classes, and `split` panics when the separator is empty.
+The canonical `std/src/string.nomo` file declares these helpers while the
+runtime retains the immutable reference-counted `string-header` ABI.
 
 `std.char` provides ASCII character-class helpers and conversion:
 

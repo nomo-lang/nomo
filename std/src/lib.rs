@@ -13,6 +13,8 @@ pub const INTRINSIC_MANIFEST_SCHEMA: u32 = 1;
 pub const INTRINSIC_MANIFEST_SOURCE: &str = include_str!("../intrinsics.toml");
 const OPTION_SOURCE: &str = include_str!("option.nomo");
 const RESULT_SOURCE: &str = include_str!("result.nomo");
+const ARRAY_SOURCE: &str = include_str!("array.nomo");
+const STRING_SOURCE: &str = include_str!("string.nomo");
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct IntrinsicManifest {
@@ -273,12 +275,138 @@ const RESULT_DOC_ITEMS: &[StandardDocItem] = &[
     },
 ];
 
+const ARRAY_DOC_ITEMS: &[StandardDocItem] = &[
+    StandardDocItem {
+        kind: "function",
+        name: "new",
+        signature: "pub fn new<T>() -> Array<T>",
+        docs: "Creates an empty value-semantics array.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "len",
+        signature: "pub fn len<T>(self: Array<T>) -> u64",
+        docs: "Returns the number of elements in an array.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "push",
+        signature: "pub fn push<T>(mut self: Array<T>, value: T) -> void",
+        docs: "Appends an element to an array.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "get",
+        signature: "pub fn get<T>(self: Array<T>, index: u64) -> Option<T>",
+        docs: "Returns an element when the index is in bounds.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "set",
+        signature: "pub fn set<T>(mut self: Array<T>, index: u64, value: T) -> void",
+        docs: "Replaces an element at an index.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "insert",
+        signature: "pub fn insert<T>(mut self: Array<T>, index: u64, value: T) -> void",
+        docs: "Inserts an element at an index.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "pop",
+        signature: "pub fn pop<T>(mut self: Array<T>) -> Option<T>",
+        docs: "Removes and returns the final element.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "remove",
+        signature: "pub fn remove<T>(mut self: Array<T>, index: u64) -> Option<T>",
+        docs: "Removes and returns an element at an index.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "clear",
+        signature: "pub fn clear<T>(mut self: Array<T>) -> void",
+        docs: "Removes all elements from an array.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "iter",
+        signature: "pub fn iter<T>(self: Array<T>) -> Array<T>",
+        docs: "Returns a value snapshot suitable for iteration.",
+    },
+];
+
+const STRING_DOC_ITEMS: &[StandardDocItem] = &[
+    StandardDocItem {
+        kind: "function",
+        name: "len",
+        signature: "pub fn len(value: string) -> u64",
+        docs: "Returns the UTF-8 byte length of a string.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "concat",
+        signature: "pub fn concat(value: string, other: string) -> string",
+        docs: "Concatenates two strings.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "is_empty",
+        signature: "pub fn is_empty(value: string) -> bool",
+        docs: "Reports whether a string has no bytes.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "contains",
+        signature: "pub fn contains(value: string, needle: string) -> bool",
+        docs: "Reports whether a string contains another string.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "starts_with",
+        signature: "pub fn starts_with(value: string, prefix: string) -> bool",
+        docs: "Reports whether a string starts with a prefix.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "ends_with",
+        signature: "pub fn ends_with(value: string, suffix: string) -> bool",
+        docs: "Reports whether a string ends with a suffix.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "split",
+        signature: "pub fn split(value: string, separator: string) -> Array<string>",
+        docs: "Splits a string by a non-empty separator.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "trim",
+        signature: "pub fn trim(value: string) -> string",
+        docs: "Removes ASCII whitespace from both ends of a string.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "to_lower",
+        signature: "pub fn to_lower(value: string) -> string",
+        docs: "Converts ASCII letters to lower case.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "to_upper",
+        signature: "pub fn to_upper(value: string) -> string",
+        docs: "Converts ASCII letters to upper case.",
+    },
+];
+
 pub const MODULES: &[StandardModule] = &[
     StandardModule {
         path: "std.array",
         docs: "Array helpers",
         items: ARRAY_ITEMS,
-        doc_items: &[],
+        doc_items: ARRAY_DOC_ITEMS,
     },
     StandardModule {
         path: "std.char",
@@ -410,7 +538,7 @@ pub const MODULES: &[StandardModule] = &[
         path: "std.string",
         docs: "string helpers",
         items: STRING_ITEMS,
-        doc_items: &[],
+        doc_items: STRING_DOC_ITEMS,
     },
     StandardModule {
         path: "std.testing",
@@ -541,6 +669,8 @@ pub fn validate_intrinsic_manifest_source(source: &str) -> Result<(), String> {
             "operator",
             "carrier-propagation",
         ),
+        ("array", "std.array", "Array", "layout", "array-header"),
+        ("string", "std.string", "string", "layout", "string-header"),
     ] {
         let Some(binding) = manifest.bindings.iter().find(|binding| binding.id == id) else {
             return Err(format!(
@@ -574,21 +704,21 @@ pub fn validate_intrinsic_source_contract() -> Result<(), String> {
         "is_some",
         &["T"],
         &[("Option", &["T"][..])],
-        &["bool"],
+        ("bool", &[][..]),
     )?;
     validate_function(
         &option,
         "is_none",
         &["T"],
         &[("Option", &["T"][..])],
-        &["bool"],
+        ("bool", &[][..]),
     )?;
     validate_function(
         &option,
         "unwrap_or",
         &["T"],
         &[("Option", &["T"][..]), ("T", &[][..])],
-        &["T"],
+        ("T", &[][..]),
     )?;
 
     let result = parse_source_contract("std/src/result.nomo", RESULT_SOURCE)?;
@@ -604,22 +734,121 @@ pub fn validate_intrinsic_source_contract() -> Result<(), String> {
         "is_ok",
         &["T", "E"],
         &[("Result", &["T", "E"][..])],
-        &["bool"],
+        ("bool", &[][..]),
     )?;
     validate_function(
         &result,
         "is_err",
         &["T", "E"],
         &[("Result", &["T", "E"][..])],
-        &["bool"],
+        ("bool", &[][..]),
     )?;
     validate_function(
         &result,
         "unwrap_or",
         &["T", "E"],
         &[("Result", &["T", "E"][..]), ("T", &[][..])],
-        &["T"],
+        ("T", &[][..]),
     )?;
+
+    let array = parse_source_contract("std/src/array.nomo", ARRAY_SOURCE)?;
+    validate_package(&array, "std.array")?;
+    validate_function(&array, "new", &["T"], &[], ("Array", &["T"][..]))?;
+    validate_function(
+        &array,
+        "len",
+        &["T"],
+        &[("Array", &["T"][..])],
+        ("u64", &[][..]),
+    )?;
+    validate_function(
+        &array,
+        "push",
+        &["T"],
+        &[("Array", &["T"][..]), ("T", &[][..])],
+        ("void", &[][..]),
+    )?;
+    validate_function(
+        &array,
+        "get",
+        &["T"],
+        &[("Array", &["T"][..]), ("u64", &[][..])],
+        ("Option", &["T"][..]),
+    )?;
+    for name in ["set", "insert"] {
+        validate_function(
+            &array,
+            name,
+            &["T"],
+            &[("Array", &["T"][..]), ("u64", &[][..]), ("T", &[][..])],
+            ("void", &[][..]),
+        )?;
+    }
+    validate_function(
+        &array,
+        "pop",
+        &["T"],
+        &[("Array", &["T"][..])],
+        ("Option", &["T"][..]),
+    )?;
+    validate_function(
+        &array,
+        "remove",
+        &["T"],
+        &[("Array", &["T"][..]), ("u64", &[][..])],
+        ("Option", &["T"][..]),
+    )?;
+    validate_function(
+        &array,
+        "clear",
+        &["T"],
+        &[("Array", &["T"][..])],
+        ("void", &[][..]),
+    )?;
+    validate_function(
+        &array,
+        "iter",
+        &["T"],
+        &[("Array", &["T"][..])],
+        ("Array", &["T"][..]),
+    )?;
+
+    let string = parse_source_contract("std/src/string.nomo", STRING_SOURCE)?;
+    validate_package(&string, "std.string")?;
+    for (name, parameters, return_type) in [
+        ("len", vec![("string", &[][..])], ("u64", &[][..])),
+        (
+            "concat",
+            vec![("string", &[][..]), ("string", &[][..])],
+            ("string", &[][..]),
+        ),
+        ("is_empty", vec![("string", &[][..])], ("bool", &[][..])),
+        (
+            "contains",
+            vec![("string", &[][..]), ("string", &[][..])],
+            ("bool", &[][..]),
+        ),
+        (
+            "starts_with",
+            vec![("string", &[][..]), ("string", &[][..])],
+            ("bool", &[][..]),
+        ),
+        (
+            "ends_with",
+            vec![("string", &[][..]), ("string", &[][..])],
+            ("bool", &[][..]),
+        ),
+        (
+            "split",
+            vec![("string", &[][..]), ("string", &[][..])],
+            ("Array", &["string"][..]),
+        ),
+        ("trim", vec![("string", &[][..])], ("string", &[][..])),
+        ("to_lower", vec![("string", &[][..])], ("string", &[][..])),
+        ("to_upper", vec![("string", &[][..])], ("string", &[][..])),
+    ] {
+        validate_function(&string, name, &[], &parameters, return_type)?;
+    }
     Ok(())
 }
 
@@ -677,7 +906,7 @@ fn validate_function(
     name: &str,
     type_parameters: &[&str],
     parameters: &[(&str, &[&str])],
-    return_type: &[&str],
+    return_type: (&str, &[&str]),
 ) -> Result<(), String> {
     let Some(function) = source.functions.iter().find(|item| item.name == name) else {
         return Err(format!("std source is missing pure helper `{name}`"));
@@ -701,7 +930,7 @@ fn validate_function(
             .any(|(actual, (expected_name, expected_args))| {
                 !type_ref_matches(&actual.type_ref, expected_name, expected_args)
             })
-        || !type_ref_matches(&function.return_type, return_type[0], &return_type[1..])
+        || !type_ref_matches(&function.return_type, return_type.0, return_type.1)
     {
         return Err(format!("std helper `{name}` has the wrong type signature"));
     }
@@ -840,6 +1069,21 @@ mod tests {
             error.contains("binding `question` does not match the required canonical identity"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn intrinsic_manifest_requires_array_and_string_layout_identities() {
+        for (needle, expected) in [
+            ("abi = \"array-header\"", "array"),
+            ("abi = \"string-header\"", "string"),
+        ] {
+            let source = INTRINSIC_MANIFEST_SOURCE.replace(needle, "abi = \"drifted\"");
+            let error = validate_intrinsic_manifest_source(&source).unwrap_err();
+            assert!(
+                error.contains(&format!("binding `{expected}` does not match")),
+                "{error}"
+            );
+        }
     }
 
     #[test]

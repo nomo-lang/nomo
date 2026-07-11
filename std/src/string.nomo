@@ -1,2 +1,55 @@
 //! String helpers.
 package std.string
+
+import std.array
+import std.string
+
+/// Returns the UTF-8 byte length of a string.
+pub fn len(value: string) -> u64 {
+    return string.len(value)
+}
+
+/// Concatenates two strings.
+pub fn concat(value: string, other: string) -> string {
+    return string.concat(value, other)
+}
+
+/// Reports whether a string has no bytes.
+pub fn is_empty(value: string) -> bool {
+    return string.is_empty(value)
+}
+
+/// Reports whether a string contains another string.
+pub fn contains(value: string, needle: string) -> bool {
+    return string.contains(value, needle)
+}
+
+/// Reports whether a string starts with a prefix.
+pub fn starts_with(value: string, prefix: string) -> bool {
+    return string.starts_with(value, prefix)
+}
+
+/// Reports whether a string ends with a suffix.
+pub fn ends_with(value: string, suffix: string) -> bool {
+    return string.ends_with(value, suffix)
+}
+
+/// Splits a string by a non-empty separator.
+pub fn split(value: string, separator: string) -> Array<string> {
+    return string.split(value, separator)
+}
+
+/// Removes ASCII whitespace from both ends of a string.
+pub fn trim(value: string) -> string {
+    return string.trim(value)
+}
+
+/// Converts ASCII letters to lower case.
+pub fn to_lower(value: string) -> string {
+    return string.to_lower(value)
+}
+
+/// Converts ASCII letters to upper case.
+pub fn to_upper(value: string) -> string {
+    return string.to_upper(value)
+}

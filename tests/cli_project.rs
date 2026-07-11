@@ -632,6 +632,11 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Option\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Result\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"new\""), "{stdout}");
+    assert!(
+        stdout.contains("pub fn split(value: string, separator: string) -> Array<string>"),
+        "{stdout}"
+    );
     assert!(
         stdout.contains("pub fn unwrap_or<T>(value: Option<T>, fallback: T) -> T"),
         "{stdout}"

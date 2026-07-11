@@ -35,7 +35,7 @@ declaration = "Array"
 kind = "layout"
 abi = "array-header"
 source = "src/array.nomo"
-required = false
+required = true
 
 [[binding]]
 id = "string"
@@ -44,7 +44,7 @@ declaration = "string"
 kind = "layout"
 abi = "string-header"
 source = "src/string.nomo"
-required = false
+required = true
 
 [[binding]]
 id = "cstring"

@@ -1,2 +1,69 @@
 //! Blocking plain-HTTP client and server helpers.
 package std.http
+
+import std.http
+
+/// Error returned when an HTTP operation fails.
+pub struct HttpError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// An opaque blocking HTTP server.
+pub struct HttpServer {
+    handle: u64
+}
+
+/// An HTTP request accepted by a server.
+pub struct HttpExchange {
+    handle: u64
+    /// Request method, such as `GET` or `POST`.
+    pub method: string
+    /// Request path.
+    pub path: string
+    /// Request body.
+    pub body: string
+}
+
+/// A response returned by an HTTP request.
+pub struct HttpResponse {
+    /// Numeric HTTP status code.
+    pub status: i64
+    /// Response body.
+    pub body: string
+}
+
+/// Performs a blocking HTTP GET request.
+pub fn get(url: string) -> Result<HttpResponse, HttpError> {
+    return http.get(url)
+}
+
+/// Performs a blocking HTTP POST request with a string body.
+pub fn post(url: string, body: string) -> Result<HttpResponse, HttpError> {
+    return http.post(url, body)
+}
+
+/// Binds a blocking HTTP server.
+pub fn listen(host: string, port: i64) -> Result<HttpServer, HttpError> {
+    return http.listen(host, port)
+}
+
+/// Accepts the next HTTP request.
+pub fn accept(server: HttpServer) -> Result<HttpExchange, HttpError> {
+    return http.accept(server)
+}
+
+/// Sends a string response for an accepted exchange.
+pub fn respond_string(exchange: HttpExchange, status: i64, body: string) -> Result<void, HttpError> {
+    return http.respond_string(exchange, status, body)
+}
+
+/// Closes an HTTP server.
+pub fn close_server(server: HttpServer) -> void {
+    http.close_server(server)
+}
+
+/// Closes an accepted HTTP exchange.
+pub fn close_exchange(exchange: HttpExchange) -> void {
+    http.close_exchange(exchange)
+}

@@ -1,2 +1,96 @@
 //! Blocking TCP and UDP helpers.
 package std.net
+
+import std.net
+
+/// Error returned when a network operation fails.
+pub struct NetError {
+    /// Human-readable error description.
+    pub message: string
+}
+
+/// An opaque blocking TCP stream.
+pub struct TcpStream {
+    handle: u64
+}
+
+/// An opaque blocking TCP listener.
+pub struct TcpListener {
+    handle: u64
+}
+
+/// An opaque blocking UDP socket.
+pub struct UdpSocket {
+    handle: u64
+}
+
+/// A datagram received from a UDP peer.
+pub struct UdpDatagram {
+    /// Datagram payload decoded as a string.
+    pub data: string
+    /// Sender host name or address.
+    pub host: string
+    /// Sender port.
+    pub port: i64
+}
+
+/// Opens a blocking TCP connection.
+pub fn connect(host: string, port: i64) -> Result<TcpStream, NetError> {
+    return net.connect(host, port)
+}
+
+/// Binds a blocking TCP listener.
+pub fn listen(host: string, port: i64) -> Result<TcpListener, NetError> {
+    return net.listen(host, port)
+}
+
+/// Binds a blocking UDP socket.
+pub fn udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError> {
+    return net.udp_bind(host, port)
+}
+
+impl TcpStream {
+    /// Reads until the peer closes its write side.
+    pub fn read_to_string(self) -> Result<string, NetError> {
+        return self.read_to_string()
+    }
+
+    /// Writes a string to the stream.
+    pub fn write_string(self, content: string) -> Result<void, NetError> {
+        return self.write_string(content)
+    }
+
+    /// Closes the stream.
+    pub fn close(self) -> void {
+        self.close()
+    }
+}
+
+impl TcpListener {
+    /// Accepts the next incoming TCP connection.
+    pub fn accept(self) -> Result<TcpStream, NetError> {
+        return self.accept()
+    }
+
+    /// Closes the listener.
+    pub fn close(self) -> void {
+        self.close()
+    }
+}
+
+impl UdpSocket {
+    /// Receives a datagram with at most `max_bytes` bytes.
+    pub fn recv_from_string(self, max_bytes: i64) -> Result<UdpDatagram, NetError> {
+        return self.recv_from_string(max_bytes)
+    }
+
+    /// Sends a string datagram to a host and port.
+    pub fn send_to_string(self, content: string, host: string, port: i64) -> Result<void, NetError> {
+        return self.send_to_string(content, host, port)
+    }
+
+    /// Closes the socket.
+    pub fn close(self) -> void {
+        self.close()
+    }
+}

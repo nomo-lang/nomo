@@ -38,7 +38,8 @@ host-sensitive calls through its builtin/runtime backing while this source
 migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
 `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
-`collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, and `testing`.
+`collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
+`net`, and `http`.
 
 ## Propagation Carriers
 

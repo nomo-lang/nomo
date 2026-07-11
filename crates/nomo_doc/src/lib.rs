@@ -710,5 +710,30 @@ mod tests {
             .find(|item| item.name == "panic")
             .unwrap();
         assert_eq!(panic.source, "std/src/debug.nomo");
+
+        let net = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.net")
+            .unwrap();
+        let connect = net
+            .items
+            .iter()
+            .find(|item| item.name == "connect")
+            .unwrap();
+        assert_eq!(connect.source, "std/src/net.nomo");
+        assert_eq!(
+            connect.signature,
+            "pub fn connect(host: string, port: i64) -> Result<TcpStream, NetError>"
+        );
+
+        let http = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.http")
+            .unwrap();
+        let get = http.items.iter().find(|item| item.name == "get").unwrap();
+        assert_eq!(get.source, "std/src/http.nomo");
+        assert!(get.docs.contains("blocking HTTP GET"));
     }
 }

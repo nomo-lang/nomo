@@ -4,8 +4,8 @@ Nomo uses one language server across all supported editors. Install the
 `nomo-lsp` binary for your platform from the
 [`nomo-lsp` releases](https://github.com/nomo-lang/nomo-lsp/releases), extract
 it, and place it on `PATH` before installing an editor extension. Source builds
-require sibling `nomo` and `nomo-lsp` checkouts because the language server
-links directly to the compiler workspace.
+only require the `nomo-lsp` checkout; its Cargo manifest fetches the pinned
+compiler revision from Git automatically.
 
 The language server provides compiler diagnostics, completion, hover,
 go-to-definition, references, rename, document and workspace symbols, semantic
@@ -39,10 +39,11 @@ plugin uses LSP4IJ and finds `nomo-lsp` on `PATH`.
 ## Release Compatibility
 
 The preview toolchain, language server, grammar, and editor extensions use the
-same `0.1.x` compatibility line. A tagged `nomo-lsp` release checks out the
-matching `nomo` tag, and each editor release workflow verifies that its tag
-matches its package or extension version. Grammar consumers pin a Git commit so
-highlighting changes remain reproducible independently of npm publication.
+same `0.1.x` compatibility line. A tagged `nomo-lsp` release uses the compiler
+revision pinned in its `Cargo.toml`, and each editor release workflow verifies
+that its tag matches its package or extension version. Grammar consumers pin a
+Git commit so highlighting changes remain reproducible independently of npm
+publication.
 
 The language server resolves source-defined standard-library symbols to the
 canonical `std/src/*.nomo` files. This makes hover and go-to-definition useful

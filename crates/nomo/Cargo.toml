@@ -1,0 +1,35 @@
+[package]
+name = "nomo"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nomo-codegen-c.workspace = true
+nomo-compiler.workspace = true
+nomo-diagnostics.workspace = true
+nomo-doc.workspace = true
+nomo-fmt.workspace = true
+nomo-graph.workspace = true
+nomo-ir.workspace = true
+nomo-lsp-bridge.workspace = true
+nomo-lockfile.workspace = true
+nomo-manifest.workspace = true
+nomo-resolver.workspace = true
+nomo-spans.workspace = true
+nomo-std.workspace = true
+nomo-syntax.workspace = true
+nomo-test.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+sha2.workspace = true
+toml.workspace = true
+
+[lib]
+name = "nomo"
+
+[[bin]]
+name = "nomo"
+
+[[bin]]
+name = "nomoc"

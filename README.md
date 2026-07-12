@@ -73,6 +73,10 @@ which owns `nomo.toml` parsing and editing, and
 `crates/nomo_codegen_c`, which owns the IR-specific C99 backend. The `std/`
 workspace member owns the toolchain standard-library package identity, module
 source inventory and public import metadata used across compiler tooling.
+The user-facing `nomo` package, library, and `nomo`/`nomoc` binaries live in
+`crates/nomo`; the workspace root is a virtual manifest. Internal package
+dependencies are declared once in the root `[workspace.dependencies]` table and
+are inherited by members with `workspace = true`.
 The current module files establish package/module identity and documentation
 roots; builtin bodies continue to lower through compiler intrinsics and the
 native runtime while public implementations migrate into Nomo source.
@@ -80,7 +84,7 @@ native runtime while public implementations migrate into Nomo source.
 ```bash
 cargo build --workspace --release
 # or install both binaries onto your PATH:
-cargo install --path .
+cargo install --path crates/nomo
 ```
 
 Tagged releases publish `nomo` and `nomoc` archives for Linux x86-64, macOS

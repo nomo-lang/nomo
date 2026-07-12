@@ -6,8 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-diagnostics.workspace = true
-nomo-syntax = { path = "../nomo_syntax" }
+nomo-syntax.workspace = true
 
 [lib]
 name = "nomo_fmt"
-path = "src/lib.rs"

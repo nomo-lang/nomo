@@ -5,7 +5,7 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nomo-manifest = { path = "../nomo_manifest" }
+nomo-manifest.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -17,4 +17,3 @@ rustls = { version = "0.23.41", default-features = false, features = ["ring", "s
 
 [lib]
 name = "nomo_resolver"
-path = "src/lib.rs"

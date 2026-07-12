@@ -59,7 +59,11 @@ fn emitted_diagnostic_codes_are_registered() {
 }
 
 fn diagnostics_dir() -> PathBuf {
-    Path::new(env!("CARGO_MANIFEST_DIR")).join("docs/diagnostics")
+    workspace_root().join("docs/diagnostics")
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 fn registered_codes() -> Vec<String> {
@@ -83,11 +87,10 @@ fn documented_codes(index: &str) -> Vec<String> {
 }
 
 fn emitted_codes() -> BTreeSet<String> {
-    let root = Path::new(env!("CARGO_MANIFEST_DIR"));
+    let root = workspace_root();
     let mut files = Vec::new();
-    collect_rs_files(&root.join("src"), &mut files);
     collect_rs_files(&root.join("crates"), &mut files);
-    collect_rs_files(&root.join("tests"), &mut files);
+    collect_rs_files(&root.join("libs"), &mut files);
 
     let mut codes = BTreeSet::new();
     for file in files {

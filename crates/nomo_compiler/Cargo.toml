@@ -5,13 +5,12 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nomo-codegen-c = { path = "../nomo_codegen_c" }
+nomo-codegen-c.workspace = true
 nomo-diagnostics.workspace = true
 nomo-graph.workspace = true
-nomo-ir = { path = "../nomo_ir" }
+nomo-ir.workspace = true
 nomo-std.workspace = true
-nomo-syntax = { path = "../nomo_syntax" }
+nomo-syntax.workspace = true
 
 [lib]
 name = "nomo_compiler"
-path = "src/lib.rs"

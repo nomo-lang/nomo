@@ -6,9 +6,8 @@ license.workspace = true
 
 [lib]
 name = "nomo_std"
-path = "src/lib.rs"
 
 [dependencies]
-nomo-syntax = { path = "../crates/nomo_syntax" }
+nomo-syntax.workspace = true
 serde.workspace = true
 toml.workspace = true

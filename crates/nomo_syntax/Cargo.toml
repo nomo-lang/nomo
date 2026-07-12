@@ -10,4 +10,3 @@ nomo-spans.workspace = true
 
 [lib]
 name = "nomo_syntax"
-path = "src/lib.rs"

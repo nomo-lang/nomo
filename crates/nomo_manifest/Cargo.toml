@@ -9,4 +9,3 @@ toml.workspace = true
 
 [lib]
 name = "nomo_manifest"
-path = "src/lib.rs"

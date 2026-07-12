@@ -75,7 +75,7 @@ fn examples_check_and_run() {
 
 #[test]
 fn examples_tree_is_fmt_checked() {
-    let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let examples_dir = workspace_root().join("examples");
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("fmt")
         .arg("--check")
@@ -107,7 +107,7 @@ fn examples_tree_is_fmt_checked() {
 }
 
 fn example_projects() -> Vec<PathBuf> {
-    let examples_dir = Path::new(env!("CARGO_MANIFEST_DIR")).join("examples");
+    let examples_dir = workspace_root().join("examples");
     let mut examples = fs::read_dir(&examples_dir)
         .unwrap_or_else(|err| panic!("failed to read {}: {err}", examples_dir.display()))
         .filter_map(|entry| {
@@ -130,6 +130,10 @@ fn example_projects() -> Vec<PathBuf> {
         );
     }
     examples
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("../..")
 }
 
 fn assert_cli_check(example: &Path) {

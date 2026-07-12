@@ -7,8 +7,7 @@ license.workspace = true
 [dependencies]
 nomo-diagnostics.workspace = true
 nomo-spans.workspace = true
-nomo-syntax = { path = "../nomo_syntax" }
+nomo-syntax.workspace = true
 
 [lib]
 name = "nomo_lsp_bridge"
-path = "src/lib.rs"

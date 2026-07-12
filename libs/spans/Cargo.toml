@@ -6,4 +6,3 @@ license.workspace = true
 
 [lib]
 name = "nomo_spans"
-path = "src/lib.rs"

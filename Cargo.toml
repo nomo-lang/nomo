@@ -1,13 +1,7 @@
-[package]
-name = "nomo"
-version.workspace = true
-edition.workspace = true
-license.workspace = true
-
 [workspace]
 resolver = "2"
 members = [
-    ".",
+    "crates/nomo",
     "crates/nomo_compiler",
     "crates/nomo_codegen_c",
     "crates/nomo_doc",
@@ -25,6 +19,7 @@ members = [
     "libs/spans",
     "std",
 ]
+default-members = ["crates/nomo"]
 
 [workspace.package]
 version = "0.1.0"
@@ -32,45 +27,25 @@ edition = "2024"
 license = "MIT"
 
 [workspace.dependencies]
+nomo = { path = "crates/nomo" }
+nomo-codegen-c = { path = "crates/nomo_codegen_c" }
+nomo-compiler = { path = "crates/nomo_compiler" }
 nomo-diagnostics = { path = "libs/diagnostics" }
+nomo-doc = { path = "crates/nomo_doc" }
+nomo-fmt = { path = "crates/nomo_fmt" }
 nomo-graph = { path = "libs/graph" }
+nomo-ir = { path = "crates/nomo_ir" }
+nomo-lockfile = { path = "crates/nomo_lockfile" }
+nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }
+nomo-manifest = { path = "crates/nomo_manifest" }
+nomo-resolver = { path = "crates/nomo_resolver" }
+nomo-runtime = { path = "crates/nomo_runtime" }
 nomo-spans = { path = "libs/spans" }
 nomo-std = { path = "std" }
+nomo-syntax = { path = "crates/nomo_syntax" }
+nomo-test = { path = "crates/nomo_test" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 sha2 = "0.10"
 toml = "0.8"
 ureq = { version = "3.3.0", features = ["platform-verifier"] }
-
-[dependencies]
-nomo-codegen-c = { path = "crates/nomo_codegen_c" }
-nomo-compiler = { path = "crates/nomo_compiler" }
-nomo-diagnostics.workspace = true
-nomo-doc = { path = "crates/nomo_doc" }
-nomo-ir = { path = "crates/nomo_ir" }
-nomo-fmt = { path = "crates/nomo_fmt" }
-nomo-graph.workspace = true
-nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }
-nomo-lockfile = { path = "crates/nomo_lockfile" }
-nomo-manifest = { path = "crates/nomo_manifest" }
-nomo-resolver = { path = "crates/nomo_resolver" }
-nomo-spans.workspace = true
-nomo-std.workspace = true
-nomo-syntax = { path = "crates/nomo_syntax" }
-nomo-test = { path = "crates/nomo_test" }
-serde.workspace = true
-serde_json.workspace = true
-sha2.workspace = true
-toml.workspace = true
-
-[lib]
-name = "nomo"
-path = "src/lib.rs"
-
-[[bin]]
-name = "nomo"
-path = "src/bin/nomo.rs"
-
-[[bin]]
-name = "nomoc"
-path = "src/bin/nomoc.rs"

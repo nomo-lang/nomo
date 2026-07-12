@@ -5,9 +5,8 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
-nomo-ir = { path = "../nomo_ir" }
-nomo-runtime = { path = "../nomo_runtime" }
+nomo-ir.workspace = true
+nomo-runtime.workspace = true
 
 [lib]
 name = "nomo_codegen_c"
-path = "src/lib.rs"

@@ -6,10 +6,9 @@ license.workspace = true
 
 [dependencies]
 nomo-graph.workspace = true
-nomo-manifest = { path = "../nomo_manifest" }
+nomo-manifest.workspace = true
 serde.workspace = true
 toml.workspace = true
 
 [lib]
 name = "nomo_lockfile"
-path = "src/lib.rs"

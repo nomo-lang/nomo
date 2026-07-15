@@ -42,6 +42,7 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::BoolLiteral(value) => out.push_str(if *value { "1" } else { "0" }),
         ValueExpr::VoidLiteral => out.push('0'),
         ValueExpr::Variable(name) => out.push_str(&c_var_ident(name)),
+        ValueExpr::FunctionRef(name) => out.push_str(&c_fn_ident(name)),
         ValueExpr::MutBorrow(path) => {
             out.push('&');
             emit_lvalue_path(out, path);
@@ -193,6 +194,24 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
                 out.push(')');
             } else if name == BUILTIN_CSTRING_DATA_EXPR {
                 emit_string_data_expr(out, &args[0]);
+            } else if name == BUILTIN_NULLABLE_NONE_EXPR {
+                out.push_str("NULL");
+            } else if name == BUILTIN_NULLABLE_SOME_EXPR {
+                emit_expr(out, &args[0]);
+            } else if name == BUILTIN_NULLABLE_IS_NULL_EXPR {
+                out.push('(');
+                emit_expr(out, &args[0]);
+                out.push_str(" == NULL)");
+            } else if name == BUILTIN_NULLABLE_UNWRAP_EXPR {
+                out.push_str("((");
+                emit_expr(out, &args[0]);
+                out.push_str(") != NULL ? (");
+                emit_expr(out, &args[0]);
+                out.push_str(
+                    ") : (nomo_panic(\"attempted to unwrap a null FFI handle\"), (void *)NULL))",
+                );
+            } else if name == BUILTIN_OWNED_BORROW_EXPR {
+                emit_expr(out, &args[0]);
             } else if let Some(symbol) = name.strip_prefix(EXTERN_CALL_PREFIX) {
                 out.push_str(symbol);
                 out.push('(');

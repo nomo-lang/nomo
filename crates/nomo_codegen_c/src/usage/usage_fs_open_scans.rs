@@ -237,6 +237,7 @@ pub(super) fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::OsPlatform
         | ValueExpr::OsArch

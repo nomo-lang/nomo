@@ -1,8 +1,9 @@
 use nomo_graph::DirectedGraph;
 use nomo_manifest::{
-    Dependency, DependencySource, PackageMetadata, validate_dependency_alias, validate_package_id,
-    validate_version_like,
+    Dependency, DependencySource, PackageMetadata, PackageVersion, VersionConstraint,
+    validate_dependency_alias, validate_package_id, validate_version_like,
 };
+use nomo_supply_chain::VerifiedReleaseEvidence;
 use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
@@ -18,6 +19,7 @@ pub struct ResolvedDependency {
     pub package: String,
     pub source: DependencySource,
     pub checksum: Option<String>,
+    pub supply_chain: Option<VerifiedReleaseEvidence>,
     pub dependencies: Vec<ResolvedDependency>,
 }
 
@@ -152,7 +154,28 @@ pub fn validate_locked_source_matches_manifest(
                 version: locked_version,
                 registry: locked_registry,
             },
-        ) if version == locked_version && registry == locked_registry => Ok(()),
+        ) if registry == locked_registry => {
+            let requirement = VersionConstraint::parse(version).map_err(|err| {
+                format!(
+                    "nomo.lock cannot validate dependency `{}` requirement `{version}`: {err}",
+                    manifest.alias
+                )
+            })?;
+            let locked_version = PackageVersion::parse(locked_version).map_err(|err| {
+                format!(
+                    "nomo.lock contains invalid version `{locked_version}` for dependency `{}`: {err}",
+                    manifest.alias
+                )
+            })?;
+            if requirement.matches(&locked_version) {
+                Ok(())
+            } else {
+                Err(format!(
+                    "nomo.lock is out of date: dependency `{}` locked version `{locked_version}` does not satisfy manifest requirement `{requirement}`",
+                    manifest.alias
+                ))
+            }
+        }
         (DependencySource::Path { .. }, DependencySource::Path { .. }) => Ok(()),
         (
             DependencySource::Git {
@@ -260,6 +283,8 @@ struct LockPackage {
     rev: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     checksum: Option<String>,
+    #[serde(rename = "supply-chain", skip_serializing_if = "Option::is_none")]
+    supply_chain: Option<VerifiedReleaseEvidence>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     dependencies: Vec<String>,
 }
@@ -300,6 +325,7 @@ impl LockPackage {
             tag,
             rev,
             checksum: dependency.checksum.clone(),
+            supply_chain: dependency.supply_chain.clone(),
             dependencies: dependency
                 .dependencies
                 .iter()
@@ -336,6 +362,7 @@ impl LockPackage {
                     registry: None,
                 },
                 checksum: None,
+                supply_chain: None,
                 dependencies: Vec::new(),
             })
             .collect();
@@ -344,6 +371,7 @@ impl LockPackage {
             package: self.id,
             source,
             checksum: self.checksum,
+            supply_chain: self.supply_chain,
             dependencies,
         })
     }
@@ -377,6 +405,7 @@ fn build_locked_dependency(
         package: dependency.package.clone(),
         source: dependency.source.clone(),
         checksum: dependency.checksum.clone(),
+        supply_chain: dependency.supply_chain.clone(),
         dependencies: children,
     })
 }
@@ -593,5 +622,74 @@ dependencies = ["a -> app/a"]
             error,
             "cyclic dependency in nomo.lock: app/a -> app/b -> app/a"
         );
+    }
+
+    #[test]
+    fn locked_registry_version_may_satisfy_a_manifest_range() {
+        let manifest = Dependency {
+            alias: "json".to_string(),
+            package: "nomo-lang/json".to_string(),
+            source: DependencySource::Registry {
+                version: "^1.2.0".to_string(),
+                registry: Some("https://packages.example.com".to_string()),
+            },
+        };
+        let locked = ResolvedDependency {
+            alias: "json".to_string(),
+            package: "nomo-lang/json".to_string(),
+            source: DependencySource::Registry {
+                version: "1.9.0".to_string(),
+                registry: Some("https://packages.example.com".to_string()),
+            },
+            checksum: None,
+            supply_chain: None,
+            dependencies: Vec::new(),
+        };
+
+        validate_locked_source_matches_manifest(&manifest, &locked).unwrap();
+
+        let incompatible = ResolvedDependency {
+            source: DependencySource::Registry {
+                version: "2.0.0".to_string(),
+                registry: Some("https://packages.example.com".to_string()),
+            },
+            ..locked
+        };
+        let error = validate_locked_source_matches_manifest(&manifest, &incompatible).unwrap_err();
+        assert!(error.contains("does not satisfy manifest requirement `^1.2.0`"));
+    }
+
+    #[test]
+    fn round_trips_public_supply_chain_evidence_without_secret_material() {
+        let evidence = VerifiedReleaseEvidence {
+            key_id: format!("sha256:{}", "1".repeat(64)),
+            subject_digest: format!("sha256:{}", "2".repeat(64)),
+            provenance_digest: Some(format!("sha256:{}", "3".repeat(64))),
+            transparency_root: Some(format!("sha256:{}", "4".repeat(64))),
+            transparency_size: Some(9),
+        };
+        let graph = DependencyGraph {
+            root: PackageMetadata {
+                namespace: "app".to_string(),
+                name: "root".to_string(),
+                version: "1.0.0".to_string(),
+                edition: "2026".to_string(),
+            },
+            dependencies: vec![ResolvedDependency {
+                alias: "demo".to_string(),
+                package: "nomo-lang/demo".to_string(),
+                source: DependencySource::Registry {
+                    version: "1.0.0".to_string(),
+                    registry: Some("https://packages.example.com".to_string()),
+                },
+                checksum: Some(format!("sha256:{}", "5".repeat(64))),
+                supply_chain: Some(evidence.clone()),
+                dependencies: Vec::new(),
+            }],
+        };
+        let lock = render_lockfile(&graph);
+        assert!(!lock.contains("private"));
+        let parsed = parse_lockfile_text(&lock).unwrap();
+        assert_eq!(parsed[0].supply_chain, Some(evidence));
     }
 }

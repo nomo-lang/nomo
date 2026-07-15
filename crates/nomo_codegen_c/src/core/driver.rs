@@ -1,7 +1,22 @@
 use super::*;
+use nomo_target::TargetTriple;
 
 pub fn emit_c(program: &Program) -> String {
+    let target = TargetTriple::host().expect("C code generation requires a supported host target");
+    emit_c_for_target(program, &target)
+}
+
+pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     let mut out = String::new();
+    out.push_str("/* nomo target: ");
+    out.push_str(&target.to_string());
+    out.push_str(" */\n#define NOMO_TARGET_TRIPLE \"");
+    out.push_str(&target.to_string());
+    out.push_str("\"\n#define NOMO_TARGET_ARCH \"");
+    out.push_str(target.architecture().as_str());
+    out.push_str("\"\n#define NOMO_TARGET_PLATFORM \"");
+    out.push_str(target.operating_system().platform_name());
+    out.push_str("\"\n");
     emit_c_prelude(&mut out);
     emit_operator_runtime(&mut out);
     out.push('\n');

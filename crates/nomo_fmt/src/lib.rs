@@ -2,8 +2,9 @@
 
 use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
-    ConstDef, EnumDef, ExternBlock, Field, ForVariant, Function, FunctionSignature, ImplBlock,
-    InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef, TypeParamBound,
+    ConstDef, EnumDef, ExternBlock, ExternOpaqueType, Field, ForVariant, Function,
+    FunctionSignature, ImplBlock, InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef,
+    TypeParamBound,
 };
 use nomo_syntax::lexer::{Token, lex};
 use nomo_syntax::parser::parse;
@@ -104,6 +105,7 @@ impl<'a> Formatter<'a> {
         !(self.ast.structs.is_empty()
             && self.ast.enums.is_empty()
             && self.ast.interfaces.is_empty()
+            && self.ast.extern_opaque_types.is_empty()
             && self.ast.extern_blocks.is_empty()
             && self.ast.impls.is_empty()
             && self.ast.consts.is_empty()
@@ -116,6 +118,9 @@ impl<'a> Formatter<'a> {
             TopLevelItem::Struct(index) => self.struct_def(index, &self.ast.structs[index]),
             TopLevelItem::Enum(index) => self.enum_def(index, &self.ast.enums[index]),
             TopLevelItem::Interface(index) => self.interface_def(&self.ast.interfaces[index]),
+            TopLevelItem::ExternOpaque(index) => {
+                self.extern_opaque_type(&self.ast.extern_opaque_types[index])
+            }
             TopLevelItem::ExternBlock(index) => self.extern_block(&self.ast.extern_blocks[index]),
             TopLevelItem::Impl(index) => self.impl_block(index, &self.ast.impls[index]),
             TopLevelItem::Const(index) => self.const_def(&self.ast.consts[index]),
@@ -208,6 +213,19 @@ impl<'a> Formatter<'a> {
             self.signature(function, 1, false);
         }
         self.line(0, "}");
+    }
+
+    fn extern_opaque_type(&mut self, opaque: &ExternOpaqueType) {
+        let release = opaque
+            .release_function
+            .as_deref()
+            .map(|function| format!(" release {function}"))
+            .unwrap_or_default();
+        self.line_at(
+            0,
+            &format!("extern opaque type {}{release}", opaque.name),
+            opaque.span.line,
+        );
     }
 
     fn signature(&mut self, signature: &FunctionSignature, indent: usize, in_interface: bool) {

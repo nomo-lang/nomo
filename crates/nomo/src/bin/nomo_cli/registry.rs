@@ -1,8 +1,9 @@
 use nomo::project::{
     BuildError, DependencyAddSpec, add_registry_dependency, add_registry_package_owner,
-    discover_project, login_registry, prepare_publish_package, publish_package_archive,
-    remove_dependency, remove_registry_package_owner, search_registry_packages,
-    yank_registry_package,
+    add_registry_publisher_key, discover_project, login_registry, prepare_publish_package,
+    publish_package_archive, publish_signed_package_archive, remove_dependency,
+    remove_registry_package_owner, revoke_registry_publisher_key, search_registry_packages,
+    sign_publish_package, yank_registry_package,
 };
 use std::env;
 use std::path::PathBuf;
@@ -18,9 +19,7 @@ pub(super) fn run_login_command(args: Vec<String>) -> Result<(), String> {
 
 pub(super) fn run_owner_command(args: Vec<String>) -> Result<(), String> {
     let [subcommand, rest @ ..] = args.as_slice() else {
-        return Err(
-            "usage: nomo owner <add|remove> <owner/package> <user> --registry <url>".to_string(),
-        );
+        return Err("usage: nomo owner <add|remove|key> ... --registry <url>".to_string());
     };
     match subcommand.as_str() {
         "add" => {
@@ -42,6 +41,36 @@ pub(super) fn run_owner_command(args: Vec<String>) -> Result<(), String> {
             println!("removed owner {user} from {package}");
             println!("registry {registry}");
             Ok(())
+        }
+        "key" => {
+            let [action, key_args @ ..] = rest else {
+                return Err("usage: nomo owner key <add|revoke> ... --registry <url>".to_string());
+            };
+            match action.as_str() {
+                "add" => {
+                    let (package, public_key, registry) = parse_owner_registry_args(
+                        key_args.to_vec(),
+                        "usage: nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>",
+                        "nomo owner key add requires --registry <url>",
+                    )?;
+                    let key_id = add_registry_publisher_key(&registry, &package, &public_key)?;
+                    println!("registered publisher key {key_id} for {package}");
+                    println!("registry {registry}");
+                    Ok(())
+                }
+                "revoke" => {
+                    let (package, key_id, registry) = parse_owner_registry_args(
+                        key_args.to_vec(),
+                        "usage: nomo owner key revoke <owner/package> <key-id> --registry <url>",
+                        "nomo owner key revoke requires --registry <url>",
+                    )?;
+                    revoke_registry_publisher_key(&registry, &package, &key_id)?;
+                    println!("revoked publisher key {key_id} for {package}");
+                    println!("registry {registry}");
+                    Ok(())
+                }
+                other => Err(format!("unknown owner key command `{other}`")),
+            }
         }
         other => Err(format!("unknown owner command `{other}`")),
     }
@@ -100,33 +129,58 @@ pub(super) fn run_yank_command(args: Vec<String>) -> Result<(), String> {
 }
 
 pub(super) fn run_publish_command(args: Vec<String>) -> Result<(), String> {
-    let (path, dry_run, registry, output, json) = parse_publish_args(
+    let args = parse_publish_args(
         args,
-        "usage: nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]",
+        "usage: nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]",
     )?;
-    let project = discover_project(&path)?;
-    if dry_run {
-        let package = match prepare_publish_package(&project, output.as_deref()) {
+    let project = discover_project(&args.path)?;
+    if args.dry_run {
+        let package = match prepare_publish_package(&project, args.output.as_deref()) {
             Ok(package) => package,
-            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(BuildError::Diagnostic(diag)) if args.json => return Err(diag.json()),
             Err(err) => return Err(err.human()),
+        };
+        let package = if let Some(signer) = args.signer.as_deref() {
+            sign_publish_package(package, signer, args.envelope.as_deref())
+                .map_err(|err| err.human())?
+        } else {
+            package
         };
         println!("publish dry-run {} {}", package.package, package.version);
         println!("archive {}", package.archive_path.display());
         println!("checksum {}", package.checksum);
+        println!("provenance {}", package.provenance_path.display());
+        if let Some(envelope) = &package.envelope_path {
+            println!("envelope {}", envelope.display());
+        }
         println!("size {}", package.size);
     } else {
-        let registry = registry.ok_or_else(|| {
+        let registry = args.registry.ok_or_else(|| {
             "nomo publish requires either --dry-run or --registry <url>".to_string()
         })?;
-        let package = match publish_package_archive(&project, &registry, output.as_deref()) {
+        let result = if let Some(signer) = args.signer.as_deref() {
+            publish_signed_package_archive(
+                &project,
+                &registry,
+                args.output.as_deref(),
+                signer,
+                args.envelope.as_deref(),
+            )
+        } else {
+            publish_package_archive(&project, &registry, args.output.as_deref())
+        };
+        let package = match result {
             Ok(package) => package,
-            Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+            Err(BuildError::Diagnostic(diag)) if args.json => return Err(diag.json()),
             Err(err) => return Err(err.human()),
         };
         println!("published {} {}", package.package, package.version);
         println!("archive {}", package.archive_path.display());
         println!("checksum {}", package.checksum);
+        println!("provenance {}", package.provenance_path.display());
+        if let Some(envelope) = &package.envelope_path {
+            println!("envelope {}", envelope.display());
+        }
         println!("size {}", package.size);
         println!("registry {registry}");
     }
@@ -300,14 +354,23 @@ pub(super) fn parse_yank_args(
     Ok((package.clone(), version.clone(), registry))
 }
 
-pub(super) fn parse_publish_args(
-    args: Vec<String>,
-    usage: &str,
-) -> Result<(PathBuf, bool, Option<String>, Option<PathBuf>, bool), String> {
+struct PublishArgs {
+    path: PathBuf,
+    dry_run: bool,
+    registry: Option<String>,
+    output: Option<PathBuf>,
+    signer: Option<String>,
+    envelope: Option<PathBuf>,
+    json: bool,
+}
+
+fn parse_publish_args(args: Vec<String>, usage: &str) -> Result<PublishArgs, String> {
     let mut dry_run = false;
     let mut registry = None;
     let mut output = None;
     let mut json = false;
+    let mut signer = None;
+    let mut envelope = None;
     let mut path = None;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
@@ -337,6 +400,28 @@ pub(super) fn parse_publish_args(
                 return Err("--output requires a directory".to_string());
             };
             output = Some(PathBuf::from(value));
+        } else if let Some(value) = arg.strip_prefix("--signer=") {
+            if value.is_empty() {
+                return Err("--signer requires an external signer command".to_string());
+            }
+            signer = Some(value.to_string());
+        } else if arg == "--signer" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--signer requires an external signer command".to_string());
+            };
+            signer = Some(value.clone());
+        } else if let Some(value) = arg.strip_prefix("--envelope=") {
+            if value.is_empty() {
+                return Err("--envelope requires a file path".to_string());
+            }
+            envelope = Some(PathBuf::from(value));
+        } else if arg == "--envelope" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--envelope requires a file path".to_string());
+            };
+            envelope = Some(PathBuf::from(value));
         } else if arg.starts_with('-') {
             return Err(usage.to_string());
         } else if path.is_none() {
@@ -351,13 +436,18 @@ pub(super) fn parse_publish_args(
             "nomo publish accepts either --dry-run or --registry <url>, not both".to_string(),
         );
     }
-    Ok((
-        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+    if envelope.is_some() && signer.is_none() {
+        return Err("--envelope requires --signer <command>".to_string());
+    }
+    Ok(PublishArgs {
+        path: path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         dry_run,
         registry,
         output,
+        signer,
+        envelope,
         json,
-    ))
+    })
 }
 
 fn parse_dependency_add_spec(

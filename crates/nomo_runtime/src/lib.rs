@@ -420,7 +420,9 @@ pub fn emit_string_runtime(out: &mut String) {
     out.push_str("    return nomo_string_owned(out);\n");
     out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_os_platform(void) {\n");
-    out.push_str("#if defined(_WIN32)\n");
+    out.push_str("#if defined(NOMO_TARGET_PLATFORM)\n");
+    out.push_str("    return nomo_string_literal(NOMO_TARGET_PLATFORM);\n");
+    out.push_str("#elif defined(_WIN32)\n");
     out.push_str("    return nomo_string_literal(\"windows\");\n");
     out.push_str("#elif defined(__APPLE__)\n");
     out.push_str("    return nomo_string_literal(\"macos\");\n");
@@ -433,7 +435,9 @@ pub fn emit_string_runtime(out: &mut String) {
     out.push_str("#endif\n");
     out.push_str("}\n");
     out.push_str("\nstatic nomo_string nomo_os_arch(void) {\n");
-    out.push_str("#if defined(__aarch64__) || defined(_M_ARM64)\n");
+    out.push_str("#if defined(NOMO_TARGET_ARCH)\n");
+    out.push_str("    return nomo_string_literal(NOMO_TARGET_ARCH);\n");
+    out.push_str("#elif defined(__aarch64__) || defined(_M_ARM64)\n");
     out.push_str("    return nomo_string_literal(\"aarch64\");\n");
     out.push_str("#elif defined(__x86_64__) || defined(_M_X64)\n");
     out.push_str("    return nomo_string_literal(\"x86_64\");\n");

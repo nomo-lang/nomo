@@ -1,4 +1,53 @@
 use super::*;
+
+pub(super) fn validate_extern_opaque_type_namespace(
+    path: &Path,
+    opaque_types: &[AstExternOpaqueType],
+    structs: &[StructType],
+    enums: &[EnumType],
+) -> Result<(), Diagnostic> {
+    const BUILTIN_TYPES: &[&str] = &[
+        "string", "CString", "Opaque", "i64", "i32", "u32", "u64", "f64", "char", "bool", "void",
+        "Array", "Nullable", "Owned", "Borrowed",
+    ];
+    let concrete_types = structs
+        .iter()
+        .map(|item| item.name.as_str())
+        .chain(enums.iter().map(|item| item.name.as_str()))
+        .collect::<HashSet<_>>();
+    let mut seen = HashSet::new();
+    for item in opaque_types {
+        if BUILTIN_TYPES.contains(&item.name.as_str())
+            || concrete_types.contains(item.name.as_str())
+        {
+            return Err(Diagnostic::new(
+                "E1521",
+                format!(
+                    "opaque handle type `{}` conflicts with an existing type",
+                    item.name
+                ),
+                path,
+                item.span.line,
+                item.span.column,
+                item.span.length,
+                &item.span.text,
+            ));
+        }
+        if !seen.insert(item.name.as_str()) {
+            return Err(Diagnostic::new(
+                "E1521",
+                format!("opaque handle type `{}` is already defined", item.name),
+                path,
+                item.span.line,
+                item.span.column,
+                item.span.length,
+                &item.span.text,
+            ));
+        }
+    }
+    Ok(())
+}
+
 pub(super) fn validate_type_namespace(
     path: &Path,
     structs: &[StructType],
@@ -22,6 +71,69 @@ pub(super) fn validate_type_namespace(
         }
     }
     Ok(())
+}
+
+pub(super) fn validate_repr_c_structs(
+    path: &Path,
+    structs: &[StructType],
+    repr_c_structs: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let struct_map = structs
+        .iter()
+        .map(|item| (item.name.as_str(), item))
+        .collect::<HashMap<_, _>>();
+    for name in repr_c_structs {
+        let Some(struct_type) = struct_map.get(name.as_str()) else {
+            continue;
+        };
+        if !struct_type.type_params.is_empty() {
+            return Err(repr_c_diagnostic(
+                path,
+                format!("`#[repr(C)]` struct `{name}` cannot be generic"),
+            ));
+        }
+        if struct_type.fields.is_empty() {
+            return Err(repr_c_diagnostic(
+                path,
+                format!("`#[repr(C)]` struct `{name}` cannot be empty"),
+            ));
+        }
+        for field in &struct_type.fields {
+            if !is_repr_c_field_type(&field.value_type, repr_c_structs) {
+                return Err(repr_c_diagnostic(
+                    path,
+                    format!(
+                        "field `{}.{}` has non-ABI-safe type `{}`; repr(C) fields must be fixed-width scalars, handles, nullable handles, or another non-generic repr(C) struct",
+                        name,
+                        field.name,
+                        field.value_type.name()
+                    ),
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn is_repr_c_field_type(value_type: &ValueType, repr_c_structs: &HashSet<String>) -> bool {
+    matches!(
+        value_type,
+        ValueType::Int
+            | ValueType::I32
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::Float
+            | ValueType::Char
+            | ValueType::Bool
+            | ValueType::Opaque
+            | ValueType::OpaqueHandle(_)
+            | ValueType::BorrowedHandle(_)
+            | ValueType::Nullable(_)
+    ) || matches!(value_type, ValueType::Struct(name, args) if args.is_empty() && repr_c_structs.contains(name))
+}
+
+fn repr_c_diagnostic(path: &Path, message: String) -> Diagnostic {
+    Diagnostic::new("E1530", message, path, 1, 1, 1, "")
 }
 
 pub(super) fn validate_no_recursive_value_types(
@@ -85,10 +197,25 @@ pub(super) fn collect_value_type_dependencies(
                 collect_value_type_dependencies(arg, nominal_names, out);
             }
         }
+        ValueType::Nullable(inner) => {
+            collect_value_type_dependencies(inner, nominal_names, out);
+        }
+        ValueType::ExternCallback {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                collect_value_type_dependencies(param, nominal_names, out);
+            }
+            collect_value_type_dependencies(return_type, nominal_names, out);
+        }
         ValueType::Array(_) => {}
         ValueType::String
         | ValueType::CString
         | ValueType::Opaque
+        | ValueType::OpaqueHandle(_)
+        | ValueType::OwnedHandle(_)
+        | ValueType::BorrowedHandle(_)
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32

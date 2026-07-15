@@ -6,6 +6,7 @@ license.workspace = true
 
 [dependencies]
 nomo-manifest.workspace = true
+nomo-supply-chain.workspace = true
 serde.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
@@ -13,6 +14,7 @@ ureq.workspace = true
 
 [dev-dependencies]
 rcgen = "0.14.8"
+ring.workspace = true
 rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12"] }
 
 [lib]

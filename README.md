@@ -107,7 +107,7 @@ compiles generated C99 code on the runner.
 ```bash
 nomo new <name>                  # scaffold a new project (nomo.toml + src/main.nomo)
 nomo check [path] [--json-errors] [--workspace] # type-check one project or every workspace member
-nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
+nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
 nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
@@ -126,11 +126,22 @@ nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print on
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
 nomo deps vendor [path] [--workspace] [--dir vendor] [--sync] # copy locked path/git dependency sources into vendor/
 nomo deps clean-cache [path]      # remove the project or workspace git dependency cache
+nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>] # generate typed Nomo bindings and provenance
 ```
 
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
 entry point. `nomo build` writes generated C to `build/c/main.c` and the linked
-executable to `build/bin/<name>`.
+executable to `build/bin/<name>`. An explicit `--target` canonicalizes the
+triple and isolates both artifacts under `build/<canonical-target>/`. The first
+native cross-link path is macOS `x86_64 <-> aarch64`; `--emit-c` can emit C for
+every recognized target even when a native cross linker is not configured. See
+[Cross Compilation](docs/cross-compilation.md).
+
+Typed C interop supports nominal opaque handles, explicit nullable and
+owned/borrowed handle types, fixed-layout `#[repr(C)]` records, and restricted
+non-capturing callbacks. `nomo ffi bindgen` converts a controlled C-header
+subset into deterministic reviewable Nomo source plus SHA-256 provenance. See
+[Typed C FFI](docs/ffi.md) for the accepted syntax and explicit limitations.
 
 `nomo run <source.nomo>` also supports a standalone script file when the file is
 not inside a project manifest. The file still starts with `package`, may define
@@ -217,8 +228,8 @@ Dependency keys are local import aliases. For example:
 
 ```toml
 [dependencies]
-json = { package = "nomo-lang/json", version = "0.1.0" }
-json_private = { package = "nomo-lang/json", version = "0.1.0", registry = "https://packages.example.com" }
+json = { package = "nomo-lang/json", version = "^1.2.0" }
+json_private = { package = "nomo-lang/json", version = ">=1.2, <2.0", registry = "https://packages.example.com" }
 local_utils = { package = "fynn/utils", path = "../utils" }
 http = { package = "nomo-lang/http", git = "https://github.com/nomo-lang/http.git", rev = "2a4b8c1" }
 cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git", branch = "stable" }
@@ -340,8 +351,8 @@ deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
 provide imported public API to project builds. HTTP and HTTPS registry requests
 share one transport with platform certificate verification, proxy environment
 support, response size limits, and optional bearer authentication. `nomo add`
-and `nomo remove` edit the registry dependency entries in `nomo.toml`; full
-version solving remains a separate registry slice. `nomo publish --dry-run`
+and `nomo remove` edit the registry dependency entries in `nomo.toml`.
+Registry ranges are solved as described below. `nomo publish --dry-run`
 validates the selected package with `nomo check`, packages `nomo.toml` plus
 `src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
 checksum and byte size. `nomo publish --registry <url>` prepares the same
@@ -371,11 +382,15 @@ directory without consulting registry metadata. The package-index form
 `GET /api/v1/packages/<owner>/<package>` returns `package` plus a `versions`
 array using the same `version`, `checksum`, and `yanked` fields. File registries
 may provide equivalent `index.json` and per-version `metadata.json` files;
-metadata remains optional for legacy local fixtures. v0.1 dependency manifests
-still use exact version values; package metadata does not introduce version
-range or latest-version selection.
-If the same canonical package ID resolves to conflicting sources or versions,
-v0.1 reports an error instead of trying to solve multiple versions.
+metadata remains optional for legacy local fixtures. Dependency manifests may
+use bare exact versions, caret ranges, tilde ranges, or bounded comparison
+ranges. Nomo rejects wildcards, alternatives, implicit `latest`, and `=` exact
+syntax. Fresh resolution chooses the highest non-yanked version satisfying all
+constraints and records only that exact version in `nomo.lock`; all workspace
+members share one selection. HTTP package indexes are cached for offline range
+resolution. Unsatisfiable constraints report a stable minimal set with the
+dependency path that introduced each requirement. Multiple versions of one
+canonical package and conflicting sources remain errors.
 `--locked` is accepted by `nomo build`, `nomo deps resolve`, and
 `nomo deps tree`; it requires an existing lockfile and rejects missing or
 out-of-date direct dependencies without rewriting `nomo.lock`. `--offline`
@@ -388,7 +403,8 @@ alias or canonical package ID it first verifies that the target is a direct
 dependency, then rewrites the lockfile. The current implementation rewrites the
 full lockfile. `--precise <version-or-rev>` requires a direct dependency target,
 updates only the in-memory source used for lockfile generation, and never edits
-`nomo.toml`: registry dependencies use the precise value as `version`, git
+`nomo.toml`: registry dependencies use the precise value as the exact lockfile
+selection only when it satisfies the declared manifest requirement; git
 dependencies use it as `rev` with any branch/tag selector cleared, and path
 dependencies are rejected.
 `nomo deps vendor [path]` ensures a lockfile exists, copies locked `path`, `git`,
@@ -408,7 +424,7 @@ source, git cache checkout, or registry cache entry is missing.
 
 ```bash
 nomoc check <source.nomo> [--json-errors]        # parse and type-check
-nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors] # emit C99
+nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors] # emit target-tagged C99
 ```
 
 The `--json-errors` flag produces machine-readable diagnostics (with positions
@@ -641,7 +657,12 @@ ordering, available source roots, and each source package's public semantic API;
 `build_workspace_graph` adds the workspace layer and aggregates those package
 graphs while preserving member/default-member topology and workspace metadata.
 The library also exposes the `lexer`, `parser`, `ast`, `compiler`, `codegen`,
-`diagnostic`, `semantic`, and `project` modules. The `semantic` module provides
+`diagnostic`, `incremental`, `semantic`, and `project` modules. The
+`incremental` module owns content fingerprints, target/toolchain-aware query
+keys, dependency edges, transitive invalidation, cache statistics and immutable
+generation snapshots. `IncrementalSemanticSession` caches conservative
+project-check and symbol queries while preserving clean-result equivalence.
+The `semantic` module provides
 current-document symbol queries plus project-aware hover, definition, and
 reference queries over local `src/**/*.nomo` modules.
 

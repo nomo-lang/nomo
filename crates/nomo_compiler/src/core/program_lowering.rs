@@ -34,16 +34,41 @@ pub(super) fn lower_program(
     prepare_entry_point(path, &mut ast, entry_mode)?;
     validate_standard_type_imports(path, &imports, &ast)?;
     let standard_type_needs = standard_type_needs(&imports, &ast);
+    let repr_c_structs = ast
+        .structs
+        .iter()
+        .filter(|item| item.repr_c)
+        .map(|item| item.name.clone())
+        .collect::<HashSet<_>>();
     validate_standard_type_conflicts(path, standard_type_needs, &ast.structs, &ast.enums)?;
-    let mut structs = lower_structs(path, &ast.structs, &ast.enums, standard_type_needs)?;
-    let mut enums = lower_enums(path, &structs, &ast.enums, standard_type_needs)?;
+    let mut structs = lower_structs(
+        path,
+        &ast.structs,
+        &ast.enums,
+        &ast.extern_opaque_types,
+        standard_type_needs,
+    )?;
+    let mut enums = lower_enums(
+        path,
+        &structs,
+        &ast.enums,
+        &ast.extern_opaque_types,
+        standard_type_needs,
+    )?;
     inject_standard_types(standard_type_needs, &mut structs, &mut enums);
     validate_type_namespace(path, &structs, &enums)?;
+    validate_extern_opaque_type_namespace(path, &ast.extern_opaque_types, &structs, &enums)?;
+    validate_repr_c_structs(path, &structs, &repr_c_structs)?;
     validate_no_recursive_value_types(path, &structs, &enums)?;
-    let struct_map = structs
+    let mut struct_map = structs
         .iter()
         .map(|item| (item.name.clone(), item.clone()))
         .collect::<HashMap<_, _>>();
+    struct_map.extend(
+        ast.extern_opaque_types
+            .iter()
+            .map(|item| (item.name.clone(), opaque_handle_struct(&item.name))),
+    );
     let enum_map = enums
         .iter()
         .map(|item| (item.name.clone(), item.clone()))
@@ -69,8 +94,15 @@ pub(super) fn lower_program(
             function_signature(path, function, &struct_map, &enum_map)?,
         );
     }
-    let (extern_call_names, extern_functions) =
-        collect_extern_signatures(path, &ast, &struct_map, &enum_map, &mut signatures)?;
+    let (extern_call_names, extern_functions) = collect_extern_signatures(
+        path,
+        &ast,
+        &struct_map,
+        &enum_map,
+        &repr_c_structs,
+        &mut signatures,
+    )?;
+    validate_opaque_handle_release_functions(path, &ast.extern_opaque_types, &signatures)?;
     validate_extern_calls_are_unsafe(path, &ast, &extern_call_names)?;
     let local_struct_names = ast
         .structs
@@ -242,10 +274,7 @@ pub(super) fn lower_program(
     let mut const_types: Vec<(String, ValueType)> = Vec::new();
     let mut consts = Vec::new();
     for const_def in &ast.consts {
-        let struct_names = struct_map
-            .values()
-            .map(|item| (item.name.clone(), item.type_params.len()))
-            .collect::<Vec<_>>();
+        let struct_names = struct_type_names(&struct_map);
         let enum_names = enum_map
             .values()
             .map(|item| (item.name.clone(), item.type_params.len()))

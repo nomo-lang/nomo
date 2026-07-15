@@ -1,0 +1,6 @@
+[package]
+name = "ffi_typed_handle"
+version = "0.0.0-20260713145859"
+
+[ffi]
+sources = ["native/handle.c"]

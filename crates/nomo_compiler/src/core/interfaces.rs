@@ -275,10 +275,7 @@ fn interface_method_signature(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Result<FunctionSignature, Diagnostic> {
-    let struct_names = structs
-        .values()
-        .map(|item| (item.name.clone(), item.type_params.len()))
-        .collect::<Vec<_>>();
+    let struct_names = struct_type_names(structs);
     let enum_names = enums
         .values()
         .map(|item| (item.name.clone(), item.type_params.len()))

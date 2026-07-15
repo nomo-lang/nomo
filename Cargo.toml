@@ -12,7 +12,9 @@ members = [
     "crates/nomo_manifest",
     "crates/nomo_resolver",
     "crates/nomo_runtime",
+    "crates/nomo_supply_chain",
     "crates/nomo_syntax",
+    "crates/nomo_target",
     "crates/nomo_test",
     "libs/diagnostics",
     "libs/graph",
@@ -22,7 +24,7 @@ members = [
 default-members = ["crates/nomo"]
 
 [workspace.package]
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 edition = "2024"
 license = "MIT"
 
@@ -40,12 +42,16 @@ nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }
 nomo-manifest = { path = "crates/nomo_manifest" }
 nomo-resolver = { path = "crates/nomo_resolver" }
 nomo-runtime = { path = "crates/nomo_runtime" }
+nomo-supply-chain = { path = "crates/nomo_supply_chain" }
 nomo-spans = { path = "libs/spans" }
 nomo-std = { path = "std" }
 nomo-syntax = { path = "crates/nomo_syntax" }
+nomo-target = { path = "crates/nomo_target" }
 nomo-test = { path = "crates/nomo_test" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+semver = "1"
 sha2 = "0.10"
+ring = "0.17"
 toml = "0.8"
 ureq = { version = "3.3.0", features = ["platform-verifier"] }

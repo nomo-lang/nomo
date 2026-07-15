@@ -786,6 +786,60 @@ fn parses_top_level_const() {
 }
 
 #[test]
+fn parses_extern_opaque_handle_types() {
+    let source = "package app.main\n\nextern opaque type FileHandle release file_close\nextern opaque type SocketHandle\n\nextern \"C\" {\n    fn file_close(handle: Owned<FileHandle>) -> void\n}\n\nfn main() -> void {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    assert_eq!(ast.extern_opaque_types.len(), 2);
+    assert_eq!(ast.extern_opaque_types[0].name, "FileHandle");
+    assert_eq!(
+        ast.extern_opaque_types[0].release_function.as_deref(),
+        Some("file_close")
+    );
+    assert_eq!(ast.extern_opaque_types[1].name, "SocketHandle");
+    assert_eq!(ast.extern_opaque_types[1].release_function, None);
+    assert_eq!(ast.extern_blocks.len(), 1);
+    assert_eq!(ast.extern_blocks[0].functions[0].name, "file_close");
+}
+
+#[test]
+fn parses_nested_generic_type_at_end_of_declaration_line() {
+    let source = "package app.main\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn try_open() -> Nullable<Owned<FileHandle>>\n    fn close(handle: Owned<FileHandle>) -> void\n}\n\nfn main() -> void {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let return_type = &ast.extern_blocks[0].functions[0].return_type;
+    assert_eq!(return_type.path, ["Nullable"]);
+    assert_eq!(return_type.args[0].path, ["Owned"]);
+    assert_eq!(return_type.args[0].args[0].path, ["FileHandle"]);
+}
+
+#[test]
+fn parses_extern_c_callback_parameter_type() {
+    let source = "package app.main\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn visit(handle: Borrowed<FileHandle>, callback: extern \"C\" fn(i32, bool) -> i32) -> i32\n}\n\nfn main() -> void {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let callback = &ast.extern_blocks[0].functions[0].params[1].type_ref;
+    assert_eq!(callback.path, [crate::ast::EXTERN_C_CALLBACK_TYPE_PATH]);
+    assert_eq!(callback.args.len(), 3);
+    assert_eq!(callback.args[0].path, ["i32"]);
+    assert_eq!(callback.args[1].path, ["bool"]);
+    assert_eq!(callback.args[2].path, ["i32"]);
+}
+
+#[test]
+fn parses_repr_c_struct_attribute() {
+    let source = "package app.main\n\n#[repr(C)]\nstruct Header {\n    tag: i32\n    value: u64\n}\n\nfn main() -> void {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    assert!(ast.structs[0].repr_c);
+    assert_eq!(ast.structs[0].name, "Header");
+}
+
+#[test]
 fn parses_top_level_script_statements_after_declarations() {
     let source = "package app.main\n\nfn greeting() -> string {\n    return \"hi\"\n}\n\nlet message: string = greeting()\nio.println(message)\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -830,6 +884,7 @@ fn parser_ast_golden_snapshot() {
     structs: [
         StructDef {
             public: false,
+            repr_c: false,
             package: [
                 "app",
                 "main",
@@ -911,6 +966,7 @@ fn parser_ast_golden_snapshot() {
         },
     ],
     interfaces: [],
+    extern_opaque_types: [],
     extern_blocks: [],
     impls: [],
     consts: [],

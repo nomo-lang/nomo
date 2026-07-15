@@ -196,6 +196,14 @@ pub(super) fn c_type(value_type: &ValueType) -> String {
         ValueType::String => "nomo_string".to_string(),
         ValueType::CString => "nomo_string".to_string(),
         ValueType::Opaque => "void *".to_string(),
+        ValueType::OpaqueHandle(_) => "void *".to_string(),
+        ValueType::OwnedHandle(_) => "void *".to_string(),
+        ValueType::BorrowedHandle(_) => "void *".to_string(),
+        ValueType::Nullable(_) => "void *".to_string(),
+        ValueType::ExternCallback {
+            params,
+            return_type,
+        } => c_callback_type(params, return_type),
         ValueType::Int => "long long".to_string(),
         ValueType::I32 => "int32_t".to_string(),
         ValueType::U32 => "uint32_t".to_string(),
@@ -222,6 +230,14 @@ pub(super) fn c_extern_type(value_type: &ValueType) -> String {
     match value_type {
         ValueType::CString => "const char *".to_string(),
         ValueType::Opaque => "void *".to_string(),
+        ValueType::OpaqueHandle(_) => "void *".to_string(),
+        ValueType::OwnedHandle(_) => "void *".to_string(),
+        ValueType::BorrowedHandle(_) => "void *".to_string(),
+        ValueType::Nullable(_) => "void *".to_string(),
+        ValueType::ExternCallback {
+            params,
+            return_type,
+        } => c_callback_type(params, return_type),
         _ => c_type(value_type),
     }
 }
@@ -249,6 +265,11 @@ pub(super) fn c_zero_value(value_type: &ValueType) -> String {
     match value_type {
         ValueType::String | ValueType::CString => "nomo_string_literal(\"\")".to_string(),
         ValueType::Opaque => "NULL".to_string(),
+        ValueType::OpaqueHandle(_) => "NULL".to_string(),
+        ValueType::OwnedHandle(_) => "NULL".to_string(),
+        ValueType::BorrowedHandle(_) => "NULL".to_string(),
+        ValueType::Nullable(_) => "NULL".to_string(),
+        ValueType::ExternCallback { .. } => "NULL".to_string(),
         ValueType::Int => "0".to_string(),
         ValueType::I32 | ValueType::U32 | ValueType::U64 => "0".to_string(),
         ValueType::Float => "0.0".to_string(),
@@ -278,6 +299,22 @@ pub(super) fn c_type_name_part(value_type: &ValueType) -> String {
         ValueType::String => "string".to_string(),
         ValueType::CString => "cstring".to_string(),
         ValueType::Opaque => "opaque".to_string(),
+        ValueType::OpaqueHandle(name) => format!("handle_{name}"),
+        ValueType::OwnedHandle(name) => format!("owned_handle_{name}"),
+        ValueType::BorrowedHandle(name) => format!("borrowed_handle_{name}"),
+        ValueType::Nullable(inner) => format!("nullable_{}", c_type_name_part(inner)),
+        ValueType::ExternCallback {
+            params,
+            return_type,
+        } => format!(
+            "callback_{}_to_{}",
+            params
+                .iter()
+                .map(c_type_name_part)
+                .collect::<Vec<_>>()
+                .join("_"),
+            c_type_name_part(return_type)
+        ),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),
@@ -292,6 +329,19 @@ pub(super) fn c_type_name_part(value_type: &ValueType) -> String {
         ValueType::Void => "void".to_string(),
         ValueType::Never => "never".to_string(),
     }
+}
+
+fn c_callback_type(params: &[ValueType], return_type: &ValueType) -> String {
+    let params = if params.is_empty() {
+        "void".to_string()
+    } else {
+        params
+            .iter()
+            .map(c_extern_type)
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    format!("{} (*)({params})", c_extern_type(return_type))
 }
 
 pub(super) fn c_var_ident(name: &str) -> String {

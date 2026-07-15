@@ -11,11 +11,15 @@
 pub use nomo_diagnostics as diagnostic;
 pub use nomo_syntax::{ast, lexer, parser};
 
+mod ffi_layout;
+pub use ffi_layout::{CFieldLayout, CStructLayout, compute_repr_c_layout};
+
 use crate::ast::{
-    AssignOp, BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr, ForVariant,
-    Function as AstFunction, FunctionSignature as AstFunctionSignature,
-    InterfaceDef as AstInterfaceDef, MatchArm as AstMatchArm, PostfixOp, SourceFile, Span, Stmt,
-    StructDef as AstStructDef, TypeRef as AstTypeRef, UnaryOp as AstUnaryOp,
+    AssignOp, BinaryOp as AstBinaryOp, EnumDef as AstEnumDef, Expr as AstExpr,
+    ExternOpaqueType as AstExternOpaqueType, ForVariant, Function as AstFunction,
+    FunctionSignature as AstFunctionSignature, InterfaceDef as AstInterfaceDef,
+    MatchArm as AstMatchArm, PostfixOp, SourceFile, Span, Stmt, StructDef as AstStructDef,
+    TypeRef as AstTypeRef, UnaryOp as AstUnaryOp,
 };
 use crate::diagnostic::{Diagnostic, Suggestion};
 use nomo_codegen_c as codegen;
@@ -191,9 +195,11 @@ pub use driver::{
     check_source, check_source_text, check_source_text_with_external_imports,
     check_source_text_with_project_modules, check_source_text_with_project_modules_and_overrides,
     check_source_with_external_imports, check_source_with_external_modules,
-    compile_script_source_to_c, compile_source_text_to_c_with_project_modules, compile_source_to_c,
-    compile_source_to_c_with_external_imports, compile_source_to_c_with_external_modules,
-    compile_source_to_c_with_project_modules,
+    compile_script_source_to_c, compile_script_source_to_c_for_target,
+    compile_source_text_to_c_with_project_modules, compile_source_to_c,
+    compile_source_to_c_for_target, compile_source_to_c_with_external_imports,
+    compile_source_to_c_with_external_modules, compile_source_to_c_with_project_modules,
+    compile_source_to_c_with_project_modules_for_target,
 };
 use expression_calls::*;
 use expression_enums::*;
@@ -234,6 +240,11 @@ const BUILTIN_EPRINTLN_EXPR: &str = "__nomo_builtin_eprintln";
 const BUILTIN_EPRINT_EXPR: &str = "__nomo_builtin_eprint";
 const BUILTIN_CSTRING_FROM_STRING_EXPR: &str = "__nomo_cstring_from_string";
 const BUILTIN_CSTRING_DATA_EXPR: &str = "__nomo_cstring_data";
+const BUILTIN_NULLABLE_NONE_EXPR: &str = "__nomo_nullable_none";
+const BUILTIN_NULLABLE_SOME_EXPR: &str = "__nomo_nullable_some";
+const BUILTIN_NULLABLE_IS_NULL_EXPR: &str = "__nomo_nullable_is_null";
+const BUILTIN_NULLABLE_UNWRAP_EXPR: &str = "__nomo_nullable_unwrap";
+const BUILTIN_OWNED_BORROW_EXPR: &str = "__nomo_owned_borrow";
 const EXTERN_CALL_PREFIX: &str = "__nomo_extern::";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";

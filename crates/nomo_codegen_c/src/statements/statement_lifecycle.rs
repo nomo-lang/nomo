@@ -234,6 +234,7 @@ pub(super) fn emit_array_retain_return_if_needed(
 pub(super) fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
     match value {
         ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::FieldAccess { .. }
         | ValueExpr::EnumPayload { .. }
         | ValueExpr::EnumPayloadFieldAccess { .. } => true,

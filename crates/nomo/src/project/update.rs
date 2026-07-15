@@ -1,11 +1,15 @@
 use super::{
     DependencyUpdateOptions, Project, WorkspaceGraph,
-    dependency_resolution::resolve_dependency_graph_for_manifest,
+    dependency_resolution::{
+        resolve_dependency_graph_for_manifest, resolve_dependency_graphs_for_manifests,
+    },
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     workspace::validate_workspace_update_target,
 };
 use nomo_lockfile::{render_lockfile, render_workspace_lockfile};
-use nomo_manifest::{Dependency, DependencySource, parse_manifest_at_root, validate_version_like};
+use nomo_manifest::{
+    Dependency, DependencySource, PackageVersion, VersionConstraint, parse_manifest_at_root,
+};
 use std::fs;
 use std::path::PathBuf;
 
@@ -78,16 +82,15 @@ pub fn update_workspace_dependencies(
         ));
     }
 
-    let mut graphs = Vec::new();
-    for (project, manifest) in manifests {
-        graphs.push(resolve_dependency_graph_for_manifest(
-            &project.root,
-            manifest,
-            Some(&workspace.root),
-            Some(&workspace.root),
-            options.resolution.offline,
-        )?);
-    }
+    let graphs = resolve_dependency_graphs_for_manifests(
+        manifests
+            .iter()
+            .map(|(project, manifest)| (&*project.root, manifest.clone()))
+            .collect(),
+        Some(&workspace.root),
+        Some(&workspace.root),
+        options.resolution.offline,
+    )?;
 
     let lock = render_workspace_lockfile(&graphs)?;
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
@@ -132,13 +135,22 @@ fn precise_dependency_source(
     precise: &str,
 ) -> Result<DependencySource, String> {
     match &dependency.source {
-        DependencySource::Registry { registry, .. } => {
-            validate_version_like(
-                &format!("dependency `{}` precise version", dependency.alias),
-                precise,
-            )?;
+        DependencySource::Registry { version, registry } => {
+            let requirement = VersionConstraint::parse(version)?;
+            let precise_version = PackageVersion::parse(precise).map_err(|error| {
+                format!(
+                    "dependency `{}` precise version `{precise}` is invalid: {error}",
+                    dependency.alias
+                )
+            })?;
+            if !requirement.matches(&precise_version) {
+                return Err(format!(
+                    "dependency `{}` precise version `{precise}` does not satisfy manifest requirement `{version}`",
+                    dependency.alias
+                ));
+            }
             Ok(DependencySource::Registry {
-                version: precise.to_string(),
+                version: precise_version.to_string(),
                 registry: registry.clone(),
             })
         }

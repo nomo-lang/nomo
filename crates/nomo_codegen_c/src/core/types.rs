@@ -270,6 +270,11 @@ fn collect_complete_type_dependencies(value_type: &ValueType, out: &mut BTreeSet
         ValueType::String
         | ValueType::CString
         | ValueType::Opaque
+        | ValueType::OpaqueHandle(_)
+        | ValueType::OwnedHandle(_)
+        | ValueType::BorrowedHandle(_)
+        | ValueType::Nullable(_)
+        | ValueType::ExternCallback { .. }
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32

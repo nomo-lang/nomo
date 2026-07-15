@@ -6,9 +6,24 @@ use std::process::{Command, Stdio};
 use std::thread;
 use std::time::{Duration, Instant};
 
-const NOMO_HELP: &str = "nomo 0.1.0\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n";
+const NOMO_HELP: &str = concat!(
+    "nomo ",
+    env!("CARGO_PKG_VERSION"),
+    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
+);
 
-const NOMOC_HELP: &str = "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n\n";
+const NOMOC_HELP: &str = concat!(
+    "nomoc ",
+    env!("CARGO_PKG_VERSION"),
+    "\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors]\n\n"
+);
+
+fn expected_nomo_help() -> String {
+    format!(
+        "{}\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n\n  nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>\n  nomo owner key revoke <owner/package> <key-id> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]\n  nomo verify <archive> --envelope <file> --key <ed25519-public-key-hex> [--provenance <file>] [--transparency <file> --log-key <ed25519-public-key-hex>] [--cached-head <file>]\n",
+        NOMO_HELP.trim_end()
+    )
+}
 
 fn http_header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
     headers.lines().find_map(|line| {
@@ -29,7 +44,10 @@ fn nomo_help_prints_command_summary() {
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), NOMO_HELP);
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        expected_nomo_help()
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -50,7 +68,10 @@ fn nomo_help_flags_print_command_summary() {
             "{}",
             String::from_utf8_lossy(&output.stderr)
         );
-        assert_eq!(String::from_utf8_lossy(&output.stdout), NOMO_HELP);
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            expected_nomo_help()
+        );
         assert!(
             output.stderr.is_empty(),
             "{}",
@@ -99,6 +120,116 @@ fn nomoc_help_flags_print_command_summary() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn nomo_build_explicit_target_uses_canonical_isolated_artifact_directory() {
+    let root = temp_test_root("build-explicit-target");
+    reset_dir(&root);
+    let create = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("new")
+        .arg("target-demo")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        create.status.success(),
+        "{}",
+        String::from_utf8_lossy(&create.stderr)
+    );
+
+    let project = root.join("target-demo");
+    let target = nomo::target::TargetTriple::host().unwrap();
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .arg("--target")
+        .arg(target.to_string())
+        .output()
+        .unwrap();
+
+    let c_path = project
+        .join("build")
+        .join(target.to_string())
+        .join("c/main.c");
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        format!("built {}\n", c_path.display())
+    );
+    let c = fs::read_to_string(&c_path).unwrap();
+    assert!(c.starts_with(&format!("/* nomo target: {target} */\n")));
+    assert!(c.contains(&format!("#define NOMO_TARGET_TRIPLE \"{target}\"")));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_build_rejects_unsupported_target_before_creating_artifacts() {
+    let root = temp_test_root("build-invalid-target");
+    reset_dir(&root);
+    let project = root.join("invalid-target-demo");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"invalid-target-demo\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--target")
+        .arg("riscv64-unknown-linux-gnu")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr)
+            .contains("unsupported target architecture `riscv64`")
+    );
+    assert!(!project.join("build").exists());
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomoc_build_embeds_the_requested_target_in_emitted_c() {
+    let root = temp_test_root("nomoc-explicit-target");
+    reset_dir(&root);
+    let source = root.join("main.nomo");
+    let output_path = root.join("target.c");
+    fs::write(&source, "package app.main\n\nfn main() -> void {\n}\n").unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--target")
+        .arg("aarch64-unknown-linux-gnu")
+        .arg("--out")
+        .arg(&output_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let c = fs::read_to_string(&output_path).unwrap();
+    assert!(c.starts_with("/* nomo target: aarch64-unknown-linux-gnu */\n"));
+    assert!(c.contains("#define NOMO_TARGET_ARCH \"aarch64\""));
+    assert!(c.contains("#define NOMO_TARGET_PLATFORM \"linux\""));
+    fs::remove_dir_all(&root).unwrap();
 }
 
 #[test]
@@ -1507,7 +1638,10 @@ fn nomo_new_run_and_clean_project() {
     assert!(source.exists());
     assert_eq!(
         fs::read_to_string(&manifest).unwrap(),
-        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"
+        format!(
+            "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"{}\"\nedition = \"2026\"\n",
+            env!("CARGO_PKG_VERSION")
+        )
     );
     let source_text = fs::read_to_string(&source).unwrap();
     assert!(source_text.contains("package app.main"));
@@ -2688,6 +2822,100 @@ fn nomo_owner_remove_requires_registry() {
 }
 
 #[test]
+fn nomo_owner_publisher_key_registration_and_revocation_use_separate_endpoints() {
+    let root = temp_test_root("registry-publisher-keys");
+    reset_dir(&root);
+    let nomo_home = root.join("nomo-home");
+    let public_key = "d75a980182b10ab7d54bfed3c964073a0ee172f3daa62325af021a68f707511a";
+    let key_id =
+        nomo_supply_chain::publisher_key_id(&nomo_supply_chain::decode_hex(public_key).unwrap());
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry = format!("http://{}", listener.local_addr().unwrap());
+    let expected_key_id = key_id.clone();
+    let server = thread::spawn(move || {
+        for method in ["PUT", "DELETE"] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            let (header_end, content_length) = loop {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let end = end + 4;
+                    let headers = String::from_utf8_lossy(&request[..end]);
+                    let length = http_header(&headers, "Content-Length")
+                        .unwrap_or("0")
+                        .parse::<usize>()
+                        .unwrap();
+                    break (end, length);
+                }
+            };
+            while request.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            let expected_path = format!(
+                "{method} /api/v1/packages/fynn/hello/publisher-keys/{expected_key_id} HTTP/1.1\r\n"
+            );
+            assert!(headers.starts_with(&expected_path), "{headers}");
+            if method == "PUT" {
+                let body = String::from_utf8_lossy(&request[header_end..]);
+                assert!(body.contains(public_key), "{body}");
+                assert!(body.contains(&expected_key_id), "{body}");
+                assert!(!body.contains("PRIVATE"), "{body}");
+            } else {
+                assert_eq!(content_length, 0);
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 204 No Content\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        }
+    });
+
+    let add = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("owner")
+        .arg("key")
+        .arg("add")
+        .arg("fynn/hello")
+        .arg(public_key)
+        .arg("--registry")
+        .arg(&registry)
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        add.status.success(),
+        "{}",
+        String::from_utf8_lossy(&add.stderr)
+    );
+    assert!(String::from_utf8_lossy(&add.stdout).contains(&key_id));
+
+    let revoke = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("owner")
+        .arg("key")
+        .arg("revoke")
+        .arg("fynn/hello")
+        .arg(&key_id)
+        .arg("--registry")
+        .arg(&registry)
+        .env("NOMO_HOME", &nomo_home)
+        .output()
+        .unwrap();
+    assert!(
+        revoke.status.success(),
+        "{}",
+        String::from_utf8_lossy(&revoke.stderr)
+    );
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_yank_marks_http_registry_package_version() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let registry_addr = listener.local_addr().unwrap();
@@ -3439,13 +3667,422 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_deps_resolve_selects_highest_registry_version_for_range() {
+    let root = temp_test_root("registry-range-highest");
+    reset_dir(&root);
+    let package = root.join("json");
+    let registry = root.join("registry");
+    let registry_version = registry.join("api/v1/packages/nomo-lang/json/1.9.0");
+    let archive_out = root.join("archive-out");
+    let project = root.join("app");
+    fs::create_dir_all(package.join("src")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(&registry_version).unwrap();
+    fs::write(
+        package.join("nomo.toml"),
+        "[package]\nnamespace = \"nomo-lang\"\nname = \"json\"\nversion = \"1.9.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/main.nomo"),
+        "package json.main\n\npub fn version() -> i64 {\n    return 19\n}\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&package)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&archive_out)
+        .output()
+        .unwrap();
+    assert!(
+        publish.status.success(),
+        "{}",
+        String::from_utf8_lossy(&publish.stderr)
+    );
+    let archive = fs::read(archive_out.join("nomo-lang-json-1.9.0.nomo-package")).unwrap();
+    let checksum = nomo_resolver::archive_checksum(&archive);
+    fs::write(registry_version.join("download"), &archive).unwrap();
+    fs::write(
+        registry_version.join("metadata.json"),
+        format!(
+            "{{\"package\":\"nomo-lang/json\",\"version\":\"1.9.0\",\"checksum\":\"{checksum}\",\"yanked\":false}}\n"
+        ),
+    )
+    .unwrap();
+    fs::write(
+        registry_version.parent().unwrap().join("index.json"),
+        format!(
+            "{{\"package\":\"nomo-lang/json\",\"versions\":[{{\"version\":\"2.0.0\",\"checksum\":\"sha256:{}\",\"yanked\":false}},{{\"version\":\"1.2.0\",\"checksum\":\"sha256:{}\",\"yanked\":false}},{{\"version\":\"1.9.0\",\"checksum\":\"{checksum}\",\"yanked\":false}}]}}\n",
+            "2".repeat(64),
+            "1".repeat(64)
+        ),
+    )
+    .unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.0.0-20260715120000\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", version = \"^1.2.0\", registry = \"file://{}\" }}\n",
+            registry.display()
+        ),
+    )
+    .unwrap();
+
+    let resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        resolve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve.stderr)
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(lockfile.contains("version = \"1.9.0\""), "{lockfile}");
+    assert!(!lockfile.contains("version = \"^1.2.0\""), "{lockfile}");
+
+    let tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        tree.status.success(),
+        "{}",
+        String::from_utf8_lossy(&tree.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&tree.stdout),
+        format!(
+            "fynn/app 0.0.0-20260715120000\n+-- json -> nomo-lang/json 1.9.0 (registry file://{})\n",
+            registry.display()
+        )
+    );
+
+    fs::remove_dir_all(&registry).unwrap();
+    let locked_offline_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&project)
+        .arg("--locked")
+        .arg("--offline")
+        .output()
+        .unwrap();
+    assert!(
+        locked_offline_tree.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_offline_tree.stderr)
+    );
+    assert_eq!(locked_offline_tree.stdout, tree.stdout);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn nomo_workspace_resolve_selects_one_version_for_all_member_constraints() {
+    let root = temp_test_root("workspace-registry-range-single-version");
+    reset_dir(&root);
+    let package = root.join("json");
+    let registry = root.join("registry");
+    let archive_out = root.join("archive-out");
+    let api = root.join("apps/api");
+    let worker = root.join("apps/worker");
+    fs::create_dir_all(package.join("src")).unwrap();
+    fs::create_dir_all(api.join("src")).unwrap();
+    fs::create_dir_all(worker.join("src")).unwrap();
+    fs::write(
+        package.join("src/main.nomo"),
+        "package json.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let mut versions = Vec::new();
+    for version in ["1.4.0", "1.9.0"] {
+        fs::write(
+            package.join("nomo.toml"),
+            format!(
+                "[package]\nnamespace = \"nomo-lang\"\nname = \"json\"\nversion = \"{version}\"\nedition = \"2026\"\n"
+            ),
+        )
+        .unwrap();
+        let publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("publish")
+            .arg(&package)
+            .arg("--dry-run")
+            .arg("--output")
+            .arg(&archive_out)
+            .output()
+            .unwrap();
+        assert!(
+            publish.status.success(),
+            "{}",
+            String::from_utf8_lossy(&publish.stderr)
+        );
+        let archive =
+            fs::read(archive_out.join(format!("nomo-lang-json-{version}.nomo-package"))).unwrap();
+        let checksum = nomo_resolver::archive_checksum(&archive);
+        let registry_version = registry.join(format!("api/v1/packages/nomo-lang/json/{version}"));
+        fs::create_dir_all(&registry_version).unwrap();
+        fs::write(registry_version.join("download"), archive).unwrap();
+        fs::write(
+            registry_version.join("metadata.json"),
+            format!(
+                "{{\"package\":\"nomo-lang/json\",\"version\":\"{version}\",\"checksum\":\"{checksum}\",\"yanked\":false}}\n"
+            ),
+        )
+        .unwrap();
+        versions.push((version, checksum));
+    }
+    let index = registry.join("api/v1/packages/nomo-lang/json/index.json");
+    fs::write(
+        index,
+        format!(
+            "{{\"package\":\"nomo-lang/json\",\"versions\":[{{\"version\":\"2.1.0\",\"checksum\":\"sha256:{}\",\"yanked\":false}},{{\"version\":\"{}\",\"checksum\":\"{}\",\"yanked\":false}},{{\"version\":\"{}\",\"checksum\":\"{}\",\"yanked\":false}}]}}\n",
+            "2".repeat(64),
+            versions[1].0,
+            versions[1].1,
+            versions[0].0,
+            versions[0].1
+        ),
+    )
+    .unwrap();
+
+    fs::write(
+        root.join("nomo.toml"),
+        "[workspace]\nmembers = [\"apps/*\"]\n",
+    )
+    .unwrap();
+    fs::write(api.join("src/main.nomo"), "package api.main\n").unwrap();
+    fs::write(worker.join("src/main.nomo"), "package worker.main\n").unwrap();
+    fs::write(
+        api.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"api\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", version = \"^1.0.0\", registry = \"file://{}\" }}\n",
+            registry.display()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        worker.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"worker\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", version = \">=1.0, <1.5\", registry = \"file://{}\" }}\n",
+            registry.display()
+        ),
+    )
+    .unwrap();
+
+    let resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        resolve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve.stderr)
+    );
+    let lockfile = fs::read_to_string(root.join("nomo.lock")).unwrap();
+    assert!(lockfile.contains("version = \"1.4.0\""), "{lockfile}");
+    assert!(!lockfile.contains("version = \"1.9.0\""), "{lockfile}");
+    assert_eq!(lockfile.matches("id = \"nomo-lang/json\"").count(), 1);
+
+    let locked_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg("--workspace")
+        .arg("--locked")
+        .arg("--offline")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        locked_tree.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_tree.stderr)
+    );
+    let tree = String::from_utf8_lossy(&locked_tree.stdout);
+    assert_eq!(tree.matches("nomo-lang/json 1.4.0").count(), 2, "{tree}");
+
+    fs::write(
+        worker.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"worker\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", version = \"^2.0.0\", registry = \"file://{}\" }}\n",
+            registry.display()
+        ),
+    )
+    .unwrap();
+    let conflict = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg("--workspace")
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(!conflict.status.success());
+    let stderr = String::from_utf8_lossy(&conflict.stderr);
+    assert!(
+        stderr.contains("`^1.0.0` required by fynn/api -> nomo-lang/json"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`^2.0.0` required by fynn/worker -> nomo-lang/json"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("available versions: 1.4.0, 1.9.0, 2.1.0"),
+        "{stderr}"
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn nomo_deps_resolve_reuses_cached_http_registry_range_offline() {
+    let root = temp_test_root("registry-range-http-offline");
+    reset_dir(&root);
+    let package = root.join("json");
+    let archive_out = root.join("archive-out");
+    let project = root.join("app");
+    fs::create_dir_all(package.join("src")).unwrap();
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        package.join("nomo.toml"),
+        "[package]\nnamespace = \"nomo-lang\"\nname = \"json\"\nversion = \"1.9.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        package.join("src/main.nomo"),
+        "package json.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    let publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&package)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&archive_out)
+        .output()
+        .unwrap();
+    assert!(
+        publish.status.success(),
+        "{}",
+        String::from_utf8_lossy(&publish.stderr)
+    );
+    let archive = fs::read(archive_out.join("nomo-lang-json-1.9.0.nomo-package")).unwrap();
+    let checksum = nomo_resolver::archive_checksum(&archive);
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry = format!("http://{}", listener.local_addr().unwrap());
+    let server_checksum = checksum.clone();
+    let server = thread::spawn(move || {
+        for request_index in 0..3 {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 1024];
+            loop {
+                let read = stream.read(&mut buffer).unwrap();
+                if read == 0 {
+                    break;
+                }
+                request.extend_from_slice(&buffer[..read]);
+                if request.windows(4).any(|window| window == b"\r\n\r\n") {
+                    break;
+                }
+            }
+            let request = String::from_utf8_lossy(&request);
+            let (expected_path, content_type, body) = match request_index {
+                0 => (
+                    "/api/v1/packages/nomo-lang/json",
+                    "application/json",
+                    format!(
+                        "{{\"package\":\"nomo-lang/json\",\"versions\":[{{\"version\":\"1.9.0\",\"checksum\":\"{server_checksum}\",\"yanked\":false}}]}}"
+                    )
+                    .into_bytes(),
+                ),
+                1 => (
+                    "/api/v1/packages/nomo-lang/json/1.9.0",
+                    "application/json",
+                    format!(
+                        "{{\"package\":\"nomo-lang/json\",\"version\":\"1.9.0\",\"checksum\":\"{server_checksum}\",\"yanked\":false}}"
+                    )
+                    .into_bytes(),
+                ),
+                _ => (
+                    "/api/v1/packages/nomo-lang/json/1.9.0/download",
+                    "application/octet-stream",
+                    archive.clone(),
+                ),
+            };
+            assert!(
+                request.starts_with(&format!("GET {expected_path} HTTP/1.1\r\n")),
+                "{request}"
+            );
+            let response = format!(
+                "HTTP/1.1 200 OK\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                body.len()
+            );
+            stream.write_all(response.as_bytes()).unwrap();
+            stream.write_all(&body).unwrap();
+        }
+    });
+
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        format!(
+            "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = {{ package = \"nomo-lang/json\", version = \"^1.2.0\", registry = \"{registry}\" }}\n"
+        ),
+    )
+    .unwrap();
+
+    let online = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        online.status.success(),
+        "{}",
+        String::from_utf8_lossy(&online.stderr)
+    );
+    server.join().unwrap();
+    fs::remove_file(project.join("nomo.lock")).unwrap();
+
+    let offline = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&project)
+        .arg("--offline")
+        .output()
+        .unwrap();
+    assert!(
+        offline.status.success(),
+        "{}",
+        String::from_utf8_lossy(&offline.stderr)
+    );
+    let lockfile = fs::read_to_string(project.join("nomo.lock")).unwrap();
+    assert!(lockfile.contains("version = \"1.9.0\""), "{lockfile}");
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn nomo_deps_update_precise_rewrites_registry_lockfile() {
     let root = temp_test_root("deps-update-precise-registry");
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
-    let manifest = "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\", registry = \"https://packages.nomo.test\" }\n";
+    let manifest = "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \">=0.1.0, <0.3.0\", registry = \"https://packages.nomo.test\" }\n";
     fs::write(project.join("nomo.toml"), manifest).unwrap();
 
     let update_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -3478,9 +4115,63 @@ fn nomo_deps_update_precise_rewrites_registry_lockfile() {
         lockfile.contains("source = \"registry+https://packages.nomo.test\""),
         "{lockfile}"
     );
-    assert!(!lockfile.contains("version = \"0.1.0\""), "{lockfile}");
+    assert!(
+        !lockfile.contains("version = \">=0.1.0, <0.3.0\""),
+        "{lockfile}"
+    );
+
+    let locked_tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("tree")
+        .arg(&project)
+        .arg("--locked")
+        .arg("--offline")
+        .output()
+        .unwrap();
+    assert!(
+        locked_tree.status.success(),
+        "{}",
+        String::from_utf8_lossy(&locked_tree.stderr)
+    );
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_deps_update_precise_rejects_version_outside_manifest_requirement() {
+    let root = temp_test_root("deps-update-precise-outside-range");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"^1.2.0\", registry = \"https://packages.nomo.test\" }\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("update")
+        .arg(&project)
+        .arg("json")
+        .arg("--precise")
+        .arg("2.0.0")
+        .arg("--offline")
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        stderr.contains(
+            "dependency `json` precise version `2.0.0` does not satisfy manifest requirement `^1.2.0`"
+        ),
+        "{stderr}"
+    );
+    assert!(!project.join("nomo.lock").exists());
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -4428,7 +5119,7 @@ fn nomo_deps_rejects_dependency_with_multiple_sources() {
 }
 
 #[test]
-fn nomo_deps_resolve_rejects_conflicting_package_sources() {
+fn nomo_deps_resolve_reports_conflicting_version_requirements() {
     let root = temp_test_root("deps-conflict");
     reset_dir(&root);
     let app = root.join("app");
@@ -4457,8 +5148,24 @@ fn nomo_deps_resolve_rejects_conflicting_package_sources() {
 
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("conflicting sources"), "{stderr}");
-    assert!(stderr.contains("nomo-lang/cli"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "failed to resolve package `nomo-lang/cli`: no available version satisfies all constraints"
+        ),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`0.2.1` required by fynn/app -> fynn/utils -> nomo-lang/cli"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("`0.2.0` required by fynn/app -> nomo-lang/cli"),
+        "{stderr}"
+    );
+    assert!(
+        stderr.contains("available versions: 0.2.0, 0.2.1"),
+        "{stderr}"
+    );
     assert!(!app.join("nomo.lock").exists());
 
     fs::remove_dir_all(&root).unwrap();
@@ -5979,7 +6686,9 @@ fn nomoc_build_rejects_missing_out_path() {
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
-        stderr.contains("usage: nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]"),
+        stderr.contains(
+            "usage: nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors]",
+        ),
         "{stderr}"
     );
 
@@ -9444,6 +10153,380 @@ fn main() -> void {
         String::from_utf8_lossy(&run_output.stderr).is_empty(),
         "{}",
         String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn nomo_publish_external_signer_and_independent_verify_round_trip() {
+    use std::os::unix::fs::PermissionsExt;
+
+    if Command::new("openssl").arg("version").output().is_err()
+        || Command::new("xxd").arg("-h").output().is_err()
+    {
+        return;
+    }
+    let root = temp_test_root("publish-sign-verify");
+    reset_dir(&root);
+    let project = root.join("signed");
+    let output_dir = root.join("out");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"fynn\"\nname = \"signed\"\nversion = \"1.0.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let private_key = root.join("publisher-private.pem");
+    let generate = Command::new("openssl")
+        .arg("genpkey")
+        .arg("-algorithm")
+        .arg("ED25519")
+        .arg("-out")
+        .arg(&private_key)
+        .output()
+        .unwrap();
+    assert!(
+        generate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generate.stderr)
+    );
+    let public_der = Command::new("openssl")
+        .arg("pkey")
+        .arg("-in")
+        .arg(&private_key)
+        .arg("-pubout")
+        .arg("-outform")
+        .arg("DER")
+        .output()
+        .unwrap();
+    assert!(public_der.status.success());
+    let public_key = nomo_supply_chain::encode_hex(
+        &public_der.stdout[public_der.stdout.len().saturating_sub(32)..],
+    );
+
+    let signer = root.join("external-signer.sh");
+    fs::write(
+        &signer,
+        format!(
+            "#!/bin/sh\nset -eu\npayload=\"${{TMPDIR:-/tmp}}/nomo-signer-payload-$$\"\nsignature=\"${{TMPDIR:-/tmp}}/nomo-signer-signature-$$\"\ntrap 'rm -f \"$payload\" \"$signature\"' EXIT\ntee \"$payload\" >/dev/null\nopenssl pkeyutl -sign -rawin -inkey '{}' -in \"$payload\" -out \"$signature\"\nsig=$(xxd -p -c 256 \"$signature\")\nprintf '{{\"algorithm\":\"ed25519\",\"public_key\":\"{}\",\"signature\":\"%s\"}}\\n' \"$sig\"\n",
+            private_key.display(),
+            public_key
+        ),
+    )
+    .unwrap();
+    let mut permissions = fs::metadata(&signer).unwrap().permissions();
+    permissions.set_mode(0o700);
+    fs::set_permissions(&signer, permissions).unwrap();
+
+    let publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--dry-run")
+        .arg("--output")
+        .arg(&output_dir)
+        .arg("--signer")
+        .arg(&signer)
+        .output()
+        .unwrap();
+    assert!(
+        publish.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&publish.stdout),
+        String::from_utf8_lossy(&publish.stderr)
+    );
+    let archive = output_dir.join("fynn-signed-1.0.0.nomo-package");
+    let provenance = PathBuf::from(format!("{}.provenance.json", archive.display()));
+    let envelope = PathBuf::from(format!("{}.envelope.json", archive.display()));
+    assert!(archive.is_file());
+    assert!(provenance.is_file());
+    assert!(envelope.is_file());
+
+    let verify = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("verify")
+        .arg(&archive)
+        .arg("--envelope")
+        .arg(&envelope)
+        .arg("--key")
+        .arg(&public_key)
+        .arg("--provenance")
+        .arg(&provenance)
+        .output()
+        .unwrap();
+    assert!(
+        verify.status.success(),
+        "{}",
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&verify.stdout);
+    assert!(
+        stdout.contains("verified fynn/signed 1.0.0 sha256:"),
+        "{stdout}"
+    );
+    let public_artifacts = format!(
+        "{}{}",
+        fs::read_to_string(&provenance).unwrap(),
+        fs::read_to_string(&envelope).unwrap()
+    );
+    assert!(!public_artifacts.contains("PRIVATE KEY"));
+    assert!(!public_artifacts.contains(&private_key.display().to_string()));
+
+    let tampered = root.join("tampered.nomo-package");
+    let mut bytes = fs::read(&archive).unwrap();
+    bytes.push(b'!');
+    fs::write(&tampered, bytes).unwrap();
+    let rejected = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("verify")
+        .arg(&tampered)
+        .arg("--envelope")
+        .arg(&envelope)
+        .arg("--key")
+        .arg(&public_key)
+        .arg("--provenance")
+        .arg(&provenance)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert!(String::from_utf8_lossy(&rejected.stderr).contains("archive checksum does not match"));
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let registry = format!("http://{}", listener.local_addr().unwrap());
+    let server = thread::spawn(move || {
+        for (suffix, content_type) in [
+            ("", "application/octet-stream"),
+            ("/provenance", "application/json"),
+            ("/attestation", "application/json"),
+        ] {
+            let (mut stream, _) = listener.accept().unwrap();
+            let mut request = Vec::new();
+            let mut buffer = [0u8; 4096];
+            let (header_end, content_length) = loop {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+                if let Some(end) = request.windows(4).position(|window| window == b"\r\n\r\n") {
+                    let end = end + 4;
+                    let headers = String::from_utf8_lossy(&request[..end]);
+                    let length = http_header(&headers, "Content-Length")
+                        .unwrap()
+                        .parse::<usize>()
+                        .unwrap();
+                    break (end, length);
+                }
+            };
+            while request.len() < header_end + content_length {
+                let read = stream.read(&mut buffer).unwrap();
+                assert!(read > 0);
+                request.extend_from_slice(&buffer[..read]);
+            }
+            let headers = String::from_utf8_lossy(&request[..header_end]);
+            assert!(
+                headers.starts_with(&format!(
+                    "PUT /api/v1/packages/fynn/signed/1.0.0{suffix} HTTP/1.1\r\n"
+                )),
+                "{headers}"
+            );
+            assert_eq!(http_header(&headers, "Content-Type"), Some(content_type));
+            if suffix == "/attestation" {
+                let body = String::from_utf8_lossy(&request[header_end..]);
+                assert!(body.contains("\"algorithm\": \"ed25519\""), "{body}");
+                assert!(!body.contains("PRIVATE KEY"), "{body}");
+            }
+            stream
+                .write_all(
+                    b"HTTP/1.1 201 Created\r\nContent-Length: 0\r\nConnection: close\r\n\r\n",
+                )
+                .unwrap();
+        }
+    });
+    let registry_publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--registry")
+        .arg(&registry)
+        .arg("--output")
+        .arg(root.join("registry-out"))
+        .arg("--signer")
+        .arg(&signer)
+        .env("NOMO_HOME", root.join("empty-nomo-home"))
+        .output()
+        .unwrap();
+    assert!(
+        registry_publish.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&registry_publish.stdout),
+        String::from_utf8_lossy(&registry_publish.stderr)
+    );
+    server.join().unwrap();
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_ffi_bindgen_generates_bindings_that_link_and_run() {
+    let root = temp_test_root("ffi-bindgen-link-run");
+    reset_dir(&root);
+    let project = root.join("ffi-bindgen");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::create_dir_all(project.join("native")).unwrap();
+    let header = project.join("native/api.h");
+    let bindings = project.join("src/bindings.nomo");
+    let provenance = project.join("bindings.provenance.json");
+
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"ffi-bindgen\"\nversion = \"0.0.0-20260713145859\"\nedition = \"2026\"\n\n[ffi]\nsources = [\"native/api.c\"]\n",
+    )
+    .unwrap();
+    fs::write(
+        &header,
+        r#"#include <stdint.h>
+
+typedef struct FileHandle FileHandle;
+typedef struct Point {
+    int32_t x;
+    int32_t y;
+} Point;
+
+FileHandle *file_open(void);
+int32_t file_marker(FileHandle *handle);
+void file_close(FileHandle *handle);
+int32_t point_sum(Point point);
+int32_t apply_callback(int32_t value, int32_t (*callback)(int32_t));
+"#,
+    )
+    .unwrap();
+    fs::write(
+        project.join("native/api.c"),
+        r#"#include "api.h"
+#include <stdlib.h>
+
+struct FileHandle { int32_t marker; };
+
+FileHandle *file_open(void) {
+    FileHandle *handle = malloc(sizeof(FileHandle));
+    if (handle != NULL) { handle->marker = 40; }
+    return handle;
+}
+int32_t file_marker(FileHandle *handle) { return handle->marker; }
+void file_close(FileHandle *handle) { free(handle); }
+int32_t point_sum(Point point) { return point.x + point.y; }
+int32_t apply_callback(int32_t value, int32_t (*callback)(int32_t)) {
+    return callback(value);
+}
+"#,
+    )
+    .unwrap();
+
+    let bindgen_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("ffi")
+        .arg("bindgen")
+        .arg(&header)
+        .arg("--package")
+        .arg("app.bindings")
+        .arg("--output")
+        .arg(&bindings)
+        .arg("--provenance")
+        .arg(&provenance)
+        .output()
+        .unwrap();
+    assert!(
+        bindgen_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&bindgen_output.stderr)
+    );
+    assert!(bindings.is_file());
+    assert!(provenance.is_file());
+    let generated = fs::read_to_string(&bindings).unwrap();
+    assert!(generated.contains("extern opaque type FileHandle release file_close"));
+    assert!(generated.contains("#[repr(C)]\npub struct Point"));
+    assert!(generated.contains("callback: extern \"C\" fn(i32) -> i32"));
+    let provenance_json = fs::read_to_string(&provenance).unwrap();
+    assert!(provenance_json.contains("\"source_sha256\""));
+    assert!(provenance_json.contains("\"generator\": \"nomo ffi bindgen\""));
+
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import app.bindings
+import std.io
+
+fn double(value: i32) -> i32 {
+    return value * 2
+}
+
+fn open() -> Nullable<Owned<FileHandle>> {
+    unsafe {
+        return file_open()
+    }
+}
+
+fn marker(handle: Borrowed<FileHandle>) -> i32 {
+    unsafe {
+        return file_marker(handle)
+    }
+}
+
+fn close(handle: Owned<FileHandle>) -> void {
+    unsafe {
+        file_close(handle)
+    }
+}
+
+fn sum(point: Point) -> i32 {
+    unsafe {
+        return point_sum(point)
+    }
+}
+
+fn callback(value: i32) -> i32 {
+    unsafe {
+        return apply_callback(value, double)
+    }
+}
+
+fn main() -> void {
+    let maybe: Nullable<Owned<FileHandle>> = open()
+    let handle: Owned<FileHandle> = maybe.unwrap()
+    let observed: i32 = marker(handle.borrow())
+    let point: Point = Point {
+        x: 1,
+        y: 1,
+    }
+    let total: i32 = sum(point) + callback(20)
+    close(handle)
+    if observed == 40 && total == 42 {
+        io.println("ffi bindgen ok")
+    } else {
+        panic("ffi bindgen failed")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let run_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout),
+        "ffi bindgen ok\n"
     );
 
     fs::remove_dir_all(&root).unwrap();

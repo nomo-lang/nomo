@@ -1,7 +1,7 @@
 use crate::ast::{
-    AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, ExternBlock, Field, ForVariant,
-    Function, FunctionSignature, ImplBlock, InterfaceDef, MatchArm, MatchStmtArm, Param, PostfixOp,
-    SourceFile, Span, Stmt, StructDef, TypeRef,
+    AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, ExternBlock, ExternOpaqueType, Field,
+    ForVariant, Function, FunctionSignature, ImplBlock, InterfaceDef, MatchArm, MatchStmtArm,
+    Param, PostfixOp, SourceFile, Span, Stmt, StructDef, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};
@@ -56,6 +56,7 @@ impl Parser<'_> {
         let mut structs = Vec::new();
         let mut enums = Vec::new();
         let mut interfaces = Vec::new();
+        let mut extern_opaque_types = Vec::new();
         let mut extern_blocks = Vec::new();
         let mut impls = Vec::new();
         let mut consts = Vec::new();
@@ -64,12 +65,20 @@ impl Parser<'_> {
         let mut parsing_script_body = false;
         loop {
             self.skip_newlines();
-            let is_test = self.parse_test_attribute()?;
+            let attributes = self.parse_declaration_attributes()?;
+            let is_test = attributes.is_test;
             let public = self.consume_pub();
             if is_test && !matches!(self.peek().kind, TokenKind::Fn) {
                 return Err(self.error(
                     "E1100",
                     "`#[test]` can only be applied to a function",
+                    self.peek().length(),
+                ));
+            }
+            if attributes.repr_c && !matches!(self.peek().kind, TokenKind::Struct) {
+                return Err(self.error(
+                    "E1100",
+                    "`#[repr(C)]` can only be applied to a struct",
                     self.peek().length(),
                 ));
             }
@@ -82,14 +91,18 @@ impl Parser<'_> {
             }
             match self.peek().kind {
                 TokenKind::Struct if !parsing_script_body => {
-                    structs.push(self.parse_struct(public)?)
+                    structs.push(self.parse_struct(public, attributes.repr_c)?)
                 }
                 TokenKind::Enum if !parsing_script_body => enums.push(self.parse_enum(public)?),
                 TokenKind::Interface if !parsing_script_body => {
                     interfaces.push(self.parse_interface(public)?)
                 }
                 TokenKind::Extern if !public && !parsing_script_body => {
-                    extern_blocks.push(self.parse_extern_block()?)
+                    if self.is_extern_opaque_type() {
+                        extern_opaque_types.push(self.parse_extern_opaque_type()?);
+                    } else {
+                        extern_blocks.push(self.parse_extern_block()?);
+                    }
                 }
                 TokenKind::Impl if !public && !parsing_script_body => {
                     impls.push(self.parse_impl()?)
@@ -98,7 +111,7 @@ impl Parser<'_> {
                 TokenKind::Fn if !parsing_script_body => {
                     functions.push(self.parse_function(public, is_test)?)
                 }
-                TokenKind::Eof if !public && !is_test => break,
+                TokenKind::Eof if !public && !is_test && !attributes.repr_c => break,
                 _ if public => {
                     return Err(self.error(
                         "E0201",
@@ -143,6 +156,7 @@ impl Parser<'_> {
             structs,
             enums,
             interfaces,
+            extern_opaque_types,
             extern_blocks,
             impls,
             consts,
@@ -152,6 +166,9 @@ impl Parser<'_> {
     }
 
     fn parse_type_ref(&mut self) -> Result<TypeRef, Diagnostic> {
+        if matches!(self.peek().kind, TokenKind::Extern) {
+            return self.parse_extern_c_callback_type_ref();
+        }
         if matches!(self.peek().kind, TokenKind::Void) {
             self.advance();
             return Ok(TypeRef {
@@ -164,6 +181,48 @@ impl Parser<'_> {
         Ok(TypeRef { path, args })
     }
 
+    fn parse_extern_c_callback_type_ref(&mut self) -> Result<TypeRef, Diagnostic> {
+        self.expect_kind(TokenKind::Extern, "E1524", "expected `extern`")?;
+        match self.peek().kind.clone() {
+            TokenKind::String(abi) if abi == "C" => self.advance(),
+            _ => return Err(self.error("E1524", "expected callback ABI string `\"C\"`", 1)),
+        }
+        self.expect_kind(TokenKind::Fn, "E1524", "expected `fn` in callback type")?;
+        self.expect_kind(
+            TokenKind::LParen,
+            "E1524",
+            "expected `(` before callback parameter types",
+        )?;
+        let mut args = Vec::new();
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            loop {
+                args.push(self.parse_type_ref()?);
+                match self.peek().kind {
+                    TokenKind::Comma => self.advance(),
+                    TokenKind::RParen => break,
+                    _ => {
+                        return Err(self.error(
+                            "E1524",
+                            "expected `,` or `)` after callback parameter type",
+                            self.peek().length(),
+                        ));
+                    }
+                }
+            }
+        }
+        self.expect_kind(
+            TokenKind::RParen,
+            "E1524",
+            "expected `)` after callback parameter types",
+        )?;
+        self.expect_kind(TokenKind::Arrow, "E1524", "expected `->` in callback type")?;
+        args.push(self.parse_type_ref()?);
+        Ok(TypeRef {
+            path: vec![crate::ast::EXTERN_C_CALLBACK_TYPE_PATH.to_string()],
+            args,
+        })
+    }
+
     fn parse_type_args(&mut self) -> Result<Vec<TypeRef>, Diagnostic> {
         if !matches!(self.peek().kind, TokenKind::Less) {
             return Ok(Vec::new());
@@ -173,11 +232,11 @@ impl Parser<'_> {
         self.skip_newlines();
         loop {
             args.push(self.parse_type_ref()?);
-            self.skip_newlines();
             if self.pending_type_gt > 0 {
                 self.pending_type_gt -= 1;
                 break;
             }
+            self.skip_newlines();
             match self.peek().kind {
                 TokenKind::Comma => {
                     self.advance();

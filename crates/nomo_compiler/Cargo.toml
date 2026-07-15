@@ -11,6 +11,7 @@ nomo-graph.workspace = true
 nomo-ir.workspace = true
 nomo-std.workspace = true
 nomo-syntax.workspace = true
+nomo-target.workspace = true
 
 [lib]
 name = "nomo_compiler"

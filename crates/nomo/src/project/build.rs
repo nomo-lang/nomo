@@ -2,8 +2,9 @@ use super::{
     BuildError, DependencyResolutionOptions, Project, project_ffi_link_metadata_with_options,
     project_module_context_with_options,
 };
-use crate::compiler::compile_source_to_c_with_project_modules;
+use crate::compiler::compile_source_to_c_with_project_modules_for_target;
 use nomo_manifest::FfiLinkMetadata;
+use nomo_target::TargetTriple;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -24,19 +25,45 @@ pub fn build_project_with_options(
     emit_c_only: bool,
     options: DependencyResolutionOptions,
 ) -> Result<PathBuf, BuildError> {
+    let target = TargetTriple::host().map_err(BuildError::Message)?;
+    build_project_impl(project, emit_c_only, options, &target, false)
+}
+
+pub fn build_project_for_target_with_options(
+    project: &Project,
+    emit_c_only: bool,
+    options: DependencyResolutionOptions,
+    target: &TargetTriple,
+) -> Result<PathBuf, BuildError> {
+    build_project_impl(project, emit_c_only, options, target, true)
+}
+
+fn build_project_impl(
+    project: &Project,
+    emit_c_only: bool,
+    options: DependencyResolutionOptions,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<PathBuf, BuildError> {
     let context =
         project_module_context_with_options(project, options).map_err(BuildError::Message)?;
     let ffi_link_metadata =
         project_ffi_link_metadata_with_options(project, options).map_err(BuildError::Message)?;
-    let c = compile_source_to_c_with_project_modules(
+    let c = compile_source_to_c_with_project_modules_for_target(
         &project.main,
         Some(&context.local_source_root),
         &context.external_import_roots,
         &context.external_modules,
+        target,
     )
     .map_err(BuildError::Diagnostic)?;
-    let c_dir = project.root.join("build/c");
-    let bin_dir = project.root.join("build/bin");
+    let target_dir = if target_scoped_artifacts {
+        project.root.join("build").join(target.to_string())
+    } else {
+        project.root.join("build")
+    };
+    let c_dir = target_dir.join("c");
+    let bin_dir = target_dir.join("bin");
     fs::create_dir_all(&c_dir).map_err(|err| BuildError::Message(err.to_string()))?;
     fs::create_dir_all(&bin_dir).map_err(|err| BuildError::Message(err.to_string()))?;
 
@@ -46,15 +73,23 @@ pub fn build_project_with_options(
         return Ok(c_path);
     }
 
+    let host = TargetTriple::host().map_err(BuildError::Message)?;
+    let toolchain = target
+        .c_toolchain_from(&host)
+        .map_err(BuildError::Message)?;
     let bin_path = bin_dir.join(&project.name);
-    let mut command = Command::new("cc");
+    let mut command = Command::new(&toolchain.program);
+    command.args(&toolchain.args);
     configure_c_compile_command(&mut command, &c_path, &bin_path, &ffi_link_metadata);
-    let output = command
-        .output()
-        .map_err(|err| BuildError::Message(format!("failed to run cc: {err}")))?;
+    let output = command.output().map_err(|err| {
+        BuildError::Message(format!(
+            "failed to run C compiler `{}` for target `{target}`: {err}",
+            toolchain.program
+        ))
+    })?;
     if !output.status.success() {
         return Err(BuildError::Message(format!(
-            "cc failed:\n{}{}",
+            "C compiler failed for target `{target}`:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )));

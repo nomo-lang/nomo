@@ -396,6 +396,7 @@ pub(super) fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::VoidLiteral
         | ValueExpr::HashNew
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
@@ -640,6 +641,7 @@ pub(super) fn expr_uses_env_args(expr: &ValueExpr) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir

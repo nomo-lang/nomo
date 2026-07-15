@@ -596,6 +596,7 @@ pub(super) fn collect_expr_array_elements(
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir

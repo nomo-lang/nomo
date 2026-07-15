@@ -53,7 +53,7 @@ Dependency keys are source import aliases. For example:
 [dependencies]
 local_utils = { package = "local/utils", path = "../utils" }
 fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
-json = { package = "nomo-lang/json", version = "0.1.0" }
+json = { package = "nomo-lang/json", version = "^1.2.0" }
 ```
 
 Each dependency must declare exactly one source kind:
@@ -177,8 +177,13 @@ provide package metadata at `api/v1/packages/<owner>/<package>/index.json` and
 version metadata at
 `api/v1/packages/<owner>/<package>/<version>/metadata.json`. These files are
 optional for compatibility with existing local file registries.
-Dependency manifests continue to use exact version values. Metadata validation
-does not select a newer version or interpret version ranges.
+Dependency manifests support bare exact versions, caret ranges, tilde ranges,
+and bounded comparison ranges. Wildcards, alternatives, implicit `latest`, and
+`=` exact syntax are rejected. Fresh resolution selects the highest non-yanked
+version satisfying every project or workspace constraint and writes only that
+exact version to `nomo.lock`. HTTP package indexes are cached for offline range
+resolution. An unsatisfiable graph reports a stable minimal constraint set with
+dependency paths. One canonical package still has only one selected version.
 
 These flags are accepted by build and dependency commands that need dependency
 resolution:
@@ -189,6 +194,42 @@ nomo deps resolve --offline
 nomo deps tree --frozen
 ```
 
+## Supply-chain trust
+
+Registry metadata may include a publisher signature, canonical provenance, and
+an inclusion proof from a transparency log. Projects opt into verification in
+the manifest:
+
+```toml
+[trust]
+policy = "signed+transparent"
+transparency-keys = ["<64 hexadecimal Ed25519 log public key>"]
+```
+
+`checksum-only` is the compatibility default, `signed` requires an authorized
+publisher key and signed provenance, and `signed+transparent` additionally
+requires a log key pinned by the project. The resolver stores the verified
+publisher key id, subject/provenance digests, and transparency tree head in
+`nomo.lock`; cached tree heads reject rollback or equivocation. Offline locked
+builds reuse this evidence and never treat a downloaded bundle's log key as a
+trust root.
+
+Publishers can keep signing keys outside Nomo credentials with an external
+signer:
+
+```sh
+nomo owner key add owner/package <ed25519-public-key-hex> --registry <url>
+nomo publish --registry <url> --signer /path/to/signer
+nomo verify build/package/owner-package-1.0.0.nomo-package \
+  --envelope build/package/owner-package-1.0.0.nomo-package.envelope.json \
+  --key <ed25519-public-key-hex> \
+  --provenance build/package/owner-package-1.0.0.nomo-package.provenance.json \
+  --transparency transparency.json --log-key <ed25519-log-public-key-hex>
+```
+
+The signer receives only the canonical release subject on stdin. Private keys
+never enter credentials, registry metadata, provenance, envelopes, or lockfiles.
+
 ## Updating Dependencies
 
 `nomo deps update [path] [alias-or-package]` refreshes the lockfile from current
@@ -198,7 +239,8 @@ target, the target must be a direct dependency alias or canonical package ID.
 `--precise <version-or-rev>` updates only the source used for lockfile
 generation:
 
-- registry dependencies use the value as `version`;
+- registry dependencies use the value as the exact selection when it satisfies
+  the manifest requirement;
 - git dependencies use the value as `rev`, clearing branch/tag selection;
 - path dependencies reject `--precise`.
 

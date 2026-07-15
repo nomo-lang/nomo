@@ -561,6 +561,7 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir
@@ -969,6 +970,7 @@ where
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir

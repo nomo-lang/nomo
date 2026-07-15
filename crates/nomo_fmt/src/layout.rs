@@ -5,6 +5,7 @@ pub(super) enum TopLevelItem {
     Struct(usize),
     Enum(usize),
     Interface(usize),
+    ExternOpaque(usize),
     ExternBlock(usize),
     Impl(usize),
     Const(usize),
@@ -17,6 +18,7 @@ pub(super) fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
     let mut structs = 0usize;
     let mut enums = 0usize;
     let mut interfaces = 0usize;
+    let mut extern_opaque_types = 0usize;
     let mut extern_blocks = 0usize;
     let mut impls = 0usize;
     let mut consts = 0usize;
@@ -28,6 +30,13 @@ pub(super) fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
             break;
         }
         if depth == 0 {
+            if is_extern_opaque_start(tokens, index) {
+                let item = TopLevelItem::ExternOpaque(extern_opaque_types);
+                extern_opaque_types += 1;
+                items.push(item);
+                index += 1;
+                continue;
+            }
             if matches!(token.kind, TokenKind::Pub) {
                 if let Some(item) = public_top_level_item(
                     tokens.get(index + 1),
@@ -66,6 +75,19 @@ pub(super) fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
     }
 
     items
+}
+
+fn is_extern_opaque_start(tokens: &[Token], index: usize) -> bool {
+    matches!(
+        tokens.get(index).map(|token| &token.kind),
+        Some(TokenKind::Extern)
+    ) && matches!(
+        tokens.get(index + 1).map(|token| &token.kind),
+        Some(TokenKind::Ident(name)) if name == "opaque"
+    ) && matches!(
+        tokens.get(index + 2).map(|token| &token.kind),
+        Some(TokenKind::Ident(name)) if name == "type"
+    )
 }
 
 fn public_top_level_item(

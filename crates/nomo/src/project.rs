@@ -33,7 +33,8 @@ mod workspace;
 
 use build::configure_c_compile_command;
 pub use build::{
-    build_project, build_project_with_diagnostics, build_project_with_options, clean_project,
+    build_project, build_project_for_target_with_options, build_project_with_diagnostics,
+    build_project_with_options, clean_project,
 };
 pub use dependency_tree::{
     dependency_tree, dependency_tree_current_sources, dependency_tree_with_options,
@@ -49,14 +50,16 @@ pub use nomo_test::{
 };
 pub use package::{
     PublishPackage, add_registry_dependency, prepare_publish_package, remove_dependency,
+    sign_publish_package,
 };
 pub use package_graph::{
     PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, project_package_graph,
     project_package_graph_with_options,
 };
 pub use registry_http::{
-    RegistryLogin, RegistrySearchResult, add_registry_package_owner, login_registry,
-    publish_package_archive, remove_registry_package_owner, search_registry_packages,
+    RegistryLogin, RegistrySearchResult, add_registry_package_owner, add_registry_publisher_key,
+    login_registry, publish_package_archive, publish_signed_package_archive,
+    remove_registry_package_owner, revoke_registry_publisher_key, search_registry_packages,
     yank_registry_package,
 };
 pub use resolve::{
@@ -140,7 +143,8 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, String> {
     fs::write(
         project_root.join("nomo.toml"),
         format!(
-            "[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"0.1.0\"\nedition = \"2026\"\n"
+            "[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"{}\"\nedition = \"2026\"\n",
+            env!("CARGO_PKG_VERSION")
         ),
     )
     .map_err(|err| err.to_string())?;
@@ -610,9 +614,11 @@ source = "registry+nomo-lang/cli"
         }
         fs::create_dir_all(&root).unwrap();
         let project = create_project(&root, "source-demo").unwrap();
+        let manifest = parse_manifest_at_root(&project.root).unwrap();
 
         let discovered = discover_project(&project.root.join("src/main.nomo")).unwrap();
 
+        assert_eq!(manifest.package.version, env!("CARGO_PKG_VERSION"));
         assert_eq!(discovered.root, project.root);
         assert_eq!(discovered.name, "source-demo");
         assert_eq!(discovered.main, project.root.join("src/main.nomo"));

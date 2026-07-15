@@ -12,7 +12,9 @@
 
 pub mod compiler;
 pub mod doc;
+pub mod ffi_bindgen;
 pub mod format;
+pub mod incremental;
 pub mod project;
 pub mod semantic;
 
@@ -21,8 +23,10 @@ pub use compiler::{
     build_module_graph_with_overrides, check_script_source_text, check_source, check_source_text,
     check_source_text_with_external_imports, check_source_text_with_project_modules,
     check_source_text_with_project_modules_and_overrides, check_source_with_external_imports,
-    compile_script_source_to_c, compile_source_text_to_c_with_project_modules, compile_source_to_c,
-    compile_source_to_c_with_external_imports,
+    compile_script_source_to_c, compile_script_source_to_c_for_target,
+    compile_source_text_to_c_with_project_modules, compile_source_to_c,
+    compile_source_to_c_for_target, compile_source_to_c_with_external_imports,
+    compile_source_to_c_with_project_modules_for_target,
 };
 pub use format::format_source;
 pub use lexer::{Token, TokenKind, lex};
@@ -33,6 +37,7 @@ pub use nomo_graph as graph;
 pub use nomo_spans as spans;
 pub use nomo_std as standard_library;
 pub use nomo_syntax::{ast, lexer, parser};
+pub use nomo_target as target;
 pub use project::{
     PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, WorkspaceGraph,
     WorkspaceMember, build_workspace_graph, build_workspace_graph_with_options,

@@ -1,6 +1,37 @@
 use super::*;
 
 #[test]
+fn emits_canonical_target_contract_for_cross_codegen() {
+    let program = Program {
+        consts: Vec::new(),
+        package: "app.main".to_string(),
+        imports: Vec::new(),
+        extern_functions: Vec::new(),
+        structs: Vec::new(),
+        enums: Vec::new(),
+        functions: vec![Function {
+            package: "app.main".to_string(),
+            name: "main".to_string(),
+            params: Vec::new(),
+            return_type: ValueType::Void,
+            body: Vec::new(),
+        }],
+    };
+    let target = "aarch64-unknown-linux-gnu"
+        .parse::<nomo_target::TargetTriple>()
+        .unwrap();
+
+    let c = emit_c_for_target(&program, &target);
+
+    assert!(c.starts_with("/* nomo target: aarch64-unknown-linux-gnu */\n"));
+    assert!(c.contains("#define NOMO_TARGET_TRIPLE \"aarch64-unknown-linux-gnu\""));
+    assert!(c.contains("#define NOMO_TARGET_ARCH \"aarch64\""));
+    assert!(c.contains("#define NOMO_TARGET_PLATFORM \"linux\""));
+    assert!(c.contains("return nomo_string_literal(NOMO_TARGET_PLATFORM);"));
+    assert!(c.contains("return nomo_string_literal(NOMO_TARGET_ARCH);"));
+}
+
+#[test]
 fn emits_os_helpers() {
     let program = Program {
         consts: Vec::new(),

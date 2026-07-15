@@ -2,18 +2,21 @@ use super::registry_transport::{
     RegistryHttpMethod, RegistryHttpRequest, is_registry_http_endpoint, send_registry_http_request,
 };
 use nomo_manifest::{validate_package_id, validate_version_like};
-use serde::Deserialize;
+use nomo_supply_chain::{
+    PublisherKey, ReleaseProvenance, SignedReleaseEnvelope, TransparencyBundle,
+};
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeSet;
 use std::fs;
 use std::path::Path;
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RegistryPackageMetadata {
     pub package: String,
     pub versions: Vec<RegistryVersionSummary>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RegistryVersionSummary {
     pub version: String,
     pub checksum: String,
@@ -21,13 +24,21 @@ pub struct RegistryVersionSummary {
     pub yanked: bool,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Deserialize, Serialize)]
 pub struct RegistryVersionMetadata {
     pub package: String,
     pub version: String,
     pub checksum: String,
     #[serde(default)]
     pub yanked: bool,
+    #[serde(default)]
+    pub publisher_keys: Vec<PublisherKey>,
+    #[serde(default)]
+    pub signature: Option<SignedReleaseEnvelope>,
+    #[serde(default)]
+    pub provenance: Option<ReleaseProvenance>,
+    #[serde(default)]
+    pub transparency: Option<TransparencyBundle>,
 }
 
 pub fn load_registry_package_metadata(
@@ -181,7 +192,19 @@ fn validate_version_metadata(
             metadata.version
         ));
     }
-    validate_checksum(&metadata.checksum)
+    validate_checksum(&metadata.checksum)?;
+    if let Some(envelope) = &metadata.signature {
+        envelope.subject.validate()?;
+        if envelope.subject.package != expected_package
+            || envelope.subject.version != expected_version
+            || envelope.subject.archive_checksum != metadata.checksum
+        {
+            return Err(format!(
+                "registry `{registry}` returned a signed release subject that does not match `{expected_package}` {expected_version}"
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn validate_checksum(checksum: &str) -> Result<(), String> {

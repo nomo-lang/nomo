@@ -1088,11 +1088,6 @@ pub fn source_root() -> PathBuf {
         return PathBuf::from(root);
     }
 
-    let compiled_root = Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
-    if compiled_root.is_dir() {
-        return compiled_root;
-    }
-
     if let Ok(executable) = env::current_exe() {
         for ancestor in executable.ancestors() {
             let installed_root = ancestor.join("std/src");
@@ -1102,7 +1097,7 @@ pub fn source_root() -> PathBuf {
         }
     }
 
-    compiled_root
+    Path::new(env!("CARGO_MANIFEST_DIR")).join("src")
 }
 
 pub fn module_source_path(module: &StandardModule) -> PathBuf {

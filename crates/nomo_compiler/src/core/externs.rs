@@ -5,6 +5,7 @@ pub(super) fn collect_extern_signatures(
     ast: &SourceFile,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
+    repr_c_structs: &HashSet<String>,
     signatures: &mut HashMap<String, FunctionSignature>,
 ) -> Result<(HashSet<String>, Vec<ExternFunction>), Diagnostic> {
     let mut extern_names = HashSet::new();
@@ -35,7 +36,8 @@ pub(super) fn collect_extern_signatures(
                     &function.span.text,
                 ));
             }
-            let signature = extern_function_signature(path, function, structs, enums)?;
+            let signature =
+                extern_function_signature(path, function, structs, enums, repr_c_structs)?;
             extern_functions.push(ExternFunction {
                 symbol: function.name.clone(),
                 params: signature
@@ -51,11 +53,47 @@ pub(super) fn collect_extern_signatures(
     Ok((extern_names, extern_functions))
 }
 
+pub(super) fn validate_opaque_handle_release_functions(
+    path: &Path,
+    opaque_types: &[AstExternOpaqueType],
+    signatures: &HashMap<String, FunctionSignature>,
+) -> Result<(), Diagnostic> {
+    for item in opaque_types {
+        let Some(release_function) = &item.release_function else {
+            continue;
+        };
+        let expected = ValueType::OwnedHandle(item.name.clone());
+        let valid = signatures.get(release_function).is_some_and(|signature| {
+            signature.extern_symbol.as_deref() == Some(release_function.as_str())
+                && signature.return_type == ValueType::Void
+                && signature.params.len() == 1
+                && signature.params[0].value_type == expected
+                && !signature.params[0].mutable
+        });
+        if !valid {
+            return Err(Diagnostic::new(
+                "E1523",
+                format!(
+                    "release function `{release_function}` for `{}` must be declared in an extern \"C\" block as `fn {release_function}(handle: Owned<{}>) -> void`",
+                    item.name, item.name
+                ),
+                path,
+                item.span.line,
+                item.span.column,
+                item.span.length,
+                &item.span.text,
+            ));
+        }
+    }
+    Ok(())
+}
+
 fn extern_function_signature(
     path: &Path,
     function: &AstFunctionSignature,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
+    repr_c_structs: &HashSet<String>,
 ) -> Result<FunctionSignature, Diagnostic> {
     if !function.type_params.is_empty() {
         return Err(Diagnostic::new(
@@ -68,10 +106,7 @@ fn extern_function_signature(
             &function.span.text,
         ));
     }
-    let struct_names = structs
-        .values()
-        .map(|item| (item.name.clone(), item.type_params.len()))
-        .collect::<Vec<_>>();
+    let struct_names = struct_type_names(structs);
     let enum_names = enums
         .values()
         .map(|item| (item.name.clone(), item.type_params.len()))
@@ -112,6 +147,7 @@ fn extern_function_signature(
                 &function.span,
                 &value_type,
                 ExternTypePosition::Parameter,
+                repr_c_structs,
             )?;
             Ok(ParamSignature {
                 value_type,
@@ -140,6 +176,7 @@ fn extern_function_signature(
         &function.span,
         &return_type,
         ExternTypePosition::Return,
+        repr_c_structs,
     )?;
     Ok(FunctionSignature {
         type_params: Vec::new(),
@@ -154,7 +191,30 @@ fn ensure_supported_extern_type(
     span: &Span,
     value_type: &ValueType,
     position: ExternTypePosition,
+    repr_c_structs: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    if let ValueType::ExternCallback {
+        params,
+        return_type,
+    } = value_type
+    {
+        if position != ExternTypePosition::Parameter {
+            return Err(Diagnostic::new(
+                "E1525",
+                "extern C callbacks may only be passed as extern function parameters",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        for param in params {
+            ensure_supported_callback_component(path, span, param, false, repr_c_structs)?;
+        }
+        ensure_supported_callback_component(path, span, return_type, true, repr_c_structs)?;
+        return Ok(());
+    }
     let supported = matches!(
         value_type,
         ValueType::Int
@@ -165,8 +225,12 @@ fn ensure_supported_extern_type(
             | ValueType::Bool
             | ValueType::Char
             | ValueType::Opaque
-    ) || (position == ExternTypePosition::Parameter
-        && value_type == &ValueType::CString)
+            | ValueType::OpaqueHandle(_)
+            | ValueType::OwnedHandle(_)
+            | ValueType::BorrowedHandle(_)
+            | ValueType::Nullable(_)
+    ) || matches!(value_type, ValueType::Struct(name, args) if args.is_empty() && repr_c_structs.contains(name))
+        || (position == ExternTypePosition::Parameter && value_type == &ValueType::CString)
         || (position == ExternTypePosition::Return && value_type == &ValueType::Void);
     if supported {
         Ok(())
@@ -182,6 +246,47 @@ fn ensure_supported_extern_type(
                 } else {
                     ", and void return types; CString cannot be returned by C"
                 }
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ))
+    }
+}
+
+fn ensure_supported_callback_component(
+    path: &Path,
+    span: &Span,
+    value_type: &ValueType,
+    is_return: bool,
+    repr_c_structs: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let supported = matches!(
+        value_type,
+        ValueType::Int
+            | ValueType::I32
+            | ValueType::U32
+            | ValueType::U64
+            | ValueType::Float
+            | ValueType::Bool
+            | ValueType::Char
+            | ValueType::Opaque
+            | ValueType::OpaqueHandle(_)
+            | ValueType::BorrowedHandle(_)
+            | ValueType::Nullable(_)
+    ) || matches!(value_type, ValueType::Struct(name, args) if args.is_empty() && repr_c_structs.contains(name))
+        || (is_return && value_type == &ValueType::Void);
+    if supported {
+        Ok(())
+    } else {
+        Err(Diagnostic::new(
+            "E1525",
+            format!(
+                "extern C callback {} type `{}` is not ABI-safe in the current implementation",
+                if is_return { "return" } else { "parameter" },
+                value_type.name()
             ),
             path,
             span.line,

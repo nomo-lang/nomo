@@ -24,6 +24,17 @@ pub(super) fn lower_struct_literal_value_expr(
             &span.text,
         ));
     };
+    if is_opaque_handle_struct(struct_type) {
+        return Err(Diagnostic::new(
+            "E1522",
+            format!("opaque handle type `{type_name}` cannot be constructed in Nomo"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
     let struct_args = match expected {
         Some(ValueType::Struct(expected_name, expected_args)) if expected_name == type_name => {
             expected_args.clone()

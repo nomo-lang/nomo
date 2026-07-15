@@ -13,7 +13,9 @@ use crate::compiler::{
 use crate::diagnostic::Diagnostic;
 use nomo_lockfile::ResolvedDependency;
 use nomo_manifest::{Dependency, DependencySource, parse_manifest_at_root};
-use nomo_resolver::{registry_cached_source_root, resolve_registry_source};
+use nomo_resolver::{
+    registry_cached_source_root, resolve_registry_source, resolve_registry_version,
+};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -230,7 +232,7 @@ pub(super) fn dependency_module_root(
         }
         DependencySource::Registry { version, registry } => {
             let authorization = registry_dependency_authorization(registry.as_deref())?;
-            let Some(dep_root) = resolve_registry_source(
+            let selected_version = resolve_registry_version(
                 base_root,
                 &dependency.alias,
                 &dependency.package,
@@ -238,10 +240,26 @@ pub(super) fn dependency_module_root(
                 registry.as_deref(),
                 offline,
                 authorization.as_deref(),
+            )?;
+            let Some(dep_root) = resolve_registry_source(
+                base_root,
+                &dependency.alias,
+                &dependency.package,
+                &selected_version,
+                registry.as_deref(),
+                offline,
+                authorization.as_deref(),
             )?
             else {
                 return Ok(None);
             };
+            let dep_manifest = parse_manifest_at_root(&dep_root)?;
+            if dep_manifest.package.version != selected_version {
+                return Err(format!(
+                    "registry dependency `{}` selected version `{selected_version}`, but the package manifest declares `{}`",
+                    dependency.alias, dep_manifest.package.version
+                ));
+            }
             dep_root
         }
     };

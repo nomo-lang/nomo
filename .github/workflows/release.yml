@@ -45,6 +45,34 @@ jobs:
       - name: Build release binaries
         run: cargo build --locked --workspace --release --target ${{ matrix.target }}
 
+      - name: Smoke test Unix release binaries
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          "target/${{ matrix.target }}/release/nomo" --help
+          "target/${{ matrix.target }}/release/nomoc" --help
+
+      - name: Smoke test Windows release binaries
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          & "target/${{ matrix.target }}/release/nomo.exe" --help
+          & "target/${{ matrix.target }}/release/nomoc.exe" --help
+
+      - name: Measure Unix compiler release gate
+        if: runner.os != 'Windows'
+        run: >-
+          python3 scripts/compiler_release_gate.py
+          --nomo target/${{ matrix.target }}/release/nomo
+          --output nomo-${{ matrix.target }}-release-gate.json
+
+      - name: Measure Windows compiler release gate
+        if: runner.os == 'Windows'
+        run: >-
+          python scripts/compiler_release_gate.py
+          --nomo target/${{ matrix.target }}/release/nomo.exe
+          --output nomo-${{ matrix.target }}-release-gate.json
+
       - name: Package Unix binaries
         if: runner.os != 'Windows'
         shell: bash
@@ -67,11 +95,41 @@ jobs:
           Copy-Item std release/std -Recurse
           Compress-Archive -Path release/* -DestinationPath $env:ASSET_NAME
 
+      - name: Smoke test packaged Unix toolchain
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          install_root="$RUNNER_TEMP/nomo-release-smoke"
+          project_root="$RUNNER_TEMP/nomo-release-project"
+          mkdir -p "$install_root"
+          tar -C "$install_root" -xzf "$ASSET_NAME"
+          "$install_root/nomo" --help
+          "$install_root/nomoc" --help
+          cd "$RUNNER_TEMP"
+          "$install_root/nomo" new nomo-release-project
+          "$install_root/nomo" run "$project_root"
+
+      - name: Smoke test packaged Windows toolchain
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          $installRoot = Join-Path $env:RUNNER_TEMP "nomo-release-smoke"
+          $projectRoot = Join-Path $env:RUNNER_TEMP "nomo-release-project"
+          Expand-Archive -Path $env:ASSET_NAME -DestinationPath $installRoot
+          & (Join-Path $installRoot "nomo.exe") --help
+          & (Join-Path $installRoot "nomoc.exe") --help
+          Push-Location $env:RUNNER_TEMP
+          & (Join-Path $installRoot "nomo.exe") new nomo-release-project
+          & (Join-Path $installRoot "nomo.exe") run $projectRoot
+          Pop-Location
+
       - name: Upload release archive
         uses: actions/upload-artifact@v7
         with:
           name: ${{ matrix.target }}
-          path: ${{ env.ASSET_NAME }}
+          path: |
+            ${{ env.ASSET_NAME }}
+            nomo-${{ matrix.target }}-release-gate.json
           if-no-files-found: error
 
   publish:
@@ -110,11 +168,16 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         shell: bash
         run: |
+          prerelease_args=()
+          if [[ "$GITHUB_REF_NAME" == v0.0.0-* ]]; then
+            prerelease_args+=(--prerelease)
+          fi
           if gh release view "$GITHUB_REF_NAME" >/dev/null 2>&1; then
             gh release upload "$GITHUB_REF_NAME" dist/* --clobber
           else
             gh release create "$GITHUB_REF_NAME" dist/* \
               --generate-notes \
               --verify-tag \
+              "${prerelease_args[@]}" \
               --title "Nomo $GITHUB_REF_NAME"
           fi

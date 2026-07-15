@@ -389,7 +389,7 @@ dependencies = [
 
 [[package]]
 name = "nomo"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-codegen-c",
  "nomo-compiler",
@@ -404,7 +404,9 @@ dependencies = [
  "nomo-resolver",
  "nomo-spans",
  "nomo-std",
+ "nomo-supply-chain",
  "nomo-syntax",
+ "nomo-target",
  "nomo-test",
  "serde",
  "serde_json",
@@ -414,15 +416,16 @@ dependencies = [
 
 [[package]]
 name = "nomo-codegen-c"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-ir",
  "nomo-runtime",
+ "nomo-target",
 ]
 
 [[package]]
 name = "nomo-compiler"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-codegen-c",
  "nomo-diagnostics",
@@ -430,18 +433,19 @@ dependencies = [
  "nomo-ir",
  "nomo-std",
  "nomo-syntax",
+ "nomo-target",
 ]
 
 [[package]]
 name = "nomo-diagnostics"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-spans",
 ]
 
 [[package]]
 name = "nomo-doc"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-diagnostics",
  "nomo-std",
@@ -450,7 +454,7 @@ dependencies = [
 
 [[package]]
 name = "nomo-fmt"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-diagnostics",
  "nomo-syntax",
@@ -458,25 +462,26 @@ dependencies = [
 
 [[package]]
 name = "nomo-graph"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 
 [[package]]
 name = "nomo-ir"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 
 [[package]]
 name = "nomo-lockfile"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-graph",
  "nomo-manifest",
+ "nomo-supply-chain",
  "serde",
  "toml",
 ]
 
 [[package]]
 name = "nomo-lsp-bridge"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-diagnostics",
  "nomo-spans",
@@ -485,17 +490,20 @@ dependencies = [
 
 [[package]]
 name = "nomo-manifest"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
+ "semver",
  "toml",
 ]
 
 [[package]]
 name = "nomo-resolver"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-manifest",
+ "nomo-supply-chain",
  "rcgen",
+ "ring",
  "rustls",
  "serde",
  "serde_json",
@@ -505,15 +513,15 @@ dependencies = [
 
 [[package]]
 name = "nomo-runtime"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 
 [[package]]
 name = "nomo-spans"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 
 [[package]]
 name = "nomo-std"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-syntax",
  "serde",
@@ -521,16 +529,31 @@ dependencies = [
 ]
 
 [[package]]
+name = "nomo-supply-chain"
+version = "0.0.0-20260713145859"
+dependencies = [
+ "nomo-manifest",
+ "ring",
+ "serde",
+ "serde_json",
+ "sha2",
+]
+
+[[package]]
 name = "nomo-syntax"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 dependencies = [
  "nomo-diagnostics",
  "nomo-spans",
 ]
 
 [[package]]
+name = "nomo-target"
+version = "0.0.0-20260713145859"
+
+[[package]]
 name = "nomo-test"
-version = "0.1.0"
+version = "0.0.0-20260713145859"
 
 [[package]]
 name = "num-bigint"
@@ -778,6 +801,12 @@ dependencies = [
  "core-foundation-sys",
  "libc",
 ]
+
+[[package]]
+name = "semver"
+version = "1.0.28"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "8a7852d02fc848982e0c167ef163aaff9cd91dc640ba85e263cb1ce46fae51cd"
 
 [[package]]
 name = "serde"

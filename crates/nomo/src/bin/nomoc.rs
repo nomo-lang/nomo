@@ -1,4 +1,5 @@
-use nomo::{check_source, compile_source_to_c};
+use nomo::target::TargetTriple;
+use nomo::{check_source, compile_source_to_c_for_target};
 use std::env;
 use std::fs;
 use std::path::PathBuf;
@@ -32,8 +33,8 @@ fn run() -> Result<(), String> {
             }
         }
         "build" => {
-            let (source, out, json) = parse_build_args(args)?;
-            let c = match compile_source_to_c(&source) {
+            let (source, out, json, target) = parse_build_args(args)?;
+            let c = match compile_source_to_c_for_target(&source, &target) {
                 Ok(c) => c,
                 Err(diag) if json => return Err(diag.json()),
                 Err(diag) => return Err(diag.human()),
@@ -74,40 +75,52 @@ fn parse_source_and_json(args: Vec<String>) -> Result<(PathBuf, bool), String> {
         .ok_or_else(|| "usage: nomoc check <source.nomo> [--json-errors]".to_string())
 }
 
-fn parse_build_args(args: Vec<String>) -> Result<(PathBuf, Option<PathBuf>, bool), String> {
+fn parse_build_args(
+    args: Vec<String>,
+) -> Result<(PathBuf, Option<PathBuf>, bool, TargetTriple), String> {
     let mut source = None;
     let mut out = None;
     let mut json = false;
+    let mut target = None;
     let mut iter = args.into_iter();
     while let Some(arg) = iter.next() {
         match arg.as_str() {
             "--emit-c" => {}
             "--json-errors" => json = true,
+            "--target" => {
+                let Some(value) = iter.next() else {
+                    return Err(build_usage());
+                };
+                if target.is_some() {
+                    return Err("--target may only be specified once".to_string());
+                }
+                target = Some(value.parse::<TargetTriple>()?);
+            }
             "--out" => {
                 let Some(value) = iter.next() else {
-                    return Err(
-                        "usage: nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]"
-                            .to_string(),
-                    );
+                    return Err(build_usage());
                 };
                 out = Some(PathBuf::from(value));
             }
             _ if source.is_none() => source = Some(PathBuf::from(arg)),
             _ => {
-                return Err(
-                    "usage: nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]"
-                        .to_string(),
-                );
+                return Err(build_usage());
             }
         }
     }
-    source.map(|source| (source, out, json)).ok_or_else(|| {
-        "usage: nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]".to_string()
-    })
+    source
+        .map(|source| TargetTriple::host().map(|host| (source, out, json, target.unwrap_or(host))))
+        .ok_or_else(build_usage)?
+}
+
+fn build_usage() -> String {
+    "usage: nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors]"
+        .to_string()
 }
 
 fn print_help() {
     println!(
-        "nomoc 0.1.0\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--emit-c] [--out path] [--json-errors]\n"
+        "nomoc {}\n\nCommands:\n  nomoc check <source.nomo> [--json-errors]\n  nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors]\n",
+        env!("CARGO_PKG_VERSION")
     );
 }

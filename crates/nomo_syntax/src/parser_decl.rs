@@ -6,30 +6,100 @@ struct ParsedTypeParams {
     bounds: Vec<TypeParamBound>,
 }
 
+pub(super) struct ParsedDeclarationAttributes {
+    pub(super) is_test: bool,
+    pub(super) repr_c: bool,
+}
+
 impl Parser<'_> {
-    pub(super) fn parse_test_attribute(&mut self) -> Result<bool, Diagnostic> {
-        if !matches!(self.peek().kind, TokenKind::Hash) {
-            return Ok(false);
+    pub(super) fn is_extern_opaque_type(&self) -> bool {
+        matches!(&self.peek_n(1).kind, TokenKind::Ident(value) if value == "opaque")
+            && matches!(&self.peek_n(2).kind, TokenKind::Ident(value) if value == "type")
+    }
+
+    pub(super) fn parse_extern_opaque_type(&mut self) -> Result<ExternOpaqueType, Diagnostic> {
+        let extern_token = self.peek().clone();
+        self.expect_kind(TokenKind::Extern, "E1520", "expected `extern`")?;
+        let opaque = self.expect_ident("expected `opaque` after `extern`")?;
+        if opaque != "opaque" {
+            return Err(self.error("E1520", "expected `opaque` after `extern`", opaque.len()));
         }
-        let token = self.peek().clone();
-        self.advance();
-        self.expect_kind(TokenKind::LBracket, "E1100", "expected `[` after `#`")?;
-        let name = self.expect_ident("expected attribute name")?;
-        self.expect_kind(TokenKind::RBracket, "E1100", "expected `]` after attribute")?;
-        self.expect_newline("expected newline after attribute")?;
-        if name == "test" {
-            Ok(true)
+        let type_keyword = self.expect_ident("expected `type` after `extern opaque`")?;
+        if type_keyword != "type" {
+            return Err(self.error(
+                "E1520",
+                "expected `type` after `extern opaque`",
+                type_keyword.len(),
+            ));
+        }
+        let name = self.expect_ident("expected opaque handle type name")?;
+        let release_function = if matches!(&self.peek().kind, TokenKind::Ident(value) if value == "release")
+        {
+            self.advance();
+            Some(self.expect_ident("expected release function name after `release`")?)
         } else {
-            Err(Diagnostic::new(
-                "E1100",
-                format!("unsupported attribute `#[{name}]`"),
-                self.path,
-                token.line,
-                token.column,
-                token.length(),
-                &token.text,
-            ))
+            None
+        };
+        self.expect_newline("expected newline after opaque handle declaration")?;
+        Ok(ExternOpaqueType {
+            name,
+            release_function,
+            span: token_span(&extern_token),
+        })
+    }
+
+    pub(super) fn parse_declaration_attributes(
+        &mut self,
+    ) -> Result<ParsedDeclarationAttributes, Diagnostic> {
+        let mut attributes = ParsedDeclarationAttributes {
+            is_test: false,
+            repr_c: false,
+        };
+        while matches!(self.peek().kind, TokenKind::Hash) {
+            let token = self.peek().clone();
+            self.advance();
+            self.expect_kind(TokenKind::LBracket, "E1100", "expected `[` after `#`")?;
+            let name = self.expect_ident("expected attribute name")?;
+            match name.as_str() {
+                "test" => {
+                    if attributes.is_test {
+                        return Err(self.error("E1100", "duplicate `#[test]` attribute", 1));
+                    }
+                    attributes.is_test = true;
+                }
+                "repr" => {
+                    if attributes.repr_c {
+                        return Err(self.error("E1100", "duplicate `#[repr(C)]` attribute", 1));
+                    }
+                    self.expect_kind(TokenKind::LParen, "E1100", "expected `(` after `repr`")?;
+                    let representation = self.expect_ident("expected `C` in `#[repr(C)]`")?;
+                    if representation != "C" {
+                        return Err(self.error(
+                            "E1100",
+                            "only `#[repr(C)]` is supported",
+                            representation.len(),
+                        ));
+                    }
+                    self.expect_kind(TokenKind::RParen, "E1100", "expected `)` after `C`")?;
+                    attributes.repr_c = true;
+                }
+                _ => {
+                    return Err(Diagnostic::new(
+                        "E1100",
+                        format!("unsupported attribute `#[{name}]`"),
+                        self.path,
+                        token.line,
+                        token.column,
+                        token.length(),
+                        &token.text,
+                    ));
+                }
+            }
+            self.expect_kind(TokenKind::RBracket, "E1100", "expected `]` after attribute")?;
+            self.expect_newline("expected newline after attribute")?;
+            self.skip_newlines();
         }
+        Ok(attributes)
     }
 
     pub(super) fn parse_enum(&mut self, public: bool) -> Result<EnumDef, Diagnostic> {
@@ -153,7 +223,11 @@ impl Parser<'_> {
         Ok(ParsedTypeParams { names, bounds })
     }
 
-    pub(super) fn parse_struct(&mut self, public: bool) -> Result<StructDef, Diagnostic> {
+    pub(super) fn parse_struct(
+        &mut self,
+        public: bool,
+        repr_c: bool,
+    ) -> Result<StructDef, Diagnostic> {
         let struct_token = self.peek().clone();
         self.expect_kind(TokenKind::Struct, "E0218", "expected `struct`")?;
         let name = self.expect_ident("expected struct name")?;
@@ -196,6 +270,7 @@ impl Parser<'_> {
 
         Ok(StructDef {
             public,
+            repr_c,
             package: Vec::new(),
             name,
             type_params,

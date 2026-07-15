@@ -38,6 +38,21 @@ pub(super) fn ensure_supported_value_type(
             }
             ensure_supported_value_type(path, element_type, span)
         }
+        ValueType::Nullable(inner) => {
+            if !is_ffi_handle_type(inner) {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    "Nullable currently supports only extern opaque handle types",
+                ));
+            }
+            ensure_supported_value_type(path, inner, span)
+        }
+        ValueType::ExternCallback { .. } => Err(type_mismatch(
+            path,
+            span,
+            "extern C callback types may only appear as parameters of extern C functions",
+        )),
         ValueType::Struct(_, args) | ValueType::Enum(_, args) => {
             for arg in args {
                 ensure_supported_value_type(path, arg, span)?;
@@ -47,6 +62,9 @@ pub(super) fn ensure_supported_value_type(
         ValueType::String
         | ValueType::CString
         | ValueType::Opaque
+        | ValueType::OpaqueHandle(_)
+        | ValueType::OwnedHandle(_)
+        | ValueType::BorrowedHandle(_)
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32
@@ -485,6 +503,22 @@ pub(super) fn value_type_key_part(value_type: &ValueType) -> String {
         ValueType::String => "string".to_string(),
         ValueType::CString => "cstring".to_string(),
         ValueType::Opaque => "opaque".to_string(),
+        ValueType::OpaqueHandle(name) => format!("handle_{name}"),
+        ValueType::OwnedHandle(name) => format!("owned_handle_{name}"),
+        ValueType::BorrowedHandle(name) => format!("borrowed_handle_{name}"),
+        ValueType::Nullable(inner) => format!("nullable_{}", value_type_key_part(inner)),
+        ValueType::ExternCallback {
+            params,
+            return_type,
+        } => format!(
+            "callback_{}_to_{}",
+            params
+                .iter()
+                .map(value_type_key_part)
+                .collect::<Vec<_>>()
+                .join("_"),
+            value_type_key_part(return_type)
+        ),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),

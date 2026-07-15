@@ -716,6 +716,7 @@ fn collect_expr_struct(
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::OsPlatform
         | ValueExpr::OsArch

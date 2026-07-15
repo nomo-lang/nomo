@@ -1,0 +1,66 @@
+package app.main
+
+import std.io
+
+extern opaque type FileHandle release nomo_file_close
+
+extern "C" {
+    fn nomo_file_open() -> Owned<FileHandle>
+    fn nomo_file_try_open(should_open: bool) -> Nullable<Owned<FileHandle>>
+    fn nomo_file_marker(handle: Borrowed<FileHandle>) -> i32
+    fn nomo_file_close(handle: Owned<FileHandle>) -> void
+    fn nomo_apply_callback(value: i32, callback: __nomo_extern_c_callback<i32, i32>) -> i32
+}
+
+fn double(value: i32) -> i32 {
+    return value * 2
+}
+
+fn apply_callback(value: i32) -> i32 {
+    unsafe {
+        return nomo_apply_callback(value, double)
+    }
+}
+
+fn try_open(should_open: bool) -> Nullable<Owned<FileHandle>> {
+    unsafe {
+        return nomo_file_try_open(should_open)
+    }
+}
+
+fn open() -> Owned<FileHandle> {
+    unsafe {
+        return nomo_file_open()
+    }
+}
+
+fn marker(handle: Borrowed<FileHandle>) -> i32 {
+    unsafe {
+        return nomo_file_marker(handle)
+    }
+}
+
+fn close(handle: Owned<FileHandle>) -> void {
+    unsafe {
+        nomo_file_close(handle)
+    }
+}
+
+fn main() -> void {
+    let missing: Nullable<Owned<FileHandle>> = try_open(false)
+    let missing_status: string = if missing.is_null() {
+        "null ok"
+    } else {
+        panic("null FFI handle was reported as present")
+    }
+    let maybe: Nullable<Owned<FileHandle>> = try_open(true)
+    let handle: Owned<FileHandle> = maybe.unwrap()
+    let value: i32 = marker(handle.borrow())
+    let callback_value: i32 = apply_callback(21)
+    close(handle)
+    if value == 42 && callback_value == 42 {
+        io.println("ffi typed handle ok")
+    } else {
+        panic("ffi typed handle failed")
+    }
+}

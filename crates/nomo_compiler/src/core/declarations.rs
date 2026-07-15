@@ -4,6 +4,7 @@ pub(super) fn lower_structs(
     path: &Path,
     structs: &[AstStructDef],
     enums: &[AstEnumDef],
+    opaque_types: &[AstExternOpaqueType],
     standard_type_needs: StandardTypeNeeds,
 ) -> Result<Vec<StructType>, Diagnostic> {
     let mut lowered = Vec::new();
@@ -25,6 +26,11 @@ pub(super) fn lower_structs(
     let known_structs = known
         .iter()
         .map(|(name, arity)| (name.clone(), *arity))
+        .chain(
+            opaque_types
+                .iter()
+                .map(|item| (item.name.clone(), OPAQUE_HANDLE_ARITY)),
+        )
         .chain(standard_struct_names(standard_type_needs))
         .collect::<Vec<_>>();
     let known_enums = enums
@@ -103,6 +109,7 @@ pub(super) fn lower_enums(
     path: &Path,
     structs: &[StructType],
     enums: &[AstEnumDef],
+    opaque_types: &[AstExternOpaqueType],
     standard_type_needs: StandardTypeNeeds,
 ) -> Result<Vec<EnumType>, Diagnostic> {
     let mut lowered = Vec::new();
@@ -143,6 +150,11 @@ pub(super) fn lower_enums(
                 let known_structs = structs
                     .iter()
                     .map(|item| (item.name.clone(), item.type_params.len()))
+                    .chain(
+                        opaque_types
+                            .iter()
+                            .map(|item| (item.name.clone(), OPAQUE_HANDLE_ARITY)),
+                    )
                     .chain(standard_struct_names(standard_type_needs))
                     .collect::<Vec<_>>();
                 let known_enums = enums
@@ -226,10 +238,7 @@ pub(super) fn function_signature(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Result<FunctionSignature, Diagnostic> {
-    let struct_names = structs
-        .values()
-        .map(|item| (item.name.clone(), item.type_params.len()))
-        .collect::<Vec<_>>();
+    let struct_names = struct_type_names(structs);
     let enum_names = enums
         .values()
         .map(|item| (item.name.clone(), item.type_params.len()))

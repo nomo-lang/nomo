@@ -162,6 +162,60 @@ pub(super) fn lower_call_arg_for_param(
     position: usize,
     mutable_borrows: &mut Vec<Vec<String>>,
 ) -> Result<ValueExpr, Diagnostic> {
+    if !expected.mutable {
+        if let ValueType::ExternCallback {
+            params,
+            return_type,
+        } = &expected.value_type
+        {
+            let AstExpr::Name(callback_path) = arg else {
+                return Err(callback_argument_diagnostic(
+                    path,
+                    span,
+                    callable,
+                    position,
+                    "callbacks must be non-capturing top-level function names",
+                ));
+            };
+            let [name] = callback_path.as_slice() else {
+                return Err(callback_argument_diagnostic(
+                    path,
+                    span,
+                    callable,
+                    position,
+                    "callbacks must be unqualified top-level function names",
+                ));
+            };
+            let Some(signature) = signatures.get(name) else {
+                return Err(callback_argument_diagnostic(
+                    path,
+                    span,
+                    callable,
+                    position,
+                    &format!("unknown callback function `{name}`"),
+                ));
+            };
+            let callback_matches = signature.extern_symbol.is_none()
+                && signature.type_params.is_empty()
+                && signature.params.iter().all(|param| !param.mutable)
+                && signature
+                    .params
+                    .iter()
+                    .map(|param| &param.value_type)
+                    .eq(params.iter())
+                && signature.return_type == **return_type;
+            if !callback_matches {
+                return Err(callback_argument_diagnostic(
+                    path,
+                    span,
+                    callable,
+                    position,
+                    &format!("function `{name}` does not match the declared callback ABI"),
+                ));
+            }
+            return Ok(ValueExpr::FunctionRef(name.clone()));
+        }
+    }
     match (expected.mutable, arg) {
         (true, AstExpr::MutArg { name }) => lower_mut_call_arg(
             path,
@@ -220,6 +274,24 @@ pub(super) fn lower_call_arg_for_param(
             Ok(lowered)
         }
     }
+}
+
+fn callback_argument_diagnostic(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    position: usize,
+    detail: &str,
+) -> Diagnostic {
+    Diagnostic::new(
+        "E1525",
+        format!("argument {position} to `{callable}` is not a valid extern C callback: {detail}"),
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
 }
 
 #[allow(clippy::too_many_arguments)]

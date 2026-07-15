@@ -245,6 +245,7 @@ pub(super) fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         | ValueExpr::BoolLiteral(_)
         | ValueExpr::VoidLiteral
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvCwd
         | ValueExpr::EnvHomeDir

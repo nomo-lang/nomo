@@ -1,5 +1,7 @@
 pub use nomo_spans::Span;
 
+pub const EXTERN_C_CALLBACK_TYPE_PATH: &str = "__nomo_extern_c_callback";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {
     pub package: Vec<String>,
@@ -7,6 +9,7 @@ pub struct SourceFile {
     pub structs: Vec<StructDef>,
     pub enums: Vec<EnumDef>,
     pub interfaces: Vec<InterfaceDef>,
+    pub extern_opaque_types: Vec<ExternOpaqueType>,
     pub extern_blocks: Vec<ExternBlock>,
     pub impls: Vec<ImplBlock>,
     pub consts: Vec<ConstDef>,
@@ -15,8 +18,16 @@ pub struct SourceFile {
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ExternOpaqueType {
+    pub name: String,
+    pub release_function: Option<String>,
+    pub span: Span,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct StructDef {
     pub public: bool,
+    pub repr_c: bool,
     pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,

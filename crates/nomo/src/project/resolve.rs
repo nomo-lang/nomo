@@ -1,8 +1,12 @@
 use super::{
     DependencyResolutionOptions, Project, WorkspaceGraph,
-    dependency_resolution::{resolve_dependency_graph_for_lock, validate_project_lock},
+    dependency_resolution::{
+        resolve_dependency_graph_for_lock, resolve_dependency_graphs_for_manifests,
+        validate_project_lock,
+    },
 };
 use nomo_lockfile::{render_lockfile, render_workspace_lockfile};
+use nomo_manifest::parse_manifest_at_root;
 use std::fs;
 use std::path::PathBuf;
 
@@ -45,15 +49,16 @@ pub fn resolve_workspace_dependencies_with_options(
         }
         return Ok(lock_path);
     }
-    let mut graphs = Vec::new();
+    let mut manifests = Vec::new();
     for project in &workspace.members {
-        graphs.push(resolve_dependency_graph_for_lock(
-            &project.root,
-            Some(&workspace.root),
-            Some(&workspace.root),
-            options.offline,
-        )?);
+        manifests.push((&*project.root, parse_manifest_at_root(&project.root)?));
     }
+    let graphs = resolve_dependency_graphs_for_manifests(
+        manifests,
+        Some(&workspace.root),
+        Some(&workspace.root),
+        options.offline,
+    )?;
     let lock = render_workspace_lockfile(&graphs)?;
     fs::write(&lock_path, lock).map_err(|err| err.to_string())?;
     Ok(lock_path)

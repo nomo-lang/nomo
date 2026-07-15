@@ -184,6 +184,8 @@ fn merge_public_items(ast: &mut SourceFile, module_ast: SourceFile) {
         .extend(module_ast.enums.into_iter().filter(|item| item.public));
     ast.interfaces
         .extend(module_ast.interfaces.into_iter().filter(|item| item.public));
+    ast.extern_opaque_types
+        .extend(module_ast.extern_opaque_types);
     ast.consts
         .extend(module_ast.consts.into_iter().filter(|item| item.public));
     ast.extern_blocks.extend(module_ast.extern_blocks);

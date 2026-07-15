@@ -175,5 +175,12 @@ the same code.
 - [E1517](E1517.md) - expected unsafe block
 - [E1518](E1518.md) - missing unsafe block body
 - [E1519](E1519.md) - invalid FFI or unsafe boundary
+- [E1520](E1520.md) - invalid opaque handle declaration
+- [E1521](E1521.md) - duplicate or conflicting opaque handle type
+- [E1522](E1522.md) - opaque handle construction is not allowed
+- [E1523](E1523.md) - invalid opaque handle release function
+- [E1524](E1524.md) - invalid extern C callback type
+- [E1525](E1525.md) - callback is not ABI-safe
+- [E1530](E1530.md) - invalid repr(C) layout
 
 More codes should be added as implementation slices stabilize their diagnostics.

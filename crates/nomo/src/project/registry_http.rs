@@ -1,9 +1,10 @@
-use super::{BuildError, Project, PublishPackage, prepare_publish_package};
+use super::{BuildError, Project, PublishPackage, prepare_publish_package, sign_publish_package};
 use nomo_manifest::{validate_package_id, validate_package_segment, validate_version_like};
 use nomo_resolver::{
     RegistryHttpMethod, RegistryHttpRequest, RegistryHttpResponse, is_registry_http_endpoint,
     send_registry_http_request, validate_registry_http_endpoint,
 };
+use nomo_supply_chain::{PublisherKey, decode_hex, publisher_key_id};
 use serde::{Deserialize, Serialize};
 use std::env;
 use std::fs;
@@ -36,6 +37,63 @@ pub fn publish_package_archive(
     })?;
     upload_registry_archive(registry, &package.package, &package.version, &archive)
         .map_err(BuildError::Message)?;
+    Ok(package)
+}
+
+pub fn publish_signed_package_archive(
+    project: &Project,
+    registry: &str,
+    output_dir: Option<&Path>,
+    signer: &str,
+    envelope_path: Option<&Path>,
+) -> Result<PublishPackage, BuildError> {
+    let package = sign_publish_package(
+        prepare_publish_package(project, output_dir)?,
+        signer,
+        envelope_path,
+    )?;
+    let archive = fs::read(&package.archive_path).map_err(|err| {
+        BuildError::Message(format!(
+            "failed to read {} for registry upload: {err}",
+            package.archive_path.display()
+        ))
+    })?;
+    upload_registry_archive(registry, &package.package, &package.version, &archive)
+        .map_err(BuildError::Message)?;
+    let provenance = fs::read(&package.provenance_path).map_err(|err| {
+        BuildError::Message(format!(
+            "failed to read {} for registry upload: {err}",
+            package.provenance_path.display()
+        ))
+    })?;
+    upload_registry_release_document(
+        registry,
+        &package.package,
+        &package.version,
+        "/provenance",
+        "provenance",
+        &provenance,
+    )
+    .map_err(BuildError::Message)?;
+    let envelope_path = package
+        .envelope_path
+        .as_ref()
+        .expect("signed package has an envelope path");
+    let envelope = fs::read(envelope_path).map_err(|err| {
+        BuildError::Message(format!(
+            "failed to read {} for registry upload: {err}",
+            envelope_path.display()
+        ))
+    })?;
+    upload_registry_release_document(
+        registry,
+        &package.package,
+        &package.version,
+        "/attestation",
+        "attestation",
+        &envelope,
+    )
+    .map_err(BuildError::Message)?;
     Ok(package)
 }
 
@@ -122,6 +180,71 @@ pub fn remove_registry_package_owner(
     )
 }
 
+pub fn add_registry_publisher_key(
+    registry: &str,
+    package: &str,
+    public_key: &str,
+) -> Result<String, String> {
+    validate_package_id(package)?;
+    let public_key_bytes = decode_hex(public_key)?;
+    if public_key_bytes.len() != 32 {
+        return Err("ed25519 publisher public key must contain 32 bytes".to_string());
+    }
+    let key_id = publisher_key_id(&public_key_bytes);
+    let path = registry_publisher_key_path(package, &key_id)?;
+    let body = serde_json::to_vec(&PublisherKey {
+        key_id: key_id.clone(),
+        public_key: public_key.to_ascii_lowercase(),
+    })
+    .map_err(|err| err.to_string())?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Put,
+        "application/json",
+        Some("application/json"),
+        &body,
+    )
+    .map_err(|err| format!("failed to register publisher key for `{package}`: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("register publisher key `{key_id}` for `{package}`"),
+        response.status,
+        &[200, 201, 204],
+    )?;
+    Ok(key_id)
+}
+
+pub fn revoke_registry_publisher_key(
+    registry: &str,
+    package: &str,
+    key_id: &str,
+) -> Result<(), String> {
+    validate_package_id(package)?;
+    let digest = key_id
+        .strip_prefix("sha256:")
+        .ok_or_else(|| "publisher key id must use sha256:<hex>".to_string())?;
+    if digest.len() != 64 || !digest.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+        return Err("publisher key id must contain 64 hexadecimal digits".to_string());
+    }
+    let path = registry_publisher_key_path(package, key_id)?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Delete,
+        "application/json",
+        None,
+        &[],
+    )
+    .map_err(|err| format!("failed to revoke publisher key `{key_id}`: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("revoke publisher key `{key_id}` for `{package}`"),
+        response.status,
+        &[200, 202, 204],
+    )
+}
+
 pub fn yank_registry_package(registry: &str, package: &str, version: &str) -> Result<(), String> {
     validate_package_id(package)?;
     validate_version_like("package version", version)?;
@@ -167,6 +290,32 @@ fn upload_registry_archive(
     )
 }
 
+fn upload_registry_release_document(
+    registry: &str,
+    package: &str,
+    version: &str,
+    suffix: &str,
+    label: &str,
+    body: &[u8],
+) -> Result<(), String> {
+    let path = registry_package_version_path(package, version, suffix)?;
+    let response = registry_request(
+        registry,
+        &path,
+        RegistryHttpMethod::Put,
+        "application/json",
+        Some("application/json"),
+        body,
+    )
+    .map_err(|err| format!("failed to upload package {label}: {err}"))?;
+    ensure_registry_status(
+        registry,
+        &format!("upload {label} for `{package}` {version}"),
+        response.status,
+        &[200, 201, 204],
+    )
+}
+
 fn registry_request(
     registry: &str,
     path: &str,
@@ -193,6 +342,15 @@ fn registry_owner_path(package: &str, user: &str) -> Result<String, String> {
         format!("registry package `{package}` must use canonical owner/package form")
     })?;
     Ok(format!("/api/v1/packages/{owner}/{name}/owners/{user}"))
+}
+
+fn registry_publisher_key_path(package: &str, key_id: &str) -> Result<String, String> {
+    let (owner, name) = package.split_once('/').ok_or_else(|| {
+        format!("registry package `{package}` must use canonical owner/package form")
+    })?;
+    Ok(format!(
+        "/api/v1/packages/{owner}/{name}/publisher-keys/{key_id}"
+    ))
 }
 
 fn registry_package_version_path(

@@ -1,8 +1,10 @@
 use nomo::project::{
-    BuildError, DependencyResolutionOptions, Project, build_project_with_options, check_project,
-    clean_project, discover_project, discover_workspace, project_package_id,
-    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
+    BuildError, DependencyResolutionOptions, Project, build_project_for_target_with_options,
+    build_project_with_options, check_project, clean_project, discover_project, discover_workspace,
+    project_package_id, run_project_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_diagnostics,
 };
+use nomo::target::TargetTriple;
 use std::env;
 use std::path::{Path, PathBuf};
 
@@ -34,13 +36,17 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
 }
 
 pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
-    let (path, emit_c, json, workspace, deps) = parse_build_args(
+    let (path, emit_c, json, workspace, deps, target, target_explicit) = parse_build_args(
         args,
-        "usage: nomo build [path] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
+        "usage: nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
     )?;
     if workspace {
         for project in discover_workspace(&path)?.members {
-            let artifact = match build_project_with_options(&project, emit_c, deps) {
+            let artifact = match if target_explicit {
+                build_project_for_target_with_options(&project, emit_c, deps, &target)
+            } else {
+                build_project_with_options(&project, emit_c, deps)
+            } {
                 Ok(artifact) => artifact,
                 Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
                 Err(err) => return Err(err.human()),
@@ -49,7 +55,11 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
         }
     } else {
         let project = discover_project(&path)?;
-        let artifact = match build_project_with_options(&project, emit_c, deps) {
+        let artifact = match if target_explicit {
+            build_project_for_target_with_options(&project, emit_c, deps, &target)
+        } else {
+            build_project_with_options(&project, emit_c, deps)
+        } {
             Ok(artifact) => artifact,
             Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
             Err(err) => return Err(err.human()),
@@ -119,13 +129,26 @@ pub(super) fn parse_path_json_workspace(
 pub(super) fn parse_build_args(
     args: Vec<String>,
     usage: &str,
-) -> Result<(PathBuf, bool, bool, bool, DependencyResolutionOptions), String> {
+) -> Result<
+    (
+        PathBuf,
+        bool,
+        bool,
+        bool,
+        DependencyResolutionOptions,
+        TargetTriple,
+        bool,
+    ),
+    String,
+> {
     let mut emit_c = false;
     let mut json = false;
     let mut workspace = false;
     let mut deps = DependencyResolutionOptions::default();
+    let mut target = None;
     let mut path = None;
-    for arg in args {
+    let mut args = args.into_iter();
+    while let Some(arg) = args.next() {
         if arg == "--emit-c" {
             emit_c = true;
         } else if arg == "--json-errors" {
@@ -139,18 +162,27 @@ pub(super) fn parse_build_args(
         } else if arg == "--frozen" {
             deps.locked = true;
             deps.offline = true;
+        } else if arg == "--target" {
+            let value = args.next().ok_or_else(|| usage.to_string())?;
+            if target.is_some() {
+                return Err("--target may only be specified once".to_string());
+            }
+            target = Some(value.parse::<TargetTriple>()?);
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
             return Err(usage.to_string());
         }
     }
+    let target_explicit = target.is_some();
     Ok((
         path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
         emit_c,
         json,
         workspace,
         deps,
+        target.unwrap_or(TargetTriple::host()?),
+        target_explicit,
     ))
 }
 

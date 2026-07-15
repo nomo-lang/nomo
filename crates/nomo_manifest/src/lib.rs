@@ -2,6 +2,10 @@ use std::collections::BTreeMap;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
+mod version;
+
+pub use version::{PackageVersion, VersionConstraint};
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyAddSpec {
     pub alias: String,
@@ -34,6 +38,37 @@ pub struct Manifest {
     pub package: PackageMetadata,
     pub dependencies: Vec<Dependency>,
     pub ffi: FfiLinkMetadata,
+    pub trust: RegistryTrustPolicy,
+    pub transparency_keys: Vec<String>,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum RegistryTrustPolicy {
+    #[default]
+    ChecksumOnly,
+    Signed,
+    SignedTransparent,
+}
+
+impl RegistryTrustPolicy {
+    pub fn parse(value: &str) -> Result<Self, String> {
+        match value {
+            "checksum-only" => Ok(Self::ChecksumOnly),
+            "signed" => Ok(Self::Signed),
+            "signed+transparent" => Ok(Self::SignedTransparent),
+            other => Err(format!(
+                "unknown registry trust policy `{other}`; expected checksum-only, signed, or signed+transparent"
+            )),
+        }
+    }
+
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::ChecksumOnly => "checksum-only",
+            Self::Signed => "signed",
+            Self::SignedTransparent => "signed+transparent",
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -242,6 +277,8 @@ fn parse_manifest_document_at_root(
     };
     let mut dependencies = Vec::new();
     let ffi = parse_ffi_link_metadata(root, optional_table(document, "ffi")?)?;
+    let (trust, transparency_keys) =
+        parse_registry_trust_policy(optional_table(document, "trust")?)?;
 
     let package_table = optional_table(document, "package")?;
     if package_table.is_none() && optional_table(document, "workspace")?.is_some() {
@@ -293,7 +330,36 @@ fn parse_manifest_document_at_root(
         package,
         dependencies,
         ffi,
+        trust,
+        transparency_keys,
     })
+}
+
+fn parse_registry_trust_policy(
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<(RegistryTrustPolicy, Vec<String>), String> {
+    let Some(table) = table else {
+        return Ok((RegistryTrustPolicy::default(), Vec::new()));
+    };
+    let policy = optional_string_field(table, "trust", "policy")?
+        .unwrap_or_else(|| "checksum-only".to_string());
+    let policy = RegistryTrustPolicy::parse(&policy)?;
+    let transparency_keys = optional_string_array_field(table, "trust", "transparency-keys")?;
+    for key in &transparency_keys {
+        if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
+            return Err(
+                "manifest `trust.transparency-keys` entries must be 32-byte hexadecimal Ed25519 public keys"
+                    .to_string(),
+            );
+        }
+    }
+    if policy == RegistryTrustPolicy::SignedTransparent && transparency_keys.is_empty() {
+        return Err(
+            "manifest `trust.policy = \"signed+transparent\"` requires at least one `transparency-keys` entry"
+                .to_string(),
+        );
+    }
+    Ok((policy, transparency_keys))
 }
 
 fn parse_ffi_link_metadata(
@@ -616,7 +682,7 @@ fn parse_dependency_value(
         }
     } else if fields.contains_key("version") {
         let version = required_dependency_string(alias, fields, "version")?;
-        validate_version_like(&format!("dependency `{alias}` version"), &version)?;
+        validate_version_constraint(&format!("dependency `{alias}` version"), &version)?;
         DependencySource::Registry {
             version,
             registry: optional_dependency_string(alias, fields, "registry")?,
@@ -805,15 +871,15 @@ pub fn validate_dependency_alias(value: &str) -> Result<(), String> {
 }
 
 pub fn validate_version_like(label: &str, value: &str) -> Result<(), String> {
-    let valid = !value.is_empty()
-        && value
-            .chars()
-            .all(|ch| ch == '.' || ch == '-' || ch.is_ascii_alphanumeric());
-    if valid {
-        Ok(())
-    } else {
-        Err(format!("{label} `{value}` contains unsupported characters"))
-    }
+    PackageVersion::parse(value)
+        .map(|_| ())
+        .map_err(|err| format!("{label} `{value}` is invalid: {err}"))
+}
+
+pub fn validate_version_constraint(label: &str, value: &str) -> Result<(), String> {
+    VersionConstraint::parse(value)
+        .map(|_| ())
+        .map_err(|err| format!("{label} `{value}` is invalid: {err}"))
 }
 
 pub fn is_package_name(value: &str) -> bool {
@@ -840,4 +906,41 @@ fn is_legacy_package_name(value: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod trust_tests {
+    use super::*;
+
+    #[test]
+    fn parses_explicit_registry_trust_policies_and_defaults_to_checksum_only() {
+        let base = "[package]\nnamespace = \"app\"\nname = \"demo\"\nversion = \"1.0.0\"\nedition = \"2026\"\n";
+        let default = parse_manifest_text(base, Path::new("demo")).unwrap();
+        assert_eq!(default.trust, RegistryTrustPolicy::ChecksumOnly);
+        assert!(default.transparency_keys.is_empty());
+
+        for (value, expected) in [
+            ("signed", RegistryTrustPolicy::Signed),
+            ("signed+transparent", RegistryTrustPolicy::SignedTransparent),
+        ] {
+            let keys = if value == "signed+transparent" {
+                format!("transparency-keys = [\"{}\"]\n", "1".repeat(64))
+            } else {
+                String::new()
+            };
+            let manifest = format!("{base}\n[trust]\npolicy = \"{value}\"\n{keys}");
+            assert_eq!(
+                parse_manifest_text(&manifest, Path::new("demo"))
+                    .unwrap()
+                    .trust,
+                expected
+            );
+        }
+        let invalid = format!("{base}\n[trust]\npolicy = \"trust-me\"\n");
+        assert!(
+            parse_manifest_text(&invalid, Path::new("demo"))
+                .unwrap_err()
+                .contains("unknown registry trust policy")
+        );
+    }
 }

@@ -37,6 +37,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `ffi_abs`: `extern "C"` primitive `i32` parameter and return value mapping
 - `ffi_puts`: owned `CString` conversion and `const char *` extern parameter mapping
 - `ffi_opaque`: opaque `void *` handle round trip through a linked C fixture
+- `ffi_typed_handle`: nominal, non-interchangeable opaque handle round trip through a linked C fixture
 - `interface_display`: constrained generic `T: Interface` with a statically dispatched impl
 - `result_chain`: `Result` with `?`
 - `result_helpers`: `Result` predicates, fallback, map, map_err, and and_then helpers with `?`

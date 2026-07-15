@@ -65,15 +65,8 @@ pub(super) fn lower_call_value_expr(
                 return lower_array_new(path, type_args, args, structs, enums, span);
             }
             if is_ffi_builtin_call(callee) {
-                if !type_args.is_empty() {
-                    return Err(type_mismatch(
-                        path,
-                        span,
-                        "FFI builtins do not accept type arguments",
-                    ));
-                }
                 return lower_ffi_builtin(
-                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                    path, callee, args, type_args, scope, imports, signatures, structs, enums, span,
                 );
             }
             if is_string_builtin_call(callee) {
@@ -408,6 +401,12 @@ pub(super) fn lower_call_value_expr(
                 return lower_udp_socket_value_method(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
+            }
+            if type_args.is_empty() && is_nullable_value_method(callee, scope) {
+                return lower_nullable_value_method(path, callee, args, scope, span);
+            }
+            if type_args.is_empty() && is_owned_handle_value_method(callee, scope) {
+                return lower_owned_handle_value_method(path, callee, args, scope, span);
             }
             if type_args.is_empty() {
                 if let Some(lowered) = lower_option_value_method(

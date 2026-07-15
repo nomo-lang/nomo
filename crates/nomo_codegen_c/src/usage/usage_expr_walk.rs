@@ -354,6 +354,7 @@ pub(super) fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool)
         | ValueExpr::CollectionsStringMapNew
         | ValueExpr::CollectionsStringSetNew
         | ValueExpr::Variable(_)
+        | ValueExpr::FunctionRef(_)
         | ValueExpr::MutBorrow(_)
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine

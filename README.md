@@ -113,6 +113,9 @@ nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one 
 nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
 nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
 nomo clean [path]                 # remove generated build artifacts
+nomo cache stats [path]           # inspect the persistent incremental cache
+nomo cache clean [path]           # remove the persistent incremental cache
+nomo cache prune [path] --max-bytes <bytes> # evict oldest entries to a capacity
 nomo login --registry <url> --token <token> # store a registry bearer token in $NOMO_HOME/credentials.toml
 nomo owner add <owner/package> <user> --registry <url> # add a package owner through an HTTP/HTTPS registry
 nomo owner remove <owner/package> <user> --registry <url> # remove a package owner through an HTTP/HTTPS registry
@@ -138,6 +141,17 @@ cross-link paths are configured for macOS `x86_64 <-> aarch64` and GNU/Linux
 QEMU. `--emit-c` can emit C for every recognized target even when a native
 cross linker is not configured. See
 [Cross Compilation](docs/cross-compilation.md).
+
+`nomo check` and the C-generation stage of `nomo build` reuse conservative,
+content-addressed results across processes. Entries live under
+`.nomo/cache/incremental/v1`, are written through synced temporary files and
+atomic replacement, and carry both query-key and value checksums. A malformed,
+incompatible, or truncated entry is deleted and recomputed as a normal miss.
+The default capacity is 512 MiB; set `NOMO_INCREMENTAL_CACHE_MAX_BYTES` or run
+`nomo cache prune` to apply a different limit. `nomo clean` removes build
+artifacts but intentionally preserves this rebuildable cache; `nomo cache
+clean` removes it separately. See
+[Persistent Incremental Cache](docs/incremental-cache.md).
 
 Typed C interop supports nominal opaque handles, explicit nullable and
 owned/borrowed handle types, fixed-layout `#[repr(C)]` records, and restricted
@@ -667,8 +681,10 @@ The library also exposes the `lexer`, `parser`, `ast`, `compiler`, `codegen`,
 `diagnostic`, `incremental`, `semantic`, and `project` modules. The
 `incremental` module owns content fingerprints, target/toolchain-aware query
 keys, dependency edges, transitive invalidation, cache statistics and immutable
-generation snapshots. `IncrementalSemanticSession` caches conservative
-project-check and symbol queries while preserving clean-result equivalence.
+generation snapshots. `PersistentQueryCache` adds schema-versioned atomic disk
+storage, checksummed corruption recovery, and bounded eviction.
+`IncrementalSemanticSession` caches conservative project-check and symbol
+queries while preserving clean-result equivalence.
 The `semantic` module provides
 current-document symbol queries plus project-aware hover, definition, and
 reference queries over local `src/**/*.nomo` modules.

@@ -1,3 +1,4 @@
 /target/
 /performance/results/
+.nomo/
 examples/*/build/

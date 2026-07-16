@@ -2,6 +2,7 @@ use crate::compiler::check_source_text_with_project_modules_and_overrides;
 #[cfg(test)]
 use crate::compiler::{ExternalModule, ModuleId};
 use crate::diagnostic::Diagnostic;
+use crate::incremental::{PersistentQueryCache, project_query_key};
 #[cfg(test)]
 use nomo_lockfile::parse_lockfile_text;
 pub use nomo_lockfile::{DependencyGraph, ResolvedDependency};
@@ -209,6 +210,71 @@ impl Project {
 
 pub fn check_project(project: &Project) -> Result<(), Diagnostic> {
     check_project_with_overrides(project, &[])
+}
+
+/// Checks a project while reusing a conservative, content-addressed success
+/// result across CLI processes. Cache failures are ignored because the cache is
+/// an optimization and never a build input.
+pub fn check_project_with_persistent_cache(project: &Project) -> Result<(), Diagnostic> {
+    let context = project_module_context(project).map_err(|message| {
+        Diagnostic::new(
+            "E0901",
+            message,
+            &project.root.join("nomo.toml"),
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let source = fs::read_to_string(&project.main).map_err(|error| {
+        Diagnostic::new(
+            "E0001",
+            format!("failed to read source file: {error}"),
+            &project.main,
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let target = nomo_target::TargetTriple::host().map_err(|message| {
+        Diagnostic::new(
+            "E0901",
+            message,
+            &project.root.join("nomo.toml"),
+            1,
+            1,
+            1,
+            "",
+        )
+    })?;
+    let key = project_query_key(
+        project,
+        &context.external_modules,
+        &[],
+        &target,
+        "semantic-check-success",
+        format!("{}:{}", project.name, project.main.display()),
+    );
+    let cache_root = project
+        .workspace_root
+        .as_deref()
+        .unwrap_or(project.root.as_path());
+    let cache = PersistentQueryCache::at_root(cache_root);
+    if cache.get::<bool>(&key) == Some(true) {
+        return Ok(());
+    }
+    check_source_text_with_project_modules_and_overrides(
+        &project.main,
+        &source,
+        Some(&context.local_source_root),
+        &context.external_import_roots,
+        &context.external_modules,
+        &[],
+    )?;
+    let _ = cache.insert(&key, &true);
+    Ok(())
 }
 
 pub fn check_project_with_overrides(

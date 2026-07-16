@@ -4,11 +4,17 @@
 //! an optimization, never a build input, and callers must attach every file or
 //! upstream query that can affect a result.
 
+use serde::de::DeserializeOwned;
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::{BTreeMap, BTreeSet, VecDeque};
 use std::fmt;
-use std::path::Path;
+use std::fs::{self, OpenOptions};
+use std::io::Write;
+use std::path::{Path, PathBuf};
 use std::sync::Mutex;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::Program;
 use crate::diagnostic::Diagnostic;
@@ -17,8 +23,12 @@ use crate::semantic::{self, SemanticSymbol};
 use nomo_target::TargetTriple;
 
 pub const QUERY_SCHEMA_VERSION: u32 = 1;
+pub const PERSISTENT_CACHE_SCHEMA_VERSION: u32 = 1;
+pub const DEFAULT_PERSISTENT_CACHE_MAX_BYTES: u64 = 512 * 1024 * 1024;
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+static TEMP_FILE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ContentFingerprint(String);
 
 impl ContentFingerprint {
@@ -71,7 +81,7 @@ impl FingerprintBuilder {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct InputId(String);
 
 impl InputId {
@@ -88,7 +98,7 @@ impl InputId {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct QueryKey {
     pub schema: u32,
     pub toolchain: String,
@@ -116,7 +126,7 @@ impl QueryKey {
     }
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, PartialOrd, Ord)]
 pub enum QueryDependency {
     Input(InputId),
     Query(QueryKey),
@@ -282,6 +292,362 @@ impl<V: Clone> QueryCache<V> {
     }
 }
 
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct PersistentCacheStats {
+    pub hits: u64,
+    pub misses: u64,
+    pub writes: u64,
+    pub corruptions: u64,
+    pub evictions: u64,
+    pub entries: usize,
+    pub bytes: u64,
+    pub capacity_bytes: u64,
+}
+
+#[derive(Debug, Serialize, Deserialize)]
+struct PersistentCacheEntry {
+    schema: u32,
+    key: QueryKey,
+    value_sha256: String,
+    value_hex: String,
+    written_at_unix_seconds: u64,
+}
+
+#[derive(Debug)]
+struct PersistentCacheCounters {
+    hits: AtomicU64,
+    misses: AtomicU64,
+    writes: AtomicU64,
+    corruptions: AtomicU64,
+    evictions: AtomicU64,
+}
+
+impl Default for PersistentCacheCounters {
+    fn default() -> Self {
+        Self {
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
+            writes: AtomicU64::new(0),
+            corruptions: AtomicU64::new(0),
+            evictions: AtomicU64::new(0),
+        }
+    }
+}
+
+/// A rebuildable, content-addressed disk cache for compiler query values.
+///
+/// Entries live below a schema-versioned directory. Writers create and sync a
+/// temporary file before atomically replacing the final entry, so concurrent
+/// readers never observe a partial value. Any malformed entry, mismatched key,
+/// or value checksum failure is treated as a miss and removed.
+#[derive(Debug)]
+pub struct PersistentQueryCache {
+    base: PathBuf,
+    root: PathBuf,
+    max_bytes: u64,
+    counters: PersistentCacheCounters,
+}
+
+impl PersistentQueryCache {
+    pub fn at_root(project_or_workspace_root: &Path) -> Self {
+        Self::with_max_bytes(
+            project_or_workspace_root,
+            persistent_cache_capacity_from_env(),
+        )
+    }
+
+    pub fn with_max_bytes(project_or_workspace_root: &Path, max_bytes: u64) -> Self {
+        let base = incremental_cache_base(project_or_workspace_root);
+        let root = base.join(format!("v{PERSISTENT_CACHE_SCHEMA_VERSION}"));
+        Self {
+            base,
+            root,
+            max_bytes,
+            counters: PersistentCacheCounters::default(),
+        }
+    }
+
+    pub fn base(&self) -> &Path {
+        &self.base
+    }
+
+    pub fn root(&self) -> &Path {
+        &self.root
+    }
+
+    pub fn get<V: DeserializeOwned>(&self, key: &QueryKey) -> Option<V> {
+        let path = self.entry_path(key);
+        let bytes = match fs::read(&path) {
+            Ok(bytes) => bytes,
+            Err(_) => {
+                self.counters.misses.fetch_add(1, Ordering::Relaxed);
+                return None;
+            }
+        };
+        let decoded = serde_json::from_slice::<PersistentCacheEntry>(&bytes)
+            .map_err(|_| ())
+            .and_then(|entry| {
+                if entry.schema != PERSISTENT_CACHE_SCHEMA_VERSION || entry.key != *key {
+                    return Err(());
+                }
+                let value_bytes = decode_hex(&entry.value_hex).ok_or(())?;
+                if sha256_hex(&value_bytes) != entry.value_sha256 {
+                    return Err(());
+                }
+                serde_json::from_slice::<V>(&value_bytes).map_err(|_| ())
+            });
+        match decoded {
+            Ok(value) => {
+                self.counters.hits.fetch_add(1, Ordering::Relaxed);
+                trace_persistent_cache("hit", key, &path);
+                Some(value)
+            }
+            Err(()) => {
+                self.counters.misses.fetch_add(1, Ordering::Relaxed);
+                self.counters.corruptions.fetch_add(1, Ordering::Relaxed);
+                let _ = fs::remove_file(&path);
+                trace_persistent_cache("corrupt", key, &path);
+                None
+            }
+        }
+    }
+
+    pub fn insert<V: Serialize>(&self, key: &QueryKey, value: &V) -> Result<(), String> {
+        let value_bytes = serde_json::to_vec(value).map_err(|error| error.to_string())?;
+        let entry = PersistentCacheEntry {
+            schema: PERSISTENT_CACHE_SCHEMA_VERSION,
+            key: key.clone(),
+            value_sha256: sha256_hex(&value_bytes),
+            value_hex: encode_hex(&value_bytes),
+            written_at_unix_seconds: SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap_or_default()
+                .as_secs(),
+        };
+        let bytes = serde_json::to_vec(&entry).map_err(|error| error.to_string())?;
+        let path = self.entry_path(key);
+        let parent = path
+            .parent()
+            .ok_or_else(|| format!("cache entry has no parent: {}", path.display()))?;
+        fs::create_dir_all(parent).map_err(|error| error.to_string())?;
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        let timestamp = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let temp = parent.join(format!(
+            ".{}.{}.{}.{}.tmp",
+            path.file_stem()
+                .and_then(|name| name.to_str())
+                .unwrap_or("entry"),
+            std::process::id(),
+            timestamp,
+            sequence
+        ));
+        let write_result = (|| -> Result<(), String> {
+            let mut file = OpenOptions::new()
+                .write(true)
+                .create_new(true)
+                .open(&temp)
+                .map_err(|error| error.to_string())?;
+            file.write_all(&bytes).map_err(|error| error.to_string())?;
+            file.sync_all().map_err(|error| error.to_string())?;
+            drop(file);
+            atomic_replace(&temp, &path)?;
+            sync_directory(parent);
+            Ok(())
+        })();
+        if write_result.is_err() {
+            let _ = fs::remove_file(&temp);
+        }
+        write_result?;
+        self.counters.writes.fetch_add(1, Ordering::Relaxed);
+        trace_persistent_cache("write", key, &path);
+        self.prune()?;
+        Ok(())
+    }
+
+    pub fn prune(&self) -> Result<usize, String> {
+        if !self.root.exists() {
+            return Ok(0);
+        }
+        let mut files = Vec::new();
+        collect_cache_files(&self.root, &mut files)?;
+        let mut entries = Vec::new();
+        let mut total = 0_u64;
+        for path in files {
+            if path.extension().and_then(|extension| extension.to_str()) == Some("tmp") {
+                let stale = fs::metadata(&path)
+                    .and_then(|metadata| metadata.modified())
+                    .ok()
+                    .and_then(|modified| SystemTime::now().duration_since(modified).ok())
+                    .is_some_and(|age| age.as_secs() >= 60 * 60);
+                if stale {
+                    let _ = fs::remove_file(path);
+                }
+                continue;
+            }
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            let metadata = match fs::metadata(&path) {
+                Ok(metadata) => metadata,
+                Err(_) => continue,
+            };
+            let length = metadata.len();
+            total = total.saturating_add(length);
+            entries.push((metadata.modified().unwrap_or(UNIX_EPOCH), path, length));
+        }
+        entries.sort_by(|left, right| left.0.cmp(&right.0).then_with(|| left.1.cmp(&right.1)));
+        let mut removed = 0;
+        for (_, path, length) in entries {
+            if total <= self.max_bytes {
+                break;
+            }
+            if fs::remove_file(path).is_ok() {
+                total = total.saturating_sub(length);
+                removed += 1;
+            }
+        }
+        self.counters
+            .evictions
+            .fetch_add(removed as u64, Ordering::Relaxed);
+        Ok(removed)
+    }
+
+    pub fn stats(&self) -> Result<PersistentCacheStats, String> {
+        let mut files = Vec::new();
+        if self.root.exists() {
+            collect_cache_files(&self.root, &mut files)?;
+        }
+        let mut entries = 0;
+        let mut bytes = 0_u64;
+        for path in files {
+            if path.extension().and_then(|extension| extension.to_str()) != Some("json") {
+                continue;
+            }
+            if let Ok(metadata) = fs::metadata(path) {
+                entries += 1;
+                bytes = bytes.saturating_add(metadata.len());
+            }
+        }
+        Ok(PersistentCacheStats {
+            hits: self.counters.hits.load(Ordering::Relaxed),
+            misses: self.counters.misses.load(Ordering::Relaxed),
+            writes: self.counters.writes.load(Ordering::Relaxed),
+            corruptions: self.counters.corruptions.load(Ordering::Relaxed),
+            evictions: self.counters.evictions.load(Ordering::Relaxed),
+            entries,
+            bytes,
+            capacity_bytes: self.max_bytes,
+        })
+    }
+
+    fn entry_path(&self, key: &QueryKey) -> PathBuf {
+        let encoded = serde_json::to_vec(key).expect("query keys must serialize");
+        let digest = sha256_hex(&encoded);
+        self.root.join(&digest[..2]).join(format!("{digest}.json"))
+    }
+}
+
+pub fn incremental_cache_base(project_or_workspace_root: &Path) -> PathBuf {
+    project_or_workspace_root.join(".nomo/cache/incremental")
+}
+
+pub fn clean_incremental_cache(project_or_workspace_root: &Path) -> Result<PathBuf, String> {
+    let base = incremental_cache_base(project_or_workspace_root);
+    if base.exists() {
+        fs::remove_dir_all(&base).map_err(|error| error.to_string())?;
+    }
+    Ok(base)
+}
+
+fn persistent_cache_capacity_from_env() -> u64 {
+    std::env::var("NOMO_INCREMENTAL_CACHE_MAX_BYTES")
+        .ok()
+        .and_then(|value| value.parse::<u64>().ok())
+        .unwrap_or(DEFAULT_PERSISTENT_CACHE_MAX_BYTES)
+}
+
+fn collect_cache_files(root: &Path, files: &mut Vec<PathBuf>) -> Result<(), String> {
+    let entries = fs::read_dir(root).map_err(|error| error.to_string())?;
+    for entry in entries {
+        let path = entry.map_err(|error| error.to_string())?.path();
+        if path.is_dir() {
+            collect_cache_files(&path, files)?;
+        } else {
+            files.push(path);
+        }
+    }
+    Ok(())
+}
+
+fn atomic_replace(temp: &Path, final_path: &Path) -> Result<(), String> {
+    match fs::rename(temp, final_path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {
+            fs::remove_file(final_path).map_err(|remove_error| remove_error.to_string())?;
+            fs::rename(temp, final_path).map_err(|rename_error| rename_error.to_string())
+        }
+        Err(error) => Err(error.to_string()),
+    }
+}
+
+fn sync_directory(path: &Path) {
+    if let Ok(directory) = fs::File::open(path) {
+        let _ = directory.sync_all();
+    }
+}
+
+fn sha256_hex(bytes: &[u8]) -> String {
+    format!("{:x}", Sha256::digest(bytes))
+}
+
+fn encode_hex(bytes: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut encoded = String::with_capacity(bytes.len() * 2);
+    for byte in bytes {
+        encoded.push(HEX[(byte >> 4) as usize] as char);
+        encoded.push(HEX[(byte & 0x0f) as usize] as char);
+    }
+    encoded
+}
+
+fn decode_hex(encoded: &str) -> Option<Vec<u8>> {
+    if !encoded.len().is_multiple_of(2) {
+        return None;
+    }
+    encoded
+        .as_bytes()
+        .chunks_exact(2)
+        .map(|pair| {
+            let high = decode_hex_digit(pair[0])?;
+            let low = decode_hex_digit(pair[1])?;
+            Some((high << 4) | low)
+        })
+        .collect()
+}
+
+fn decode_hex_digit(digit: u8) -> Option<u8> {
+    match digit {
+        b'0'..=b'9' => Some(digit - b'0'),
+        b'a'..=b'f' => Some(digit - b'a' + 10),
+        b'A'..=b'F' => Some(digit - b'A' + 10),
+        _ => None,
+    }
+}
+
+fn trace_persistent_cache(event: &str, key: &QueryKey, path: &Path) {
+    if std::env::var_os("NOMO_INCREMENTAL_TRACE").is_some() {
+        eprintln!(
+            "incremental-cache {event} {}:{} {}",
+            key.namespace,
+            key.identity,
+            path.display()
+        );
+    }
+}
+
 fn invalidate_queries<V>(state: &mut CacheState<V>, roots: BTreeSet<QueryKey>) -> usize {
     let mut queue = roots.into_iter().collect::<VecDeque<_>>();
     let mut removed = 0;
@@ -424,6 +790,18 @@ impl IncrementalSemanticSession {
 struct SemanticInputs {
     fingerprint: ContentFingerprint,
     dependencies: Vec<QueryDependency>,
+}
+
+pub(crate) fn project_query_key(
+    project: &Project,
+    external_modules: &[crate::compiler::ExternalModule],
+    source_overrides: &[(std::path::PathBuf, String)],
+    target: &TargetTriple,
+    namespace: &str,
+    identity: impl Into<String>,
+) -> QueryKey {
+    let inputs = semantic_inputs(project, external_modules, source_overrides);
+    QueryKey::new(target.to_string(), namespace, identity, inputs.fingerprint)
 }
 
 fn semantic_inputs(
@@ -623,5 +1001,92 @@ mod tests {
         .unwrap_err();
         assert_eq!(incremental, clean);
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn persistent_cache_round_trips_and_recovers_from_corruption() {
+        let root = temporary_root("persistent-round-trip");
+        let cache = PersistentQueryCache::with_max_bytes(&root, 1024 * 1024);
+        let query = key("codegen:app.main", "source");
+        assert_eq!(cache.get::<String>(&query), None);
+
+        cache.insert(&query, &"generated-c".to_string()).unwrap();
+        assert_eq!(cache.get(&query), Some("generated-c".to_string()));
+        let stats = cache.stats().unwrap();
+        assert_eq!(stats.entries, 1);
+        assert_eq!(stats.hits, 1);
+        assert_eq!(stats.misses, 1);
+
+        let mut files = Vec::new();
+        collect_cache_files(cache.root(), &mut files).unwrap();
+        let entry = files
+            .into_iter()
+            .find(|path| path.extension().and_then(|extension| extension.to_str()) == Some("json"))
+            .unwrap();
+        std::fs::write(&entry, b"{truncated").unwrap();
+        assert_eq!(cache.get::<String>(&query), None);
+        assert!(!entry.exists());
+        assert_eq!(cache.stats().unwrap().corruptions, 1);
+
+        cache.insert(&query, &"recovered".to_string()).unwrap();
+        assert_eq!(cache.get(&query), Some("recovered".to_string()));
+        clean_incremental_cache(&root).unwrap();
+        assert!(!cache.base().exists());
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_cache_prunes_oldest_entries_to_capacity() {
+        let root = temporary_root("persistent-prune");
+        let cache = PersistentQueryCache::with_max_bytes(&root, 900);
+        for index in 0..4 {
+            cache
+                .insert(
+                    &key(&format!("codegen:{index}"), &format!("source-{index}")),
+                    &"x".repeat(400),
+                )
+                .unwrap();
+        }
+        let stats = cache.stats().unwrap();
+        assert!(stats.bytes <= stats.capacity_bytes);
+        assert!(stats.entries < 4);
+        assert!(stats.evictions > 0);
+        clean_incremental_cache(&root).unwrap();
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn persistent_checks_match_clean_checks_under_randomized_edits() {
+        let root = temporary_root("persistent-equivalence");
+        std::fs::create_dir_all(&root).unwrap();
+        let project = crate::project::create_project(&root, "persistent-demo").unwrap();
+        let original = std::fs::read_to_string(&project.main).unwrap();
+        let mut state = 0x4d595df4d0f33173_u64;
+        for iteration in 0..32 {
+            state = state
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            let source = match state % 4 {
+                0 => original.replace("Hello, Nomo", &format!("edit-{iteration}")),
+                1 => original.replace("let message: string", "let message: i64"),
+                2 => original.replace("return \"Hello, Nomo\"", "return 42"),
+                _ => original.clone(),
+            };
+            std::fs::write(&project.main, source).unwrap();
+            let incremental = crate::project::check_project_with_persistent_cache(&project)
+                .map_err(|diagnostic| diagnostic.json());
+            let clean =
+                crate::project::check_project(&project).map_err(|diagnostic| diagnostic.json());
+            assert_eq!(incremental, clean, "edit {iteration}");
+        }
+        std::fs::remove_dir_all(root).unwrap();
+    }
+
+    fn temporary_root(label: &str) -> PathBuf {
+        let sequence = TEMP_FILE_SEQUENCE.fetch_add(1, Ordering::Relaxed);
+        std::env::temp_dir().join(format!(
+            "nomo-incremental-{label}-{}-{sequence}",
+            std::process::id()
+        ))
     }
 }

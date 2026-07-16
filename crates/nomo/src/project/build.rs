@@ -4,6 +4,7 @@ use super::{
     project_module_context_for_target_with_options,
 };
 use crate::compiler::compile_source_to_c_with_project_modules_for_target;
+use crate::incremental::{PersistentQueryCache, project_query_key};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::TargetTriple;
 use std::fs;
@@ -51,14 +52,34 @@ fn build_project_impl(
     let ffi_link_metadata =
         project_ffi_link_metadata_for_target_with_options(project, options, target)
             .map_err(BuildError::Message)?;
-    let c = compile_source_to_c_with_project_modules_for_target(
-        &project.main,
-        Some(&context.local_source_root),
-        &context.external_import_roots,
+    let cache_root = project
+        .workspace_root
+        .as_deref()
+        .unwrap_or(project.root.as_path());
+    let cache = PersistentQueryCache::at_root(cache_root);
+    let cache_key = project_query_key(
+        project,
         &context.external_modules,
+        &[],
         target,
-    )
-    .map_err(BuildError::Diagnostic)?;
+        "codegen-c",
+        format!("{}:{}", project.name, project.main.display()),
+    );
+    let c = match cache.get::<String>(&cache_key) {
+        Some(cached) => cached,
+        None => {
+            let generated = compile_source_to_c_with_project_modules_for_target(
+                &project.main,
+                Some(&context.local_source_root),
+                &context.external_import_roots,
+                &context.external_modules,
+                target,
+            )
+            .map_err(BuildError::Diagnostic)?;
+            let _ = cache.insert(&cache_key, &generated);
+            generated
+        }
+    };
     let target_dir = if target_scoped_artifacts {
         project.root.join("build").join(target.to_string())
     } else {

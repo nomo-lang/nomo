@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 const NOMO_HELP: &str = concat!(
     "nomo ",
     env!("CARGO_PKG_VERSION"),
-    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
+    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
 );
 
 const NOMOC_HELP: &str = concat!(
@@ -1782,6 +1782,137 @@ fn nomo_new_run_and_clean_project() {
     assert!(!project.join("build").exists());
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_persistent_cache_survives_processes_and_recovers_from_corruption() {
+    let root = temp_test_root("persistent-cache-cli");
+    reset_dir(&root);
+    let created = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("new")
+        .arg("cached")
+        .current_dir(&root)
+        .output()
+        .unwrap();
+    assert!(
+        created.status.success(),
+        "{}",
+        String::from_utf8_lossy(&created.stderr)
+    );
+    let project = root.join("cached");
+    let source = project.join("src/main.nomo");
+    let original = fs::read_to_string(&source).unwrap();
+
+    let cold_check = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .env("NOMO_INCREMENTAL_TRACE", "1")
+        .output()
+        .unwrap();
+    assert!(cold_check.status.success());
+    assert!(
+        String::from_utf8_lossy(&cold_check.stderr)
+            .contains("incremental-cache write semantic-check-success"),
+        "{}",
+        String::from_utf8_lossy(&cold_check.stderr)
+    );
+
+    let warm_check = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .env("NOMO_INCREMENTAL_TRACE", "1")
+        .output()
+        .unwrap();
+    assert!(warm_check.status.success());
+    assert!(
+        String::from_utf8_lossy(&warm_check.stderr)
+            .contains("incremental-cache hit semantic-check-success"),
+        "{}",
+        String::from_utf8_lossy(&warm_check.stderr)
+    );
+
+    for expected_event in ["write", "hit"] {
+        let build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("build")
+            .arg(&project)
+            .arg("--emit-c")
+            .env("NOMO_INCREMENTAL_TRACE", "1")
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+        assert!(
+            String::from_utf8_lossy(&build.stderr)
+                .contains(&format!("incremental-cache {expected_event} codegen-c")),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+    }
+
+    let stats = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["cache", "stats"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(stats.status.success());
+    let stats_stdout = String::from_utf8_lossy(&stats.stdout);
+    assert!(stats_stdout.contains("schema 1\n"), "{stats_stdout}");
+    assert!(stats_stdout.contains("entries 2\n"), "{stats_stdout}");
+
+    let cache_root = project.join(".nomo/cache/incremental/v1");
+    let check_entry = find_incremental_cache_entry(&cache_root, "semantic-check-success");
+    fs::write(&check_entry, b"{truncated").unwrap();
+    let recovered = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .env("NOMO_INCREMENTAL_TRACE", "1")
+        .output()
+        .unwrap();
+    assert!(recovered.status.success());
+    let recovered_stderr = String::from_utf8_lossy(&recovered.stderr);
+    assert!(recovered_stderr.contains("incremental-cache corrupt"));
+    assert!(recovered_stderr.contains("incremental-cache write"));
+
+    fs::write(
+        &source,
+        original.replace("let message: string", "let message: i64"),
+    )
+    .unwrap();
+    let changed = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        !changed.status.success(),
+        "changed source reused stale success"
+    );
+    fs::write(&source, original).unwrap();
+
+    let pruned = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["cache", "prune"])
+        .arg(&project)
+        .args(["--max-bytes", "0"])
+        .output()
+        .unwrap();
+    assert!(pruned.status.success());
+    assert!(
+        String::from_utf8_lossy(&pruned.stdout).contains("entries 0\n"),
+        "{}",
+        String::from_utf8_lossy(&pruned.stdout)
+    );
+
+    let cleaned = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["cache", "clean"])
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(cleaned.status.success());
+    assert!(!project.join(".nomo/cache/incremental").exists());
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -10713,6 +10844,35 @@ fn find_git_cache_checkout(project: &Path, alias: &str) -> PathBuf {
         return checkouts[0].clone();
     }
     panic!("missing git cache checkout for alias `{alias}`");
+}
+
+fn find_incremental_cache_entry(root: &Path, namespace: &str) -> PathBuf {
+    find_incremental_cache_entry_if_present(root, namespace).unwrap_or_else(|| {
+        panic!(
+            "missing incremental cache entry for namespace `{namespace}` below {}",
+            root.display()
+        )
+    })
+}
+
+fn find_incremental_cache_entry_if_present(root: &Path, namespace: &str) -> Option<PathBuf> {
+    for entry in fs::read_dir(root)
+        .unwrap_or_else(|error| panic!("failed to read {}: {error}", root.display()))
+    {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            if let Some(found) = find_incremental_cache_entry_if_present(&path, namespace) {
+                return Some(found);
+            }
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("json")
+            && fs::read_to_string(&path)
+                .map(|text| text.contains(&format!("\"namespace\":\"{namespace}\"")))
+                .unwrap_or(false)
+        {
+            return Some(path);
+        }
+    }
+    None
 }
 
 fn strip_checksum_lines(text: &str) -> String {

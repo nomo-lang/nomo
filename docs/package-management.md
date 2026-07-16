@@ -45,6 +45,24 @@ files participate in package checksums, publish archives, and vendoring.
 and source dependencies; standalone script mode does not read a manifest and
 therefore does not use `[ffi]`.
 
+Target-specific native metadata uses restricted `arch`, `os`, and `env`
+selectors. Each selector accepts one string or a set of strings:
+
+```toml
+[[ffi.target]]
+os = ["linux"]
+sources = ["native/linux.c"]
+libraries = ["pthread"]
+
+[[ffi.target]]
+os = "macos"
+frameworks = ["Security"]
+```
+
+Matching entries extend the common `[ffi]` metadata. Non-matching sources,
+libraries, search paths, frameworks, and link arguments are not passed to the
+target compiler.
+
 ## Dependencies
 
 Dependency keys are source import aliases. For example:
@@ -54,6 +72,7 @@ Dependency keys are source import aliases. For example:
 local_utils = { package = "local/utils", path = "../utils" }
 fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
 json = { package = "nomo-lang/json", version = "^1.2.0" }
+winapi = { package = "nomo-lang/winapi", version = "1.0.0", target = { os = "windows", arch = ["x86_64", "arm64"] } }
 ```
 
 Each dependency must declare exactly one source kind:
@@ -62,6 +81,14 @@ Each dependency must declare exactly one source kind:
 - `git`: git package source, cached under `.nomo/deps/git/`.
 - `version`: registry source fetched from the configured file, HTTP, or HTTPS registry
   and cached under `.nomo/cache/registry/`.
+
+An optional `target = { ... }` predicate makes an edge active only when every
+specified dimension matches; multiple values within one dimension form a set.
+`amd64`, `arm64`, and `macos` are accepted and canonicalized to `x86_64`,
+`aarch64`, and `darwin`. Conditions that cannot match a supported target are
+rejected. Resolution records every known edge in `nomo.lock`; compilation,
+workspace member ordering, module loading, and FFI aggregation filter that
+complete graph using one canonical target context.
 
 Project imports use dependency aliases:
 

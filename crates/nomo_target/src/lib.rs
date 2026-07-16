@@ -112,7 +112,7 @@ pub struct AbiFacts {
     pub endianness: Endianness,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct TargetTriple {
     arch: Architecture,
     vendor: Vendor,
@@ -176,6 +176,47 @@ impl TargetTriple {
         }
     }
 
+    pub const fn supported() -> [Self; 6] {
+        [
+            Self::new(
+                Architecture::X86_64,
+                Vendor::Unknown,
+                OperatingSystem::Linux,
+                Environment::Gnu,
+            ),
+            Self::new(
+                Architecture::Aarch64,
+                Vendor::Unknown,
+                OperatingSystem::Linux,
+                Environment::Gnu,
+            ),
+            Self::new(
+                Architecture::X86_64,
+                Vendor::Apple,
+                OperatingSystem::Darwin,
+                Environment::None,
+            ),
+            Self::new(
+                Architecture::Aarch64,
+                Vendor::Apple,
+                OperatingSystem::Darwin,
+                Environment::None,
+            ),
+            Self::new(
+                Architecture::X86_64,
+                Vendor::Pc,
+                OperatingSystem::Windows,
+                Environment::Msvc,
+            ),
+            Self::new(
+                Architecture::Aarch64,
+                Vendor::Pc,
+                OperatingSystem::Windows,
+                Environment::Msvc,
+            ),
+        ]
+    }
+
     pub const fn architecture(&self) -> Architecture {
         self.arch
     }
@@ -232,8 +273,25 @@ impl TargetTriple {
                 args: vec!["-target".to_string(), self.llvm_triple()],
             });
         }
+        if host.os == OperatingSystem::Linux
+            && self.os == OperatingSystem::Linux
+            && host.vendor == Vendor::Unknown
+            && self.vendor == Vendor::Unknown
+            && host.env == Environment::Gnu
+            && self.env == Environment::Gnu
+            && host.arch != self.arch
+        {
+            let program = match self.arch {
+                Architecture::X86_64 => "x86_64-linux-gnu-gcc",
+                Architecture::Aarch64 => "aarch64-linux-gnu-gcc",
+            };
+            return Ok(CToolchain {
+                program: program.to_string(),
+                args: Vec::new(),
+            });
+        }
         Err(format!(
-            "cross compilation from `{host}` to `{self}` is not configured; the first supported cross path is x86_64-apple-darwin-none <-> aarch64-apple-darwin-none"
+            "cross compilation from `{host}` to `{self}` is not configured; supported native cross paths are x86_64-apple-darwin-none <-> aarch64-apple-darwin-none and x86_64-unknown-linux-gnu <-> aarch64-unknown-linux-gnu"
         ))
     }
 }
@@ -355,6 +413,36 @@ mod tests {
         assert_eq!(
             target.c_toolchain_from(&host).unwrap().args,
             ["-target", "x86_64-apple-darwin"]
+        );
+    }
+
+    #[test]
+    fn linux_cross_arch_uses_gnu_cross_compiler() {
+        let host = "x86_64-unknown-linux-gnu".parse::<TargetTriple>().unwrap();
+        let target = "aarch64-unknown-linux-gnu".parse::<TargetTriple>().unwrap();
+        assert_eq!(
+            target.c_toolchain_from(&host).unwrap(),
+            CToolchain {
+                program: "aarch64-linux-gnu-gcc".to_string(),
+                args: Vec::new(),
+            }
+        );
+    }
+
+    #[test]
+    fn supported_targets_are_canonical_and_complete() {
+        let targets = TargetTriple::supported();
+        assert_eq!(targets.len(), 6);
+        assert_eq!(
+            targets.map(|target| target.to_string()),
+            [
+                "x86_64-unknown-linux-gnu",
+                "aarch64-unknown-linux-gnu",
+                "x86_64-apple-darwin-none",
+                "aarch64-apple-darwin-none",
+                "x86_64-pc-windows-msvc",
+                "aarch64-pc-windows-msvc",
+            ]
         );
     }
 }

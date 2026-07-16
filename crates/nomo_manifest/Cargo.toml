@@ -5,7 +5,9 @@ edition.workspace = true
 license.workspace = true
 
 [dependencies]
+nomo-target.workspace = true
 semver.workspace = true
+serde.workspace = true
 toml.workspace = true
 
 [lib]

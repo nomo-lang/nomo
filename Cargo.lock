@@ -475,6 +475,7 @@ dependencies = [
  "nomo-graph",
  "nomo-manifest",
  "nomo-supply-chain",
+ "nomo-target",
  "serde",
  "toml",
 ]
@@ -492,7 +493,9 @@ dependencies = [
 name = "nomo-manifest"
 version = "0.0.0-20260713145859"
 dependencies = [
+ "nomo-target",
  "semver",
+ "serde",
  "toml",
 ]
 

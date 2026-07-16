@@ -1,12 +1,13 @@
 use super::{
     DependencyResolutionOptions, PackageDependency, PackageGraph, PackageId, PackageNode, Project,
-    discover_project, project_package_graph_with_options,
+    discover_project, project_package_graph_for_target_with_options,
 };
 use nomo_graph::DirectedGraph;
 use nomo_manifest::{
     Dependency, DependencySource, WorkspaceContext, manifest_document_has_workspace,
     parse_manifest_at_root, parse_manifest_document, parse_workspace_context,
 };
+use nomo_target::TargetTriple;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -34,6 +35,7 @@ pub struct WorkspaceGraph {
     package_graphs: BTreeMap<PackageId, PackageGraph>,
     resolved_packages: BTreeMap<PackageId, PackageNode>,
     package_graphs_resolved: bool,
+    target: TargetTriple,
 }
 
 impl WorkspaceGraph {
@@ -122,7 +124,11 @@ impl WorkspaceGraph {
     ) -> Result<(), String> {
         let mut package_graphs = BTreeMap::new();
         for member in self.member_nodes.values() {
-            let package_graph = project_package_graph_with_options(&member.project, options)?;
+            let package_graph = project_package_graph_for_target_with_options(
+                &member.project,
+                options,
+                &self.target,
+            )?;
             if package_graph.root() != &member.id {
                 return Err(format!(
                     "workspace member `{}` produced package graph rooted at `{}`",
@@ -141,6 +147,14 @@ impl WorkspaceGraph {
 }
 
 pub fn discover_workspace(path: &Path) -> Result<WorkspaceGraph, String> {
+    let target = TargetTriple::host()?;
+    discover_workspace_for_target(path, &target)
+}
+
+pub fn discover_workspace_for_target(
+    path: &Path,
+    target: &TargetTriple,
+) -> Result<WorkspaceGraph, String> {
     let source_file = path.extension().and_then(|ext| ext.to_str()) == Some("nomo");
     let search_root = if source_file {
         path.parent()
@@ -162,7 +176,7 @@ pub fn discover_workspace(path: &Path) -> Result<WorkspaceGraph, String> {
     if !context.default_members.is_empty() && default_members.is_empty() {
         return Err("workspace default-members did not select any included package".to_string());
     }
-    let member_model = build_workspace_member_model(&members, &default_members)?;
+    let member_model = build_workspace_member_model(&members, &default_members, target)?;
     Ok(WorkspaceGraph {
         lockfile: root.join("nomo.lock"),
         root,
@@ -177,6 +191,7 @@ pub fn discover_workspace(path: &Path) -> Result<WorkspaceGraph, String> {
         package_graphs: BTreeMap::new(),
         resolved_packages: BTreeMap::new(),
         package_graphs_resolved: false,
+        target: *target,
     })
 }
 
@@ -189,6 +204,16 @@ pub fn build_workspace_graph_with_options(
     options: DependencyResolutionOptions,
 ) -> Result<WorkspaceGraph, String> {
     let mut workspace = discover_workspace(path)?;
+    workspace.resolve_package_graphs_with_options(options)?;
+    Ok(workspace)
+}
+
+pub fn build_workspace_graph_for_target_with_options(
+    path: &Path,
+    options: DependencyResolutionOptions,
+    target: &TargetTriple,
+) -> Result<WorkspaceGraph, String> {
+    let mut workspace = discover_workspace_for_target(path, target)?;
     workspace.resolve_package_graphs_with_options(options)?;
     Ok(workspace)
 }
@@ -238,6 +263,7 @@ fn aggregate_resolved_packages(
 fn build_workspace_member_model(
     members: &[Project],
     default_members: &[Project],
+    target: &TargetTriple,
 ) -> Result<WorkspaceMemberModel, String> {
     let mut nodes = BTreeMap::new();
     let mut roots = BTreeMap::new();
@@ -276,7 +302,11 @@ fn build_workspace_member_model(
     }
 
     for member in nodes.values() {
-        for dependency in &member.dependencies {
+        for dependency in member
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.target.matches(target))
+        {
             let DependencySource::Path { path } = &dependency.source else {
                 continue;
             };

@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 const NOMO_HELP: &str = concat!(
     "nomo ",
     env!("CARGO_PKG_VERSION"),
-    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps <resolve|tree> [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
+    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
 );
 
 const NOMOC_HELP: &str = concat!(
@@ -165,6 +165,99 @@ fn nomo_build_explicit_target_uses_canonical_isolated_artifact_directory() {
     let c = fs::read_to_string(&c_path).unwrap();
     assert!(c.starts_with(&format!("/* nomo target: {target} */\n")));
     assert!(c.contains(&format!("#define NOMO_TARGET_TRIPLE \"{target}\"")));
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn target_conditioned_dependencies_are_locked_completely_and_filtered_for_builds() {
+    let root = temp_test_root("target-conditioned-dependencies");
+    reset_dir(&root);
+    let app = root.join("app");
+    let linux = root.join("linux");
+    let windows = root.join("windows");
+    for package in [&app, &linux, &windows] {
+        fs::create_dir_all(package.join("src")).unwrap();
+    }
+    fs::write(
+        app.join("nomo.toml"),
+        "[package]\nnamespace = \"app\"\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\nlinux = { package = \"app/linux\", path = \"../linux\", target = { os = \"linux\" } }\nwindows = { package = \"app/windows\", path = \"../windows\", target = { os = [\"windows\"] } }\n",
+    )
+    .unwrap();
+    fs::write(
+        app.join("src/main.nomo"),
+        "package app\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+    for (package, name) in [(&linux, "linux"), (&windows, "windows")] {
+        fs::write(
+            package.join("nomo.toml"),
+            format!(
+                "[package]\nnamespace = \"app\"\nname = \"{name}\"\nversion = \"1.0.0\"\nedition = \"2026\"\n"
+            ),
+        )
+        .unwrap();
+        fs::write(
+            package.join("src/main.nomo"),
+            format!("package {name}\n\npub fn value() -> i64 {{\n    return 1\n}}\n"),
+        )
+        .unwrap();
+    }
+
+    let resolve = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("deps")
+        .arg("resolve")
+        .arg(&app)
+        .output()
+        .unwrap();
+    assert!(
+        resolve.status.success(),
+        "{}",
+        String::from_utf8_lossy(&resolve.stderr)
+    );
+    let lock = fs::read_to_string(app.join("nomo.lock")).unwrap();
+    assert!(lock.contains("app/linux"), "{lock}");
+    assert!(lock.contains("app/windows"), "{lock}");
+    assert!(lock.contains("os = [\"linux\"]"), "{lock}");
+    assert!(lock.contains("os = [\"windows\"]"), "{lock}");
+
+    for (target, included, excluded) in [
+        ("x86_64-unknown-linux-gnu", "app/linux", "app/windows"),
+        ("x86_64-pc-windows-msvc", "app/windows", "app/linux"),
+    ] {
+        let tree = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("deps")
+            .arg("tree")
+            .arg(&app)
+            .arg("--locked")
+            .arg("--target")
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            tree.status.success(),
+            "{}",
+            String::from_utf8_lossy(&tree.stderr)
+        );
+        let tree = String::from_utf8_lossy(&tree.stdout);
+        assert!(tree.contains(included), "{tree}");
+        assert!(!tree.contains(excluded), "{tree}");
+
+        let build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("build")
+            .arg(&app)
+            .arg("--locked")
+            .arg("--emit-c")
+            .arg("--target")
+            .arg(target)
+            .output()
+            .unwrap();
+        assert!(
+            build.status.success(),
+            "{}",
+            String::from_utf8_lossy(&build.stderr)
+        );
+    }
+
     fs::remove_dir_all(&root).unwrap();
 }
 

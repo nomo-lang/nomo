@@ -5,14 +5,13 @@ use super::{
     registry_http::registry_dependency_authorization,
     vendor::locked_or_vendor_source_root,
 };
-use nomo_graph::DirectedGraph;
 use nomo_lockfile::{
     DependencyGraph, ResolvedDependency, parse_lockfile_root,
     validate_locked_source_matches_manifest,
 };
 use nomo_manifest::{
-    Dependency, DependencySource, Manifest, PackageVersion, RegistryTrustPolicy, VersionConstraint,
-    parse_manifest_at_root, relative_path,
+    Dependency, DependencySource, Manifest, PackageVersion, RegistryTrustPolicy, TargetCondition,
+    VersionConstraint, parse_manifest_at_root, relative_path,
 };
 use nomo_resolver::{
     ConstraintOrigin, VersionCandidate, load_registry_version_candidates, package_checksum,
@@ -250,13 +249,9 @@ pub(super) fn resolve_dependency_graphs_for_manifests(
         let mut graphs = Vec::with_capacity(manifests.len());
         for (root, manifest, root_package) in &manifests {
             let mut package_sources = BTreeMap::new();
-            let mut package_graph = DirectedGraph::new();
-            package_graph.add_node(root_package.clone());
             let dependencies = resolve_dependencies(
                 &manifest.dependencies,
                 root,
-                root_package,
-                &mut package_graph,
                 &mut package_sources,
                 lock_source_base.as_deref(),
                 dependency_cache_base.as_deref(),
@@ -265,6 +260,7 @@ pub(super) fn resolve_dependency_graphs_for_manifests(
                 &mut registry_solver,
                 manifest.trust,
                 &manifest.transparency_keys,
+                &TargetCondition::default(),
             )?;
             graphs.push(DependencyGraph {
                 root: manifest.package.clone(),
@@ -385,8 +381,6 @@ fn validate_locked_trust_policy(
 fn resolve_dependencies(
     dependencies: &[Dependency],
     base_root: &Path,
-    current_package: &str,
-    package_graph: &mut DirectedGraph<String>,
     package_sources: &mut BTreeMap<String, DependencySource>,
     lock_source_base: Option<&Path>,
     dependency_cache_base: Option<&Path>,
@@ -395,21 +389,22 @@ fn resolve_dependencies(
     registry_solver: &mut RegistrySolveState,
     trust_policy: RegistryTrustPolicy,
     trusted_transparency_keys: &[String],
+    active_condition: &TargetCondition,
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
     for dependency in dependencies {
+        let Some(effective_condition) = active_condition.intersection(&dependency.target) else {
+            return Err(format!(
+                "dependency `{}` target condition `{}` is unreachable within parent condition `{active_condition}`",
+                dependency.alias, dependency.target
+            ));
+        };
         let mut dependency_path = current_path.to_vec();
         dependency_path.push(dependency.package.clone());
-        package_graph.add_edge(current_package.to_string(), dependency.package.clone());
-        if let Some(cycle) = package_graph.find_cycle() {
+        if current_path.contains(&dependency.package) {
             return Err(format!(
                 "cyclic package dependency: {}",
-                cycle
-                    .path()
-                    .iter()
-                    .map(String::as_str)
-                    .collect::<Vec<_>>()
-                    .join(" -> ")
+                dependency_path.join(" -> ")
             ));
         }
         let (resolved_source, checksum, supply_chain, child_dependencies) = match &dependency.source
@@ -436,8 +431,6 @@ fn resolve_dependencies(
                 let child_dependencies = resolve_dependencies(
                     &dep_manifest.dependencies,
                     &dep_root,
-                    &dependency.package,
-                    package_graph,
                     package_sources,
                     lock_source_base,
                     dependency_cache_base,
@@ -446,6 +439,7 @@ fn resolve_dependencies(
                     registry_solver,
                     trust_policy,
                     trusted_transparency_keys,
+                    &effective_condition,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 let resolved_source = match lock_source_base {
@@ -501,8 +495,6 @@ fn resolve_dependencies(
                 let child_dependencies = resolve_dependencies(
                     &dep_manifest.dependencies,
                     &dep_root,
-                    &dependency.package,
-                    package_graph,
                     package_sources,
                     lock_source_base,
                     dependency_cache_base,
@@ -511,6 +503,7 @@ fn resolve_dependencies(
                     registry_solver,
                     trust_policy,
                     trusted_transparency_keys,
+                    &effective_condition,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
                 (
@@ -573,8 +566,6 @@ fn resolve_dependencies(
                         let child_dependencies = resolve_dependencies(
                             &dep_manifest.dependencies,
                             &dep_root,
-                            &dependency.package,
-                            package_graph,
                             package_sources,
                             lock_source_base,
                             dependency_cache_base,
@@ -583,6 +574,7 @@ fn resolve_dependencies(
                             registry_solver,
                             trust_policy,
                             trusted_transparency_keys,
+                            &effective_condition,
                         )?;
                         let checksum = package_checksum(&dep_root)?;
                         (
@@ -609,6 +601,7 @@ fn resolve_dependencies(
             source: resolved_source,
             checksum,
             supply_chain,
+            target: dependency.target.clone(),
             dependencies: child_dependencies,
         });
     }
@@ -699,7 +692,7 @@ fn verify_locked_source_checksums(
 #[cfg(test)]
 mod registry_solver_tests {
     use super::RegistrySolveState;
-    use nomo_manifest::{Dependency, DependencySource};
+    use nomo_manifest::{Dependency, DependencySource, TargetCondition};
     use std::fs;
     use std::path::PathBuf;
     use std::time::{SystemTime, UNIX_EPOCH};
@@ -737,6 +730,7 @@ mod registry_solver_tests {
                 version: requirement.to_string(),
                 registry: Some(registry.to_string()),
             },
+            target: TargetCondition::default(),
         }
     }
 

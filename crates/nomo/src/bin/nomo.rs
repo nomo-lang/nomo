@@ -1,5 +1,7 @@
 #![allow(clippy::result_large_err, clippy::type_complexity)]
 
+#[path = "nomo_cli/cache.rs"]
+mod cli_cache;
 #[path = "nomo_cli/common.rs"]
 mod cli_common;
 #[path = "nomo_cli/deps.rs"]
@@ -17,6 +19,7 @@ mod cli_supply_chain;
 #[path = "nomo_cli/test.rs"]
 mod cli_test;
 
+use cli_cache::run_cache_command;
 use cli_common::{run_build_command, run_check_command, run_clean_command, run_run_command};
 use cli_deps::run_deps_command;
 use cli_doc::run_doc_command;
@@ -64,6 +67,7 @@ fn run() -> Result<(), String> {
         "test" => run_test_command(args),
         "doc" => run_doc_command(args),
         "clean" => run_clean_command(args),
+        "cache" => run_cache_command(args),
         "login" => run_login_command(args),
         "owner" => run_owner_command(args),
         "add" => run_add_command(args),
@@ -84,7 +88,7 @@ fn run() -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "nomo {}\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n",
+        "nomo {}\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n",
         env!("CARGO_PKG_VERSION")
     );
     println!(

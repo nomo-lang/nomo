@@ -1,8 +1,8 @@
 use nomo::project::{
     BuildError, DependencyResolutionOptions, Project, build_project_for_target_with_options,
-    build_project_with_options, check_project, clean_project, discover_project, discover_workspace,
-    discover_workspace_for_target, project_package_id, run_project_with_args_and_diagnostics,
-    run_standalone_script_with_args_and_diagnostics,
+    build_project_with_options, check_project_with_persistent_cache, clean_project,
+    discover_project, discover_workspace, discover_workspace_for_target, project_package_id,
+    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::target::TargetTriple;
 use std::env;
@@ -15,7 +15,7 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
     )?;
     if workspace {
         for project in discover_workspace(&path)?.members {
-            match check_project(&project) {
+            match check_project_with_persistent_cache(&project) {
                 Ok(()) => println!("checked {}", project.main.display()),
                 Err(diag) if json => return Err(diag.json()),
                 Err(diag) => return Err(diag.human()),
@@ -24,7 +24,7 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
         Ok(())
     } else {
         let project = discover_project(&path)?;
-        match check_project(&project) {
+        match check_project_with_persistent_cache(&project) {
             Ok(()) => {
                 println!("checked {}", project.main.display());
                 Ok(())

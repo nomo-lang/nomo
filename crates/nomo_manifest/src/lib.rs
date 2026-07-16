@@ -1,4 +1,7 @@
+use nomo_target::TargetTriple;
+use serde::{Deserialize, Serialize};
 use std::collections::BTreeMap;
+use std::fmt;
 use std::fs;
 use std::path::{Component, Path, PathBuf};
 
@@ -31,6 +34,144 @@ impl FfiLinkMetadata {
         self.frameworks.extend(other.frameworks);
         self.link_args.extend(other.link_args);
     }
+
+    pub fn is_empty(&self) -> bool {
+        self.libraries.is_empty()
+            && self.library_paths.is_empty()
+            && self.sources.is_empty()
+            && self.frameworks.is_empty()
+            && self.link_args.is_empty()
+    }
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq, PartialOrd, Ord, Hash, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TargetCondition {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    arch: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    os: Vec<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    env: Vec<String>,
+}
+
+impl TargetCondition {
+    pub fn is_unconditional(&self) -> bool {
+        self.arch.is_empty() && self.os.is_empty() && self.env.is_empty()
+    }
+
+    pub fn matches(&self, target: &TargetTriple) -> bool {
+        target_component_matches(&self.arch, target.architecture().as_str())
+            && target_component_matches(&self.os, target.operating_system().as_str())
+            && target_component_matches(&self.env, target.environment().as_str())
+    }
+
+    pub fn intersection(&self, other: &Self) -> Option<Self> {
+        let condition = Self {
+            arch: intersect_target_values(&self.arch, &other.arch)?,
+            os: intersect_target_values(&self.os, &other.os)?,
+            env: intersect_target_values(&self.env, &other.env)?,
+        };
+        condition.is_satisfiable().then_some(condition)
+    }
+
+    pub fn architectures(&self) -> &[String] {
+        &self.arch
+    }
+
+    pub fn operating_systems(&self) -> &[String] {
+        &self.os
+    }
+
+    pub fn environments(&self) -> &[String] {
+        &self.env
+    }
+
+    pub fn validate_canonical(&self) -> Result<(), String> {
+        validate_canonical_target_values("arch", &self.arch, &["aarch64", "x86_64"])?;
+        validate_canonical_target_values("os", &self.os, &["darwin", "linux", "windows"])?;
+        validate_canonical_target_values("env", &self.env, &["gnu", "msvc", "none"])?;
+        if !self.is_unconditional() && !self.is_satisfiable() {
+            return Err(format!(
+                "target condition `{self}` does not match any supported target"
+            ));
+        }
+        Ok(())
+    }
+
+    fn is_satisfiable(&self) -> bool {
+        TargetTriple::supported()
+            .iter()
+            .any(|target| self.matches(target))
+    }
+}
+
+impl fmt::Display for TargetCondition {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        let mut predicates = Vec::new();
+        push_target_predicate(&mut predicates, "arch", &self.arch);
+        push_target_predicate(&mut predicates, "os", &self.os);
+        push_target_predicate(&mut predicates, "env", &self.env);
+        if predicates.is_empty() {
+            formatter.write_str("all targets")
+        } else {
+            formatter.write_str(&predicates.join(" and "))
+        }
+    }
+}
+
+fn target_component_matches(values: &[String], actual: &str) -> bool {
+    values.is_empty() || values.iter().any(|value| value == actual)
+}
+
+fn validate_canonical_target_values(
+    field: &str,
+    values: &[String],
+    allowed: &[&str],
+) -> Result<(), String> {
+    if let Some(value) = values
+        .iter()
+        .find(|value| !allowed.contains(&value.as_str()))
+    {
+        return Err(format!(
+            "target condition field `{field}` has non-canonical value `{value}`"
+        ));
+    }
+    if values.windows(2).any(|pair| pair[0] >= pair[1]) {
+        return Err(format!(
+            "target condition field `{field}` values must be sorted and unique"
+        ));
+    }
+    Ok(())
+}
+
+fn intersect_target_values(left: &[String], right: &[String]) -> Option<Vec<String>> {
+    if left.is_empty() {
+        return Some(right.to_vec());
+    }
+    if right.is_empty() {
+        return Some(left.to_vec());
+    }
+    let values = left
+        .iter()
+        .filter(|value| right.contains(value))
+        .cloned()
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then_some(values)
+}
+
+fn push_target_predicate(out: &mut Vec<String>, field: &str, values: &[String]) {
+    match values {
+        [] => {}
+        [value] => out.push(format!("target.{field} = {value}")),
+        _ => out.push(format!("target.{field} in [{}]", values.join(", "))),
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConditionalFfiLinkMetadata {
+    pub condition: TargetCondition,
+    pub metadata: FfiLinkMetadata,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -38,8 +179,21 @@ pub struct Manifest {
     pub package: PackageMetadata,
     pub dependencies: Vec<Dependency>,
     pub ffi: FfiLinkMetadata,
+    pub target_ffi: Vec<ConditionalFfiLinkMetadata>,
     pub trust: RegistryTrustPolicy,
     pub transparency_keys: Vec<String>,
+}
+
+impl Manifest {
+    pub fn ffi_for_target(&self, target: &TargetTriple) -> FfiLinkMetadata {
+        let mut metadata = self.ffi.clone();
+        for conditional in &self.target_ffi {
+            if conditional.condition.matches(target) {
+                metadata.extend(conditional.metadata.clone());
+            }
+        }
+        metadata
+    }
 }
 
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
@@ -103,6 +257,7 @@ pub struct Dependency {
     pub alias: String,
     pub package: String,
     pub source: DependencySource,
+    pub target: TargetCondition,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -276,7 +431,9 @@ fn parse_manifest_document_at_root(
         edition: "2026".to_string(),
     };
     let mut dependencies = Vec::new();
-    let ffi = parse_ffi_link_metadata(root, optional_table(document, "ffi")?)?;
+    let ffi_table = optional_table(document, "ffi")?;
+    let ffi = parse_ffi_link_metadata(root, ffi_table)?;
+    let target_ffi = parse_target_ffi_link_metadata(root, ffi_table)?;
     let (trust, transparency_keys) =
         parse_registry_trust_policy(optional_table(document, "trust")?)?;
 
@@ -330,6 +487,7 @@ fn parse_manifest_document_at_root(
         package,
         dependencies,
         ffi,
+        target_ffi,
         trust,
         transparency_keys,
     })
@@ -369,24 +527,85 @@ fn parse_ffi_link_metadata(
     let Some(table) = table else {
         return Ok(FfiLinkMetadata::default());
     };
-    let libraries = optional_string_array_field(table, "ffi", "libraries")?;
-    let raw_library_paths = optional_string_array_field(table, "ffi", "library_paths")?;
-    validate_non_empty_ffi_entries("ffi.library_paths", &raw_library_paths)?;
+    parse_ffi_link_metadata_table(root, table, "ffi")
+}
+
+fn parse_target_ffi_link_metadata(
+    root: &Path,
+    table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<Vec<ConditionalFfiLinkMetadata>, String> {
+    let Some(value) = table.and_then(|table| table.get("target")) else {
+        return Ok(Vec::new());
+    };
+    let entries = value
+        .as_array()
+        .ok_or_else(|| "manifest `ffi.target` must be an array of tables".to_string())?;
+    let mut conditional = Vec::with_capacity(entries.len());
+    for (index, entry) in entries.iter().enumerate() {
+        let section = format!("ffi.target[{index}]");
+        let table = entry
+            .as_table()
+            .ok_or_else(|| format!("manifest `{section}` must be a table"))?;
+        if let Some(field) = table.keys().find(|field| {
+            !matches!(
+                field.as_str(),
+                "arch"
+                    | "os"
+                    | "env"
+                    | "libraries"
+                    | "library_paths"
+                    | "sources"
+                    | "frameworks"
+                    | "link_args"
+            )
+        }) {
+            return Err(format!(
+                "manifest `{section}` contains unsupported field `{field}`"
+            ));
+        }
+        let condition = parse_target_condition_fields(table, &section)?;
+        if condition.is_unconditional() {
+            return Err(format!(
+                "manifest `{section}` must select at least one target arch, os, or env"
+            ));
+        }
+        let metadata = parse_ffi_link_metadata_table(root, table, &section)?;
+        if metadata.is_empty() {
+            return Err(format!(
+                "manifest `{section}` must define at least one FFI source, library, search path, framework, or link argument"
+            ));
+        }
+        conditional.push(ConditionalFfiLinkMetadata {
+            condition,
+            metadata,
+        });
+    }
+    Ok(conditional)
+}
+
+fn parse_ffi_link_metadata_table(
+    root: &Path,
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+) -> Result<FfiLinkMetadata, String> {
+    let libraries = optional_string_array_field(table, section, "libraries")?;
+    let raw_library_paths = optional_string_array_field(table, section, "library_paths")?;
+    validate_non_empty_ffi_entries(&format!("{section}.library_paths"), &raw_library_paths)?;
     let library_paths = raw_library_paths
         .into_iter()
         .map(|path| rebase_ffi_library_path(root, &path))
         .collect();
-    let raw_sources = optional_string_array_field(table, "ffi", "sources")?;
-    validate_non_empty_ffi_entries("ffi.sources", &raw_sources)?;
+    let raw_sources = optional_string_array_field(table, section, "sources")?;
+    validate_non_empty_ffi_entries(&format!("{section}.sources"), &raw_sources)?;
     let sources = raw_sources
         .into_iter()
         .map(|path| rebase_ffi_source_path(root, &path))
         .collect::<Result<Vec<_>, _>>()?;
-    let frameworks = optional_string_array_field(table, "ffi", "frameworks")?;
-    let link_args = optional_string_array_field(table, "ffi", "link_args")?;
-    validate_non_empty_ffi_entries("ffi.libraries", &libraries)?;
-    validate_non_empty_ffi_entries("ffi.frameworks", &frameworks)?;
-    validate_non_empty_ffi_entries("ffi.link_args", &link_args)?;
+    let frameworks = optional_string_array_field(table, section, "frameworks")?;
+    let link_args = optional_string_array_field(table, section, "link_args")?;
+    validate_non_empty_ffi_entries(&format!("{section}.libraries"), &libraries)?;
+    validate_non_empty_ffi_entries(&format!("{section}.frameworks"), &frameworks)?;
+    validate_non_empty_ffi_entries(&format!("{section}.link_args"), &link_args)?;
     Ok(FfiLinkMetadata {
         libraries,
         library_paths,
@@ -525,6 +744,113 @@ fn optional_string_array_field(
         .collect()
 }
 
+fn parse_target_condition(value: &toml::Value, section: &str) -> Result<TargetCondition, String> {
+    let table = value
+        .as_table()
+        .ok_or_else(|| format!("manifest `{section}` must be an inline table"))?;
+    if let Some(field) = table
+        .keys()
+        .find(|field| !matches!(field.as_str(), "arch" | "os" | "env"))
+    {
+        return Err(format!(
+            "manifest `{section}` contains unsupported target field `{field}`; expected arch, os, or env"
+        ));
+    }
+    let condition = parse_target_condition_fields(table, section)?;
+    if condition.is_unconditional() {
+        return Err(format!(
+            "manifest `{section}` must select at least one target arch, os, or env"
+        ));
+    }
+    Ok(condition)
+}
+
+fn parse_target_condition_fields(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+) -> Result<TargetCondition, String> {
+    let condition = TargetCondition {
+        arch: parse_target_values(table.get("arch"), section, "arch", canonical_arch)?,
+        os: parse_target_values(table.get("os"), section, "os", canonical_os)?,
+        env: parse_target_values(table.get("env"), section, "env", canonical_env)?,
+    };
+    if !condition.is_unconditional() && !condition.is_satisfiable() {
+        return Err(format!(
+            "manifest `{section}` condition `{condition}` does not match any supported target"
+        ));
+    }
+    Ok(condition)
+}
+
+fn parse_target_values(
+    value: Option<&toml::Value>,
+    section: &str,
+    field: &str,
+    canonicalize: fn(&str) -> Option<&'static str>,
+) -> Result<Vec<String>, String> {
+    let Some(value) = value else {
+        return Ok(Vec::new());
+    };
+    let raw = if let Some(value) = value.as_str() {
+        vec![value]
+    } else if let Some(values) = value.as_array() {
+        if values.is_empty() {
+            return Err(format!(
+                "manifest `{section}.{field}` must not be an empty array"
+            ));
+        }
+        values
+            .iter()
+            .map(|value| {
+                value
+                    .as_str()
+                    .ok_or_else(|| format!("manifest `{section}.{field}` entries must be strings"))
+            })
+            .collect::<Result<Vec<_>, _>>()?
+    } else {
+        return Err(format!(
+            "manifest `{section}.{field}` must be a string or string array"
+        ));
+    };
+    let mut values = raw
+        .into_iter()
+        .map(|value| {
+            canonicalize(value).map(str::to_string).ok_or_else(|| {
+                format!("manifest `{section}.{field}` has unsupported value `{value}`")
+            })
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    values.sort();
+    values.dedup();
+    Ok(values)
+}
+
+fn canonical_arch(value: &str) -> Option<&'static str> {
+    match value {
+        "x86_64" | "amd64" => Some("x86_64"),
+        "aarch64" | "arm64" => Some("aarch64"),
+        _ => None,
+    }
+}
+
+fn canonical_os(value: &str) -> Option<&'static str> {
+    match value {
+        "linux" => Some("linux"),
+        "darwin" | "macos" => Some("darwin"),
+        "windows" => Some("windows"),
+        _ => None,
+    }
+}
+
+fn canonical_env(value: &str) -> Option<&'static str> {
+    match value {
+        "gnu" => Some("gnu"),
+        "msvc" => Some("msvc"),
+        "none" => Some("none"),
+        _ => None,
+    }
+}
+
 fn optional_package_string_field(
     table: &toml::map::Map<String, toml::Value>,
     key: &str,
@@ -594,6 +920,11 @@ fn parse_dependency_value(
         return Err(format!(
             "dependency `{alias}` must be a TOML string or table"
         ));
+    };
+
+    let target = match fields.get("target") {
+        Some(value) => parse_target_condition(value, &format!("dependencies.{alias}.target"))?,
+        None => TargetCondition::default(),
     };
 
     if is_workspace_inheritance(value) {
@@ -695,6 +1026,7 @@ fn parse_dependency_value(
         alias: alias.to_string(),
         package,
         source,
+        target,
     }))
 }
 
@@ -942,5 +1274,65 @@ mod trust_tests {
                 .unwrap_err()
                 .contains("unknown registry trust policy")
         );
+    }
+}
+
+#[cfg(test)]
+mod target_tests {
+    use super::*;
+
+    const PACKAGE: &str = "[package]\nnamespace = \"app\"\nname = \"demo\"\nversion = \"1.0.0\"\nedition = \"2026\"\n";
+
+    #[test]
+    fn parses_and_canonicalizes_target_conditioned_dependencies() {
+        let manifest = parse_manifest_text(
+            &format!(
+                "{PACKAGE}\n[dependencies]\nplatform = {{ package = \"app/platform\", path = \"../platform\", target = {{ arch = [\"amd64\", \"arm64\"], os = \"macos\" }} }}\n"
+            ),
+            Path::new("demo"),
+        )
+        .unwrap();
+        let condition = &manifest.dependencies[0].target;
+        assert_eq!(condition.architectures(), ["aarch64", "x86_64"]);
+        assert_eq!(condition.operating_systems(), ["darwin"]);
+        assert!(condition.matches(&"aarch64-apple-darwin".parse::<TargetTriple>().unwrap()));
+        assert!(!condition.matches(&"aarch64-unknown-linux-gnu".parse::<TargetTriple>().unwrap()));
+    }
+
+    #[test]
+    fn rejects_target_conditions_that_match_no_supported_target() {
+        let error = parse_manifest_text(
+            &format!(
+                "{PACKAGE}\n[dependencies]\nbad = {{ package = \"app/bad\", path = \"../bad\", target = {{ os = \"linux\", env = \"msvc\" }} }}\n"
+            ),
+            Path::new("demo"),
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("does not match any supported target"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn selects_target_conditioned_ffi_metadata() {
+        let manifest = parse_manifest_text(
+            &format!(
+                "{PACKAGE}\n[ffi]\nlibraries = [\"common\"]\n\n[[ffi.target]]\nos = [\"linux\"]\nlibraries = [\"pthread\"]\nsources = [\"native/linux.c\"]\n\n[[ffi.target]]\nos = \"macos\"\nframeworks = [\"Security\"]\n"
+            ),
+            Path::new("demo"),
+        )
+        .unwrap();
+        let linux =
+            manifest.ffi_for_target(&"x86_64-unknown-linux-gnu".parse::<TargetTriple>().unwrap());
+        assert_eq!(linux.libraries, ["common", "pthread"]);
+        assert_eq!(linux.sources, [PathBuf::from("demo/native/linux.c")]);
+        assert!(linux.frameworks.is_empty());
+
+        let macos =
+            manifest.ffi_for_target(&"aarch64-apple-darwin".parse::<TargetTriple>().unwrap());
+        assert_eq!(macos.libraries, ["common"]);
+        assert_eq!(macos.frameworks, ["Security"]);
+        assert!(macos.sources.is_empty());
     }
 }

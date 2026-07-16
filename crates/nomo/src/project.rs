@@ -8,8 +8,8 @@ pub use nomo_lockfile::{DependencyGraph, ResolvedDependency};
 #[cfg(test)]
 use nomo_manifest::parse_manifest_text;
 pub use nomo_manifest::{
-    Dependency, DependencyAddSpec, DependencySource, FfiLinkMetadata, Manifest, PackageMetadata,
-    parse_manifest_at_root,
+    ConditionalFfiLinkMetadata, Dependency, DependencyAddSpec, DependencySource, FfiLinkMetadata,
+    Manifest, PackageMetadata, TargetCondition, parse_manifest_at_root,
 };
 use nomo_manifest::{is_package_name, workspace_root_for_package};
 use std::fs;
@@ -37,12 +37,16 @@ pub use build::{
     build_project_with_options, clean_project,
 };
 pub use dependency_tree::{
-    dependency_tree, dependency_tree_current_sources, dependency_tree_with_options,
+    dependency_tree, dependency_tree_current_sources, dependency_tree_for_target_with_options,
+    dependency_tree_with_options,
 };
-use ffi::project_ffi_link_metadata_with_options;
+use ffi::{
+    project_ffi_link_metadata_for_target_with_options, project_ffi_link_metadata_with_options,
+};
 pub use modules::{
-    ProjectModuleContext, project_module_context, project_module_context_with_options,
-    project_module_graph, project_module_graph_with_overrides, resolve_module_source_path,
+    ProjectModuleContext, project_module_context, project_module_context_for_target_with_options,
+    project_module_context_with_options, project_module_graph, project_module_graph_with_overrides,
+    resolve_module_source_path,
 };
 pub use nomo_test::{
     TestCaseResult as ProjectTestCaseResult, TestReport as ProjectTestReport,
@@ -54,7 +58,7 @@ pub use package::{
 };
 pub use package_graph::{
     PackageDependency, PackageGraph, PackageId, PackageNode, PackageSource, project_package_graph,
-    project_package_graph_with_options,
+    project_package_graph_for_target_with_options, project_package_graph_with_options,
 };
 pub use registry_http::{
     RegistryLogin, RegistrySearchResult, add_registry_package_owner, add_registry_publisher_key,
@@ -74,8 +78,9 @@ pub use testing::{ProjectTestOptions, run_project_tests_with_options};
 pub use update::{update_project_dependencies, update_workspace_dependencies};
 pub use vendor::{vendor_project_dependencies, vendor_workspace_dependencies};
 pub use workspace::{
-    WorkspaceGraph, WorkspaceMember, build_workspace_graph, build_workspace_graph_with_options,
-    discover_workspace,
+    WorkspaceGraph, WorkspaceMember, build_workspace_graph,
+    build_workspace_graph_for_target_with_options, build_workspace_graph_with_options,
+    discover_workspace, discover_workspace_for_target,
 };
 
 #[derive(Debug, Clone)]

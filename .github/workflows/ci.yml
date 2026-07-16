@@ -89,3 +89,41 @@ jobs:
           name: nomo-macos-arm64-to-x86_64
           path: examples/result_helpers/build/x86_64-apple-darwin-none
           if-no-files-found: error
+
+  linux-cross-build:
+    name: Cross build Linux x86_64 to arm64
+    runs-on: ubuntu-22.04
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Install arm64 GNU toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu qemu-user
+
+      - name: Build Nomo
+        run: cargo build --locked --release --bin nomo
+
+      - name: Link and execute a real arm64 ELF from the x86_64 host
+        shell: bash
+        run: |
+          test "$(uname -m)" = "x86_64"
+          target/release/nomo build examples/result_helpers --target aarch64-unknown-linux-gnu
+          artifact="examples/result_helpers/build/aarch64-unknown-linux-gnu/bin/result_helpers"
+          readelf -h "$artifact" | grep 'Machine:.*AArch64'
+          file "$artifact" | grep 'ELF 64-bit.*ARM aarch64'
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$artifact"
+          grep 'nomo target: aarch64-unknown-linux-gnu' \
+            examples/result_helpers/build/aarch64-unknown-linux-gnu/c/main.c
+
+      - name: Upload cross-build evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-linux-x86_64-to-arm64
+          path: examples/result_helpers/build/aarch64-unknown-linux-gnu
+          if-no-files-found: error

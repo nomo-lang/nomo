@@ -1,7 +1,7 @@
 use nomo::project::{
     BuildError, DependencyResolutionOptions, Project, build_project_for_target_with_options,
     build_project_with_options, check_project, clean_project, discover_project, discover_workspace,
-    project_package_id, run_project_with_args_and_diagnostics,
+    discover_workspace_for_target, project_package_id, run_project_with_args_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
 };
 use nomo::target::TargetTriple;
@@ -41,7 +41,12 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
         "usage: nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
     )?;
     if workspace {
-        for project in discover_workspace(&path)?.members {
+        let workspace = if target_explicit {
+            discover_workspace_for_target(&path, &target)?
+        } else {
+            discover_workspace(&path)?
+        };
+        for project in workspace.members {
             let artifact = match if target_explicit {
                 build_project_for_target_with_options(&project, emit_c, deps, &target)
             } else {

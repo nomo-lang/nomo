@@ -11,11 +11,12 @@ use crate::compiler::{
     ExternalModule, ModuleGraph, build_module_graph_with_overrides as compiler_module_graph,
 };
 use crate::diagnostic::Diagnostic;
-use nomo_lockfile::ResolvedDependency;
+use nomo_lockfile::{ResolvedDependency, filter_dependencies_for_target};
 use nomo_manifest::{Dependency, DependencySource, parse_manifest_at_root};
 use nomo_resolver::{
     registry_cached_source_root, resolve_registry_source, resolve_registry_version,
 };
+use nomo_target::TargetTriple;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -131,12 +132,22 @@ pub fn project_module_context_with_options(
     project: &Project,
     options: DependencyResolutionOptions,
 ) -> Result<ProjectModuleContext, String> {
+    let target = TargetTriple::host()?;
+    project_module_context_for_target_with_options(project, options, &target)
+}
+
+pub fn project_module_context_for_target_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+    target: &TargetTriple,
+) -> Result<ProjectModuleContext, String> {
     if options.locked || (options.offline && project.lock_root().join("nomo.lock").is_file()) {
         let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
         validate_project_lock_direct_dependencies(project, &graph)?;
+        let dependencies = filter_dependencies_for_target(&graph.dependencies, target);
         return project_module_context_from_resolved_dependencies(
             project,
-            &graph.dependencies,
+            &dependencies,
             &source_base,
         );
     }
@@ -144,7 +155,11 @@ pub fn project_module_context_with_options(
     let manifest = parse_manifest_at_root(&project.root)?;
     let mut aliases = Vec::new();
     let mut modules = Vec::new();
-    for dependency in manifest.dependencies {
+    for dependency in manifest
+        .dependencies
+        .into_iter()
+        .filter(|dependency| dependency.target.matches(target))
+    {
         if dependency.alias == "std" {
             continue;
         }

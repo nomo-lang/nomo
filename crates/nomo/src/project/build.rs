@@ -1,6 +1,7 @@
 use super::{
-    BuildError, DependencyResolutionOptions, Project, project_ffi_link_metadata_with_options,
-    project_module_context_with_options,
+    BuildError, DependencyResolutionOptions, Project,
+    project_ffi_link_metadata_for_target_with_options,
+    project_module_context_for_target_with_options,
 };
 use crate::compiler::compile_source_to_c_with_project_modules_for_target;
 use nomo_manifest::FfiLinkMetadata;
@@ -45,10 +46,11 @@ fn build_project_impl(
     target: &TargetTriple,
     target_scoped_artifacts: bool,
 ) -> Result<PathBuf, BuildError> {
-    let context =
-        project_module_context_with_options(project, options).map_err(BuildError::Message)?;
+    let context = project_module_context_for_target_with_options(project, options, target)
+        .map_err(BuildError::Message)?;
     let ffi_link_metadata =
-        project_ffi_link_metadata_with_options(project, options).map_err(BuildError::Message)?;
+        project_ffi_link_metadata_for_target_with_options(project, options, target)
+            .map_err(BuildError::Message)?;
     let c = compile_source_to_c_with_project_modules_for_target(
         &project.main,
         Some(&context.local_source_root),

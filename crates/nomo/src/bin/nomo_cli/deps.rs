@@ -1,18 +1,20 @@
 use super::cli_common::parse_optional_path;
 use nomo::project::{
     DependencyResolutionOptions, DependencyUpdateOptions, DependencyVendorOptions,
-    clean_dependency_cache, dependency_tree_with_options, discover_project, discover_workspace,
+    clean_dependency_cache, dependency_tree_for_target_with_options, dependency_tree_with_options,
+    discover_project, discover_workspace, discover_workspace_for_target,
     resolve_project_dependencies_with_options, resolve_workspace_dependencies_with_options,
     update_project_dependencies, update_workspace_dependencies, vendor_project_dependencies,
     vendor_workspace_dependencies,
 };
+use nomo::target::TargetTriple;
 use std::env;
 use std::path::PathBuf;
 
 pub(super) fn run_deps_command(args: Vec<String>) -> Result<(), String> {
     let [subcommand, rest @ ..] = args.as_slice() else {
         return Err(
-            "usage: nomo deps <resolve|tree|update|vendor|clean-cache> [path] [--workspace] [--locked] [--offline] [--frozen]".to_string()
+            "usage: nomo deps <resolve|tree|update|vendor|clean-cache> [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]".to_string()
         );
     };
     match subcommand.as_str() {
@@ -35,19 +37,35 @@ pub(super) fn run_deps_command(args: Vec<String>) -> Result<(), String> {
             Ok(())
         }
         "tree" => {
-            let (path, workspace, deps) = parse_deps_args(
+            let (path, workspace, deps, target) = parse_deps_tree_args(
                 rest.to_vec(),
                 &format!(
-                    "usage: nomo deps {subcommand} [path] [--workspace] [--locked] [--offline] [--frozen]"
+                    "usage: nomo deps {subcommand} [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]"
                 ),
             )?;
             if workspace {
-                for project in discover_workspace(&path)?.members {
-                    print!("{}", dependency_tree_with_options(&project, deps)?);
+                let workspace = match &target {
+                    Some(target) => discover_workspace_for_target(&path, target)?,
+                    None => discover_workspace(&path)?,
+                };
+                for project in workspace.members {
+                    let tree = match &target {
+                        Some(target) => {
+                            dependency_tree_for_target_with_options(&project, deps, target)?
+                        }
+                        None => dependency_tree_with_options(&project, deps)?,
+                    };
+                    print!("{tree}");
                 }
             } else {
                 let project = discover_project(&path)?;
-                print!("{}", dependency_tree_with_options(&project, deps)?);
+                let tree = match &target {
+                    Some(target) => {
+                        dependency_tree_for_target_with_options(&project, deps, target)?
+                    }
+                    None => dependency_tree_with_options(&project, deps)?,
+                };
+                print!("{tree}");
             }
             Ok(())
         }
@@ -91,6 +109,62 @@ pub(super) fn run_deps_command(args: Vec<String>) -> Result<(), String> {
         }
         other => Err(format!("unknown deps command `{other}`")),
     }
+}
+
+pub(super) fn parse_deps_tree_args(
+    args: Vec<String>,
+    usage: &str,
+) -> Result<
+    (
+        PathBuf,
+        bool,
+        DependencyResolutionOptions,
+        Option<TargetTriple>,
+    ),
+    String,
+> {
+    let mut workspace = false;
+    let mut deps = DependencyResolutionOptions::default();
+    let mut target = None;
+    let mut path = None;
+    let mut index = 0;
+    while let Some(arg) = args.get(index) {
+        if arg == "--workspace" {
+            workspace = true;
+        } else if arg == "--locked" {
+            deps.locked = true;
+        } else if arg == "--offline" {
+            deps.offline = true;
+        } else if arg == "--frozen" {
+            deps.locked = true;
+            deps.offline = true;
+        } else if let Some(value) = arg.strip_prefix("--target=") {
+            if value.is_empty() || target.is_some() {
+                return Err(usage.to_string());
+            }
+            target = Some(value.parse()?);
+        } else if arg == "--target" {
+            index += 1;
+            let Some(value) = args.get(index) else {
+                return Err("--target requires a target triple".to_string());
+            };
+            if target.is_some() {
+                return Err(usage.to_string());
+            }
+            target = Some(value.parse()?);
+        } else if path.is_none() {
+            path = Some(PathBuf::from(arg));
+        } else {
+            return Err(usage.to_string());
+        }
+        index += 1;
+    }
+    Ok((
+        path.unwrap_or(env::current_dir().map_err(|err| err.to_string())?),
+        workspace,
+        deps,
+        target,
+    ))
 }
 
 pub(super) fn parse_deps_args(

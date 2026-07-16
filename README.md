@@ -122,7 +122,7 @@ nomo search <query> --registry <url> # query an HTTP/HTTPS registry package inde
 nomo yank <owner/package> <version> --registry <url> # mark a published registry version as yanked
 nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors] # validate, package, or upload a package archive
 nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
-nomo deps tree [path] [--workspace] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
+nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
 nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
 nomo deps vendor [path] [--workspace] [--dir vendor] [--sync] # copy locked path/git dependency sources into vendor/
 nomo deps clean-cache [path]      # remove the project or workspace git dependency cache
@@ -132,9 +132,11 @@ nomo ffi bindgen <header> --package <package> --output <file> [--provenance <fil
 A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
 entry point. `nomo build` writes generated C to `build/c/main.c` and the linked
 executable to `build/bin/<name>`. An explicit `--target` canonicalizes the
-triple and isolates both artifacts under `build/<canonical-target>/`. The first
-native cross-link path is macOS `x86_64 <-> aarch64`; `--emit-c` can emit C for
-every recognized target even when a native cross linker is not configured. See
+triple and isolates both artifacts under `build/<canonical-target>/`. Native
+cross-link paths are configured for macOS `x86_64 <-> aarch64` and GNU/Linux
+`x86_64 <-> aarch64`; CI links and executes the Linux arm64 artifact under
+QEMU. `--emit-c` can emit C for every recognized target even when a native
+cross linker is not configured. See
 [Cross Compilation](docs/cross-compilation.md).
 
 Typed C interop supports nominal opaque handles, explicit nullable and
@@ -327,13 +329,18 @@ that resolve the same external package identity to conflicting sources.
 `nomo deps resolve --workspace [path]` writes a single workspace-root lockfile
 that records each member as a `[[root]]` entry and stores shared locked package
 entries once.
-`nomo deps tree [path]` prints dependency aliases and canonical package IDs. If
+`nomo deps tree [path]` prints dependency aliases, canonical package IDs, and
+target predicates. `--target <triple>` filters the tree to the graph active for
+that target. If
 `nomo.lock` exists, `tree` reads the locked dependency graph; otherwise it
 resolves the current manifest sources. `nomo.lock` is standard TOML: package
 entries are encoded as `[[package]]` tables with `id`, `alias`, `source`,
-optional source metadata, `checksum`, and dependency edge strings. Workspace
-lockfiles additionally use `[[root]]` tables to map member package IDs to their
-direct dependency edges. Invalid TOML, unknown lockfile fields, and mismatched
+optional source metadata, `checksum`, and dependency edges. Unconditional
+edges retain the compact `alias -> owner/package` spelling; conditional edges
+are tables that preserve canonical `arch`, `os`, and `env` sets. Workspace
+lockfiles, and single-package locks with conditional root edges, use `[[root]]`
+tables to map package IDs to their complete direct dependency sets. Invalid
+TOML, unknown lockfile fields, and mismatched
 field types are rejected. When locked `path` sources or matching git cache
 checkouts are still available, `tree` verifies their `sha256:` checksums before
 printing; missing path sources and git cache entries are treated as offline

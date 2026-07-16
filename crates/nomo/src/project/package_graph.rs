@@ -2,14 +2,16 @@ use super::{
     DependencyResolutionOptions, Project,
     dependency_resolution::{
         locked_dependency_graph_and_source_base, resolve_dependency_graph_for_lock,
+        validate_project_lock_direct_dependencies,
     },
     modules::resolved_dependency_module_root,
     package_id,
 };
 use nomo_graph::{Cycle, DirectedGraph};
-use nomo_lockfile::ResolvedDependency;
+use nomo_lockfile::{ResolvedDependency, filter_dependency_graph_for_target};
 use nomo_lsp_bridge::{SemanticSymbol, public_symbols_for_text};
 use nomo_manifest::{DependencySource, PackageMetadata, parse_manifest_at_root};
+use nomo_target::TargetTriple;
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt;
 use std::fs;
@@ -225,10 +227,21 @@ pub fn project_package_graph_with_options(
     project: &Project,
     options: DependencyResolutionOptions,
 ) -> Result<PackageGraph, String> {
+    let target = TargetTriple::host()?;
+    project_package_graph_for_target_with_options(project, options, &target)
+}
+
+pub fn project_package_graph_for_target_with_options(
+    project: &Project,
+    options: DependencyResolutionOptions,
+    target: &TargetTriple,
+) -> Result<PackageGraph, String> {
     let lock_root = project.lock_root();
     let (dependency_graph, source_base) =
         if options.locked || (options.offline && lock_root.join("nomo.lock").is_file()) {
-            locked_dependency_graph_and_source_base(project)?
+            let (graph, source_base) = locked_dependency_graph_and_source_base(project)?;
+            validate_project_lock_direct_dependencies(project, &graph)?;
+            (graph, source_base)
         } else {
             let source_base = fs::canonicalize(&lock_root).map_err(|err| err.to_string())?;
             let graph = resolve_dependency_graph_for_lock(
@@ -239,6 +252,7 @@ pub fn project_package_graph_with_options(
             )?;
             (graph, source_base)
         };
+    let dependency_graph = filter_dependency_graph_for_target(&dependency_graph, target);
 
     let root_path = fs::canonicalize(&project.root).map_err(|err| err.to_string())?;
     let root_id = PackageId::from_metadata(&dependency_graph.root);

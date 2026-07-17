@@ -1,3 +1,5 @@
+manifest-version = 2
+
 [workspace]
 members = ["apps/*", "packages/*"]
 default-members = ["apps/app"]
@@ -7,4 +9,4 @@ namespace = "examples"
 edition = "2026"
 
 [workspace.dependencies]
-util = { package = "examples/util", path = "packages/util" }
+util = { path = "packages/util" }

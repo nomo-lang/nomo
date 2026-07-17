@@ -110,6 +110,7 @@ nomo check [path] [--json-errors] [--workspace] # type-check one project or ever
 nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
 nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
 nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
+nomo manifest migrate [path] [--check] # migrate v1 manifests and trust policy to v2 atomically
 nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
 nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
 nomo clean [path]                 # remove generated build artifacts
@@ -278,29 +279,32 @@ Workspace roots can share package defaults and dependency declarations with
 member packages:
 
 ```toml
+manifest-version = 2
+
 [workspace]
 members = ["apps/*", "packages/*"]
 default-members = ["apps/cli"]
 
 [workspace.package]
 namespace = "fynn"
+version = "0.1.0"
 edition = "2026"
 
 [workspace.dependencies]
 json = { package = "nomo-lang/json", version = "0.1.0" }
-core = { package = "fynn/core", path = "packages/core" }
+core = { path = "packages/core" }
 ```
 
 ```toml
+manifest-version = 2
+
 [package]
 name = "cli"
-version = "0.1.0"
-namespace.workspace = true
-edition.workspace = true
+inherit = "workspace"
 
 [dependencies]
-json.workspace = true
-core.workspace = true
+json = { workspace = true }
+core = { workspace = true }
 ```
 
 ```nomo

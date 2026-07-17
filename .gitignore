@@ -1,4 +1,5 @@
 /target/
 /performance/results/
-.nomo/
+**/.nomo/*
+!**/.nomo/config.toml
 examples/*/build/

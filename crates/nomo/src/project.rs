@@ -21,6 +21,7 @@ mod dependency_resolution;
 mod dependency_tree;
 mod ffi;
 mod git_cache;
+mod manifest_migration;
 mod modules;
 mod package;
 mod package_graph;
@@ -44,6 +45,7 @@ pub use dependency_tree::{
 use ffi::{
     project_ffi_link_metadata_for_target_with_options, project_ffi_link_metadata_with_options,
 };
+pub use manifest_migration::{ManifestMigrationResult, migrate_project_manifests};
 pub use modules::{
     ProjectModuleContext, project_module_context, project_module_context_for_target_with_options,
     project_module_context_with_options, project_module_graph, project_module_graph_with_overrides,
@@ -149,7 +151,7 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, String> {
     fs::write(
         project_root.join("nomo.toml"),
         format!(
-            "[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"{}\"\nedition = \"2026\"\n",
+            "manifest-version = 2\n\n[package]\nnamespace = \"local\"\nname = \"{name}\"\nversion = \"{}\"\nedition = \"2026\"\npublish = false\n",
             env!("CARGO_PKG_VERSION")
         ),
     )

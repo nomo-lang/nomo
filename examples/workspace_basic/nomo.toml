@@ -1,3 +1,5 @@
+manifest-version = 2
+
 [workspace]
 members = ["apps/*", "packages/*"]
 default-members = ["apps/cli"]
@@ -7,4 +9,4 @@ namespace = "examples"
 edition = "2026"
 
 [workspace.dependencies]
-core = { package = "examples/core", path = "packages/core" }
+core = { path = "packages/core" }

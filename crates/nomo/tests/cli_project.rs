@@ -20,7 +20,7 @@ const NOMOC_HELP: &str = concat!(
 
 fn expected_nomo_help() -> String {
     format!(
-        "{}\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n\n  nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>\n  nomo owner key revoke <owner/package> <key-id> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]\n  nomo verify <archive> --envelope <file> --key <ed25519-public-key-hex> [--provenance <file>] [--transparency <file> --log-key <ed25519-public-key-hex>] [--cached-head <file>]\n",
+        "{}\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n\n  nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>\n  nomo owner key revoke <owner/package> <key-id> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]\n  nomo verify <archive> --envelope <file> --key <ed25519-public-key-hex> [--provenance <file>] [--transparency <file> --log-key <ed25519-public-key-hex>] [--cached-head <file>] [--gossip <file>] [--write-gossip <file>] [--proof-max-age-seconds <seconds>] [--offline-proof-max-age-seconds <seconds>] [--max-future-skew-seconds <seconds>] [--offline]\n",
         NOMO_HELP.trim_end()
     )
 }

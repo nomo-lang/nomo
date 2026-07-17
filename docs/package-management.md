@@ -231,15 +231,31 @@ the manifest:
 [trust]
 policy = "signed+transparent"
 transparency-keys = ["<64 hexadecimal Ed25519 log public key>"]
+proof-max-age-seconds = 86400
+offline-proof-max-age-seconds = 604800
+max-future-skew-seconds = 300
+gossip-checkpoints = ["trust/registry-peer.json"]
 ```
 
 `checksum-only` is the compatibility default, `signed` requires an authorized
 publisher key and signed provenance, and `signed+transparent` additionally
-requires a log key pinned by the project. The resolver stores the verified
-publisher key id, subject/provenance digests, and transparency tree head in
-`nomo.lock`; cached tree heads reject rollback or equivocation. Offline locked
-builds reuse this evidence and never treat a downloaded bundle's log key as a
-trust root.
+requires a log root key pinned by the project. A current log key may be reached
+from that root only through ordered rotation statements signed by both the old
+and new Ed25519 keys. Tree heads bind the log id, issuance time, signing key,
+and preceding signed checkpoint. The resolver stores the verified publisher
+key id, subject/provenance digests, and transparency tree head in `nomo.lock`;
+cached and gossiped heads reject rollback, skipped history, or equivocation.
+Offline locked builds reuse this evidence and never treat a downloaded bundle's
+log key as a trust root.
+
+Online proofs are accepted for 24 hours by default, while `--offline` resolution
+allows a seven-day proof age. Heads more than five minutes in the future are
+rejected. The three numeric manifest settings above override those defaults;
+the offline limit must be at least the online limit. `gossip-checkpoints` paths
+must remain inside the package and may contain one signed checkpoint or a JSON
+array of checkpoints distributed by CI, mirrors, or registry peers. Successful
+resolver verification writes the latest shareable checkpoint below
+`.nomo/cache/registry/trust/<registry-id>/gossip-checkpoint.json`.
 
 Publishers can keep signing keys outside Nomo credentials with an external
 signer:
@@ -251,11 +267,15 @@ nomo verify build/package/owner-package-1.0.0.nomo-package \
   --envelope build/package/owner-package-1.0.0.nomo-package.envelope.json \
   --key <ed25519-public-key-hex> \
   --provenance build/package/owner-package-1.0.0.nomo-package.provenance.json \
-  --transparency transparency.json --log-key <ed25519-log-public-key-hex>
+  --transparency transparency.json --log-key <pinned-ed25519-log-public-key-hex> \
+  --gossip peer-checkpoint.json --write-gossip latest-checkpoint.json \
+  --proof-max-age-seconds 86400
 ```
 
 The signer receives only the canonical release subject on stdin. Private keys
 never enter credentials, registry metadata, provenance, envelopes, or lockfiles.
+See [Transparency Log Operations](transparency-operations.md) for the rotation,
+gossip, freshness, and incident-response contract.
 
 ## Updating Dependencies
 

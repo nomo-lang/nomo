@@ -10,7 +10,7 @@ pub use nomo_lockfile::{DependencyGraph, ResolvedDependency};
 use nomo_manifest::parse_manifest_text;
 pub use nomo_manifest::{
     ConditionalFfiLinkMetadata, Dependency, DependencyAddSpec, DependencySource, FfiLinkMetadata,
-    Manifest, PackageMetadata, TargetCondition, parse_manifest_at_root,
+    Manifest, PackageMetadata, TargetCondition, TransparencyTrustConfig, parse_manifest_at_root,
 };
 use nomo_manifest::{is_package_name, workspace_root_for_package};
 use std::fs;

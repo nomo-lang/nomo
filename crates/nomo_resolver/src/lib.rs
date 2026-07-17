@@ -1,7 +1,8 @@
 use nomo_manifest::{PackageMetadata, parse_manifest_at_root};
 use nomo_supply_chain::{
-    CachedTreeHead, TrustPolicy, VerifiedReleaseEvidence, sha256_digest, verify_release_envelope,
-    verify_transparency_bundle,
+    CachedTreeHead, GossipCheckpoint, TransparencyVerificationPolicy, TrustPolicy,
+    VerifiedReleaseEvidence, sha256_digest, verify_release_envelope,
+    verify_transparency_bundle_with_policy,
 };
 use sha2::{Digest, Sha256};
 use std::fs;
@@ -289,6 +290,33 @@ pub fn resolve_registry_source_with_policy(
     trust_policy: TrustPolicy,
     trusted_transparency_keys: &[String],
 ) -> Result<VerifiedRegistrySource, String> {
+    let transparency_policy =
+        TransparencyVerificationPolicy::pinned(trusted_transparency_keys.to_vec());
+    resolve_registry_source_with_verification_policy(
+        base_root,
+        alias,
+        package,
+        version,
+        registry,
+        offline,
+        authorization_header,
+        trust_policy,
+        &transparency_policy,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+pub fn resolve_registry_source_with_verification_policy(
+    base_root: &Path,
+    alias: &str,
+    package: &str,
+    version: &str,
+    registry: Option<&str>,
+    offline: bool,
+    authorization_header: Option<&str>,
+    trust_policy: TrustPolicy,
+    transparency_policy: &TransparencyVerificationPolicy,
+) -> Result<VerifiedRegistrySource, String> {
     let metadata = match registry {
         Some(registry) if registry.starts_with("file://") => {
             load_registry_version_metadata(registry, package, version, authorization_header)?
@@ -336,7 +364,8 @@ pub fn resolve_registry_source_with_policy(
                     alias,
                     metadata,
                     trust_policy,
-                    trusted_transparency_keys,
+                    transparency_policy,
+                    offline,
                 )?;
                 unpack_package_archive(&archive, package, version, &source_root)?;
                 verify_registry_manifest_checksum(metadata, &source_root, trust_policy)?;
@@ -384,7 +413,8 @@ pub fn resolve_registry_source_with_policy(
             alias,
             metadata,
             trust_policy,
-            trusted_transparency_keys,
+            transparency_policy,
+            offline,
         )?
     } else {
         None
@@ -415,7 +445,8 @@ fn verify_registry_supply_chain(
     alias: &str,
     metadata: &RegistryVersionMetadata,
     trust_policy: TrustPolicy,
-    trusted_transparency_keys: &[String],
+    transparency_policy: &TransparencyVerificationPolicy,
+    offline: bool,
 ) -> Result<Option<VerifiedReleaseEvidence>, String> {
     if trust_policy == TrustPolicy::ChecksumOnly {
         return Ok(None);
@@ -455,18 +486,24 @@ fn verify_registry_supply_chain(
         })?;
         let head_path = registry_trust_head_cache_path(base_root, registry);
         let cached = read_cached_tree_head(&head_path)?;
-        let verified = verify_transparency_bundle(
+        let verified = verify_transparency_bundle_with_policy(
             bundle,
             envelope,
             cached.as_ref(),
-            trusted_transparency_keys,
+            transparency_policy,
+            offline,
+            nomo_supply_chain::current_unix_seconds(),
         )
         .map_err(|error| {
             format!("registry dependency `{alias}` transparency verification failed: {error}")
         })?;
-        write_cached_tree_head(&head_path, &verified)?;
-        evidence.transparency_root = Some(verified.root_hash);
-        evidence.transparency_size = Some(verified.tree_size);
+        write_cached_tree_head(&head_path, &verified.cached_head)?;
+        write_gossip_checkpoint(
+            &registry_gossip_checkpoint_cache_path(base_root, registry),
+            &verified.gossip_checkpoint,
+        )?;
+        evidence.transparency_root = Some(verified.cached_head.root_hash);
+        evidence.transparency_size = Some(verified.cached_head.tree_size);
     }
     Ok(Some(evidence))
 }
@@ -705,6 +742,13 @@ fn registry_trust_head_cache_path(base_root: &Path, registry: &str) -> PathBuf {
         .join("tree-head.json")
 }
 
+fn registry_gossip_checkpoint_cache_path(base_root: &Path, registry: &str) -> PathBuf {
+    base_root
+        .join(".nomo/cache/registry/trust")
+        .join(registry_cache_key(Some(registry)))
+        .join("gossip-checkpoint.json")
+}
+
 fn read_cached_tree_head(path: &Path) -> Result<Option<CachedTreeHead>, String> {
     if !path.is_file() {
         return Ok(None);
@@ -725,6 +769,10 @@ fn read_cached_tree_head(path: &Path) -> Result<Option<CachedTreeHead>, String> 
 
 fn write_cached_tree_head(path: &Path, head: &CachedTreeHead) -> Result<(), String> {
     write_json_cache(path, head, "transparency head")
+}
+
+fn write_gossip_checkpoint(path: &Path, checkpoint: &GossipCheckpoint) -> Result<(), String> {
+    write_json_cache(path, checkpoint, "transparency gossip checkpoint")
 }
 
 fn write_json_cache<T: serde::Serialize>(
@@ -995,14 +1043,15 @@ fn archive_output_path(root: &Path, relative: &str) -> Result<PathBuf, String> {
 mod tests {
     use super::{
         RegistryPackageMetadata, RegistryVersionMetadata, RegistryVersionSummary, archive_checksum,
-        build_package_archive, registry_trust_head_cache_path, resolve_registry_source_with_policy,
+        build_package_archive, registry_gossip_checkpoint_cache_path,
+        registry_trust_head_cache_path, resolve_registry_source_with_policy,
         resolve_registry_version, verify_registry_archive_checksum,
         write_cached_registry_package_metadata, write_cached_tree_head,
     };
     use nomo_manifest::{PackageMetadata, RegistryTrustPolicy};
     use nomo_supply_chain::{
-        CachedTreeHead, ExternalSignerResponse, PROVENANCE_SCHEMA, PublisherKey, ReleaseProvenance,
-        ReleaseSubject, SignedTreeHead, TransparencyBundle, TransparencyEvent,
+        CachedTreeHead, ExternalSignerResponse, GossipCheckpoint, PROVENANCE_SCHEMA, PublisherKey,
+        ReleaseProvenance, ReleaseSubject, SignedTreeHead, TransparencyBundle, TransparencyEvent,
         TransparencyEventKind, TransparencyLog, encode_hex, envelope_from_signer_response,
         publisher_key_id, sha256_digest,
     };
@@ -1159,8 +1208,13 @@ mod tests {
         ])
         .unwrap();
         let mut head = SignedTreeHead {
+            schema: nomo_supply_chain::TRANSPARENCY_HEAD_SCHEMA,
+            log_id: "file-registry-test-log".to_string(),
             tree_size: 2,
             root_hash: log.root_hash().unwrap(),
+            issued_at_unix_seconds: nomo_supply_chain::current_unix_seconds(),
+            previous_tree_size: None,
+            previous_root_hash: None,
             algorithm: "ed25519".to_string(),
             key_id: key_id.clone(),
             signature: String::new(),
@@ -1169,6 +1223,8 @@ mod tests {
         metadata.transparency = Some(TransparencyBundle {
             head: head.clone(),
             log_public_key: metadata.publisher_keys[0].public_key.clone(),
+            log_key_rotations: Vec::new(),
+            head_history: Vec::new(),
             release: log.inclusion(1).unwrap(),
             key_events: vec![log.inclusion(0).unwrap()],
         });
@@ -1198,12 +1254,19 @@ mod tests {
             Some(head.root_hash.clone())
         );
         assert_eq!(transparent_evidence.transparency_size, Some(2));
+        let gossip_cache = registry_gossip_checkpoint_cache_path(&transparent_root, &endpoint);
+        let cached_gossip: GossipCheckpoint =
+            serde_json::from_slice(&fs::read(&gossip_cache).unwrap()).unwrap();
+        assert_eq!(cached_gossip.head.root_hash, head.root_hash);
+        assert_eq!(cached_gossip.head.key_id, head.key_id);
         let head_cache = registry_trust_head_cache_path(&transparent_root, &endpoint);
         write_cached_tree_head(
             &head_cache,
             &CachedTreeHead {
                 tree_size: 3,
                 root_hash: sha256_digest(b"newer-head"),
+                issued_at_unix_seconds: nomo_supply_chain::current_unix_seconds(),
+                key_id: key_id.clone(),
             },
         )
         .unwrap();

@@ -153,6 +153,13 @@ artifacts but intentionally preserves this rebuildable cache; `nomo cache
 clean` removes it separately. See
 [Persistent Incremental Cache](docs/incremental-cache.md).
 
+For `signed+transparent` registry policy, schema-v2 tree heads carry issuance
+times and predecessor checkpoints, log keys rotate through old/new dual-signed
+statements, and cached or imported gossip checkpoints expose rollback and split
+views. Online proofs default to a 24-hour maximum age and offline proofs to
+seven days, with manifest and `nomo verify` overrides. See
+[Transparency Log Operations](docs/transparency-operations.md).
+
 Typed C interop supports nominal opaque handles, explicit nullable and
 owned/borrowed handle types, fixed-layout `#[repr(C)]` records, and restricted
 non-capturing callbacks. `nomo ffi bindgen` converts a controlled C-header

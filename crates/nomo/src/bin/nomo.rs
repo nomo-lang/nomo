@@ -92,6 +92,6 @@ fn print_help() {
         env!("CARGO_PKG_VERSION")
     );
     println!(
-        "  nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>\n  nomo owner key revoke <owner/package> <key-id> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]\n  nomo verify <archive> --envelope <file> --key <ed25519-public-key-hex> [--provenance <file>] [--transparency <file> --log-key <ed25519-public-key-hex>] [--cached-head <file>]"
+        "  nomo owner key add <owner/package> <ed25519-public-key-hex> --registry <url>\n  nomo owner key revoke <owner/package> <key-id> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--signer <command>] [--envelope <file>] [--json-errors]\n  nomo verify <archive> --envelope <file> --key <ed25519-public-key-hex> [--provenance <file>] [--transparency <file> --log-key <ed25519-public-key-hex>] [--cached-head <file>] [--gossip <file>] [--write-gossip <file>] [--proof-max-age-seconds <seconds>] [--offline-proof-max-age-seconds <seconds>] [--max-future-skew-seconds <seconds>] [--offline]"
     );
 }

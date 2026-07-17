@@ -4,8 +4,9 @@ use super::{
 };
 use nomo_graph::DirectedGraph;
 use nomo_manifest::{
-    Dependency, DependencySource, WorkspaceContext, manifest_document_has_workspace,
-    parse_manifest_at_root, parse_manifest_document, parse_workspace_context,
+    Dependency, DependencySource, ManifestSchema, WorkspaceContext,
+    manifest_document_has_workspace, manifest_schema, parse_manifest_at_root,
+    parse_manifest_document, parse_workspace_context,
 };
 use nomo_target::TargetTriple;
 use std::collections::{BTreeMap, BTreeSet};
@@ -380,6 +381,17 @@ fn workspace_projects_from_patterns(
     }
 
     let mut member_roots = BTreeSet::new();
+    let mut canonical_roots = BTreeMap::new();
+    let canonical_workspace_root = if context.schema == ManifestSchema::V2 {
+        Some(fs::canonicalize(&context.root).map_err(|err| {
+            format!(
+                "failed to resolve workspace root {}: {err}",
+                context.root.display()
+            )
+        })?)
+    } else {
+        None
+    };
     for pattern in patterns {
         let mut expanded = expand_workspace_pattern(&context.root, pattern)?;
         expanded.sort();
@@ -401,6 +413,38 @@ fn workspace_projects_from_patterns(
                 return Err(format!(
                     "workspace member `{relative}` is missing nomo.toml"
                 ));
+            }
+            if let Some(workspace_root) = &canonical_workspace_root {
+                let canonical_root = fs::canonicalize(&root).map_err(|err| {
+                    format!("failed to resolve workspace member `{relative}`: {err}")
+                })?;
+                if !canonical_root.starts_with(workspace_root) {
+                    return Err(format!(
+                        "workspace member `{relative}` resolves outside the workspace root"
+                    ));
+                }
+                if let Some(existing) = canonical_roots.insert(canonical_root.clone(), root.clone())
+                {
+                    return Err(format!(
+                        "workspace members {} and {} resolve to the same canonical path {}",
+                        existing.display(),
+                        root.display(),
+                        canonical_root.display()
+                    ));
+                }
+                let text = fs::read_to_string(root.join("nomo.toml"))
+                    .map_err(|err| format!("failed to read member `{relative}`: {err}"))?;
+                let document = parse_manifest_document(&text)?;
+                if manifest_schema(&document)? != ManifestSchema::V2 {
+                    return Err(format!(
+                        "manifest v2 workspace member `{relative}` must define `manifest-version = 2`; run `nomo manifest migrate`"
+                    ));
+                }
+                if root != context.root && manifest_document_has_workspace(&document)? {
+                    return Err(format!(
+                        "workspace member `{relative}` defines a nested workspace; nested workspace membership is ambiguous"
+                    ));
+                }
             }
             member_roots.insert(root);
         }
@@ -524,6 +568,37 @@ pub(super) fn validate_workspace_update_target(
 mod tests {
     use super::*;
     use std::time::{SystemTime, UNIX_EPOCH};
+
+    #[test]
+    fn manifest_v2_workspace_rejects_legacy_and_nested_members() {
+        let root = temp_test_root("workspace-v2-member-contract");
+        reset_dir(&root);
+        let app = root.join("apps/app");
+        fs::create_dir_all(app.join("src")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "manifest-version = 2\n\n[workspace]\nmembers = [\"apps/*\"]\n",
+        )
+        .unwrap();
+        fs::write(
+            app.join("nomo.toml"),
+            "[package]\nnamespace = \"acme\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+
+        let legacy = discover_workspace(&root).unwrap_err();
+        assert!(legacy.contains("manifest-version = 2"), "{legacy}");
+
+        fs::write(
+            app.join("nomo.toml"),
+            "manifest-version = 2\n\n[package]\nnamespace = \"acme\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[workspace]\nmembers = [\".\"]\n",
+        )
+        .unwrap();
+        let nested = discover_workspace(&root).unwrap_err();
+        assert!(nested.contains("nested workspace"), "{nested}");
+        fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn builds_workspace_member_topology_and_resolved_package_graphs() {

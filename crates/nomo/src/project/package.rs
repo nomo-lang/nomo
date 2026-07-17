@@ -98,6 +98,12 @@ pub fn prepare_publish_package(
 
     check_project(project).map_err(BuildError::Diagnostic)?;
     let manifest = parse_manifest_at_root(&project.root).map_err(BuildError::Message)?;
+    if manifest.details.publish == Some(false) {
+        return Err(BuildError::Message(format!(
+            "package `{}/{}` is marked `publish = false` in nomo.toml",
+            manifest.package.namespace, manifest.package.name
+        )));
+    }
     let archive =
         build_package_archive(&project.root, &manifest.package).map_err(BuildError::Message)?;
     let checksum = archive_checksum(&archive);

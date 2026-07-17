@@ -9,15 +9,32 @@ validate imports, load local modules, and resolve path or git dependencies.
 A package manifest declares the package identity:
 
 ```toml
+manifest-version = 2
+
 [package]
 namespace = "local"
 name = "hello"
 version = "0.1.0"
 edition = "2026"
+description = "A small Nomo application"
+license = "MIT"
+repository = "https://example.com/local/hello"
+publish = false
 ```
 
-`namespace`, `name`, `version`, and `edition` are validated by the project
-loader. `std`, `nomo`, and `core` are reserved namespaces.
+Manifest v2 requires `namespace`, `name`, `version`, and `edition` for a
+standalone package and rejects unknown fields. `std`, `nomo`, and `core` are
+reserved namespaces. Omitting `manifest-version` selects the legacy v1
+compatibility parser; migrate a project or complete workspace with:
+
+```sh
+nomo manifest migrate [path]
+nomo manifest migrate [path] --check
+```
+
+Migration materializes legacy defaults and moves consumer-side trust policy to
+`.nomo/config.toml`. It validates every output before replacing files and is
+idempotent. `--check` reports whether a write would be required.
 
 `std` is built in. User manifests do not need a `std` dependency, `std` cannot
 be used as an ordinary dependency alias, and `std` is not written to the
@@ -69,7 +86,7 @@ Dependency keys are source import aliases. For example:
 
 ```toml
 [dependencies]
-local_utils = { package = "local/utils", path = "../utils" }
+local_utils = { path = "../utils" }
 fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
 json = { package = "nomo-lang/json", version = "^1.2.0" }
 winapi = { package = "nomo-lang/winapi", version = "1.0.0", target = { os = "windows", arch = ["x86_64", "arm64"] } }
@@ -81,6 +98,10 @@ Each dependency must declare exactly one source kind:
 - `git`: git package source, cached under `.nomo/deps/git/`.
 - `version`: registry source fetched from the configured file, HTTP, or HTTPS registry
   and cached under `.nomo/cache/registry/`.
+
+In manifest v2, path dependencies can omit `package`; Nomo derives and validates
+the canonical identity from the target manifest. Git and registry dependencies
+keep an explicit canonical package identity.
 
 An optional `target = { ... }` predicate makes an edge active only when every
 specified dimension matches; multiple values within one dimension form a set.
@@ -108,32 +129,40 @@ A workspace root contains `[workspace]` and may provide inherited package fields
 or dependencies:
 
 ```toml
+manifest-version = 2
+
 [workspace]
 members = ["apps/*", "packages/*"]
+default-members = ["apps/app"]
 
 [workspace.package]
 namespace = "local"
+version = "0.1.0"
 edition = "2026"
+license = "MIT"
 
 [workspace.dependencies]
-util = { package = "local/util", path = "packages/util" }
+util = { path = "packages/util" }
 ```
 
 Member manifests can inherit package fields and dependencies:
 
 ```toml
+manifest-version = 2
+
 [package]
 name = "app"
-version = "0.1.0"
-namespace.workspace = true
-edition.workspace = true
+inherit = "workspace"
 
 [dependencies]
-util.workspace = true
+util = { workspace = true }
 ```
 
-Workspace dependency paths are interpreted from the workspace root and rebased
-for each member during resolution.
+`package.name` always belongs to the member. `inherit = "workspace"` fills only
+missing namespace, version, edition, and descriptive metadata after the package
+has been proven to match `members` minus `exclude`. Workspace dependency paths
+are interpreted from the workspace root and rebased for each member during
+resolution.
 
 Workspace-aware commands include:
 
@@ -225,10 +254,13 @@ nomo deps tree --frozen
 
 Registry metadata may include a publisher signature, canonical provenance, and
 an inclusion proof from a transparency log. Projects opt into verification in
-the manifest:
+the root `.nomo/config.toml`, keeping local operating policy out of publishable
+package manifests:
 
 ```toml
-[trust]
+config-version = 1
+
+[registry]
 policy = "signed+transparent"
 transparency-keys = ["<64 hexadecimal Ed25519 log public key>"]
 proof-max-age-seconds = 86400
@@ -250,10 +282,11 @@ log key as a trust root.
 
 Online proofs are accepted for 24 hours by default, while `--offline` resolution
 allows a seven-day proof age. Heads more than five minutes in the future are
-rejected. The three numeric manifest settings above override those defaults;
+rejected. The three numeric project-config settings above override those defaults;
 the offline limit must be at least the online limit. `gossip-checkpoints` paths
-must remain inside the package and may contain one signed checkpoint or a JSON
-array of checkpoints distributed by CI, mirrors, or registry peers. Successful
+must remain inside the project or workspace root and may contain one signed
+checkpoint or a JSON array of checkpoints distributed by CI, mirrors, or
+registry peers. Successful
 resolver verification writes the latest shareable checkpoint below
 `.nomo/cache/registry/trust/<registry-id>/gossip-checkpoint.json`.
 

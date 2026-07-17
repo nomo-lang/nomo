@@ -1,3 +1,5 @@
+manifest-version = 2
+
 [package]
 namespace = "nomo-lang"
 name = "std"

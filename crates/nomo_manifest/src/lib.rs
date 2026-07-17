@@ -9,6 +9,54 @@ mod version;
 
 pub use version::{PackageVersion, VersionConstraint};
 
+pub const MANIFEST_VERSION_V2: i64 = 2;
+pub const PROJECT_CONFIG_VERSION: i64 = 1;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestSchema {
+    V1,
+    V2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ManifestDocumentKind {
+    Package,
+    Workspace,
+    Combined,
+}
+
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PackageDetails {
+    pub description: Option<String>,
+    pub license: Option<String>,
+    pub repository: Option<String>,
+    pub publish: Option<bool>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ProjectConfig {
+    pub version: i64,
+    pub trust: RegistryTrustPolicy,
+    pub transparency: TransparencyTrustConfig,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ManifestMigration {
+    pub manifest: String,
+    pub project_config: Option<String>,
+    pub changed: bool,
+}
+
+impl Default for ProjectConfig {
+    fn default() -> Self {
+        Self {
+            version: PROJECT_CONFIG_VERSION,
+            trust: RegistryTrustPolicy::default(),
+            transparency: TransparencyTrustConfig::default(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct DependencyAddSpec {
     pub alias: String,
@@ -176,7 +224,10 @@ pub struct ConditionalFfiLinkMetadata {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Manifest {
+    pub schema: ManifestSchema,
+    pub kind: ManifestDocumentKind,
     pub package: PackageMetadata,
+    pub details: PackageDetails,
     pub dependencies: Vec<Dependency>,
     pub ffi: FfiLinkMetadata,
     pub target_ffi: Vec<ConditionalFfiLinkMetadata>,
@@ -264,10 +315,12 @@ pub struct WorkspacePackageDefaults {
     pub name: Option<String>,
     pub version: Option<String>,
     pub edition: Option<String>,
+    pub details: PackageDetails,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct WorkspaceContext {
+    pub schema: ManifestSchema,
     pub root: PathBuf,
     pub members: Vec<String>,
     pub default_members: Vec<String>,
@@ -321,6 +374,39 @@ pub fn parse_manifest_document(manifest: &str) -> Result<toml::Value, String> {
         .map_err(|err| format!("failed to parse nomo.toml as TOML: {err}"))
 }
 
+pub fn manifest_schema(document: &toml::Value) -> Result<ManifestSchema, String> {
+    let Some(value) = document.get("manifest-version") else {
+        return Ok(ManifestSchema::V1);
+    };
+    let version = value
+        .as_integer()
+        .ok_or_else(|| "manifest `manifest-version` must be an integer".to_string())?;
+    match version {
+        MANIFEST_VERSION_V2 => Ok(ManifestSchema::V2),
+        other => Err(format!(
+            "unsupported manifest version `{other}`; this Nomo build supports version {MANIFEST_VERSION_V2}"
+        )),
+    }
+}
+
+pub fn manifest_document_kind(document: &toml::Value) -> Result<ManifestDocumentKind, String> {
+    match (
+        optional_table(document, "package")?.is_some(),
+        optional_table(document, "workspace")?.is_some(),
+    ) {
+        (true, false) => Ok(ManifestDocumentKind::Package),
+        (false, true) => Ok(ManifestDocumentKind::Workspace),
+        (true, true) => Ok(ManifestDocumentKind::Combined),
+        (false, false) if manifest_schema(document)? == ManifestSchema::V1 => {
+            Ok(ManifestDocumentKind::Package)
+        }
+        (false, false) => Err(
+            "manifest v2 must define a `[package]` table, a `[workspace]` table, or both"
+                .to_string(),
+        ),
+    }
+}
+
 pub fn manifest_document_has_workspace(document: &toml::Value) -> Result<bool, String> {
     Ok(optional_table(document, "workspace")?.is_some())
 }
@@ -329,22 +415,80 @@ pub fn parse_workspace_context(
     root: &Path,
     document: &toml::Value,
 ) -> Result<WorkspaceContext, String> {
+    parse_workspace_context_impl(root, document, true)
+}
+
+fn parse_workspace_context_impl(
+    root: &Path,
+    document: &toml::Value,
+    include_dependencies: bool,
+) -> Result<WorkspaceContext, String> {
+    let schema = manifest_schema(document)?;
+    if schema == ManifestSchema::V2 {
+        validate_v2_top_level(document)?;
+    }
     let workspace_table = optional_table(document, "workspace")?
         .ok_or_else(|| "manifest does not define a [workspace] table".to_string())?;
+    if schema == ManifestSchema::V2 {
+        validate_supported_fields(
+            workspace_table,
+            "workspace",
+            &[
+                "members",
+                "default-members",
+                "exclude",
+                "resolver",
+                "package",
+                "dependencies",
+            ],
+        )?;
+    }
     let members = optional_string_array_field(workspace_table, "workspace", "members")?;
     let default_members =
         optional_string_array_field(workspace_table, "workspace", "default-members")?;
     let exclude = optional_string_array_field(workspace_table, "workspace", "exclude")?;
     let resolver = optional_string_field(workspace_table, "workspace", "resolver")?;
+    if schema == ManifestSchema::V2 {
+        if members.is_empty() {
+            return Err("manifest v2 `workspace.members` must not be empty".to_string());
+        }
+        validate_workspace_patterns("workspace.members", &members)?;
+        validate_workspace_patterns("workspace.default-members", &default_members)?;
+        validate_workspace_patterns("workspace.exclude", &exclude)?;
+        if optional_table(document, "package")?.is_some()
+            && !members.iter().any(|member| member == ".")
+        {
+            return Err(
+                "a manifest v2 combined workspace root must include `.` in `workspace.members`"
+                    .to_string(),
+            );
+        }
+    }
     let package = match workspace_table.get("package") {
-        Some(value) => parse_workspace_package_defaults(value)?,
+        Some(value) => parse_workspace_package_defaults(value, schema)?,
         None => WorkspacePackageDefaults::default(),
     };
-    let dependencies = match workspace_table.get("dependencies") {
-        Some(value) => parse_workspace_dependencies(value)?,
-        None => BTreeMap::new(),
+    if schema == ManifestSchema::V2 {
+        if let Some(namespace) = &package.namespace {
+            validate_package_namespace("workspace package namespace", namespace)?;
+        }
+        if let Some(version) = &package.version {
+            validate_version_like("workspace package version", version)?;
+        }
+        if package.edition.as_deref() == Some("") {
+            return Err("workspace package edition must not be empty".to_string());
+        }
+    }
+    let dependencies = if include_dependencies {
+        match workspace_table.get("dependencies") {
+            Some(value) => parse_workspace_dependencies(value, schema, root)?,
+            None => BTreeMap::new(),
+        }
+    } else {
+        BTreeMap::new()
     };
     Ok(WorkspaceContext {
+        schema,
         root: root.to_path_buf(),
         members,
         default_members,
@@ -364,6 +508,12 @@ pub fn workspace_root_for_package(root: &Path) -> Result<Option<PathBuf>, String
         let text = fs::read_to_string(&manifest).map_err(|err| err.to_string())?;
         let document = parse_manifest_document(&text)?;
         if optional_table(&document, "workspace")?.is_some() {
+            if manifest_schema(&document)? == ManifestSchema::V2 {
+                let context = parse_workspace_context_impl(candidate, &document, false)?;
+                if !workspace_context_includes_root(&context, root)? {
+                    continue;
+                }
+            }
             return Ok(Some(candidate.to_path_buf()));
         }
     }
@@ -374,6 +524,7 @@ pub fn upsert_registry_dependency(
     document: &mut toml::Value,
     spec: &DependencyAddSpec,
 ) -> Result<(), String> {
+    let schema = manifest_schema(document)?;
     let root = document
         .as_table_mut()
         .ok_or_else(|| "manifest root must be a TOML table".to_string())?;
@@ -403,7 +554,7 @@ pub fn upsert_registry_dependency(
         );
     }
     let value = toml::Value::Table(fields);
-    parse_dependency_value(&spec.alias, &value, None)?;
+    parse_dependency_value(&spec.alias, &value, None, schema, None)?;
     dependencies.insert(spec.alias.clone(), value);
     Ok(())
 }
@@ -439,11 +590,418 @@ pub fn render_manifest_document(document: &toml::Value) -> Result<String, String
     Ok(rendered)
 }
 
+pub fn render_project_config(config: &ProjectConfig, root: &Path) -> Result<String, String> {
+    let mut registry = toml::map::Map::new();
+    registry.insert(
+        "policy".to_string(),
+        toml::Value::String(config.trust.as_str().to_string()),
+    );
+    if !config.transparency.keys.is_empty() {
+        registry.insert(
+            "transparency-keys".to_string(),
+            toml::Value::Array(
+                config
+                    .transparency
+                    .keys
+                    .iter()
+                    .cloned()
+                    .map(toml::Value::String)
+                    .collect(),
+            ),
+        );
+    }
+    registry.insert(
+        "proof-max-age-seconds".to_string(),
+        toml::Value::Integer(
+            i64::try_from(config.transparency.proof_max_age_seconds)
+                .map_err(|_| "proof-max-age-seconds is too large to render".to_string())?,
+        ),
+    );
+    registry.insert(
+        "offline-proof-max-age-seconds".to_string(),
+        toml::Value::Integer(
+            i64::try_from(config.transparency.offline_proof_max_age_seconds)
+                .map_err(|_| "offline-proof-max-age-seconds is too large to render".to_string())?,
+        ),
+    );
+    registry.insert(
+        "max-future-skew-seconds".to_string(),
+        toml::Value::Integer(
+            i64::try_from(config.transparency.max_future_skew_seconds)
+                .map_err(|_| "max-future-skew-seconds is too large to render".to_string())?,
+        ),
+    );
+    if !config.transparency.gossip_checkpoints.is_empty() {
+        let mut checkpoints = Vec::new();
+        for checkpoint in &config.transparency.gossip_checkpoints {
+            let relative = relative_path(root, checkpoint).ok_or_else(|| {
+                format!(
+                    "cannot express gossip checkpoint {} relative to project root {}",
+                    checkpoint.display(),
+                    root.display()
+                )
+            })?;
+            if relative.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            }) {
+                return Err(format!(
+                    "gossip checkpoint {} is outside project root {}",
+                    checkpoint.display(),
+                    root.display()
+                ));
+            }
+            checkpoints.push(toml::Value::String(
+                relative.to_string_lossy().replace('\\', "/"),
+            ));
+        }
+        registry.insert(
+            "gossip-checkpoints".to_string(),
+            toml::Value::Array(checkpoints),
+        );
+    }
+
+    let mut document = toml::map::Map::new();
+    document.insert(
+        "config-version".to_string(),
+        toml::Value::Integer(PROJECT_CONFIG_VERSION),
+    );
+    document.insert("registry".to_string(), toml::Value::Table(registry));
+    let document = toml::Value::Table(document);
+    parse_project_config_document(root, &document, &root.join(".nomo/config.toml"))?;
+    render_manifest_document(&document)
+}
+
+pub fn migrate_manifest_at_root(root: &Path) -> Result<ManifestMigration, String> {
+    let manifest_path = root.join("nomo.toml");
+    let original = fs::read_to_string(&manifest_path)
+        .map_err(|err| format!("failed to read {}: {err}", manifest_path.display()))?;
+    let document = parse_manifest_document(&original)?;
+    let schema = manifest_schema(&document)?;
+    let kind = manifest_document_kind(&document)?;
+
+    if schema == ManifestSchema::V2 {
+        if kind == ManifestDocumentKind::Workspace {
+            parse_workspace_context(root, &document)?;
+        } else {
+            let workspace = workspace_context_for_manifest(root, &document)?;
+            parse_manifest_document_at_root(&document, root, workspace.as_ref())?;
+        }
+        return Ok(ManifestMigration {
+            manifest: original,
+            project_config: None,
+            changed: false,
+        });
+    }
+
+    let workspace = workspace_context_for_manifest(root, &document)?;
+    let parsed = if kind == ManifestDocumentKind::Workspace {
+        None
+    } else {
+        Some(parse_manifest_document_at_root(
+            &document,
+            root,
+            workspace.as_ref(),
+        )?)
+    };
+    let mut migrated = document.clone();
+    let root_table = migrated
+        .as_table_mut()
+        .ok_or_else(|| "manifest root must be a TOML table".to_string())?;
+    root_table.insert(
+        "manifest-version".to_string(),
+        toml::Value::Integer(MANIFEST_VERSION_V2),
+    );
+
+    let trust = root_table.remove("trust");
+    let project_config = trust
+        .map(|trust| migrate_trust_to_project_config(root, trust))
+        .transpose()?;
+
+    if let Some(parsed) = &parsed {
+        migrate_package_table(root_table, &document, parsed)?;
+    }
+    if let Some(workspace) = root_table
+        .get_mut("workspace")
+        .and_then(toml::Value::as_table_mut)
+    {
+        migrate_workspace_table(workspace, kind)?;
+    }
+
+    let migrated_workspace =
+        if kind == ManifestDocumentKind::Workspace || kind == ManifestDocumentKind::Combined {
+            Some(parse_workspace_context(root, &migrated)?)
+        } else {
+            workspace
+        };
+    if kind != ManifestDocumentKind::Workspace {
+        parse_manifest_document_at_root(&migrated, root, migrated_workspace.as_ref())?;
+    }
+
+    Ok(ManifestMigration {
+        manifest: render_manifest_document(&migrated)?,
+        project_config,
+        changed: true,
+    })
+}
+
+fn migrate_package_table(
+    root: &mut toml::map::Map<String, toml::Value>,
+    original: &toml::Value,
+    parsed: &Manifest,
+) -> Result<(), String> {
+    let original_package = optional_table(original, "package")?;
+    let inherited = ["namespace", "version", "edition"]
+        .into_iter()
+        .filter(|key| {
+            original_package
+                .and_then(|table| table.get(*key))
+                .is_some_and(is_workspace_inheritance)
+        })
+        .collect::<Vec<_>>();
+    let legacy_fields = if original_package.is_none() {
+        [
+            "namespace",
+            "name",
+            "version",
+            "edition",
+            "description",
+            "license",
+            "repository",
+            "publish",
+        ]
+        .into_iter()
+        .filter_map(|key| root.remove(key).map(|value| (key.to_string(), value)))
+        .collect::<Vec<_>>()
+    } else {
+        Vec::new()
+    };
+
+    let package = root
+        .entry("package".to_string())
+        .or_insert_with(|| toml::Value::Table(toml::map::Map::new()))
+        .as_table_mut()
+        .ok_or_else(|| "manifest `package` must be a TOML table".to_string())?;
+
+    for (key, value) in legacy_fields {
+        package.insert(key, value);
+    }
+
+    package.insert(
+        "name".to_string(),
+        toml::Value::String(parsed.package.name.clone()),
+    );
+    for (key, value) in [
+        ("namespace", &parsed.package.namespace),
+        ("version", &parsed.package.version),
+        ("edition", &parsed.package.edition),
+    ] {
+        if inherited.contains(&key) {
+            package.remove(key);
+        } else if !package.contains_key(key) {
+            package.insert(key.to_string(), toml::Value::String(value.clone()));
+        }
+    }
+    if inherited.is_empty() {
+        package.remove("inherit");
+    } else {
+        package.insert(
+            "inherit".to_string(),
+            toml::Value::String("workspace".to_string()),
+        );
+    }
+    Ok(())
+}
+
+fn migrate_workspace_table(
+    workspace: &mut toml::map::Map<String, toml::Value>,
+    kind: ManifestDocumentKind,
+) -> Result<(), String> {
+    if let Some(package) = workspace
+        .get_mut("package")
+        .and_then(toml::Value::as_table_mut)
+    {
+        package.remove("name");
+    }
+    if kind == ManifestDocumentKind::Combined {
+        let members = workspace
+            .entry("members".to_string())
+            .or_insert_with(|| toml::Value::Array(Vec::new()))
+            .as_array_mut()
+            .ok_or_else(|| "manifest `workspace.members` must be an array".to_string())?;
+        if !members.iter().any(|member| member.as_str() == Some(".")) {
+            members.insert(0, toml::Value::String(".".to_string()));
+        }
+    }
+    Ok(())
+}
+
+fn migrate_trust_to_project_config(root: &Path, trust: toml::Value) -> Result<String, String> {
+    let trust_table = trust
+        .as_table()
+        .ok_or_else(|| "manifest `trust` must be a TOML table".to_string())?;
+    parse_registry_trust_policy_table(root, Some(trust_table), "trust")?;
+    let mut document = toml::map::Map::new();
+    document.insert(
+        "config-version".to_string(),
+        toml::Value::Integer(PROJECT_CONFIG_VERSION),
+    );
+    document.insert("registry".to_string(), trust);
+    let document = toml::Value::Table(document);
+    parse_project_config_document(root, &document, &root.join(".nomo/config.toml"))?;
+    render_manifest_document(&document)
+}
+
+pub fn parse_project_config_at_root(root: &Path) -> Result<ProjectConfig, String> {
+    let path = root.join(".nomo/config.toml");
+    if !path.is_file() {
+        return Ok(ProjectConfig::default());
+    }
+    let text = fs::read_to_string(&path)
+        .map_err(|err| format!("failed to read {}: {err}", path.display()))?;
+    let document = text
+        .parse::<toml::Value>()
+        .map_err(|err| format!("failed to parse {} as TOML: {err}", path.display()))?;
+    parse_project_config_document(root, &document, &path)
+}
+
+pub fn parse_project_config_text(text: &str, root: &Path) -> Result<ProjectConfig, String> {
+    let path = root.join(".nomo/config.toml");
+    let document = text
+        .parse::<toml::Value>()
+        .map_err(|err| format!("failed to parse {} as TOML: {err}", path.display()))?;
+    parse_project_config_document(root, &document, &path)
+}
+
+pub fn parse_manifest_document_with_workspace(
+    document: &toml::Value,
+    root: &Path,
+    workspace: Option<&WorkspaceContext>,
+) -> Result<Manifest, String> {
+    parse_manifest_document_at_root(document, root, workspace)
+}
+
+fn parse_project_config_document(
+    root: &Path,
+    document: &toml::Value,
+    path: &Path,
+) -> Result<ProjectConfig, String> {
+    let table = document
+        .as_table()
+        .ok_or_else(|| format!("project config {} must be a TOML table", path.display()))?;
+    validate_supported_fields(table, "project config", &["config-version", "registry"])?;
+    let version = table
+        .get("config-version")
+        .and_then(toml::Value::as_integer)
+        .ok_or_else(|| {
+            format!(
+                "project config {} must define integer `config-version = {PROJECT_CONFIG_VERSION}`",
+                path.display()
+            )
+        })?;
+    if version != PROJECT_CONFIG_VERSION {
+        return Err(format!(
+            "unsupported project config version `{version}` in {}; this Nomo build supports version {PROJECT_CONFIG_VERSION}",
+            path.display()
+        ));
+    }
+    let registry = match table.get("registry") {
+        Some(value) => Some(value.as_table().ok_or_else(|| {
+            format!(
+                "project config {} field `registry` must be a table",
+                path.display()
+            )
+        })?),
+        None => None,
+    };
+    let (trust, transparency) =
+        parse_registry_trust_policy_table(root, registry, "registry config")?;
+    Ok(ProjectConfig {
+        version,
+        trust,
+        transparency,
+    })
+}
+
 fn parse_manifest_document_at_root(
     document: &toml::Value,
     root: &Path,
     workspace: Option<&WorkspaceContext>,
 ) -> Result<Manifest, String> {
+    let schema = manifest_schema(document)?;
+    let kind = manifest_document_kind(document)?;
+    if schema == ManifestSchema::V2 {
+        validate_v2_top_level(document)?;
+    }
+    if kind == ManifestDocumentKind::Workspace {
+        return Err(format!(
+            "{} is a workspace manifest and does not define a package",
+            root.join("nomo.toml").display()
+        ));
+    }
+
+    let (package, details, namespace_explicit) =
+        parse_package_header(document, root, workspace, schema)?;
+    let mut dependencies = Vec::new();
+    let ffi_table = optional_table(document, "ffi")?;
+    let ffi = parse_ffi_link_metadata(root, ffi_table)?;
+    let target_ffi = parse_target_ffi_link_metadata(root, ffi_table)?;
+    let (trust, transparency) = if schema == ManifestSchema::V2 {
+        let config_root = workspace
+            .map(|workspace| workspace.root.as_path())
+            .unwrap_or(root);
+        let config = parse_project_config_at_root(config_root)?;
+        (config.trust, config.transparency)
+    } else {
+        parse_registry_trust_policy(root, optional_table(document, "trust")?)?
+    };
+
+    if let Some(table) = optional_table(document, "dependencies")? {
+        let inheritance = workspace.map(|workspace| WorkspaceDependencyInheritance {
+            workspace,
+            package_root: root,
+        });
+        for (alias, value) in table {
+            if let Some(dependency) =
+                parse_dependency_value(alias, value, inheritance.as_ref(), schema, Some(root))?
+            {
+                dependencies.push(dependency);
+            }
+        }
+    }
+
+    validate_package_namespace("package namespace", &package.namespace)?;
+    if schema == ManifestSchema::V2 || namespace_explicit {
+        validate_package_segment("package name", &package.name)?;
+    } else if !is_legacy_package_name(&package.name) {
+        return Err(format!("invalid legacy package name `{}`", package.name));
+    }
+    validate_version_like("package version", &package.version)?;
+    if package.edition.is_empty() {
+        return Err("package edition must not be empty".to_string());
+    }
+
+    Ok(Manifest {
+        schema,
+        kind,
+        package,
+        details,
+        dependencies,
+        ffi,
+        target_ffi,
+        trust,
+        transparency,
+    })
+}
+
+fn parse_package_header(
+    document: &toml::Value,
+    root: &Path,
+    workspace: Option<&WorkspaceContext>,
+    schema: ManifestSchema,
+) -> Result<(PackageMetadata, PackageDetails, bool), String> {
     let root_name = root
         .file_name()
         .unwrap_or_default()
@@ -455,72 +1013,81 @@ fn parse_manifest_document_at_root(
         version: "0.1.0".to_string(),
         edition: "2026".to_string(),
     };
-    let mut dependencies = Vec::new();
-    let ffi_table = optional_table(document, "ffi")?;
-    let ffi = parse_ffi_link_metadata(root, ffi_table)?;
-    let target_ffi = parse_target_ffi_link_metadata(root, ffi_table)?;
-    let (trust, transparency) =
-        parse_registry_trust_policy(root, optional_table(document, "trust")?)?;
-
-    let package_table = optional_table(document, "package")?;
-    if package_table.is_none() && optional_table(document, "workspace")?.is_some() {
-        return Err(format!(
-            "{} is a workspace manifest and does not define a package",
-            root.join("nomo.toml").display()
-        ));
-    }
-    let namespace_explicit = package_table.is_some_and(|table| table.contains_key("namespace"));
-    if let Some(table) = package_table {
-        if let Some(value) = optional_package_string_field(table, "namespace", workspace)? {
+    let package_table = match optional_table(document, "package")? {
+        Some(table) => table,
+        None if schema == ManifestSchema::V1 => document
+            .as_table()
+            .ok_or_else(|| "manifest root must be a TOML table".to_string())?,
+        None => return Err("manifest v2 does not define a `[package]` table".to_string()),
+    };
+    let namespace_explicit = package_table.contains_key("namespace");
+    let mut details = parse_package_details(package_table)?;
+    if schema == ManifestSchema::V2 {
+        validate_supported_fields(
+            package_table,
+            "package",
+            &[
+                "namespace",
+                "name",
+                "version",
+                "edition",
+                "inherit",
+                "description",
+                "license",
+                "repository",
+                "publish",
+            ],
+        )?;
+        let inherit = match optional_string_field(package_table, "package", "inherit")? {
+            Some(value) if value == "workspace" => true,
+            Some(value) => {
+                return Err(format!(
+                    "manifest `package.inherit` must be `workspace`, found `{value}`"
+                ));
+            }
+            None => false,
+        };
+        if inherit && workspace.is_none() {
+            return Err(
+                "manifest `package.inherit = \"workspace\"` is only valid for a verified workspace member"
+                    .to_string(),
+            );
+        }
+        package.name = required_package_string(package_table, "name")?;
+        package.namespace = v2_package_string(package_table, workspace, inherit, "namespace")?;
+        package.version = v2_package_string(package_table, workspace, inherit, "version")?;
+        package.edition = v2_package_string(package_table, workspace, inherit, "edition")?;
+        if inherit {
+            inherit_package_details(&mut details, workspace.expect("inherit requires workspace"));
+        }
+    } else {
+        if let Some(value) = optional_package_string_field(package_table, "namespace", workspace)? {
             package.namespace = value;
         }
-        if let Some(value) = optional_package_string_field(table, "name", workspace)? {
+        if let Some(value) = optional_package_string_field(package_table, "name", workspace)? {
             package.name = value;
         }
-        if let Some(value) = optional_package_string_field(table, "version", workspace)? {
+        if let Some(value) = optional_package_string_field(package_table, "version", workspace)? {
             package.version = value;
         }
-        if let Some(value) = optional_package_string_field(table, "edition", workspace)? {
+        if let Some(value) = optional_package_string_field(package_table, "edition", workspace)? {
             package.edition = value;
         }
     }
-
-    if let Some(table) = optional_table(document, "dependencies")? {
-        let inheritance = workspace.map(|workspace| WorkspaceDependencyInheritance {
-            workspace,
-            package_root: root,
-        });
-        for (alias, value) in table {
-            if let Some(dependency) = parse_dependency_value(alias, value, inheritance.as_ref())? {
-                dependencies.push(dependency);
-            }
-        }
-    }
-
-    validate_package_namespace("package namespace", &package.namespace)?;
-    if namespace_explicit {
-        validate_package_segment("package name", &package.name)?;
-    } else if !is_legacy_package_name(&package.name) {
-        return Err(format!("invalid legacy package name `{}`", package.name));
-    }
-    validate_version_like("package version", &package.version)?;
-    if package.edition.is_empty() {
-        return Err("package edition must not be empty".to_string());
-    }
-
-    Ok(Manifest {
-        package,
-        dependencies,
-        ffi,
-        target_ffi,
-        trust,
-        transparency,
-    })
+    Ok((package, details, namespace_explicit))
 }
 
 fn parse_registry_trust_policy(
     root: &Path,
     table: Option<&toml::map::Map<String, toml::Value>>,
+) -> Result<(RegistryTrustPolicy, TransparencyTrustConfig), String> {
+    parse_registry_trust_policy_table(root, table, "trust")
+}
+
+fn parse_registry_trust_policy_table(
+    root: &Path,
+    table: Option<&toml::map::Map<String, toml::Value>>,
+    section: &str,
 ) -> Result<(RegistryTrustPolicy, TransparencyTrustConfig), String> {
     let Some(table) = table else {
         return Ok((
@@ -539,55 +1106,50 @@ fn parse_registry_trust_policy(
                 | "gossip-checkpoints"
         )
     }) {
-        return Err(format!(
-            "manifest `trust` contains unsupported field `{field}`"
-        ));
+        return Err(format!("`{section}` contains unsupported field `{field}`"));
     }
-    let policy = optional_string_field(table, "trust", "policy")?
+    let policy = optional_string_field(table, section, "policy")?
         .unwrap_or_else(|| "checksum-only".to_string());
     let policy = RegistryTrustPolicy::parse(&policy)?;
     let mut transparency = TransparencyTrustConfig {
-        keys: optional_string_array_field(table, "trust", "transparency-keys")?,
+        keys: optional_string_array_field(table, section, "transparency-keys")?,
         ..TransparencyTrustConfig::default()
     };
     for key in &mut transparency.keys {
         if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
-            return Err(
-                "manifest `trust.transparency-keys` entries must be 32-byte hexadecimal Ed25519 public keys"
-                    .to_string(),
-            );
+            return Err(format!(
+                "`{section}.transparency-keys` entries must be 32-byte hexadecimal Ed25519 public keys"
+            ));
         }
         *key = key.to_ascii_lowercase();
     }
     transparency.keys.sort();
     transparency.keys.dedup();
     transparency.proof_max_age_seconds =
-        optional_positive_u64_field(table, "trust", "proof-max-age-seconds")?
+        optional_positive_u64_field(table, section, "proof-max-age-seconds")?
             .unwrap_or(DEFAULT_TRANSPARENCY_PROOF_MAX_AGE_SECONDS);
     transparency.offline_proof_max_age_seconds =
-        optional_positive_u64_field(table, "trust", "offline-proof-max-age-seconds")?
+        optional_positive_u64_field(table, section, "offline-proof-max-age-seconds")?
             .unwrap_or(DEFAULT_TRANSPARENCY_OFFLINE_PROOF_MAX_AGE_SECONDS);
     transparency.max_future_skew_seconds =
-        optional_u64_field(table, "trust", "max-future-skew-seconds")?
+        optional_u64_field(table, section, "max-future-skew-seconds")?
             .unwrap_or(DEFAULT_TRANSPARENCY_MAX_FUTURE_SKEW_SECONDS);
     if transparency.offline_proof_max_age_seconds < transparency.proof_max_age_seconds {
-        return Err(
-            "manifest `trust.offline-proof-max-age-seconds` must be at least `proof-max-age-seconds`"
-                .to_string(),
-        );
+        return Err(format!(
+            "`{section}.offline-proof-max-age-seconds` must be at least `proof-max-age-seconds`"
+        ));
     }
     transparency.gossip_checkpoints =
-        optional_string_array_field(table, "trust", "gossip-checkpoints")?
+        optional_string_array_field(table, section, "gossip-checkpoints")?
             .into_iter()
-            .map(|path| rebase_trust_path(root, &path))
+            .map(|path| rebase_trust_path(root, &path, section))
             .collect::<Result<Vec<_>, _>>()?;
     transparency.gossip_checkpoints.sort();
     transparency.gossip_checkpoints.dedup();
     if policy == RegistryTrustPolicy::SignedTransparent && transparency.keys.is_empty() {
-        return Err(
-            "manifest `trust.policy = \"signed+transparent\"` requires at least one `transparency-keys` entry"
-                .to_string(),
-        );
+        return Err(format!(
+            "`{section}.policy = \"signed+transparent\"` requires at least one `transparency-keys` entry"
+        ));
     }
     Ok((policy, transparency))
 }
@@ -620,7 +1182,7 @@ fn optional_positive_u64_field(
     Ok(value)
 }
 
-fn rebase_trust_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+fn rebase_trust_path(root: &Path, path: &str, section: &str) -> Result<PathBuf, String> {
     let path = Path::new(path);
     if path.as_os_str().is_empty()
         || path.is_absolute()
@@ -632,7 +1194,7 @@ fn rebase_trust_path(root: &Path, path: &str) -> Result<PathBuf, String> {
         })
     {
         return Err(format!(
-            "manifest `trust.gossip-checkpoints` entry `{}` must stay inside the package root",
+            "`{section}.gossip-checkpoints` entry `{}` must stay inside the project root",
             path.display()
         ));
     }
@@ -785,29 +1347,110 @@ fn workspace_context_for_manifest(
     parse_workspace_context(&workspace_root, &document).map(Some)
 }
 
+fn workspace_context_for_package_identity(
+    root: &Path,
+    document: &toml::Value,
+) -> Result<Option<WorkspaceContext>, String> {
+    if optional_table(document, "workspace")?.is_some() {
+        return parse_workspace_context_impl(root, document, false).map(Some);
+    }
+    let Some(workspace_root) = workspace_root_for_package(root)? else {
+        return Ok(None);
+    };
+    let text =
+        fs::read_to_string(workspace_root.join("nomo.toml")).map_err(|err| err.to_string())?;
+    let document = parse_manifest_document(&text)?;
+    parse_workspace_context_impl(&workspace_root, &document, false).map(Some)
+}
+
+fn parse_package_identity_only_at_root(root: &Path) -> Result<String, String> {
+    let manifest_path = root.join("nomo.toml");
+    let text = fs::read_to_string(&manifest_path).map_err(|err| {
+        format!(
+            "failed to read path dependency manifest {}: {err}",
+            manifest_path.display()
+        )
+    })?;
+    let document = parse_manifest_document(&text)?;
+    let schema = manifest_schema(&document)?;
+    let kind = manifest_document_kind(&document)?;
+    if kind == ManifestDocumentKind::Workspace {
+        return Err(format!(
+            "path dependency {} is a virtual workspace, not a package",
+            root.display()
+        ));
+    }
+    if schema == ManifestSchema::V2 {
+        validate_v2_top_level(&document)?;
+    }
+    let workspace = workspace_context_for_package_identity(root, &document)?;
+    let (package, _, namespace_explicit) =
+        parse_package_header(&document, root, workspace.as_ref(), schema)?;
+    validate_package_namespace("path dependency package namespace", &package.namespace)?;
+    if schema == ManifestSchema::V2 || namespace_explicit {
+        validate_package_segment("path dependency package name", &package.name)?;
+    } else if !is_legacy_package_name(&package.name) {
+        return Err(format!("invalid legacy package name `{}`", package.name));
+    }
+    validate_version_like("path dependency package version", &package.version)?;
+    if package.edition.is_empty() {
+        return Err("path dependency package edition must not be empty".to_string());
+    }
+    Ok(format!("{}/{}", package.namespace, package.name))
+}
+
 fn parse_workspace_package_defaults(
     value: &toml::Value,
+    schema: ManifestSchema,
 ) -> Result<WorkspacePackageDefaults, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "manifest `workspace.package` must be a TOML table".to_string())?;
+    if schema == ManifestSchema::V2 {
+        validate_supported_fields(
+            table,
+            "workspace.package",
+            &[
+                "namespace",
+                "version",
+                "edition",
+                "description",
+                "license",
+                "repository",
+                "publish",
+            ],
+        )?;
+        if table.contains_key("name") {
+            return Err(
+                "manifest v2 `workspace.package.name` is not inheritable; define `package.name` in each member"
+                    .to_string(),
+            );
+        }
+    }
     Ok(WorkspacePackageDefaults {
         namespace: optional_string_field(table, "workspace.package", "namespace")?,
-        name: optional_string_field(table, "workspace.package", "name")?,
+        name: if schema == ManifestSchema::V1 {
+            optional_string_field(table, "workspace.package", "name")?
+        } else {
+            None
+        },
         version: optional_string_field(table, "workspace.package", "version")?,
         edition: optional_string_field(table, "workspace.package", "edition")?,
+        details: parse_package_details(table)?,
     })
 }
 
 fn parse_workspace_dependencies(
     value: &toml::Value,
+    schema: ManifestSchema,
+    root: &Path,
 ) -> Result<BTreeMap<String, Dependency>, String> {
     let table = value
         .as_table()
         .ok_or_else(|| "manifest `workspace.dependencies` must be a TOML table".to_string())?;
     let mut dependencies = BTreeMap::new();
     for (alias, value) in table {
-        if let Some(dependency) = parse_dependency_value(alias, value, None)? {
+        if let Some(dependency) = parse_dependency_value(alias, value, None, schema, Some(root))? {
             dependencies.insert(alias.clone(), dependency);
         }
     }
@@ -861,6 +1504,214 @@ fn optional_string_array_field(
                 .ok_or_else(|| format!("manifest `{section}.{key}` entries must be strings"))
         })
         .collect()
+}
+
+fn validate_supported_fields(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    supported: &[&str],
+) -> Result<(), String> {
+    if let Some(field) = table
+        .keys()
+        .find(|field| !supported.contains(&field.as_str()))
+    {
+        return Err(format!("`{section}` contains unsupported field `{field}`"));
+    }
+    Ok(())
+}
+
+fn validate_v2_top_level(document: &toml::Value) -> Result<(), String> {
+    let table = document
+        .as_table()
+        .ok_or_else(|| "manifest root must be a TOML table".to_string())?;
+    if table.contains_key("trust") {
+        return Err(
+            "manifest v2 does not allow `[trust]`; move registry trust policy to `.nomo/config.toml`"
+                .to_string(),
+        );
+    }
+    validate_supported_fields(
+        table,
+        "manifest v2 root",
+        &[
+            "manifest-version",
+            "package",
+            "workspace",
+            "dependencies",
+            "ffi",
+        ],
+    )
+}
+
+fn optional_bool_field(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    key: &str,
+) -> Result<Option<bool>, String> {
+    match table.get(key) {
+        Some(value) => value
+            .as_bool()
+            .map(Some)
+            .ok_or_else(|| format!("manifest `{section}.{key}` must be a boolean")),
+        None => Ok(None),
+    }
+}
+
+fn parse_package_details(
+    table: &toml::map::Map<String, toml::Value>,
+) -> Result<PackageDetails, String> {
+    Ok(PackageDetails {
+        description: optional_string_field(table, "package", "description")?,
+        license: optional_string_field(table, "package", "license")?,
+        repository: optional_string_field(table, "package", "repository")?,
+        publish: optional_bool_field(table, "package", "publish")?,
+    })
+}
+
+fn required_package_string(
+    table: &toml::map::Map<String, toml::Value>,
+    key: &str,
+) -> Result<String, String> {
+    optional_string_field(table, "package", key)?
+        .ok_or_else(|| format!("manifest v2 `package.{key}` must be explicitly defined"))
+}
+
+fn v2_package_string(
+    table: &toml::map::Map<String, toml::Value>,
+    workspace: Option<&WorkspaceContext>,
+    inherit: bool,
+    key: &str,
+) -> Result<String, String> {
+    if let Some(value) = optional_string_field(table, "package", key)? {
+        return Ok(value);
+    }
+    if inherit {
+        return workspace_package_default(workspace, key);
+    }
+    Err(format!(
+        "manifest v2 `package.{key}` must be explicitly defined or inherited with `package.inherit = \"workspace\"`"
+    ))
+}
+
+fn inherit_package_details(details: &mut PackageDetails, workspace: &WorkspaceContext) {
+    if details.description.is_none() {
+        details.description = workspace.package.details.description.clone();
+    }
+    if details.license.is_none() {
+        details.license = workspace.package.details.license.clone();
+    }
+    if details.repository.is_none() {
+        details.repository = workspace.package.details.repository.clone();
+    }
+    if details.publish.is_none() {
+        details.publish = workspace.package.details.publish;
+    }
+}
+
+fn validate_workspace_patterns(section: &str, patterns: &[String]) -> Result<(), String> {
+    for pattern in patterns {
+        let path = Path::new(pattern);
+        if pattern.is_empty()
+            || path.is_absolute()
+            || path.components().any(|component| {
+                matches!(
+                    component,
+                    Component::ParentDir | Component::RootDir | Component::Prefix(_)
+                )
+            })
+        {
+            return Err(format!(
+                "manifest `{section}` entry `{pattern}` must be a relative path inside the workspace"
+            ));
+        }
+        if pattern.contains("**") {
+            return Err(format!(
+                "manifest `{section}` entry `{pattern}` uses unsupported recursive wildcard `**`"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn workspace_context_includes_root(
+    context: &WorkspaceContext,
+    package_root: &Path,
+) -> Result<bool, String> {
+    let workspace_root = fs::canonicalize(&context.root).map_err(|err| {
+        format!(
+            "failed to resolve workspace root {}: {err}",
+            context.root.display()
+        )
+    })?;
+    let package_root = fs::canonicalize(package_root).map_err(|err| {
+        format!(
+            "failed to resolve package root {}: {err}",
+            package_root.display()
+        )
+    })?;
+    let Ok(relative) = package_root.strip_prefix(&workspace_root) else {
+        return Ok(false);
+    };
+    let relative = if relative.as_os_str().is_empty() {
+        ".".to_string()
+    } else {
+        relative.to_string_lossy().replace('\\', "/")
+    };
+    let included = context
+        .members
+        .iter()
+        .any(|pattern| workspace_pattern_matches(pattern, &relative));
+    let excluded = context.exclude.iter().any(|pattern| {
+        workspace_pattern_matches(pattern, &relative)
+            || (!pattern.contains('*')
+                && relative
+                    .strip_prefix(pattern.trim_matches('/'))
+                    .is_some_and(|suffix| suffix.starts_with('/')))
+    });
+    Ok(included && !excluded)
+}
+
+fn workspace_pattern_matches(pattern: &str, relative: &str) -> bool {
+    if pattern == "." || relative == "." {
+        return pattern == relative;
+    }
+    let pattern = pattern.trim_matches('/').split('/').collect::<Vec<_>>();
+    let relative = relative.trim_matches('/').split('/').collect::<Vec<_>>();
+    pattern.len() == relative.len()
+        && pattern
+            .iter()
+            .zip(relative)
+            .all(|(pattern, value)| wildcard_segment_matches(pattern, value))
+}
+
+fn wildcard_segment_matches(pattern: &str, value: &str) -> bool {
+    if pattern == "*" {
+        return true;
+    }
+    let parts = pattern.split('*').collect::<Vec<_>>();
+    if parts.len() == 1 {
+        return pattern == value;
+    }
+    let mut remaining = value;
+    for (index, part) in parts.iter().enumerate() {
+        if part.is_empty() {
+            continue;
+        }
+        if index == 0 && !pattern.starts_with('*') {
+            let Some(stripped) = remaining.strip_prefix(part) else {
+                return false;
+            };
+            remaining = stripped;
+        } else if index == parts.len() - 1 && !pattern.ends_with('*') {
+            return remaining.ends_with(part);
+        } else {
+            let Some(position) = remaining.find(part) else {
+                return false;
+            };
+            remaining = &remaining[position + part.len()..];
+        }
+    }
+    true
 }
 
 fn parse_target_condition(value: &toml::Value, section: &str) -> Result<TargetCondition, String> {
@@ -1022,6 +1873,8 @@ fn parse_dependency_value(
     alias: &str,
     value: &toml::Value,
     inheritance: Option<&WorkspaceDependencyInheritance<'_>>,
+    schema: ManifestSchema,
+    package_root: Option<&Path>,
 ) -> Result<Option<Dependency>, String> {
     validate_dependency_alias(alias)?;
 
@@ -1040,6 +1893,24 @@ fn parse_dependency_value(
             "dependency `{alias}` must be a TOML string or table"
         ));
     };
+    if schema == ManifestSchema::V2 {
+        validate_supported_fields(
+            fields,
+            &format!("dependencies.{alias}"),
+            &[
+                "package",
+                "version",
+                "registry",
+                "path",
+                "git",
+                "branch",
+                "tag",
+                "rev",
+                "workspace",
+                "target",
+            ],
+        )?;
+    }
 
     let target = match fields.get("target") {
         Some(value) => parse_target_condition(value, &format!("dependencies.{alias}.target"))?,
@@ -1067,17 +1938,6 @@ fn parse_dependency_value(
         return Err(format!(
             "dependency `{alias}` field `workspace` must be `true` and cannot be combined with source fields"
         ));
-    }
-
-    let package = required_dependency_string(alias, fields, "package")?;
-    validate_package_id(&package)?;
-    if alias == "std" {
-        if package == "nomo-lang/std" {
-            return Ok(None);
-        }
-        return Err(
-            "dependency alias `std` is reserved for the built-in standard library".to_string(),
-        );
     }
 
     let source_keys = ["path", "git", "version"]
@@ -1117,6 +1977,48 @@ fn parse_dependency_value(
         return Err(format!(
             "dependency `{alias}` must specify only one git checkout selector: `branch`, `tag`, or `rev`"
         ));
+    }
+
+    let package = match optional_dependency_string(alias, fields, "package")? {
+        Some(package) => package,
+        None if schema == ManifestSchema::V2 && fields.contains_key("path") => {
+            let package_root = package_root.ok_or_else(|| {
+                format!(
+                    "dependency `{alias}` cannot derive path package identity without a manifest root"
+                )
+            })?;
+            let path = required_dependency_string(alias, fields, "path")?;
+            parse_package_identity_only_at_root(&normalize_logical_path(&package_root.join(path)))?
+        }
+        None => {
+            return Err(format!(
+                "dependency `{alias}` field `package` must be a non-empty string"
+            ));
+        }
+    };
+    validate_package_id(&package)?;
+    if schema == ManifestSchema::V2 && fields.contains_key("path") {
+        let package_root = package_root.ok_or_else(|| {
+            format!(
+                "dependency `{alias}` cannot validate path package identity without a manifest root"
+            )
+        })?;
+        let path = required_dependency_string(alias, fields, "path")?;
+        let derived =
+            parse_package_identity_only_at_root(&normalize_logical_path(&package_root.join(path)))?;
+        if derived != package {
+            return Err(format!(
+                "dependency `{alias}` asserts package `{package}`, but path manifest declares `{derived}`"
+            ));
+        }
+    }
+    if alias == "std" {
+        if package == "nomo-lang/std" {
+            return Ok(None);
+        }
+        return Err(
+            "dependency alias `std` is reserved for the built-in standard library".to_string(),
+        );
     }
 
     let source = if fields.contains_key("path") {
@@ -1357,6 +2259,207 @@ fn is_legacy_package_name(value: &str) -> bool {
             .chars()
             .next()
             .is_some_and(|ch| ch == '_' || ch.is_ascii_alphabetic())
+}
+
+#[cfg(test)]
+mod manifest_v2_tests {
+    use super::*;
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    fn temp_root(label: &str) -> PathBuf {
+        std::env::temp_dir().join(format!(
+            "nomo-manifest-v2-{label}-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ))
+    }
+
+    fn write_package(root: &Path, body: &str) {
+        fs::create_dir_all(root.join("src")).unwrap();
+        fs::write(root.join("nomo.toml"), body).unwrap();
+        fs::write(root.join("src/main.nomo"), "package app.main\n").unwrap();
+    }
+
+    #[test]
+    fn parses_strict_standalone_manifest_v2_and_rejects_v1_policy_fields() {
+        let manifest = parse_manifest_text(
+            "manifest-version = 2\n\n[package]\nnamespace = \"acme\"\nname = \"demo\"\nversion = \"1.2.3\"\nedition = \"2026\"\ndescription = \"Demo\"\npublish = false\n",
+            Path::new("demo"),
+        )
+        .unwrap();
+        assert_eq!(manifest.schema, ManifestSchema::V2);
+        assert_eq!(manifest.kind, ManifestDocumentKind::Package);
+        assert_eq!(manifest.package.namespace, "acme");
+        assert_eq!(manifest.details.description.as_deref(), Some("Demo"));
+        assert_eq!(manifest.details.publish, Some(false));
+
+        let missing = parse_manifest_text(
+            "manifest-version = 2\n\n[package]\nname = \"demo\"\nversion = \"1.2.3\"\nedition = \"2026\"\n",
+            Path::new("demo"),
+        )
+        .unwrap_err();
+        assert!(missing.contains("package.namespace"), "{missing}");
+
+        let trust = parse_manifest_text(
+            "manifest-version = 2\n\n[package]\nnamespace = \"acme\"\nname = \"demo\"\nversion = \"1.2.3\"\nedition = \"2026\"\n\n[trust]\npolicy = \"signed\"\n",
+            Path::new("demo"),
+        )
+        .unwrap_err();
+        assert!(trust.contains(".nomo/config.toml"), "{trust}");
+    }
+
+    #[test]
+    fn verifies_membership_before_inheritance_and_derives_path_identity() {
+        let root = temp_root("workspace");
+        let app = root.join("apps/cli");
+        let core = root.join("packages/core");
+        let outsider = root.join("scratch/tool");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "manifest-version = 2\n\n[workspace]\nmembers = [\"apps/*\", \"packages/*\"]\ndefault-members = [\"apps/cli\"]\nresolver = \"2\"\n\n[workspace.package]\nnamespace = \"acme\"\nversion = \"0.1.0\"\nedition = \"2026\"\nlicense = \"MIT\"\n\n[workspace.dependencies]\ncore = { path = \"packages/core\" }\n",
+        )
+        .unwrap();
+        write_package(
+            &app,
+            "manifest-version = 2\n\n[package]\nname = \"cli\"\ninherit = \"workspace\"\n\n[dependencies]\ncore = { workspace = true }\n",
+        );
+        write_package(
+            &core,
+            "manifest-version = 2\n\n[package]\nname = \"core\"\ninherit = \"workspace\"\n",
+        );
+        write_package(
+            &outsider,
+            "manifest-version = 2\n\n[package]\nname = \"tool\"\ninherit = \"workspace\"\n",
+        );
+
+        let parsed = parse_manifest_at_root(&app).unwrap();
+        assert_eq!(parsed.package.namespace, "acme");
+        assert_eq!(parsed.details.license.as_deref(), Some("MIT"));
+        assert_eq!(parsed.dependencies[0].package, "acme/core");
+        assert_eq!(
+            workspace_root_for_package(&app).unwrap(),
+            Some(root.clone())
+        );
+        assert_eq!(workspace_root_for_package(&outsider).unwrap(), None);
+        let error = parse_manifest_at_root(&outsider).unwrap_err();
+        assert!(error.contains("verified workspace member"), "{error}");
+
+        let mismatch = parse_manifest_text(
+            "manifest-version = 2\n\n[package]\nnamespace = \"acme\"\nname = \"standalone\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ncore = { package = \"acme/not-core\", path = \"../../packages/core\" }\n",
+            &app,
+        )
+        .unwrap_err();
+        assert!(
+            mismatch.contains("path manifest declares `acme/core`"),
+            "{mismatch}"
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn loads_registry_policy_from_workspace_project_config() {
+        let root = temp_root("config");
+        let app = root.join("apps/cli");
+        fs::create_dir_all(root.join(".nomo")).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "manifest-version = 2\n\n[workspace]\nmembers = [\"apps/*\"]\n\n[workspace.package]\nnamespace = \"acme\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        write_package(
+            &app,
+            "manifest-version = 2\n\n[package]\nname = \"cli\"\ninherit = \"workspace\"\n",
+        );
+        fs::write(
+            root.join(".nomo/config.toml"),
+            format!(
+                "config-version = 1\n\n[registry]\npolicy = \"signed+transparent\"\ntransparency-keys = [\"{}\"]\nproof-max-age-seconds = 60\noffline-proof-max-age-seconds = 600\ngossip-checkpoints = [\"trust/peer.json\"]\n",
+                "a".repeat(64)
+            ),
+        )
+        .unwrap();
+
+        let manifest = parse_manifest_at_root(&app).unwrap();
+        assert_eq!(manifest.trust, RegistryTrustPolicy::SignedTransparent);
+        assert_eq!(manifest.transparency.proof_max_age_seconds, 60);
+        assert_eq!(
+            manifest.transparency.gossip_checkpoints,
+            vec![root.join("trust/peer.json")]
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_legacy_defaults_and_trust_without_rewriting_v2() {
+        let root = temp_root("migration-standalone");
+        fs::create_dir_all(&root).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[package]\nname = \"legacy-demo\"\n\n[trust]\npolicy = \"signed\"\n",
+        )
+        .unwrap();
+
+        let migration = migrate_manifest_at_root(&root).unwrap();
+        assert!(migration.changed);
+        let document = parse_manifest_document(&migration.manifest).unwrap();
+        assert_eq!(manifest_schema(&document).unwrap(), ManifestSchema::V2);
+        let package = document.get("package").unwrap().as_table().unwrap();
+        assert_eq!(package.get("namespace").unwrap().as_str(), Some("local"));
+        assert_eq!(package.get("version").unwrap().as_str(), Some("0.1.0"));
+        assert_eq!(package.get("edition").unwrap().as_str(), Some("2026"));
+        assert!(document.get("trust").is_none());
+        let config =
+            parse_project_config_text(migration.project_config.as_deref().unwrap(), &root).unwrap();
+        assert_eq!(config.trust, RegistryTrustPolicy::Signed);
+
+        fs::write(root.join("nomo.toml"), migration.manifest).unwrap();
+        let second = migrate_manifest_at_root(&root).unwrap();
+        assert!(!second.changed);
+        assert!(second.project_config.is_none());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn migrates_workspace_field_inheritance_to_one_explicit_switch() {
+        let root = temp_root("migration-workspace");
+        let app = root.join("apps/cli");
+        fs::create_dir_all(&app).unwrap();
+        fs::write(
+            root.join("nomo.toml"),
+            "[workspace]\nmembers = [\"apps/*\"]\n\n[workspace.package]\nnamespace = \"acme\"\nname = \"invalid-default\"\nversion = \"1.2.3\"\nedition = \"2026\"\n",
+        )
+        .unwrap();
+        fs::write(
+            app.join("nomo.toml"),
+            "[package]\nname = \"cli\"\nnamespace.workspace = true\nversion.workspace = true\nedition.workspace = true\n",
+        )
+        .unwrap();
+
+        let member = migrate_manifest_at_root(&app).unwrap();
+        let member = parse_manifest_document(&member.manifest).unwrap();
+        let package = member.get("package").unwrap().as_table().unwrap();
+        assert_eq!(package.get("name").unwrap().as_str(), Some("cli"));
+        assert_eq!(package.get("inherit").unwrap().as_str(), Some("workspace"));
+        assert!(!package.contains_key("namespace"));
+        assert!(!package.contains_key("version"));
+        assert!(!package.contains_key("edition"));
+
+        let workspace = migrate_manifest_at_root(&root).unwrap();
+        let workspace = parse_manifest_document(&workspace.manifest).unwrap();
+        let defaults = workspace
+            .get("workspace")
+            .unwrap()
+            .get("package")
+            .unwrap()
+            .as_table()
+            .unwrap();
+        assert!(!defaults.contains_key("name"));
+        fs::remove_dir_all(root).unwrap();
+    }
 }
 
 #[cfg(test)]

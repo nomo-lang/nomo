@@ -9,7 +9,7 @@ use std::time::{Duration, Instant};
 const NOMO_HELP: &str = concat!(
     "nomo ",
     env!("CARGO_PKG_VERSION"),
-    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
+    "\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo manifest migrate [path] [--check]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n\n"
 );
 
 const NOMOC_HELP: &str = concat!(
@@ -78,6 +78,66 @@ fn nomo_help_flags_print_command_summary() {
             String::from_utf8_lossy(&output.stderr)
         );
     }
+}
+
+#[test]
+fn manifest_migrate_cli_checks_writes_and_is_idempotent() {
+    let root = temp_test_root("manifest-migrate-cli");
+    reset_dir(&root);
+    fs::write(
+        root.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"legacy-demo\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[trust]\npolicy = \"signed\"\n",
+    )
+    .unwrap();
+
+    let check = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["manifest", "migrate"])
+        .arg(&root)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(!check.status.success());
+    assert!(
+        String::from_utf8_lossy(&check.stderr).contains("manifest migration required"),
+        "{}",
+        String::from_utf8_lossy(&check.stderr)
+    );
+    assert!(
+        !fs::read_to_string(root.join("nomo.toml"))
+            .unwrap()
+            .contains("manifest-version")
+    );
+
+    let migrate = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["manifest", "migrate"])
+        .arg(&root)
+        .output()
+        .unwrap();
+    assert!(
+        migrate.status.success(),
+        "{}",
+        String::from_utf8_lossy(&migrate.stderr)
+    );
+    assert!(
+        fs::read_to_string(root.join("nomo.toml"))
+            .unwrap()
+            .contains("manifest-version = 2")
+    );
+    assert!(root.join(".nomo/config.toml").is_file());
+
+    let second = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .args(["manifest", "migrate"])
+        .arg(&root)
+        .arg("--check")
+        .output()
+        .unwrap();
+    assert!(
+        second.status.success(),
+        "{}",
+        String::from_utf8_lossy(&second.stderr)
+    );
+    assert!(String::from_utf8_lossy(&second.stdout).contains("manifest v2 is up to date"));
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -1732,7 +1792,7 @@ fn nomo_new_run_and_clean_project() {
     assert_eq!(
         fs::read_to_string(&manifest).unwrap(),
         format!(
-            "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"{}\"\nedition = \"2026\"\n",
+            "manifest-version = 2\n\n[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"{}\"\nedition = \"2026\"\npublish = false\n",
             env!("CARGO_PKG_VERSION")
         )
     );
@@ -3352,6 +3412,38 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
     );
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_publish_respects_manifest_v2_publish_false() {
+    let root = temp_test_root("publish-disabled");
+    reset_dir(&root);
+    let project = root.join("private-app");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "manifest-version = 2\n\n[package]\nnamespace = \"local\"\nname = \"private-app\"\nversion = \"0.1.0\"\nedition = \"2026\"\npublish = false\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nfn main() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("publish")
+        .arg(&project)
+        .arg("--dry-run")
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(
+        String::from_utf8_lossy(&output.stderr).contains("publish = false"),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[cfg(unix)]

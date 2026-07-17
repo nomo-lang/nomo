@@ -1,8 +1,9 @@
+manifest-version = 2
+
 [package]
 name = "cli"
 version = "0.1.0"
-namespace.workspace = true
-edition.workspace = true
+inherit = "workspace"
 
 [dependencies]
-core.workspace = true
+core = { workspace = true }

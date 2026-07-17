@@ -4,9 +4,15 @@ use ring::signature::{ED25519, UnparsedPublicKey};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 use std::collections::BTreeMap;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 pub const RELEASE_ENVELOPE_SCHEMA: u32 = 1;
 pub const PROVENANCE_SCHEMA: u32 = 1;
+pub const TRANSPARENCY_HEAD_SCHEMA: u32 = 2;
+pub const LOG_KEY_ROTATION_SCHEMA: u32 = 1;
+pub const DEFAULT_PROOF_MAX_AGE_SECONDS: u64 = 24 * 60 * 60;
+pub const DEFAULT_OFFLINE_PROOF_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
+pub const DEFAULT_PROOF_MAX_FUTURE_SKEW_SECONDS: u64 = 5 * 60;
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
@@ -364,8 +370,15 @@ pub struct InclusionProof {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct SignedTreeHead {
+    pub schema: u32,
+    pub log_id: String,
     pub tree_size: u64,
     pub root_hash: String,
+    pub issued_at_unix_seconds: u64,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_tree_size: Option<u64>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub previous_root_hash: Option<String>,
     pub algorithm: String,
     pub key_id: String,
     pub signature: String,
@@ -373,11 +386,128 @@ pub struct SignedTreeHead {
 
 impl SignedTreeHead {
     pub fn canonical_bytes(&self) -> Result<Vec<u8>, String> {
-        validate_sha256("transparency root hash", &self.root_hash)?;
-        let mut out = b"nomo-transparency-head-v1\n".to_vec();
+        self.validate()?;
+        let mut out = b"nomo-transparency-head-v2\n".to_vec();
+        canonical_field(&mut out, "schema", &self.schema.to_string());
+        canonical_field(&mut out, "log-id", &self.log_id);
         canonical_field(&mut out, "tree-size", &self.tree_size.to_string());
+        validate_sha256("transparency root hash", &self.root_hash)?;
         canonical_field(&mut out, "root-hash", &self.root_hash);
+        canonical_field(
+            &mut out,
+            "issued-at",
+            &self.issued_at_unix_seconds.to_string(),
+        );
+        canonical_field(
+            &mut out,
+            "previous-size",
+            &self
+                .previous_tree_size
+                .map(|value| value.to_string())
+                .unwrap_or_default(),
+        );
+        canonical_field(
+            &mut out,
+            "previous-root",
+            self.previous_root_hash.as_deref().unwrap_or(""),
+        );
+        canonical_field(&mut out, "algorithm", &self.algorithm);
+        canonical_field(&mut out, "key-id", &self.key_id);
         Ok(out)
+    }
+
+    fn validate(&self) -> Result<(), String> {
+        if self.schema != TRANSPARENCY_HEAD_SCHEMA {
+            return Err(format!(
+                "unsupported transparency tree-head schema {}",
+                self.schema
+            ));
+        }
+        if self.log_id.trim().is_empty() {
+            return Err("transparency tree head must include a non-empty log id".to_string());
+        }
+        if self.tree_size == 0 {
+            return Err("transparency tree head must contain at least one event".to_string());
+        }
+        validate_sha256("transparency root hash", &self.root_hash)?;
+        if self.issued_at_unix_seconds == 0 {
+            return Err("transparency tree head must include an issuance timestamp".to_string());
+        }
+        match (&self.previous_tree_size, &self.previous_root_hash) {
+            (None, None) => {}
+            (Some(size), Some(root)) if *size < self.tree_size => {
+                validate_sha256("previous transparency root hash", root)?;
+            }
+            (Some(_), Some(_)) => {
+                return Err(
+                    "previous transparency tree size must be smaller than the current size"
+                        .to_string(),
+                );
+            }
+            _ => {
+                return Err(
+                    "previous transparency tree size and root hash must be provided together"
+                        .to_string(),
+                );
+            }
+        }
+        Ok(())
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct LogKeyRotation {
+    pub schema: u32,
+    pub log_id: String,
+    pub activate_at_tree_size: u64,
+    pub old_key_id: String,
+    pub old_public_key: String,
+    pub new_key_id: String,
+    pub new_public_key: String,
+    pub old_signature: String,
+    pub new_signature: String,
+}
+
+impl LogKeyRotation {
+    pub fn canonical_bytes(&self) -> Result<Vec<u8>, String> {
+        self.validate_identity()?;
+        let mut out = b"nomo-transparency-log-key-rotation-v1\n".to_vec();
+        canonical_field(&mut out, "schema", &self.schema.to_string());
+        canonical_field(&mut out, "log-id", &self.log_id);
+        canonical_field(
+            &mut out,
+            "activate-at-tree-size",
+            &self.activate_at_tree_size.to_string(),
+        );
+        canonical_field(&mut out, "old-key-id", &self.old_key_id);
+        canonical_field(&mut out, "old-public-key", &self.old_public_key);
+        canonical_field(&mut out, "new-key-id", &self.new_key_id);
+        canonical_field(&mut out, "new-public-key", &self.new_public_key);
+        Ok(out)
+    }
+
+    fn validate_identity(&self) -> Result<(), String> {
+        if self.schema != LOG_KEY_ROTATION_SCHEMA {
+            return Err(format!(
+                "unsupported transparency log-key rotation schema {}",
+                self.schema
+            ));
+        }
+        if self.log_id.trim().is_empty() {
+            return Err("transparency log-key rotation must include a log id".to_string());
+        }
+        if self.activate_at_tree_size == 0 {
+            return Err(
+                "transparency log-key rotation activation size must be positive".to_string(),
+            );
+        }
+        validate_log_key_identity("old", &self.old_key_id, &self.old_public_key)?;
+        validate_log_key_identity("new", &self.new_key_id, &self.new_public_key)?;
+        if self.old_key_id == self.new_key_id {
+            return Err("transparency log-key rotation must change the key".to_string());
+        }
+        Ok(())
     }
 }
 
@@ -393,6 +523,10 @@ pub struct LogInclusion {
 pub struct TransparencyBundle {
     pub head: SignedTreeHead,
     pub log_public_key: String,
+    #[serde(default)]
+    pub log_key_rotations: Vec<LogKeyRotation>,
+    #[serde(default)]
+    pub head_history: Vec<SignedTreeHead>,
     pub release: LogInclusion,
     pub key_events: Vec<LogInclusion>,
 }
@@ -402,6 +536,57 @@ pub struct TransparencyBundle {
 pub struct CachedTreeHead {
     pub tree_size: u64,
     pub root_hash: String,
+    #[serde(default)]
+    pub issued_at_unix_seconds: u64,
+    #[serde(default)]
+    pub key_id: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct GossipCheckpoint {
+    pub observed_at_unix_seconds: u64,
+    pub head: SignedTreeHead,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct ProofFreshnessPolicy {
+    pub max_age_seconds: u64,
+    pub offline_max_age_seconds: u64,
+    pub max_future_skew_seconds: u64,
+}
+
+impl Default for ProofFreshnessPolicy {
+    fn default() -> Self {
+        Self {
+            max_age_seconds: DEFAULT_PROOF_MAX_AGE_SECONDS,
+            offline_max_age_seconds: DEFAULT_OFFLINE_PROOF_MAX_AGE_SECONDS,
+            max_future_skew_seconds: DEFAULT_PROOF_MAX_FUTURE_SKEW_SECONDS,
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransparencyVerificationPolicy {
+    pub trusted_log_keys: Vec<String>,
+    pub freshness: ProofFreshnessPolicy,
+    pub gossip_checkpoints: Vec<GossipCheckpoint>,
+}
+
+impl TransparencyVerificationPolicy {
+    pub fn pinned(trusted_log_keys: Vec<String>) -> Self {
+        Self {
+            trusted_log_keys,
+            freshness: ProofFreshnessPolicy::default(),
+            gossip_checkpoints: Vec::new(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VerifiedTransparency {
+    pub cached_head: CachedTreeHead,
+    pub gossip_checkpoint: GossipCheckpoint,
 }
 
 #[derive(Debug, Clone)]
@@ -481,25 +666,53 @@ pub fn verify_transparency_bundle(
     cached_head: Option<&CachedTreeHead>,
     trusted_log_keys: &[String],
 ) -> Result<CachedTreeHead, String> {
-    if !trusted_log_keys
-        .iter()
-        .any(|key| key.eq_ignore_ascii_case(&bundle.log_public_key))
-    {
-        return Err("transparency log public key is not trusted by policy".to_string());
+    let policy = TransparencyVerificationPolicy::pinned(trusted_log_keys.to_vec());
+    Ok(verify_transparency_bundle_with_policy(
+        bundle,
+        envelope,
+        cached_head,
+        &policy,
+        false,
+        current_unix_seconds(),
+    )?
+    .cached_head)
+}
+
+pub fn verify_transparency_bundle_with_policy(
+    bundle: &TransparencyBundle,
+    envelope: &SignedReleaseEnvelope,
+    cached_head: Option<&CachedTreeHead>,
+    policy: &TransparencyVerificationPolicy,
+    offline: bool,
+    now_unix_seconds: u64,
+) -> Result<VerifiedTransparency, String> {
+    validate_transparency_policy(policy)?;
+    let timeline = build_log_key_timeline(bundle, &policy.trusted_log_keys)?;
+    verify_tree_head_with_timeline(&bundle.head, &timeline)?;
+    for head in &bundle.head_history {
+        verify_tree_head_with_timeline(head, &timeline)?;
     }
-    verify_tree_head(&bundle.head, &bundle.log_public_key)?;
+    verify_head_freshness(&bundle.head, policy.freshness, offline, now_unix_seconds)?;
+    let head_history = indexed_head_history(bundle)?;
     if let Some(cached) = cached_head {
-        if bundle.head.tree_size < cached.tree_size {
-            return Err(format!(
-                "transparency log rollback detected: cached size {}, received {}",
-                cached.tree_size, bundle.head.tree_size
-            ));
-        }
-        if bundle.head.tree_size == cached.tree_size && bundle.head.root_hash != cached.root_hash {
-            return Err(
-                "transparency log equivocation detected at the cached tree size".to_string(),
-            );
-        }
+        validate_sha256("cached transparency root hash", &cached.root_hash)?;
+        verify_head_extends_anchor(
+            &bundle.head,
+            &head_history,
+            cached.tree_size,
+            &cached.root_hash,
+            "cached tree head",
+        )?;
+    }
+    for gossip in &policy.gossip_checkpoints {
+        verify_gossip_checkpoint(
+            gossip,
+            &bundle.head,
+            &head_history,
+            &timeline,
+            policy.freshness.max_future_skew_seconds,
+            now_unix_seconds,
+        )?;
     }
     verify_log_inclusion(&bundle.release, &bundle.head)?;
     for event in &bundle.key_events {
@@ -561,13 +774,325 @@ pub fn verify_transparency_bundle(
         }],
     )?;
 
-    Ok(CachedTreeHead {
+    let cached_head = CachedTreeHead {
         tree_size: bundle.head.tree_size,
         root_hash: bundle.head.root_hash.clone(),
+        issued_at_unix_seconds: bundle.head.issued_at_unix_seconds,
+        key_id: bundle.head.key_id.clone(),
+    };
+    Ok(VerifiedTransparency {
+        cached_head,
+        gossip_checkpoint: GossipCheckpoint {
+            observed_at_unix_seconds: now_unix_seconds,
+            head: bundle.head.clone(),
+        },
     })
 }
 
+#[derive(Debug, Clone)]
+struct LogKeyTimeline {
+    log_id: String,
+    initial_public_key: String,
+    rotations: Vec<LogKeyRotation>,
+}
+
+impl LogKeyTimeline {
+    fn public_key_at(&self, tree_size: u64) -> &str {
+        let mut public_key = self.initial_public_key.as_str();
+        for rotation in &self.rotations {
+            if tree_size < rotation.activate_at_tree_size {
+                break;
+            }
+            public_key = &rotation.new_public_key;
+        }
+        public_key
+    }
+}
+
+fn build_log_key_timeline(
+    bundle: &TransparencyBundle,
+    trusted_log_keys: &[String],
+) -> Result<LogKeyTimeline, String> {
+    validate_log_key_identity("current", &bundle.head.key_id, &bundle.log_public_key)?;
+    if bundle.log_key_rotations.is_empty() {
+        if !trusted_log_keys
+            .iter()
+            .any(|key| key.eq_ignore_ascii_case(&bundle.log_public_key))
+        {
+            return Err("transparency log public key is not trusted by policy".to_string());
+        }
+        return Ok(LogKeyTimeline {
+            log_id: bundle.head.log_id.clone(),
+            initial_public_key: bundle.log_public_key.to_ascii_lowercase(),
+            rotations: Vec::new(),
+        });
+    }
+
+    let first = &bundle.log_key_rotations[0];
+    if !trusted_log_keys
+        .iter()
+        .any(|key| key.eq_ignore_ascii_case(&first.old_public_key))
+    {
+        return Err(
+            "transparency log-key rotation chain does not start at a policy-pinned key".to_string(),
+        );
+    }
+    let mut expected_public_key = first.old_public_key.to_ascii_lowercase();
+    let mut previous_activation = 0;
+    for rotation in &bundle.log_key_rotations {
+        rotation.validate_identity()?;
+        if rotation.log_id != bundle.head.log_id {
+            return Err("transparency log-key rotation targets a different log id".to_string());
+        }
+        if !rotation
+            .old_public_key
+            .eq_ignore_ascii_case(&expected_public_key)
+        {
+            return Err("transparency log-key rotation chain is discontinuous".to_string());
+        }
+        if rotation.activate_at_tree_size <= previous_activation
+            || rotation.activate_at_tree_size > bundle.head.tree_size
+        {
+            return Err(
+                "transparency log-key rotation activation sizes must increase within the verified tree"
+                    .to_string(),
+            );
+        }
+        verify_log_key_rotation(rotation)?;
+        previous_activation = rotation.activate_at_tree_size;
+        expected_public_key = rotation.new_public_key.to_ascii_lowercase();
+    }
+    if !expected_public_key.eq_ignore_ascii_case(&bundle.log_public_key) {
+        return Err(
+            "transparency log-key rotation chain does not reach the current tree-head key"
+                .to_string(),
+        );
+    }
+    Ok(LogKeyTimeline {
+        log_id: bundle.head.log_id.clone(),
+        initial_public_key: first.old_public_key.to_ascii_lowercase(),
+        rotations: bundle.log_key_rotations.clone(),
+    })
+}
+
+fn verify_log_key_rotation(rotation: &LogKeyRotation) -> Result<(), String> {
+    let canonical = rotation.canonical_bytes()?;
+    verify_ed25519_signature(
+        "old transparency log key",
+        &rotation.old_public_key,
+        &rotation.old_signature,
+        &canonical,
+    )?;
+    verify_ed25519_signature(
+        "new transparency log key",
+        &rotation.new_public_key,
+        &rotation.new_signature,
+        &canonical,
+    )
+}
+
+fn validate_log_key_identity(label: &str, key_id: &str, public_key: &str) -> Result<(), String> {
+    let public_key = decode_hex(public_key)?;
+    if public_key.len() != 32 || publisher_key_id(&public_key) != key_id {
+        return Err(format!("{label} transparency log key identity is invalid"));
+    }
+    Ok(())
+}
+
+fn verify_ed25519_signature(
+    label: &str,
+    public_key: &str,
+    signature: &str,
+    message: &[u8],
+) -> Result<(), String> {
+    let public_key = decode_hex(public_key)?;
+    if public_key.len() != 32 {
+        return Err(format!("{label} public key must contain 32 bytes"));
+    }
+    let signature = decode_hex(signature)?;
+    if signature.len() != 64 {
+        return Err(format!("{label} signature must contain 64 bytes"));
+    }
+    UnparsedPublicKey::new(&ED25519, public_key)
+        .verify(message, &signature)
+        .map_err(|_| format!("{label} signature verification failed"))
+}
+
+fn verify_tree_head_with_timeline(
+    head: &SignedTreeHead,
+    timeline: &LogKeyTimeline,
+) -> Result<(), String> {
+    if head.log_id != timeline.log_id {
+        return Err("transparency tree head targets a different log id".to_string());
+    }
+    verify_tree_head(head, timeline.public_key_at(head.tree_size))
+}
+
+fn validate_transparency_policy(policy: &TransparencyVerificationPolicy) -> Result<(), String> {
+    if policy.trusted_log_keys.is_empty() {
+        return Err("transparency policy must pin at least one log key".to_string());
+    }
+    for key in &policy.trusted_log_keys {
+        let bytes = decode_hex(key)?;
+        if bytes.len() != 32 {
+            return Err("transparency policy log keys must contain 32 bytes".to_string());
+        }
+    }
+    if policy.freshness.max_age_seconds == 0
+        || policy.freshness.offline_max_age_seconds < policy.freshness.max_age_seconds
+    {
+        return Err(
+            "offline transparency proof age must be at least the positive online proof age"
+                .to_string(),
+        );
+    }
+    Ok(())
+}
+
+fn verify_head_freshness(
+    head: &SignedTreeHead,
+    policy: ProofFreshnessPolicy,
+    offline: bool,
+    now_unix_seconds: u64,
+) -> Result<(), String> {
+    if now_unix_seconds == 0 {
+        return Err("transparency verification time must be positive".to_string());
+    }
+    if head.issued_at_unix_seconds > now_unix_seconds.saturating_add(policy.max_future_skew_seconds)
+    {
+        return Err("transparency proof tree head is too far in the future".to_string());
+    }
+    let age = now_unix_seconds.saturating_sub(head.issued_at_unix_seconds);
+    let maximum = if offline {
+        policy.offline_max_age_seconds
+    } else {
+        policy.max_age_seconds
+    };
+    if age > maximum {
+        return Err(format!(
+            "transparency proof is stale: tree head age {age}s exceeds {maximum}s {} limit",
+            if offline { "offline" } else { "online" }
+        ));
+    }
+    Ok(())
+}
+
+fn indexed_head_history(
+    bundle: &TransparencyBundle,
+) -> Result<BTreeMap<u64, &SignedTreeHead>, String> {
+    let mut heads = BTreeMap::new();
+    for head in bundle
+        .head_history
+        .iter()
+        .chain(std::iter::once(&bundle.head))
+    {
+        if let Some(existing) = heads.insert(head.tree_size, head) {
+            if existing.root_hash != head.root_hash {
+                return Err(
+                    "transparency head history contains equivocation at one tree size".to_string(),
+                );
+            }
+            return Err("transparency head history contains a duplicate tree size".to_string());
+        }
+    }
+    Ok(heads)
+}
+
+fn verify_head_extends_anchor(
+    current: &SignedTreeHead,
+    history: &BTreeMap<u64, &SignedTreeHead>,
+    anchor_size: u64,
+    anchor_root: &str,
+    anchor_label: &str,
+) -> Result<(), String> {
+    if current.tree_size < anchor_size {
+        return Err(format!(
+            "transparency log rollback detected: {anchor_label} size {anchor_size}, received {}",
+            current.tree_size
+        ));
+    }
+    if current.tree_size == anchor_size {
+        return if current.root_hash == anchor_root {
+            Ok(())
+        } else {
+            Err(format!(
+                "transparency log equivocation detected against {anchor_label}"
+            ))
+        };
+    }
+
+    let mut cursor = current;
+    let mut visited = BTreeMap::new();
+    loop {
+        if visited.insert(cursor.tree_size, ()).is_some() {
+            return Err("transparency head history contains a cycle".to_string());
+        }
+        let (previous_size, previous_root) = cursor
+            .previous_tree_size
+            .zip(cursor.previous_root_hash.as_deref())
+            .ok_or_else(|| {
+                format!(
+                    "transparency consistency chain does not reach {anchor_label} size {anchor_size}"
+                )
+            })?;
+        if previous_size == anchor_size {
+            return if previous_root == anchor_root {
+                Ok(())
+            } else {
+                Err(format!(
+                    "transparency log equivocation detected against {anchor_label}"
+                ))
+            };
+        }
+        if previous_size < anchor_size {
+            return Err(format!(
+                "transparency consistency chain skips {anchor_label} size {anchor_size}"
+            ));
+        }
+        cursor = history.get(&previous_size).copied().ok_or_else(|| {
+            format!(
+                "transparency consistency chain is missing tree head {previous_size} required by {anchor_label}"
+            )
+        })?;
+        if cursor.root_hash != previous_root {
+            return Err("transparency head history predecessor root does not match".to_string());
+        }
+    }
+}
+
+fn verify_gossip_checkpoint(
+    gossip: &GossipCheckpoint,
+    current: &SignedTreeHead,
+    history: &BTreeMap<u64, &SignedTreeHead>,
+    timeline: &LogKeyTimeline,
+    max_future_skew_seconds: u64,
+    now_unix_seconds: u64,
+) -> Result<(), String> {
+    verify_tree_head_with_timeline(&gossip.head, timeline)?;
+    if gossip.observed_at_unix_seconds < gossip.head.issued_at_unix_seconds {
+        return Err("gossip checkpoint was observed before its tree head was issued".to_string());
+    }
+    if gossip.observed_at_unix_seconds > now_unix_seconds.saturating_add(max_future_skew_seconds) {
+        return Err("gossip checkpoint observation time is too far in the future".to_string());
+    }
+    verify_head_extends_anchor(
+        current,
+        history,
+        gossip.head.tree_size,
+        &gossip.head.root_hash,
+        "gossip checkpoint",
+    )
+}
+
+pub fn current_unix_seconds() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs()
+}
+
 pub fn verify_tree_head(head: &SignedTreeHead, public_key: &str) -> Result<(), String> {
+    head.validate()?;
     if head.algorithm != "ed25519" {
         return Err(format!(
             "unsupported transparency signature algorithm `{}`",
@@ -731,15 +1256,51 @@ mod tests {
     }
 
     fn signed_head(log: &TransparencyLog, pair: &Ed25519KeyPair) -> SignedTreeHead {
+        signed_head_at(log, pair, current_unix_seconds(), None)
+    }
+
+    fn signed_head_at(
+        log: &TransparencyLog,
+        pair: &Ed25519KeyPair,
+        issued_at_unix_seconds: u64,
+        previous: Option<&SignedTreeHead>,
+    ) -> SignedTreeHead {
         let mut head = SignedTreeHead {
+            schema: TRANSPARENCY_HEAD_SCHEMA,
+            log_id: "https://registry.example/transparency".to_string(),
             tree_size: log.events.len() as u64,
             root_hash: log.root_hash().unwrap(),
+            issued_at_unix_seconds,
+            previous_tree_size: previous.map(|head| head.tree_size),
+            previous_root_hash: previous.map(|head| head.root_hash.clone()),
             algorithm: "ed25519".to_string(),
             key_id: publisher_key_id(pair.public_key().as_ref()),
             signature: String::new(),
         };
         head.signature = encode_hex(pair.sign(&head.canonical_bytes().unwrap()).as_ref());
         head
+    }
+
+    fn log_key_rotation(
+        old: &Ed25519KeyPair,
+        new: &Ed25519KeyPair,
+        activate_at_tree_size: u64,
+    ) -> LogKeyRotation {
+        let mut rotation = LogKeyRotation {
+            schema: LOG_KEY_ROTATION_SCHEMA,
+            log_id: "https://registry.example/transparency".to_string(),
+            activate_at_tree_size,
+            old_key_id: publisher_key_id(old.public_key().as_ref()),
+            old_public_key: encode_hex(old.public_key().as_ref()),
+            new_key_id: publisher_key_id(new.public_key().as_ref()),
+            new_public_key: encode_hex(new.public_key().as_ref()),
+            old_signature: String::new(),
+            new_signature: String::new(),
+        };
+        let canonical = rotation.canonical_bytes().unwrap();
+        rotation.old_signature = encode_hex(old.sign(&canonical).as_ref());
+        rotation.new_signature = encode_hex(new.sign(&canonical).as_ref());
+        rotation
     }
 
     #[test]
@@ -819,6 +1380,8 @@ mod tests {
         let bundle = TransparencyBundle {
             head: signed_head(&log, &log_key),
             log_public_key: encode_hex(log_key.public_key().as_ref()),
+            log_key_rotations: Vec::new(),
+            head_history: Vec::new(),
             release: log.inclusion(3).unwrap(),
             key_events: vec![
                 log.inclusion(0).unwrap(),
@@ -841,6 +1404,8 @@ mod tests {
         let rollback = CachedTreeHead {
             tree_size: verified.tree_size + 1,
             root_hash: sha256_digest(b"newer"),
+            issued_at_unix_seconds: current_unix_seconds(),
+            key_id: bundle.head.key_id.clone(),
         };
         let error = verify_transparency_bundle(
             &bundle,
@@ -893,6 +1458,8 @@ mod tests {
         let bundle = TransparencyBundle {
             head: signed_head(&log, &log_key),
             log_public_key: encode_hex(log_key.public_key().as_ref()),
+            log_key_rotations: Vec::new(),
+            head_history: Vec::new(),
             release: log.inclusion(2).unwrap(),
             key_events: vec![log.inclusion(0).unwrap(), log.inclusion(1).unwrap()],
         };
@@ -904,5 +1471,127 @@ mod tests {
         )
         .unwrap_err();
         assert!(error.contains("not active"), "{error}");
+    }
+
+    #[test]
+    fn log_key_rotation_gossip_and_online_offline_freshness_are_enforced() {
+        let publisher = key(SEED_ONE);
+        let old_log_key = key(SEED_ONE);
+        let new_log_key = key(SEED_TWO);
+        let publisher_public = encode_hex(publisher.public_key().as_ref());
+        let publisher_id = publisher_key_id(publisher.public_key().as_ref());
+        let release = sign(subject("2.0.0"), &publisher);
+        let first_log = TransparencyLog::new(vec![TransparencyEvent {
+            sequence: 0,
+            kind: TransparencyEventKind::KeyRegistered {
+                package: "nomo-lang/demo".to_string(),
+                key_id: publisher_id.clone(),
+                public_key: publisher_public.clone(),
+            },
+        }])
+        .unwrap();
+        let first_head = signed_head_at(&first_log, &old_log_key, 1_000, None);
+        let current_log = TransparencyLog::new(vec![
+            TransparencyEvent {
+                sequence: 0,
+                kind: TransparencyEventKind::KeyRegistered {
+                    package: "nomo-lang/demo".to_string(),
+                    key_id: publisher_id.clone(),
+                    public_key: publisher_public,
+                },
+            },
+            TransparencyEvent {
+                sequence: 1,
+                kind: TransparencyEventKind::Release {
+                    package: "nomo-lang/demo".to_string(),
+                    version: "2.0.0".to_string(),
+                    subject_digest: release.subject.digest().unwrap(),
+                    key_id: publisher_id,
+                },
+            },
+        ])
+        .unwrap();
+        let current_head = signed_head_at(&current_log, &new_log_key, 1_100, Some(&first_head));
+        let bundle = TransparencyBundle {
+            head: current_head.clone(),
+            log_public_key: encode_hex(new_log_key.public_key().as_ref()),
+            log_key_rotations: vec![log_key_rotation(&old_log_key, &new_log_key, 2)],
+            head_history: vec![first_head.clone()],
+            release: current_log.inclusion(1).unwrap(),
+            key_events: vec![current_log.inclusion(0).unwrap()],
+        };
+        let policy = TransparencyVerificationPolicy {
+            trusted_log_keys: vec![encode_hex(old_log_key.public_key().as_ref())],
+            freshness: ProofFreshnessPolicy {
+                max_age_seconds: 200,
+                offline_max_age_seconds: 1_000,
+                max_future_skew_seconds: 10,
+            },
+            gossip_checkpoints: vec![GossipCheckpoint {
+                observed_at_unix_seconds: 1_050,
+                head: first_head.clone(),
+            }],
+        };
+        let verified =
+            verify_transparency_bundle_with_policy(&bundle, &release, None, &policy, false, 1_200)
+                .unwrap();
+        assert_eq!(verified.cached_head.key_id, current_head.key_id);
+
+        let mut bad_rotation = bundle.clone();
+        bad_rotation.log_key_rotations[0].old_signature = "00".repeat(64);
+        let error = verify_transparency_bundle_with_policy(
+            &bad_rotation,
+            &release,
+            None,
+            &policy,
+            false,
+            1_200,
+        )
+        .unwrap_err();
+        assert!(
+            error.contains("old transparency log key signature"),
+            "{error}"
+        );
+
+        let fork_log = TransparencyLog::new(vec![TransparencyEvent {
+            sequence: 0,
+            kind: TransparencyEventKind::KeyRegistered {
+                package: "nomo-lang/other".to_string(),
+                key_id: publisher_key_id(old_log_key.public_key().as_ref()),
+                public_key: encode_hex(old_log_key.public_key().as_ref()),
+            },
+        }])
+        .unwrap();
+        let mut fork_policy = policy.clone();
+        fork_policy.gossip_checkpoints[0] = GossipCheckpoint {
+            observed_at_unix_seconds: 1_050,
+            head: signed_head_at(&fork_log, &old_log_key, 1_000, None),
+        };
+        let error = verify_transparency_bundle_with_policy(
+            &bundle,
+            &release,
+            None,
+            &fork_policy,
+            false,
+            1_200,
+        )
+        .unwrap_err();
+        assert!(error.contains("equivocation"), "{error}");
+
+        let mut age_policy = policy;
+        age_policy.gossip_checkpoints.clear();
+        age_policy.freshness.max_age_seconds = 50;
+        let error = verify_transparency_bundle_with_policy(
+            &bundle,
+            &release,
+            None,
+            &age_policy,
+            false,
+            1_200,
+        )
+        .unwrap_err();
+        assert!(error.contains("stale"), "{error}");
+        verify_transparency_bundle_with_policy(&bundle, &release, None, &age_policy, true, 1_200)
+            .unwrap();
     }
 }

@@ -11,12 +11,13 @@ use nomo_lockfile::{
 };
 use nomo_manifest::{
     Dependency, DependencySource, Manifest, PackageVersion, RegistryTrustPolicy, TargetCondition,
-    VersionConstraint, parse_manifest_at_root, relative_path,
+    TransparencyTrustConfig, VersionConstraint, parse_manifest_at_root, relative_path,
 };
 use nomo_resolver::{
     ConstraintOrigin, VersionCandidate, load_registry_version_candidates, package_checksum,
-    resolve_registry_source_with_policy, select_highest_version,
+    resolve_registry_source_with_verification_policy, select_highest_version,
 };
+use nomo_supply_chain::{GossipCheckpoint, ProofFreshnessPolicy, TransparencyVerificationPolicy};
 use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -249,6 +250,8 @@ pub(super) fn resolve_dependency_graphs_for_manifests(
         let mut graphs = Vec::with_capacity(manifests.len());
         for (root, manifest, root_package) in &manifests {
             let mut package_sources = BTreeMap::new();
+            let transparency_policy =
+                load_transparency_verification_policy(&manifest.transparency)?;
             let dependencies = resolve_dependencies(
                 &manifest.dependencies,
                 root,
@@ -259,7 +262,7 @@ pub(super) fn resolve_dependency_graphs_for_manifests(
                 std::slice::from_ref(root_package),
                 &mut registry_solver,
                 manifest.trust,
-                &manifest.transparency_keys,
+                &transparency_policy,
                 &TargetCondition::default(),
             )?;
             graphs.push(DependencyGraph {
@@ -285,6 +288,41 @@ pub(super) fn resolve_dependency_graphs_for_manifests(
         }
     }
     Err("registry dependency solver did not converge after 64 passes".to_string())
+}
+
+fn load_transparency_verification_policy(
+    config: &TransparencyTrustConfig,
+) -> Result<TransparencyVerificationPolicy, String> {
+    let mut gossip_checkpoints = Vec::new();
+    for path in &config.gossip_checkpoints {
+        let bytes = fs::read(path).map_err(|error| {
+            format!(
+                "failed to read transparency gossip checkpoint {}: {error}",
+                path.display()
+            )
+        })?;
+        if let Ok(checkpoint) = serde_json::from_slice::<GossipCheckpoint>(&bytes) {
+            gossip_checkpoints.push(checkpoint);
+            continue;
+        }
+        let checkpoints =
+            serde_json::from_slice::<Vec<GossipCheckpoint>>(&bytes).map_err(|error| {
+                format!(
+                    "invalid transparency gossip checkpoint at {}: {error}",
+                    path.display()
+                )
+            })?;
+        gossip_checkpoints.extend(checkpoints);
+    }
+    Ok(TransparencyVerificationPolicy {
+        trusted_log_keys: config.keys.clone(),
+        freshness: ProofFreshnessPolicy {
+            max_age_seconds: config.proof_max_age_seconds,
+            offline_max_age_seconds: config.offline_proof_max_age_seconds,
+            max_future_skew_seconds: config.max_future_skew_seconds,
+        },
+        gossip_checkpoints,
+    })
 }
 
 pub(super) fn dependency_graph_from_lockfile(
@@ -388,7 +426,7 @@ fn resolve_dependencies(
     current_path: &[String],
     registry_solver: &mut RegistrySolveState,
     trust_policy: RegistryTrustPolicy,
-    trusted_transparency_keys: &[String],
+    transparency_policy: &TransparencyVerificationPolicy,
     active_condition: &TargetCondition,
 ) -> Result<Vec<ResolvedDependency>, String> {
     let mut resolved = Vec::new();
@@ -438,7 +476,7 @@ fn resolve_dependencies(
                     &dependency_path,
                     registry_solver,
                     trust_policy,
-                    trusted_transparency_keys,
+                    transparency_policy,
                     &effective_condition,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
@@ -502,7 +540,7 @@ fn resolve_dependencies(
                     &dependency_path,
                     registry_solver,
                     trust_policy,
-                    trusted_transparency_keys,
+                    transparency_policy,
                     &effective_condition,
                 )?;
                 let checksum = package_checksum(&dep_root)?;
@@ -533,7 +571,7 @@ fn resolve_dependencies(
                     version: selected_version.clone(),
                     registry: registry.clone(),
                 };
-                let verified = resolve_registry_source_with_policy(
+                let verified = resolve_registry_source_with_verification_policy(
                     dependency_cache_base.unwrap_or(base_root),
                     &dependency.alias,
                     &dependency.package,
@@ -542,7 +580,7 @@ fn resolve_dependencies(
                     offline,
                     authorization.as_deref(),
                     trust_policy,
-                    trusted_transparency_keys,
+                    transparency_policy,
                 )?;
                 match verified.root {
                     Some(dep_root) => {
@@ -573,7 +611,7 @@ fn resolve_dependencies(
                             &dependency_path,
                             registry_solver,
                             trust_policy,
-                            trusted_transparency_keys,
+                            transparency_policy,
                             &effective_condition,
                         )?;
                         let checksum = package_checksum(&dep_root)?;

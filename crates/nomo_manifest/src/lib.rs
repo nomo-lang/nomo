@@ -181,7 +181,7 @@ pub struct Manifest {
     pub ffi: FfiLinkMetadata,
     pub target_ffi: Vec<ConditionalFfiLinkMetadata>,
     pub trust: RegistryTrustPolicy,
-    pub transparency_keys: Vec<String>,
+    pub transparency: TransparencyTrustConfig,
 }
 
 impl Manifest {
@@ -221,6 +221,31 @@ impl RegistryTrustPolicy {
             Self::ChecksumOnly => "checksum-only",
             Self::Signed => "signed",
             Self::SignedTransparent => "signed+transparent",
+        }
+    }
+}
+
+pub const DEFAULT_TRANSPARENCY_PROOF_MAX_AGE_SECONDS: u64 = 24 * 60 * 60;
+pub const DEFAULT_TRANSPARENCY_OFFLINE_PROOF_MAX_AGE_SECONDS: u64 = 7 * 24 * 60 * 60;
+pub const DEFAULT_TRANSPARENCY_MAX_FUTURE_SKEW_SECONDS: u64 = 5 * 60;
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TransparencyTrustConfig {
+    pub keys: Vec<String>,
+    pub proof_max_age_seconds: u64,
+    pub offline_proof_max_age_seconds: u64,
+    pub max_future_skew_seconds: u64,
+    pub gossip_checkpoints: Vec<PathBuf>,
+}
+
+impl Default for TransparencyTrustConfig {
+    fn default() -> Self {
+        Self {
+            keys: Vec::new(),
+            proof_max_age_seconds: DEFAULT_TRANSPARENCY_PROOF_MAX_AGE_SECONDS,
+            offline_proof_max_age_seconds: DEFAULT_TRANSPARENCY_OFFLINE_PROOF_MAX_AGE_SECONDS,
+            max_future_skew_seconds: DEFAULT_TRANSPARENCY_MAX_FUTURE_SKEW_SECONDS,
+            gossip_checkpoints: Vec::new(),
         }
     }
 }
@@ -434,8 +459,8 @@ fn parse_manifest_document_at_root(
     let ffi_table = optional_table(document, "ffi")?;
     let ffi = parse_ffi_link_metadata(root, ffi_table)?;
     let target_ffi = parse_target_ffi_link_metadata(root, ffi_table)?;
-    let (trust, transparency_keys) =
-        parse_registry_trust_policy(optional_table(document, "trust")?)?;
+    let (trust, transparency) =
+        parse_registry_trust_policy(root, optional_table(document, "trust")?)?;
 
     let package_table = optional_table(document, "package")?;
     if package_table.is_none() && optional_table(document, "workspace")?.is_some() {
@@ -489,35 +514,129 @@ fn parse_manifest_document_at_root(
         ffi,
         target_ffi,
         trust,
-        transparency_keys,
+        transparency,
     })
 }
 
 fn parse_registry_trust_policy(
+    root: &Path,
     table: Option<&toml::map::Map<String, toml::Value>>,
-) -> Result<(RegistryTrustPolicy, Vec<String>), String> {
+) -> Result<(RegistryTrustPolicy, TransparencyTrustConfig), String> {
     let Some(table) = table else {
-        return Ok((RegistryTrustPolicy::default(), Vec::new()));
+        return Ok((
+            RegistryTrustPolicy::default(),
+            TransparencyTrustConfig::default(),
+        ));
     };
+    if let Some(field) = table.keys().find(|field| {
+        !matches!(
+            field.as_str(),
+            "policy"
+                | "transparency-keys"
+                | "proof-max-age-seconds"
+                | "offline-proof-max-age-seconds"
+                | "max-future-skew-seconds"
+                | "gossip-checkpoints"
+        )
+    }) {
+        return Err(format!(
+            "manifest `trust` contains unsupported field `{field}`"
+        ));
+    }
     let policy = optional_string_field(table, "trust", "policy")?
         .unwrap_or_else(|| "checksum-only".to_string());
     let policy = RegistryTrustPolicy::parse(&policy)?;
-    let transparency_keys = optional_string_array_field(table, "trust", "transparency-keys")?;
-    for key in &transparency_keys {
+    let mut transparency = TransparencyTrustConfig {
+        keys: optional_string_array_field(table, "trust", "transparency-keys")?,
+        ..TransparencyTrustConfig::default()
+    };
+    for key in &mut transparency.keys {
         if key.len() != 64 || !key.bytes().all(|byte| byte.is_ascii_hexdigit()) {
             return Err(
                 "manifest `trust.transparency-keys` entries must be 32-byte hexadecimal Ed25519 public keys"
                     .to_string(),
             );
         }
+        *key = key.to_ascii_lowercase();
     }
-    if policy == RegistryTrustPolicy::SignedTransparent && transparency_keys.is_empty() {
+    transparency.keys.sort();
+    transparency.keys.dedup();
+    transparency.proof_max_age_seconds =
+        optional_positive_u64_field(table, "trust", "proof-max-age-seconds")?
+            .unwrap_or(DEFAULT_TRANSPARENCY_PROOF_MAX_AGE_SECONDS);
+    transparency.offline_proof_max_age_seconds =
+        optional_positive_u64_field(table, "trust", "offline-proof-max-age-seconds")?
+            .unwrap_or(DEFAULT_TRANSPARENCY_OFFLINE_PROOF_MAX_AGE_SECONDS);
+    transparency.max_future_skew_seconds =
+        optional_u64_field(table, "trust", "max-future-skew-seconds")?
+            .unwrap_or(DEFAULT_TRANSPARENCY_MAX_FUTURE_SKEW_SECONDS);
+    if transparency.offline_proof_max_age_seconds < transparency.proof_max_age_seconds {
+        return Err(
+            "manifest `trust.offline-proof-max-age-seconds` must be at least `proof-max-age-seconds`"
+                .to_string(),
+        );
+    }
+    transparency.gossip_checkpoints =
+        optional_string_array_field(table, "trust", "gossip-checkpoints")?
+            .into_iter()
+            .map(|path| rebase_trust_path(root, &path))
+            .collect::<Result<Vec<_>, _>>()?;
+    transparency.gossip_checkpoints.sort();
+    transparency.gossip_checkpoints.dedup();
+    if policy == RegistryTrustPolicy::SignedTransparent && transparency.keys.is_empty() {
         return Err(
             "manifest `trust.policy = \"signed+transparent\"` requires at least one `transparency-keys` entry"
                 .to_string(),
         );
     }
-    Ok((policy, transparency_keys))
+    Ok((policy, transparency))
+}
+
+fn optional_u64_field(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    let Some(value) = table.get(key) else {
+        return Ok(None);
+    };
+    let integer = value
+        .as_integer()
+        .ok_or_else(|| format!("manifest `{section}.{key}` must be a non-negative integer"))?;
+    u64::try_from(integer)
+        .map(Some)
+        .map_err(|_| format!("manifest `{section}.{key}` must be a non-negative integer"))
+}
+
+fn optional_positive_u64_field(
+    table: &toml::map::Map<String, toml::Value>,
+    section: &str,
+    key: &str,
+) -> Result<Option<u64>, String> {
+    let value = optional_u64_field(table, section, key)?;
+    if value == Some(0) {
+        return Err(format!("manifest `{section}.{key}` must be positive"));
+    }
+    Ok(value)
+}
+
+fn rebase_trust_path(root: &Path, path: &str) -> Result<PathBuf, String> {
+    let path = Path::new(path);
+    if path.as_os_str().is_empty()
+        || path.is_absolute()
+        || path.components().any(|component| {
+            matches!(
+                component,
+                Component::ParentDir | Component::RootDir | Component::Prefix(_)
+            )
+        })
+    {
+        return Err(format!(
+            "manifest `trust.gossip-checkpoints` entry `{}` must stay inside the package root",
+            path.display()
+        ));
+    }
+    Ok(root.join(path))
 }
 
 fn parse_ffi_link_metadata(
@@ -1249,7 +1368,11 @@ mod trust_tests {
         let base = "[package]\nnamespace = \"app\"\nname = \"demo\"\nversion = \"1.0.0\"\nedition = \"2026\"\n";
         let default = parse_manifest_text(base, Path::new("demo")).unwrap();
         assert_eq!(default.trust, RegistryTrustPolicy::ChecksumOnly);
-        assert!(default.transparency_keys.is_empty());
+        assert!(default.transparency.keys.is_empty());
+        assert_eq!(
+            default.transparency.proof_max_age_seconds,
+            DEFAULT_TRANSPARENCY_PROOF_MAX_AGE_SECONDS
+        );
 
         for (value, expected) in [
             ("signed", RegistryTrustPolicy::Signed),
@@ -1268,6 +1391,18 @@ mod trust_tests {
                 expected
             );
         }
+        let configured = format!(
+            "{base}\n[trust]\npolicy = \"signed+transparent\"\ntransparency-keys = [\"{}\"]\nproof-max-age-seconds = 60\noffline-proof-max-age-seconds = 600\nmax-future-skew-seconds = 10\ngossip-checkpoints = [\"trust/peer.json\"]\n",
+            "a".repeat(64)
+        );
+        let configured = parse_manifest_text(&configured, Path::new("demo")).unwrap();
+        assert_eq!(configured.transparency.proof_max_age_seconds, 60);
+        assert_eq!(configured.transparency.offline_proof_max_age_seconds, 600);
+        assert_eq!(configured.transparency.max_future_skew_seconds, 10);
+        assert_eq!(
+            configured.transparency.gossip_checkpoints,
+            vec![PathBuf::from("demo/trust/peer.json")]
+        );
         let invalid = format!("{base}\n[trust]\npolicy = \"trust-me\"\n");
         assert!(
             parse_manifest_text(&invalid, Path::new("demo"))

@@ -3,7 +3,7 @@ manifest-version = 2
 [package]
 namespace = "nomo-lang"
 name = "std"
-version = "0.0.0-20260713145859"
+version = "0.0.0-20260720080715"
 edition = "2026"
 description = "The built-in Nomo standard library"
 license = "MIT"

@@ -24,7 +24,7 @@ members = [
 default-members = ["crates/nomo"]
 
 [workspace.package]
-version = "0.0.0-20260713145859"
+version = "0.0.0-20260720080715"
 edition = "2024"
 license = "MIT"
 

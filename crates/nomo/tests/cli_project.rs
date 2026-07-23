@@ -916,6 +916,13 @@ fn nomo_doc_std_json_reports_builtin_modules() {
     assert!(stdout.contains("\"package\":\"nomo-lang/std\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"std.io\""), "{stdout}");
     assert!(stdout.contains("Printing and terminal I/O."), "{stdout}");
+    assert!(stdout.contains("\"name\":\"std.fmt\""), "{stdout}");
+    assert!(stdout.contains("Type-safe value formatting."), "{stdout}");
+    assert!(stdout.contains("\"name\":\"Display\""), "{stdout}");
+    assert!(
+        stdout.contains("pub fn format(template: string) -> string"),
+        "{stdout}"
+    );
     assert!(stdout.contains("\"name\":\"std.testing\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Option\""), "{stdout}");
     assert!(stdout.contains("\"name\":\"Result\""), "{stdout}");
@@ -1539,6 +1546,64 @@ fn main() -> void {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         "Hello, native 0\nHello, native 1\nHello, native 2\n"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_formats_scalars_and_display_structs() {
+    let root = temp_test_root("run-std-fmt");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.fmt
+import std.io
+
+struct User {
+    name: string
+}
+
+impl fmt.Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+impl fmt.Debug for User {
+    fn debug_string(self) -> string {
+        return self.name
+    }
+}
+
+fn main() -> void {
+    let user: User = User { name: "Nomo" }
+    let message = fmt.format("display={} debug={:?} count={{ {} }}", user, user, 3)
+    io.println(message)
+    io.println(user)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "display=Nomo debug=Nomo count={ 3 }\nNomo\n"
     );
 
     fs::remove_dir_all(&root).unwrap();

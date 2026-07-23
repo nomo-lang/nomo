@@ -333,6 +333,36 @@ fn main() -> void {
     }
 
     #[test]
+    fn runs_std_fmt_templates_and_display_structs() {
+        let source = r#"package app.main
+
+import std.fmt
+import std.io
+
+struct User {
+    name: string
+}
+
+impl fmt.Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+fn main() -> void {
+    let user: User = User { name: "WASM" }
+    io.println(fmt.format("Hello, {} {}", user, 7))
+    io.println(user)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "Hello, WASM 7\nWASM\n");
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn three_clause_loop_runs_update_after_continue() {
         let source = r#"package app.main
 

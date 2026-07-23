@@ -1,24 +1,27 @@
 //! Printing and terminal I/O.
 package std.io
 
+import std.fmt
 import std.io
 
-/// Writes a string to standard output without a trailing newline.
+/// Formats values through `std.fmt` and writes them to standard output.
 pub fn print(value: string) -> void {
     io.print(value)
 }
 
-/// Writes a string to standard output followed by a newline.
+/// Formats values through `std.fmt`, writes them to standard output, and
+/// appends a newline.
 pub fn println(value: string) -> void {
     io.println(value)
 }
 
-/// Writes a string to standard error without a trailing newline.
+/// Formats values through `std.fmt` and writes them to standard error.
 pub fn eprint(value: string) -> void {
     io.eprint(value)
 }
 
-/// Writes a string to standard error followed by a newline.
+/// Formats values through `std.fmt`, writes them to standard error, and
+/// appends a newline.
 pub fn eprintln(value: string) -> void {
     io.eprintln(value)
 }

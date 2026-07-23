@@ -19,6 +19,19 @@ pub(super) fn lower_call_value_expr(
             span,
         ),
         2 => {
+            if is_fmt_builtin_call(callee) {
+                require_import(path, imports, span, "std.fmt", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "fmt builtins do not accept explicit type arguments",
+                    ));
+                }
+                return lower_fmt_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if is_io_print_call(callee) {
                 if !type_args.is_empty() {
                     return Err(type_mismatch(

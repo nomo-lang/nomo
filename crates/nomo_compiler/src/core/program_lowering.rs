@@ -31,6 +31,7 @@ pub(super) fn lower_program(
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
     validate_imports(path, &imports, external_import_roots, local_import_root)?;
+    inject_standard_interfaces(&mut ast, &imports)?;
     prepare_entry_point(path, &mut ast, entry_mode)?;
     validate_standard_type_imports(path, &imports, &ast)?;
     let standard_type_needs = standard_type_needs(&imports, &ast);
@@ -75,7 +76,7 @@ pub(super) fn lower_program(
         .collect::<HashMap<_, _>>();
     let interface_map = collect_interfaces(path, &ast.interfaces)?;
     let generic_interface_bounds =
-        collect_generic_interface_bounds(path, &ast.functions, &interface_map)?;
+        collect_generic_interface_bounds(path, &ast.functions, &interface_map, &imports)?;
     let mut signatures = HashMap::new();
     for function in &ast.functions {
         if signatures.contains_key(&function.name) {
@@ -171,12 +172,22 @@ pub(super) fn lower_program(
                 &struct_map,
                 &enum_map,
                 &interface_map,
+                &imports,
             )?;
-            let interface_name = interface_name
-                .path
-                .first()
-                .expect("validated interface impl must have one path segment");
+            let interface_name = resolve_interface_name(interface_name, &imports)
+                .expect("validated interface impl must name an imported interface");
             interface_impls.insert((interface_name.clone(), owner_name.clone()));
+            if matches!(interface_name.as_str(), "Display" | "Debug") {
+                signatures.insert(
+                    fmt_interface_impl_marker(&interface_name, &owner_name),
+                    FunctionSignature {
+                        type_params: Vec::new(),
+                        params: Vec::new(),
+                        return_type: ValueType::Void,
+                        extern_symbol: None,
+                    },
+                );
+            }
         }
         for method in &impl_block.methods {
             reject_method_interface_bounds(path, method)?;
@@ -420,6 +431,38 @@ pub(super) fn lower_program(
         consts,
         functions,
     })
+}
+
+fn inject_standard_interfaces(ast: &mut SourceFile, imports: &[String]) -> Result<(), Diagnostic> {
+    if ast.package == ["std", "fmt"] {
+        return Ok(());
+    }
+    let import_all = imports.iter().any(|import| import == "std.fmt");
+    let requested = ["Display", "Debug"]
+        .into_iter()
+        .filter(|name| {
+            import_all
+                || imports
+                    .iter()
+                    .any(|import| import == &format!("std.fmt.{name}"))
+        })
+        .collect::<HashSet<_>>();
+    if requested.is_empty() {
+        return Ok(());
+    }
+
+    let source = nomo_std::embedded_module_source("std.fmt")
+        .expect("std.fmt must be embedded in the toolchain");
+    let source_path = Path::new("std/src/fmt.nomo");
+    let tokens = lexer::lex(source_path, source)?;
+    let standard_ast = parser::parse(source_path, &tokens)?;
+    ast.interfaces.extend(
+        standard_ast
+            .interfaces
+            .into_iter()
+            .filter(|interface| interface.public && requested.contains(interface.name.as_str())),
+    );
+    Ok(())
 }
 
 fn prepare_entry_point(

@@ -919,6 +919,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "specific_value_import" => "specific value import ok\n",
         "std_json" => "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n",
         "std_http" => "get-ok\npost-ok\n",
+        "std_fmt" => "display=Nomo debug=Nomo braces={}\nNomo\n",
         "std_path" => "/tmp/nomo.txt\nnomo.txt\n/tmp\ngz\n/tmp/b\n../b\nabsolute\n",
         "std_process" => "spawn-ok\nstatus-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n",
         "std_time" => "1500\n2000\n1500ms\n",

@@ -1,0 +1,39 @@
+//! Type-safe value formatting.
+package std.fmt
+
+import std.fmt
+
+/// Converts a value to its user-facing text representation.
+pub interface Display {
+    /// Returns the user-facing text representation of this value.
+    fn to_string(self) -> string
+}
+
+/// Converts a value to its diagnostic text representation.
+pub interface Debug {
+    /// Returns the diagnostic text representation of this value.
+    fn debug_string(self) -> string
+}
+
+/// Converts one displayable value to text.
+///
+/// Primitive scalar types are supported by the compiler. Structs participate
+/// by implementing `Display`.
+pub fn to_string<T: Display>(value: T) -> string {
+    return fmt.to_string(value)
+}
+
+/// Converts one debug-formattable value to text.
+///
+/// Primitive scalar types are supported by the compiler. Structs participate
+/// by implementing `Debug`.
+pub fn debug_string<T: Debug>(value: T) -> string {
+    return fmt.debug_string(value)
+}
+
+/// Produces text from a compile-time template.
+///
+/// The compiler accepts additional values for `{}` and `{:?}` placeholders.
+pub fn format(template: string) -> string {
+    return fmt.format("{}", template)
+}

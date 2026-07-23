@@ -261,7 +261,7 @@ json_private = { package = "nomo-lang/json", version = ">=1.2, <2.0", registry =
 local_utils = { package = "fynn/utils", path = "../utils" }
 http = { package = "nomo-lang/http", git = "https://github.com/nomo-lang/http.git", rev = "2a4b8c1" }
 cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git", branch = "stable" }
-fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
+renderer = { package = "nomo-lang/renderer", git = "https://github.com/nomo-lang/renderer.git", tag = "v0.1.0" }
 ```
 
 Projects and source dependencies can declare native linker metadata for C FFI:
@@ -487,10 +487,18 @@ infers `i64` from the integer initializer. Semicolons are reserved for
 separating the three header clauses; ordinary Nomo statements remain
 newline-separated.
 
-The `std.io` print builtins accept zero or more string, numeric, character, or
-boolean values. Multiple values are rendered left-to-right with one space
-between them, so `io.println(message, i)` prints both values and then one
-newline.
+`std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
+primitive scalar or a struct implementing `fmt.Display`;
+`fmt.debug_string(value)` uses `fmt.Debug`. `fmt.format` accepts a compile-time
+string literal with `{}` display placeholders, `{:?}` debug placeholders, and
+`{{` / `}}` escaped braces. Placeholder counts and forms are checked by the
+compiler.
+
+`std.io` owns output destinations. Its print builtins accept zero or more
+values and reuse the `std.fmt` conversion rules. Multiple values are rendered
+left-to-right with one space between them, so `io.println(message, i)` prints
+both values and then one newline. C-style `printf` is intentionally omitted in
+favor of type-checked `fmt.format`.
 
 The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error

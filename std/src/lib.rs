@@ -29,6 +29,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.debug" => Some(include_str!("debug.nomo")),
         "std.env" => Some(include_str!("env.nomo")),
         "std.ffi" => Some(include_str!("ffi.nomo")),
+        "std.fmt" => Some(include_str!("fmt.nomo")),
         "std.fs" => Some(include_str!("fs.nomo")),
         "std.hash" => Some(include_str!("hash.nomo")),
         "std.http" => Some(include_str!("http.nomo")),
@@ -109,6 +110,7 @@ const CRYPTO_ITEMS: &[&str] = &["random_bytes", "sha256", "sha512"];
 const DEBUG_ITEMS: &[&str] = &["backtrace", "panic", "print", "println"];
 const ENV_ITEMS: &[&str] = &["args", "cwd", "get", "home_dir", "set", "temp_dir"];
 const FFI_ITEMS: &[&str] = &["CString", "Opaque"];
+const FMT_ITEMS: &[&str] = &["Debug", "Display", "debug_string", "format", "to_string"];
 const FS_ITEMS: &[&str] = &[
     "File",
     "FileMetadata",
@@ -254,6 +256,39 @@ const FFI_DOC_ITEMS: &[StandardDocItem] = &[
         name: "CString.from_string",
         signature: "pub fn CString.from_string(value: string) -> CString",
         docs: "Creates an owned C string copy from a Nomo string.",
+    },
+];
+
+const FMT_DOC_ITEMS: &[StandardDocItem] = &[
+    StandardDocItem {
+        kind: "interface",
+        name: "Display",
+        signature: "pub interface Display",
+        docs: "User-facing value formatting through to_string.",
+    },
+    StandardDocItem {
+        kind: "interface",
+        name: "Debug",
+        signature: "pub interface Debug",
+        docs: "Diagnostic value formatting through debug_string.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "to_string",
+        signature: "pub fn to_string<T: Display>(value: T) -> string",
+        docs: "Converts one displayable value to text.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "debug_string",
+        signature: "pub fn debug_string<T: Debug>(value: T) -> string",
+        docs: "Converts one debug-formattable value to diagnostic text.",
+    },
+    StandardDocItem {
+        kind: "function",
+        name: "format",
+        signature: "pub fn format(template: string, values...) -> string",
+        docs: "Formats values into a compile-time checked template.",
     },
 ];
 
@@ -481,6 +516,12 @@ pub const MODULES: &[StandardModule] = &[
         doc_items: FFI_DOC_ITEMS,
     },
     StandardModule {
+        path: "std.fmt",
+        docs: "type-safe value formatting",
+        items: FMT_ITEMS,
+        doc_items: FMT_DOC_ITEMS,
+    },
+    StandardModule {
         path: "std.fs",
         docs: "filesystem helpers",
         items: FS_ITEMS,
@@ -598,6 +639,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.debug",
     "std.env",
     "std.ffi",
+    "std.fmt",
     "std.fs",
     "std.hash",
     "std.http",
@@ -1174,7 +1216,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 199);
+        assert_eq!(imports.len(), 205);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

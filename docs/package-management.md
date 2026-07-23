@@ -87,7 +87,7 @@ Dependency keys are source import aliases. For example:
 ```toml
 [dependencies]
 local_utils = { path = "../utils" }
-fmt = { package = "nomo-lang/fmt", git = "https://github.com/nomo-lang/fmt.git", tag = "v0.1.0" }
+renderer = { package = "nomo-lang/renderer", git = "https://github.com/nomo-lang/renderer.git", tag = "v0.1.0" }
 json = { package = "nomo-lang/json", version = "^1.2.0" }
 winapi = { package = "nomo-lang/winapi", version = "1.0.0", target = { os = "windows", arch = ["x86_64", "arm64"] } }
 ```
@@ -115,7 +115,7 @@ Project imports use dependency aliases:
 
 ```nomo
 import local_utils.path
-import fmt.main
+import renderer.main
 ```
 
 Local project modules use the project import root from `package app.main`.

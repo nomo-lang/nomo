@@ -1,0 +1,27 @@
+package app.main
+
+import std.fmt
+import std.io
+
+struct User {
+    name: string
+}
+
+impl fmt.Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+
+impl fmt.Debug for User {
+    fn debug_string(self) -> string {
+        return self.name
+    }
+}
+
+fn main() -> void {
+    let user: User = User { name: "Nomo" }
+    let message = fmt.format("display={} debug={:?} braces={{}}", user, user)
+    io.println(message)
+    io.println(user)
+}

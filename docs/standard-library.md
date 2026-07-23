@@ -37,7 +37,7 @@ The public API for the core and extension modules is declared in the canonical
 host-sensitive calls through its builtin/runtime backing while this source
 migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
-`io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
+`fmt`, `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
 `collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
 `net`, `http`, and `ffi`.
 
@@ -87,15 +87,50 @@ converter functions; closures are out of scope.
 
 ## Core Modules
 
+`std.fmt` provides type-safe value formatting without performing I/O:
+
+```nomo
+fmt.to_string(value) -> string
+fmt.debug_string(value) -> string
+fmt.format(template: string, values...) -> string
+```
+
+Primitive strings, numbers, characters, and booleans have built-in formatting.
+Local non-generic structs participate by implementing `fmt.Display` or
+`fmt.Debug`:
+
+```nomo
+import std.fmt
+
+struct User {
+    name: string
+}
+
+impl fmt.Display for User {
+    fn to_string(self) -> string {
+        return self.name
+    }
+}
+```
+
+`fmt.format` requires a compile-time string literal. `{}` uses `Display`,
+`{:?}` uses `Debug`, and `{{` / `}}` emit literal braces. The compiler rejects
+unknown placeholders and mismatched value counts. Nomo intentionally does not
+provide C-style `%`-based `printf`.
+
 `std.io` provides console I/O:
 
 ```nomo
-io.print(value: string) -> void
-io.println(value: string) -> void
-io.eprint(value: string) -> void
-io.eprintln(value: string) -> void
+io.print(values...) -> void
+io.println(values...) -> void
+io.eprint(values...) -> void
+io.eprintln(values...) -> void
 io.read_line() -> Result<string, IoError>
 ```
+
+Print helpers format values through `std.fmt`; multiple values are separated by
+one space. `print` and `println` target standard output, while `eprint` and
+`eprintln` target standard error.
 
 `std.array` provides value-semantics `Array<T>` helpers:
 

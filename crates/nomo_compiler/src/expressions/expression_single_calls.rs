@@ -35,6 +35,11 @@ pub(super) fn lower_single_segment_call_value_expr(
                 path, &qualified, args, scope, imports, signatures, structs, enums, span,
             );
         }
+        if qualified[0] == "fmt" {
+            return lower_fmt_builtin(
+                path, &qualified, args, scope, imports, signatures, structs, enums, span,
+            );
+        }
         if qualified[0] == "io" {
             return lower_io_builtin(path, &qualified, args, span);
         }

@@ -66,7 +66,7 @@ fn source_carrier_helpers_typecheck_as_library_modules() {
 
 #[test]
 fn source_string_and_array_modules_typecheck_as_library_modules() {
-    for module_name in ["std.array", "std.string"] {
+    for module_name in ["std.array", "std.fmt", "std.string"] {
         let module = nomo_std::module(module_name).unwrap();
         let path = nomo_std::module_source_path(module);
         let source = std::fs::read_to_string(&path).unwrap();

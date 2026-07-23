@@ -1,0 +1,7 @@
+manifest-version = 2
+
+[package]
+namespace = "examples"
+name = "std-fmt"
+version = "0.1.0"
+edition = "2026"

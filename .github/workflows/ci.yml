@@ -17,6 +17,7 @@ jobs:
         uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
 
       - name: Format
         run: cargo fmt --check
@@ -29,6 +30,17 @@ jobs:
 
       - name: Release Build
         run: cargo build --workspace --release --locked
+
+      - name: Build browser WebAssembly runtime
+        run: >-
+          cargo build --locked --release
+          --target wasm32-unknown-unknown
+          -p nomo-wasm
+
+      - name: Verify browser WebAssembly sandbox
+        run: >-
+          node scripts/check_browser_wasm.mjs
+          target/wasm32-unknown-unknown/release/nomo_wasm.wasm
 
       - name: Compiler clean-build and check latency gate
         run: >-

@@ -559,6 +559,16 @@ name = "nomo-test"
 version = "0.0.0-20260721120555"
 
 [[package]]
+name = "nomo-wasm"
+version = "0.0.0-20260721120555"
+dependencies = [
+ "nomo-compiler",
+ "nomo-ir",
+ "serde",
+ "serde_json",
+]
+
+[[package]]
 name = "num-bigint"
 version = "0.4.8"
 source = "registry+https://github.com/rust-lang/crates.io-index"

@@ -37,6 +37,9 @@ This repository ships two binaries and reusable Rust crates:
   editor tooling.
 - `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
   shared by the compiler, formatter, docs and LSP semantic services.
+- `nomo-wasm` (WebAssembly crate) — the production compiler front-end plus an
+  import-free, fuel-limited typed-IR interpreter used by the browser
+  Playground.
 
 ## Role in the Nomo ecosystem
 
@@ -88,9 +91,10 @@ cargo install --path crates/nomo
 ```
 
 Tagged releases publish `nomo` and `nomoc` archives for Linux x86-64, macOS
-x86-64 and Apple silicon, and Windows x86-64. Every release also publishes a
-`std/` source directory for standard-library documentation and source
-navigation, plus a `SHA256SUMS` file consumed by the `setup-nomo` action. CI workflows can install
+x86-64 and Apple silicon, and Windows x86-64, plus the import-free
+`nomo-wasm` browser runtime. Every release also publishes a `std/` source
+directory for standard-library documentation and source navigation, plus a
+`SHA256SUMS` file consumed by the `setup-nomo` action. CI workflows can install
 the latest preview toolchain with:
 
 ```yaml

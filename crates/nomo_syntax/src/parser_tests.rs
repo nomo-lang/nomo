@@ -727,8 +727,8 @@ fn keeps_less_than_as_comparison_after_name() {
 }
 
 #[test]
-fn parses_for_loop_three_forms() {
-    let source = "package app.main\n\nfn main() -> void {\n    for {}\n    for done {}\n    for x in xs {}\n}\n";
+fn parses_for_loop_four_forms() {
+    let source = "package app.main\n\nfn main() -> void {\n    for {}\n    for done {}\n    for let i: ui64 = 0; i < 10; i++ {}\n    for x in xs {}\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -748,6 +748,19 @@ fn parses_for_loop_three_forms() {
     ));
     assert!(matches!(
         ast.functions[0].body[2],
+        Stmt::For {
+            variant:
+                ForVariant::CStyle {
+                    ref binding,
+                    ref type_annotation,
+                    ..
+                },
+            ..
+        } if binding == "i"
+            && type_annotation.as_ref().is_some_and(|ty| ty.path == ["ui64"])
+    ));
+    assert!(matches!(
+        ast.functions[0].body[3],
         Stmt::For {
             variant: ForVariant::Iterate { ref binding, .. },
             ..

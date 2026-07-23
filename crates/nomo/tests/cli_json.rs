@@ -312,7 +312,7 @@ fn nomo_check_emits_json_for_lexical_errors() {
 }
 
 #[test]
-fn nomoc_check_emits_json_for_semicolon_lexical_error() {
+fn nomoc_check_emits_json_for_semicolon_outside_for_header() {
     let root = temp_test_root("nomoc-json-semicolon");
     reset_dir(&root);
     let source = root.join("semicolon.nomo");
@@ -330,11 +330,9 @@ fn nomoc_check_emits_json_for_semicolon_lexical_error() {
     let text = text.trim();
     assert_single_json_object(text);
     assert!(text.contains("\"status\":\"error\""), "{text}");
-    assert!(text.contains("\"error_code\":\"E0102\""), "{text}");
+    assert!(text.contains("\"error_code\":\"E0211\""), "{text}");
     assert!(
-        text.contains(
-            "\"message\":\"semicolons are not supported in v0.1; use a newline to separate statements\""
-        ),
+        text.contains("\"message\":\"expected newline after statement\""),
         "{text}"
     );
     assert!(text.contains("\"line\":4"), "{text}");

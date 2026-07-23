@@ -59,6 +59,17 @@ pub(super) fn statement_uses_env_get(statement: &Statement) -> bool {
             LoopKind::While(condition) => {
                 expr_uses_env_get(condition) || body.iter().any(statement_uses_env_get)
             }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_uses_env_get(initializer)
+                    || expr_uses_env_get(condition)
+                    || expr_uses_env_get(update)
+                    || body.iter().any(statement_uses_env_get)
+            }
             LoopKind::Iterate { iterable, .. } => {
                 expr_uses_env_get(iterable) || body.iter().any(statement_uses_env_get)
             }
@@ -133,6 +144,17 @@ pub(super) fn statement_uses_env_args(statement: &Statement) -> bool {
             LoopKind::Infinite => body.iter().any(statement_uses_env_args),
             LoopKind::While(condition) => {
                 expr_uses_env_args(condition) || body.iter().any(statement_uses_env_args)
+            }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_uses_env_args(initializer)
+                    || expr_uses_env_args(condition)
+                    || expr_uses_env_args(update)
+                    || body.iter().any(statement_uses_env_args)
             }
             LoopKind::Iterate { iterable, .. } => {
                 expr_uses_env_args(iterable) || body.iter().any(statement_uses_env_args)

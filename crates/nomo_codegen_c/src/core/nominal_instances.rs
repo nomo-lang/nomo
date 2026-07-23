@@ -160,6 +160,18 @@ fn collect_stmt_struct(
             match kind {
                 LoopKind::Infinite => {}
                 LoopKind::While(condition) => collect_expr_struct(condition, seen, out),
+                LoopKind::CStyle {
+                    value_type,
+                    initializer,
+                    condition,
+                    update,
+                    ..
+                } => {
+                    collect_type_struct(value_type, seen, out);
+                    collect_expr_struct(initializer, seen, out);
+                    collect_expr_struct(condition, seen, out);
+                    collect_expr_struct(update, seen, out);
+                }
                 LoopKind::Iterate {
                     element_type,
                     iterable,

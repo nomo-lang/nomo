@@ -659,6 +659,28 @@ impl<'a> Interpreter<'a> {
                 }
                 Ok(Signal::Next)
             }
+            LoopKind::CStyle {
+                binding,
+                value_type,
+                initializer,
+                condition,
+                update,
+            } => {
+                let value = self.eval_expr(initializer)?.coerce(value_type)?;
+                self.current_frame_mut()?.insert(binding.clone(), value);
+                while self.eval_expr(condition)?.as_bool()? {
+                    self.tick()?;
+                    match self.exec_block(body)? {
+                        Signal::Next | Signal::Continue => {
+                            let value = self.eval_expr(update)?.coerce(value_type)?;
+                            self.set_variable(binding, value)?;
+                        }
+                        Signal::Break => return Ok(Signal::Next),
+                        signal @ Signal::Return(_) => return Ok(signal),
+                    }
+                }
+                Ok(Signal::Next)
+            }
             LoopKind::Iterate {
                 binding, iterable, ..
             } => {

@@ -460,6 +460,44 @@ impl<'a> Formatter<'a> {
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
             }
+            ForVariant::CStyle {
+                binding,
+                type_annotation,
+                initializer,
+                condition,
+                update,
+                body,
+            } => {
+                let annotation = type_annotation
+                    .as_ref()
+                    .map(|ty| format!(": {}", type_ref(ty)))
+                    .unwrap_or_default();
+                let update = match update.as_ref() {
+                    Stmt::Assign {
+                        target, op, value, ..
+                    } => format!(
+                        "{} {} {}",
+                        path(target),
+                        assign_op(op),
+                        expr(value, indent, 0)
+                    ),
+                    Stmt::Postfix { target, op, .. } => {
+                        format!("{}{}", path(target), postfix_op(op))
+                    }
+                    _ => unreachable!("formatter validates three-clause for-loop updates"),
+                };
+                self.line_at(
+                    indent,
+                    &format!(
+                        "for let {binding}{annotation} = {}; {}; {update} {{",
+                        expr(initializer, indent, 0),
+                        expr(condition, indent, 0)
+                    ),
+                    source_line,
+                );
+                self.stmt_block(body, indent + 1);
+                self.line(indent, "}");
+            }
             ForVariant::Iterate {
                 binding,
                 iterable,
@@ -742,6 +780,21 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\nimport std.io\n\nlet message: string = \"hi\"\nio.println(message)\n"
+        );
+    }
+
+    #[test]
+    fn formats_three_clause_for_loop() {
+        let source = "package app.main\n\nfn main(){\nfor let i:ui64=0;i<10;i++{\n}\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nfn main() -> void {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
         );
     }
 

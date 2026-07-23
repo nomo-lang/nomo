@@ -146,6 +146,21 @@ pub(super) fn validate_stmt_type_imports(
                 }
                 Ok(())
             }
+            ForVariant::CStyle {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                validate_expr_type_imports(path, imports, initializer, span)?;
+                validate_expr_type_imports(path, imports, condition, span)?;
+                validate_stmt_type_imports(path, imports, update)?;
+                for stmt in body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+                Ok(())
+            }
             ForVariant::Iterate { iterable, body, .. } => {
                 validate_expr_type_imports(path, imports, iterable, span)?;
                 for stmt in body {

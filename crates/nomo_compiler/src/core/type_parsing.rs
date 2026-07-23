@@ -101,7 +101,9 @@ pub(super) fn parse_value_type_with_names(
         [name] if name == "i64" && type_ref.args.is_empty() => Some(ValueType::Int),
         [name] if name == "i32" && type_ref.args.is_empty() => Some(ValueType::I32),
         [name] if name == "u32" && type_ref.args.is_empty() => Some(ValueType::U32),
-        [name] if name == "u64" && type_ref.args.is_empty() => Some(ValueType::U64),
+        [name] if matches!(name.as_str(), "u64" | "ui64") && type_ref.args.is_empty() => {
+            Some(ValueType::U64)
+        }
         [name] if name == "f64" && type_ref.args.is_empty() => Some(ValueType::Float),
         [name] if name == "char" && type_ref.args.is_empty() => Some(ValueType::Char),
         [name] if name == "bool" && type_ref.args.is_empty() => Some(ValueType::Bool),

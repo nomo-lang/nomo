@@ -43,14 +43,17 @@ pub(super) fn lower_call_value_expr(
                         ),
                     ));
                 }
-                let [arg] = args else {
-                    return Err(println_type_error(path, span, function_name));
-                };
-                let (arg_type, lowered) =
-                    lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
-                if arg_type != ValueType::String {
-                    return Err(println_type_error(path, span, function_name));
-                }
+                let lowered = lower_io_print_args(
+                    path,
+                    args,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    span,
+                    function_name,
+                )?;
                 let name = io_print_builtin_expr_name(function_name);
                 return Ok((
                     ValueType::Void,

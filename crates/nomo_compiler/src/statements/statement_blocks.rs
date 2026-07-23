@@ -166,6 +166,153 @@ pub(super) fn lower_for_stmt(
             )?;
             (LoopKind::While(cond), lowered)
         }
+        ForVariant::CStyle {
+            binding,
+            type_annotation,
+            initializer,
+            condition,
+            update,
+            body,
+        } => {
+            if ast_expr_contains_question(initializer)
+                || ast_expr_contains_question(condition)
+                || matches!(
+                    update.as_ref(),
+                    Stmt::Assign { value, .. } if ast_expr_contains_question(value)
+                )
+            {
+                return Err(Diagnostic::new(
+                    "E0403",
+                    "`?` is not supported in a three-clause `for` header",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+
+            let update_target = match update.as_ref() {
+                Stmt::Assign { target, .. } | Stmt::Postfix { target, .. } => target,
+                _ => unreachable!("the parser restricts three-clause for-loop updates"),
+            };
+            if !matches!(update_target.as_slice(), [name] if name == binding) {
+                return Err(Diagnostic::new(
+                    "E0217",
+                    format!("for-loop update must target loop binding `{binding}`"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+
+            let mut loop_scope = scope.clone();
+            let initializer_stmt = Stmt::Let {
+                name: binding.clone(),
+                // A three-clause loop binding is mutable for its update clause,
+                // even when the compatibility spelling uses plain `let`.
+                mutable: true,
+                type_annotation: type_annotation.clone(),
+                value: initializer.clone(),
+                span: span.clone(),
+            };
+            let lowered_initializer = lower_stmt(
+                path,
+                &initializer_stmt,
+                &mut loop_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                false,
+                loop_depth,
+            )?;
+            let Statement::Let {
+                value_type,
+                initializer,
+                ..
+            } = lowered_initializer
+            else {
+                unreachable!("a non-question let initializer lowers to Statement::Let");
+            };
+            if !value_type.is_numeric() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "three-clause `for` loop binding must be numeric, found `{}`",
+                        value_type.name()
+                    ),
+                ));
+            }
+
+            let (condition_type, condition) = lower_value_expr(
+                path,
+                condition,
+                &loop_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            if condition_type != ValueType::Bool {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!(
+                        "`for` condition must be `bool`, found `{}`",
+                        condition_type.name()
+                    ),
+                ));
+            }
+
+            let lowered_update = lower_stmt(
+                path,
+                update,
+                &mut loop_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                false,
+                loop_depth + 1,
+            )?;
+            let Statement::Assign {
+                name: update_binding,
+                value: update,
+            } = lowered_update
+            else {
+                unreachable!("a three-clause for-loop update lowers to an assignment");
+            };
+            debug_assert_eq!(update_binding, *binding);
+
+            let lowered = lower_block(
+                path,
+                body,
+                &mut loop_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                loop_depth + 1,
+            )?;
+            (
+                LoopKind::CStyle {
+                    binding: binding.clone(),
+                    value_type,
+                    initializer: Box::new(initializer),
+                    condition: Box::new(condition),
+                    update: Box::new(update),
+                },
+                lowered,
+            )
+        }
         ForVariant::Iterate {
             binding,
             iterable,

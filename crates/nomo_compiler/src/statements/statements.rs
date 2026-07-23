@@ -267,14 +267,17 @@ pub(super) fn lower_stmt(
             let Some(function_name) = resolve_io_print_function(callee, imports) else {
                 return Err(missing_io_import_diagnostic(path, span, callee));
             };
-            let [arg] = args.as_slice() else {
-                return Err(println_type_error(path, span, function_name));
-            };
-            let (arg_type, lowered) =
-                lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
-            if arg_type != ValueType::String {
-                return Err(println_type_error(path, span, function_name));
-            }
+            let lowered = lower_io_print_args(
+                path,
+                args,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+                function_name,
+            )?;
             Ok(io_print_statement(function_name, lowered))
         }
         Stmt::Expr {
@@ -378,14 +381,17 @@ pub(super) fn lower_stmt(
                 let Some(function_name) = resolve_io_print_function(callee, imports) else {
                     return Err(missing_io_import_diagnostic(path, span, callee));
                 };
-                let [arg] = args.as_slice() else {
-                    return Err(println_type_error(path, span, function_name));
-                };
-                let (arg_type, lowered) =
-                    lower_value_expr(path, arg, scope, imports, signatures, structs, enums, span)?;
-                if arg_type != ValueType::String {
-                    return Err(println_type_error(path, span, function_name));
-                }
+                let lowered = lower_io_print_args(
+                    path,
+                    args,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    span,
+                    function_name,
+                )?;
                 let call = io_print_deferred_call(function_name, lowered);
                 return Ok(Statement::Defer { call });
             }

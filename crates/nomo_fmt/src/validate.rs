@@ -39,6 +39,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
             Stmt::For { variant, .. } => match variant {
                 ForVariant::Infinite { body }
                 | ForVariant::While { body, .. }
+                | ForVariant::CStyle { body, .. }
                 | ForVariant::Iterate { body, .. } => validate_stmts(path, body)?,
             },
             Stmt::Defer { stmt, .. } => {

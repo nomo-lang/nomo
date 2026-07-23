@@ -169,6 +169,18 @@ fn collect_stmt_enum(
             match kind {
                 LoopKind::Infinite => {}
                 LoopKind::While(condition) => collect_expr_enum(condition, seen, out),
+                LoopKind::CStyle {
+                    value_type,
+                    initializer,
+                    condition,
+                    update,
+                    ..
+                } => {
+                    collect_type_enum(value_type, seen, out);
+                    collect_expr_enum(initializer, seen, out);
+                    collect_expr_enum(condition, seen, out);
+                    collect_expr_enum(update, seen, out);
+                }
                 LoopKind::Iterate {
                     element_type,
                     iterable,

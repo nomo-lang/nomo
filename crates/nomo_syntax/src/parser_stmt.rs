@@ -129,7 +129,10 @@ impl Parser<'_> {
 
     fn parse_return_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
         self.expect_kind(TokenKind::Return, "E0216", "expected `return`")?;
-        let value = if matches!(self.peek().kind, TokenKind::Newline | TokenKind::RBrace) {
+        let value = if matches!(
+            self.peek().kind,
+            TokenKind::Newline | TokenKind::RBrace | TokenKind::Semicolon
+        ) {
             None
         } else {
             Some(self.parse_expr()?)
@@ -273,6 +276,53 @@ impl Parser<'_> {
             ForVariant::Iterate {
                 binding,
                 iterable,
+                body,
+            }
+        } else if matches!(self.peek().kind, TokenKind::Let) {
+            // for let [mut] binding [: type] = initializer; condition; update {}
+            self.advance();
+            if matches!(self.peek().kind, TokenKind::Mut) {
+                self.advance();
+            }
+            let binding = self.expect_ident("expected binding name after `for let`")?;
+            let type_annotation = if matches!(self.peek().kind, TokenKind::Colon) {
+                self.advance();
+                Some(self.parse_type_ref()?)
+            } else {
+                None
+            };
+            self.expect_kind(
+                TokenKind::Equal,
+                "E0213",
+                "expected `=` before for-loop initializer",
+            )?;
+            let initializer = self.parse_expr()?;
+            self.expect_kind(
+                TokenKind::Semicolon,
+                "E0264",
+                "expected `;` after for-loop initializer",
+            )?;
+            let condition = self.parse_expr_no_struct_literals()?;
+            self.expect_kind(
+                TokenKind::Semicolon,
+                "E0264",
+                "expected `;` after for-loop condition",
+            )?;
+            let update = self.parse_stmt()?;
+            if !matches!(update, Stmt::Assign { .. } | Stmt::Postfix { .. }) {
+                return Err(self.error(
+                    "E0217",
+                    "for-loop update must assign to or increment/decrement the loop binding",
+                    self.peek().length(),
+                ));
+            }
+            let body = self.parse_stmt_block("E0264", "expected `{` before `for` body")?;
+            ForVariant::CStyle {
+                binding,
+                type_annotation,
+                initializer,
+                condition,
+                update: Box::new(update),
                 body,
             }
         } else {

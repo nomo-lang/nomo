@@ -466,6 +466,17 @@ pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
                 expr_uses_fs_read_to_string(condition)
                     || body.iter().any(statement_uses_fs_read_to_string)
             }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_uses_fs_read_to_string(initializer)
+                    || expr_uses_fs_read_to_string(condition)
+                    || expr_uses_fs_read_to_string(update)
+                    || body.iter().any(statement_uses_fs_read_to_string)
+            }
             LoopKind::Iterate { iterable, .. } => {
                 expr_uses_fs_read_to_string(iterable)
                     || body.iter().any(statement_uses_fs_read_to_string)
@@ -545,6 +556,17 @@ pub(super) fn statement_uses_fs_write_string(statement: &Statement) -> bool {
                 expr_uses_fs_write_string(condition)
                     || body.iter().any(statement_uses_fs_write_string)
             }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_uses_fs_write_string(initializer)
+                    || expr_uses_fs_write_string(condition)
+                    || expr_uses_fs_write_string(update)
+                    || body.iter().any(statement_uses_fs_write_string)
+            }
             LoopKind::Iterate { iterable, .. } => {
                 expr_uses_fs_write_string(iterable)
                     || body.iter().any(statement_uses_fs_write_string)
@@ -620,6 +642,17 @@ pub(super) fn statement_uses_fs_open(statement: &Statement) -> bool {
             LoopKind::Infinite => body.iter().any(statement_uses_fs_open),
             LoopKind::While(condition) => {
                 expr_uses_fs_open(condition) || body.iter().any(statement_uses_fs_open)
+            }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_uses_fs_open(initializer)
+                    || expr_uses_fs_open(condition)
+                    || expr_uses_fs_open(update)
+                    || body.iter().any(statement_uses_fs_open)
             }
             LoopKind::Iterate { iterable, .. } => {
                 expr_uses_fs_open(iterable) || body.iter().any(statement_uses_fs_open)

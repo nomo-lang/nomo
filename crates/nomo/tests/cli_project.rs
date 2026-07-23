@@ -553,8 +553,11 @@ fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
     assert!(!output.status.success());
     assert!(output.stdout.is_empty());
     let stderr = String::from_utf8_lossy(&output.stderr);
-    assert!(stderr.contains("\"error_code\":\"E0102\""), "{stderr}");
-    assert!(stderr.contains("semicolons are not supported"), "{stderr}");
+    assert!(stderr.contains("\"error_code\":\"E0211\""), "{stderr}");
+    assert!(
+        stderr.contains("expected newline after statement"),
+        "{stderr}"
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -1492,6 +1495,51 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(String::from_utf8_lossy(&output.stdout), "arithmetic ok\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_three_clause_for_with_inference_and_multi_println() {
+    let root = temp_test_root("run-three-clause-for");
+    reset_dir(&root);
+    let source = root.join("a.nomo");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+
+fn greeting() -> string {
+    return "Hello, native"
+}
+
+fn main() -> void {
+    let message = greeting()
+    for let i: ui64 = 0; i < 3; i++ {
+        io.println(message, i)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&source)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "Hello, native 0\nHello, native 1\nHello, native 2\n"
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }

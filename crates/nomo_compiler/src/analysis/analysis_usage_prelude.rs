@@ -77,6 +77,20 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
                         .iter()
                         .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name))
             }
+            ForVariant::CStyle {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                expr_uses_core_prelude_variant(initializer, enum_name)
+                    || expr_uses_core_prelude_variant(condition, enum_name)
+                    || stmt_uses_core_prelude_variant(update, enum_name)
+                    || body
+                        .iter()
+                        .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name))
+            }
             ForVariant::Iterate { iterable, body, .. } => {
                 expr_uses_core_prelude_variant(iterable, enum_name)
                     || body

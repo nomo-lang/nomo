@@ -195,7 +195,7 @@ pub(super) fn missing_io_import_diagnostic(
 pub(super) fn println_type_error(path: &Path, span: &Span, function_name: &str) -> Diagnostic {
     Diagnostic::new(
         "E0402",
-        format!("`io.{function_name}` expects exactly one string argument"),
+        format!("`io.{function_name}` accepts string, numeric, character, or boolean arguments"),
         path,
         span.line,
         span.column,

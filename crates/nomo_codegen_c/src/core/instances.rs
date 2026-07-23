@@ -251,6 +251,16 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
             match kind {
                 LoopKind::Infinite => {}
                 LoopKind::While(condition) => collect_expr_result_map_err(condition, out),
+                LoopKind::CStyle {
+                    initializer,
+                    condition,
+                    update,
+                    ..
+                } => {
+                    collect_expr_result_map_err(initializer, out);
+                    collect_expr_result_map_err(condition, out);
+                    collect_expr_result_map_err(update, out);
+                }
                 LoopKind::Iterate { iterable, .. } => collect_expr_result_map_err(iterable, out),
             }
             for statement in body {
@@ -680,6 +690,16 @@ where
             match kind {
                 LoopKind::Infinite => {}
                 LoopKind::While(condition) => walk_expr(condition, visit),
+                LoopKind::CStyle {
+                    initializer,
+                    condition,
+                    update,
+                    ..
+                } => {
+                    walk_expr(initializer, visit);
+                    walk_expr(condition, visit);
+                    walk_expr(update, visit);
+                }
                 LoopKind::Iterate { iterable, .. } => walk_expr(iterable, visit),
             }
             for statement in body {

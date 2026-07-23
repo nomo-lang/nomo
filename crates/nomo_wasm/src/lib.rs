@@ -416,4 +416,34 @@ fn main() -> void {
             "none\n-9223372036854775808\n18446744073709551615\n7\n3\n6\n"
         );
     }
+
+    #[test]
+    fn executes_value_semantics_array_mutations() {
+        let source = r#"package app.main
+
+import std.array
+import std.io
+
+fn main() -> void {
+    let mut items: Array<i32> = Array.new<i32>()
+    items.push(1)
+    items.push(2)
+    items.set(0, 7)
+    let first: Option<i32> = items.get(0)
+    let message: string = match first {
+        Some(value) => if value == 7 {
+            "array ok"
+        } else {
+            "wrong"
+        }
+        None => "missing"
+    }
+    io.println(message)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "array ok\n");
+    }
 }

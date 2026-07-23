@@ -839,9 +839,7 @@ impl<'a> Interpreter<'a> {
                     return Err(RuntimeError::runtime("expected array"));
                 };
                 values.push(value);
-                self.current_frame_mut()?
-                    .insert(array.clone(), Value::Array(values));
-                Ok(Value::Void)
+                Ok(Value::Array(values))
             }
             ValueExpr::ArrayPop { array, .. } => {
                 let Value::Array(mut values) = self.get_variable(array)? else {
@@ -867,9 +865,7 @@ impl<'a> Interpreter<'a> {
                     .get_mut(index)
                     .ok_or_else(|| RuntimeError::runtime("array index out of bounds"))?;
                 *slot = coerce_like(value, slot)?;
-                self.current_frame_mut()?
-                    .insert(array.clone(), Value::Array(values));
-                Ok(Value::Void)
+                Ok(Value::Array(values))
             }
             ValueExpr::ArrayInsert {
                 array,
@@ -886,9 +882,7 @@ impl<'a> Interpreter<'a> {
                     return Err(RuntimeError::runtime("array index out of bounds"));
                 }
                 values.insert(index, value);
-                self.current_frame_mut()?
-                    .insert(array.clone(), Value::Array(values));
-                Ok(Value::Void)
+                Ok(Value::Array(values))
             }
             ValueExpr::ArrayRemove { array, index, .. } => {
                 let index = self.eval_expr(index)?.as_index()?;
@@ -905,9 +899,11 @@ impl<'a> Interpreter<'a> {
                 Ok(result)
             }
             ValueExpr::ArrayClear { array, .. } => {
-                self.current_frame_mut()?
-                    .insert(array.clone(), Value::Array(Vec::new()));
-                Ok(Value::Void)
+                let Value::Array(mut values) = self.get_variable(array)? else {
+                    return Err(RuntimeError::runtime("expected array"));
+                };
+                values.clear();
+                Ok(Value::Array(values))
             }
             ValueExpr::StructLiteral {
                 type_name, fields, ..

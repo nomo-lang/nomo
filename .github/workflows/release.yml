@@ -132,10 +132,49 @@ jobs:
             nomo-${{ matrix.target }}-release-gate.json
           if-no-files-found: error
 
+  browser-wasm:
+    name: Build browser WebAssembly
+    runs-on: ubuntu-latest
+    env:
+      ASSET_NAME: nomo-${{ github.ref_name }}-wasm32-unknown-unknown.wasm
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+
+      - name: Install Rust
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: wasm32-unknown-unknown
+
+      - name: Build browser WebAssembly runtime
+        run: >-
+          cargo build --locked --release
+          --target wasm32-unknown-unknown
+          -p nomo-wasm
+
+      - name: Verify browser WebAssembly sandbox
+        run: >-
+          node scripts/check_browser_wasm.mjs
+          target/wasm32-unknown-unknown/release/nomo_wasm.wasm
+
+      - name: Package browser WebAssembly runtime
+        shell: bash
+        run: >-
+          cp target/wasm32-unknown-unknown/release/nomo_wasm.wasm
+          "$ASSET_NAME"
+
+      - name: Upload browser WebAssembly runtime
+        uses: actions/upload-artifact@v7
+        with:
+          name: wasm32-unknown-unknown
+          path: ${{ env.ASSET_NAME }}
+          if-no-files-found: error
+
   publish:
     name: Publish GitHub release
     if: startsWith(github.ref, 'refs/tags/v')
-    needs: build
+    needs: [build, browser-wasm]
     runs-on: ubuntu-latest
     permissions:
       contents: write

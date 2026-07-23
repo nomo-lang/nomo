@@ -16,6 +16,7 @@ members = [
     "crates/nomo_syntax",
     "crates/nomo_target",
     "crates/nomo_test",
+    "crates/nomo_wasm",
     "libs/diagnostics",
     "libs/graph",
     "libs/spans",
@@ -48,6 +49,7 @@ nomo-std = { path = "std" }
 nomo-syntax = { path = "crates/nomo_syntax" }
 nomo-target = { path = "crates/nomo_target" }
 nomo-test = { path = "crates/nomo_test" }
+nomo-wasm = { path = "crates/nomo_wasm" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 semver = "1"

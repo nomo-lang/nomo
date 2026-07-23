@@ -1,0 +1,15 @@
+[package]
+name = "nomo-wasm"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+
+[dependencies]
+nomo-compiler.workspace = true
+nomo-ir.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+
+[lib]
+name = "nomo_wasm"
+crate-type = ["cdylib", "rlib"]

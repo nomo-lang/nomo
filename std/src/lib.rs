@@ -4,8 +4,10 @@ use nomo_syntax::ast::{SourceFile, TypeRef};
 use nomo_syntax::lexer::lex;
 use nomo_syntax::parser::parse;
 use serde::Deserialize;
+use std::borrow::Cow;
 use std::collections::BTreeSet;
 use std::env;
+#[cfg(not(target_arch = "wasm32"))]
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -17,6 +19,37 @@ const OPTION_SOURCE: &str = include_str!("option.nomo");
 const RESULT_SOURCE: &str = include_str!("result.nomo");
 const ARRAY_SOURCE: &str = include_str!("array.nomo");
 const STRING_SOURCE: &str = include_str!("string.nomo");
+
+pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
+    match module_path {
+        "std.array" => Some(ARRAY_SOURCE),
+        "std.char" => Some(include_str!("char.nomo")),
+        "std.collections" => Some(include_str!("collections.nomo")),
+        "std.crypto" => Some(include_str!("crypto.nomo")),
+        "std.debug" => Some(include_str!("debug.nomo")),
+        "std.env" => Some(include_str!("env.nomo")),
+        "std.ffi" => Some(include_str!("ffi.nomo")),
+        "std.fs" => Some(include_str!("fs.nomo")),
+        "std.hash" => Some(include_str!("hash.nomo")),
+        "std.http" => Some(include_str!("http.nomo")),
+        "std.io" => Some(include_str!("io.nomo")),
+        "std.json" => Some(include_str!("json.nomo")),
+        "std.log" => Some(include_str!("log.nomo")),
+        "std.math" => Some(include_str!("math.nomo")),
+        "std.net" => Some(include_str!("net.nomo")),
+        "std.num" => Some(include_str!("num.nomo")),
+        "std.option" => Some(OPTION_SOURCE),
+        "std.os" => Some(include_str!("os.nomo")),
+        "std.path" => Some(include_str!("path.nomo")),
+        "std.process" => Some(include_str!("process.nomo")),
+        "std.regex" => Some(include_str!("regex.nomo")),
+        "std.result" => Some(RESULT_SOURCE),
+        "std.string" => Some(STRING_SOURCE),
+        "std.testing" => Some(include_str!("testing.nomo")),
+        "std.time" => Some(include_str!("time.nomo")),
+        _ => None,
+    }
+}
 
 #[derive(Debug, Clone, PartialEq, Eq, Deserialize)]
 pub struct IntrinsicManifest {
@@ -888,10 +921,8 @@ pub fn validate_source_api_surface() -> Result<(), String> {
     for module_path in SOURCE_DEFINED_MODULES {
         let module = module(module_path)
             .ok_or_else(|| format!("source-defined standard module `{module_path}` is unknown"))?;
-        let path = module_source_path(module);
-        let source = fs::read_to_string(&path)
-            .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
-        let ast = parse_source_contract(&path.display().to_string(), &source)?;
+        let (path, source) = validation_module_source(module)?;
+        let ast = parse_source_contract(&path, &source)?;
         validate_package(&ast, module_path)?;
 
         let mut actual = BTreeSet::new();
@@ -954,6 +985,28 @@ pub fn validate_source_api_surface() -> Result<(), String> {
         }
     }
     Ok(())
+}
+
+#[cfg(target_arch = "wasm32")]
+fn validation_module_source(
+    module: &StandardModule,
+) -> Result<(String, Cow<'static, str>), String> {
+    let source = embedded_module_source(module.path)
+        .ok_or_else(|| format!("standard module `{}` has no embedded source", module.path))?;
+    Ok((
+        format!("std/src/{}", module_source_relative_path(module).display()),
+        Cow::Borrowed(source),
+    ))
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+fn validation_module_source(
+    module: &StandardModule,
+) -> Result<(String, Cow<'static, str>), String> {
+    let path = module_source_path(module);
+    let source = fs::read_to_string(&path)
+        .map_err(|error| format!("failed to read {}: {error}", path.display()))?;
+    Ok((path.display().to_string(), Cow::Owned(source)))
 }
 
 fn parse_source_contract(path: &str, source: &str) -> Result<SourceFile, String> {
@@ -1144,6 +1197,15 @@ mod tests {
                 "{}",
                 path.display()
             );
+        }
+    }
+
+    #[test]
+    fn source_defined_modules_are_embedded_for_sandboxed_compilers() {
+        for module_path in SOURCE_DEFINED_MODULES {
+            let source = embedded_module_source(module_path)
+                .unwrap_or_else(|| panic!("missing embedded source for {module_path}"));
+            assert!(source.contains(&format!("\npackage {module_path}\n")));
         }
     }
 

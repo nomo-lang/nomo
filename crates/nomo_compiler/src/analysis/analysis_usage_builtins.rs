@@ -220,6 +220,14 @@ fn is_array_builtin_call(callee: &[String]) -> bool {
 fn is_known_std_value_module(name: &str) -> bool {
     matches!(
         name,
-        "io" | "fs" | "env" | "process" | "string" | "path" | "math" | "collections" | "Array"
+        "io" | "fmt"
+            | "fs"
+            | "env"
+            | "process"
+            | "string"
+            | "path"
+            | "math"
+            | "collections"
+            | "Array"
     )
 }

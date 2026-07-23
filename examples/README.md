@@ -12,6 +12,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `hello`: minimal `std.io` output
 - `io_print`: `std.io.print` and `std.io.eprint` output without automatic newlines
 - `io_stderr`: `std.io.eprintln` writing to stderr while stdout remains independent
+- `std_fmt`: type-safe templates plus `fmt.Display` and `fmt.Debug` for user structs
 - `primitives`: fixed-width primitives, Unicode `char`, and explicit casts
 - `comments`: line, block, doc, nested block, and trailing comments
 - `operators_arithmetic`: arithmetic precedence, grouping, and unary negation

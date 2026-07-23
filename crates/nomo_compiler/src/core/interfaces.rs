@@ -4,16 +4,17 @@ pub(super) fn collect_generic_interface_bounds(
     path: &Path,
     functions: &[AstFunction],
     interfaces: &HashMap<String, &AstInterfaceDef>,
+    imports: &[String],
 ) -> Result<HashMap<String, Vec<GenericInterfaceBound>>, Diagnostic> {
     let mut out = HashMap::new();
     for function in functions {
         let mut bounds = Vec::new();
         for bound in &function.type_param_bounds {
-            let [interface] = bound.interface.path.as_slice() else {
+            let Some(interface) = resolve_interface_name(&bound.interface, imports) else {
                 return Err(generic_interface_bound_error(
                     path,
                     function,
-                    "generic interface bounds must name one interface",
+                    "generic interface bounds must name an imported interface",
                 ));
             };
             if !bound.interface.args.is_empty() {
@@ -23,7 +24,7 @@ pub(super) fn collect_generic_interface_bounds(
                     "generic interface bounds cannot take type arguments",
                 ));
             }
-            if !interfaces.contains_key(interface) {
+            if !interfaces.contains_key(&interface) {
                 return Err(generic_interface_bound_error(
                     path,
                     function,
@@ -38,7 +39,7 @@ pub(super) fn collect_generic_interface_bounds(
             bounds.push(GenericInterfaceBound {
                 type_param_index,
                 type_param: bound.parameter.clone(),
-                interface: interface.clone(),
+                interface,
             });
         }
         if !bounds.is_empty() {
@@ -211,12 +212,13 @@ pub(super) fn validate_interface_impl(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
     interfaces: &HashMap<String, &AstInterfaceDef>,
+    imports: &[String],
 ) -> Result<(), Diagnostic> {
-    let [interface_name] = interface_name.path.as_slice() else {
+    let Some(interface_name) = resolve_interface_name(interface_name, imports) else {
         return Err(interface_impl_error(
             path,
             None,
-            "v0.1 interface impls must name a single interface",
+            "interface impls must name an imported interface",
         ));
     };
     if !impl_block
@@ -230,7 +232,7 @@ pub(super) fn validate_interface_impl(
             "v0.1 interface impls do not accept interface type arguments",
         ));
     }
-    let Some(interface) = interfaces.get(interface_name) else {
+    let Some(interface) = interfaces.get(&interface_name) else {
         return Err(interface_impl_error(
             path,
             None,
@@ -257,7 +259,7 @@ pub(super) fn validate_interface_impl(
         let actual = function_signature(path, method, structs, enums)?;
         validate_interface_method_signature(
             path,
-            interface_name,
+            &interface_name,
             owner_name,
             required,
             method,
@@ -266,6 +268,20 @@ pub(super) fn validate_interface_impl(
         )?;
     }
     Ok(())
+}
+
+pub(super) fn resolve_interface_name(interface: &AstTypeRef, imports: &[String]) -> Option<String> {
+    match interface.path.as_slice() {
+        [name] => Some(name.clone()),
+        [module, name]
+            if imports.iter().any(|import| {
+                import == &format!("std.{module}") || import == &format!("std.{module}.{name}")
+            }) =>
+        {
+            Some(name.clone())
+        }
+        _ => None,
+    }
 }
 
 fn interface_method_signature(

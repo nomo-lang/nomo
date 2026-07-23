@@ -130,12 +130,13 @@ the same code.
 - [E0323](E0323.md) - enum variant does not accept payload
 - [E0324](E0324.md) - generic enum constructor needs annotation
 - [E0401](E0401.md) - invalid main signature
-- [E0402](E0402.md) - invalid io print arguments
+- [E0402](E0402.md) - value cannot be formatted
 - [E0403](E0403.md) - unsupported type or required type annotation
 - [E0404](E0404.md) - type mismatch
 - [E0405](E0405.md) - unsupported value expression
 - [E0406](E0406.md) - missing return value
 - [E0407](E0407.md) - invalid call or constructor arguments
+- [E0408](E0408.md) - invalid format template
 - [E0410](E0410.md) - recursive value type
 - [E0420](E0420.md) - invalid question operator carrier
 - [E0421](E0421.md) - incompatible question operator propagation

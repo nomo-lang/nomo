@@ -55,6 +55,8 @@ mod builtins_extensions;
 mod builtins_ffi;
 #[path = "builtins/builtins_file_methods.rs"]
 mod builtins_file_methods;
+#[path = "builtins/builtins_fmt.rs"]
+mod builtins_fmt;
 #[path = "builtins/builtins_fs.rs"]
 mod builtins_fs;
 #[path = "builtins/builtins_hash.rs"]
@@ -174,6 +176,7 @@ use builtins_env::*;
 use builtins_extensions::*;
 use builtins_ffi::*;
 use builtins_file_methods::*;
+use builtins_fmt::*;
 use builtins_fs::*;
 use builtins_hash::*;
 use builtins_http::*;

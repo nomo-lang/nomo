@@ -678,6 +678,25 @@ mod tests {
         assert_eq!(println.source, "std/src/io.nomo");
         assert_eq!(println.signature, "pub fn println(value: string) -> void");
 
+        let fmt = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.fmt")
+            .unwrap();
+        let display = fmt
+            .items
+            .iter()
+            .find(|item| item.name == "Display")
+            .unwrap();
+        assert_eq!(display.source, "std/src/fmt.nomo");
+        assert_eq!(display.kind, "interface");
+        let format = fmt.items.iter().find(|item| item.name == "format").unwrap();
+        assert_eq!(format.source, "std/src/fmt.nomo");
+        assert_eq!(
+            format.signature,
+            "pub fn format(template: string) -> string"
+        );
+
         let path = package
             .modules
             .iter()

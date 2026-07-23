@@ -3,6 +3,15 @@ pub(super) fn resolve_specific_value_builtin(
     imports: &[String],
 ) -> Option<Vec<String>> {
     let qualified = match name {
+        "format" if imports.iter().any(|item| item == "std.fmt.format") => {
+            vec!["fmt".to_string(), "format".to_string()]
+        }
+        "to_string" if imports.iter().any(|item| item == "std.fmt.to_string") => {
+            vec!["fmt".to_string(), "to_string".to_string()]
+        }
+        "debug_string" if imports.iter().any(|item| item == "std.fmt.debug_string") => {
+            vec!["fmt".to_string(), "debug_string".to_string()]
+        }
         "len" if imports.iter().any(|item| item == "std.string.len") => {
             vec!["string".to_string(), "len".to_string()]
         }

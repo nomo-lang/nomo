@@ -79,6 +79,18 @@ fn stmt_uses_expr(stmt: &Stmt, expr_uses: &impl Fn(&AstExpr) -> bool) -> bool {
             ForVariant::While { condition, body } => {
                 expr_uses(condition) || body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
             }
+            ForVariant::CStyle {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                expr_uses(initializer)
+                    || expr_uses(condition)
+                    || stmt_uses_expr(update, expr_uses)
+                    || body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
+            }
             ForVariant::Iterate { iterable, body, .. } => {
                 expr_uses(iterable) || body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
             }

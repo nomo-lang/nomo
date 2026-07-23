@@ -407,6 +407,26 @@ fn validate_extern_stmt_is_unsafe(
                         validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
                     }
                 }
+                crate::ast::ForVariant::CStyle {
+                    initializer,
+                    condition,
+                    update,
+                    body,
+                    ..
+                } => {
+                    validate_extern_expr_is_unsafe(
+                        path,
+                        initializer,
+                        in_unsafe,
+                        extern_names,
+                        span,
+                    )?;
+                    validate_extern_expr_is_unsafe(path, condition, in_unsafe, extern_names, span)?;
+                    validate_extern_stmt_is_unsafe(path, update, in_unsafe, extern_names)?;
+                    for stmt in body {
+                        validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                    }
+                }
                 crate::ast::ForVariant::Iterate { iterable, body, .. } => {
                     validate_extern_expr_is_unsafe(path, iterable, in_unsafe, extern_names, span)?;
                     for stmt in body {

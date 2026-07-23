@@ -7,8 +7,8 @@ pub(super) fn validate_extern_opaque_type_namespace(
     enums: &[EnumType],
 ) -> Result<(), Diagnostic> {
     const BUILTIN_TYPES: &[&str] = &[
-        "string", "CString", "Opaque", "i64", "i32", "u32", "u64", "f64", "char", "bool", "void",
-        "Array", "Nullable", "Owned", "Borrowed",
+        "string", "CString", "Opaque", "i64", "i32", "u32", "u64", "ui64", "f64", "char", "bool",
+        "void", "Array", "Nullable", "Owned", "Borrowed",
     ];
     let concrete_types = structs
         .iter()

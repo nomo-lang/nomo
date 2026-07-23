@@ -179,6 +179,13 @@ pub struct MatchStatementArm {
 pub enum LoopKind {
     Infinite,
     While(ValueExpr),
+    CStyle {
+        binding: String,
+        value_type: ValueType,
+        initializer: Box<ValueExpr>,
+        condition: Box<ValueExpr>,
+        update: Box<ValueExpr>,
+    },
     Iterate {
         binding: String,
         element_type: ValueType,

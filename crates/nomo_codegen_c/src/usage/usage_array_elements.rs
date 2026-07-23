@@ -193,6 +193,21 @@ pub(super) fn collect_statement_array_elements(
                     collect_statement_array_elements(stmt, seen, out);
                 }
             }
+            LoopKind::CStyle {
+                value_type,
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                collect_type_array_elements(value_type, seen, out);
+                collect_expr_array_elements(initializer, seen, out);
+                collect_expr_array_elements(condition, seen, out);
+                collect_expr_array_elements(update, seen, out);
+                for stmt in body {
+                    collect_statement_array_elements(stmt, seen, out);
+                }
+            }
             LoopKind::Iterate {
                 element_type,
                 iterable,

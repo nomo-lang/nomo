@@ -86,6 +86,19 @@ pub(super) fn statement_contains_expr(
                         .iter()
                         .any(|statement| statement_contains_expr(statement, predicate))
             }
+            LoopKind::CStyle {
+                initializer,
+                condition,
+                update,
+                ..
+            } => {
+                expr_contains(initializer, predicate)
+                    || expr_contains(condition, predicate)
+                    || expr_contains(update, predicate)
+                    || body
+                        .iter()
+                        .any(|statement| statement_contains_expr(statement, predicate))
+            }
             LoopKind::Iterate { iterable, .. } => {
                 expr_contains(iterable, predicate)
                     || body

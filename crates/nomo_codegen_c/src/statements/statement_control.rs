@@ -249,6 +249,42 @@ pub(super) fn emit_loop(
             write_indent(out, indent);
             out.push_str("}\n");
         }
+        LoopKind::CStyle {
+            binding,
+            value_type,
+            initializer,
+            condition,
+            update,
+        } => {
+            write_indent(out, indent);
+            out.push_str("for (");
+            out.push_str(&c_type(value_type));
+            out.push(' ');
+            out.push_str(&c_var_ident(binding));
+            out.push_str(" = ");
+            emit_expr(out, initializer);
+            out.push_str("; ");
+            emit_expr(out, condition);
+            out.push_str("; ");
+            out.push_str(&c_var_ident(binding));
+            out.push_str(" = ");
+            emit_expr(out, update);
+            out.push_str(") {\n");
+            emit_block(
+                out,
+                body,
+                indent + 1,
+                deferred,
+                function_return_type,
+                active_arrays,
+                deferred.len(),
+                deferred.len(),
+                active_arrays.len(),
+                active_arrays.len(),
+            );
+            write_indent(out, indent);
+            out.push_str("}\n");
+        }
         LoopKind::Iterate {
             binding,
             element_type,

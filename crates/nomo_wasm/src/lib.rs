@@ -306,22 +306,49 @@ fn main() -> void {
     }
 
     #[test]
-    fn returns_production_compiler_diagnostics() {
+    fn runs_three_clause_loop_with_ui64_alias_and_multi_argument_println() {
         let source = r#"package app.main
 
 import std.io
 
+fn greeting() -> string {
+    return "Hello, final audit"
+}
+
 fn main() -> void {
-    for let i ui64 = 0; i < 10; i++ {
-        io.println("never")
+    let message = greeting()
+    for let i: ui64 = 0; i < 3; i++ {
+        io.println(message, i)
     }
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());
 
-        assert_eq!(response.status, "compile_error");
-        assert!(response.diagnostic.is_some());
-        assert_eq!(response.stats.steps, 0);
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "Hello, final audit 0\nHello, final audit 1\nHello, final audit 2\n"
+        );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn three_clause_loop_runs_update_after_continue() {
+        let source = r#"package app.main
+
+import std.io
+
+fn main() -> void {
+    for let i = 0; i < 1; i++ {
+        continue
+    }
+    io.println("done")
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "done\n");
     }
 
     #[test]

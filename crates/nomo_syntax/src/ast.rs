@@ -233,6 +233,14 @@ pub enum ForVariant {
         condition: Expr,
         body: Vec<Stmt>,
     },
+    CStyle {
+        binding: String,
+        type_annotation: Option<TypeRef>,
+        initializer: Expr,
+        condition: Expr,
+        update: Box<Stmt>,
+        body: Vec<Stmt>,
+    },
     Iterate {
         binding: String,
         iterable: Expr,

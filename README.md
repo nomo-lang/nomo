@@ -470,6 +470,28 @@ statements are accepted only by `nomo run <source.nomo>`.
 
 ## Language notes
 
+Local bindings support initializer-based type inference. Write
+`let message = greeting()` when the initializer determines the type, or
+`let count: u64 = 0` when the annotation communicates or constrains the
+intended type. The `:` separates the binding name from an optional type
+annotation; it is not required for ordinary initialized locals. Explicit
+annotations remain required where there is not enough context to infer a
+concrete type. The canonical unsigned 64-bit spelling is `u64`; `ui64` is
+accepted as a source-compatibility alias and lowers to the same type.
+
+Loops support infinite `for { ... }`, conditional `for condition { ... }`,
+iterator `for item in items { ... }`, and three-clause
+`for let i: u64 = 0; i < limit; i++ { ... }` forms. The type annotation in the
+three-clause form is optional, so `for let i = 0; i < limit; i++ { ... }`
+infers `i64` from the integer initializer. Semicolons are reserved for
+separating the three header clauses; ordinary Nomo statements remain
+newline-separated.
+
+The `std.io` print builtins accept zero or more string, numeric, character, or
+boolean values. Multiple values are rendered left-to-right with one space
+between them, so `io.println(message, i)` prints both values and then one
+newline.
+
 The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
 early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns

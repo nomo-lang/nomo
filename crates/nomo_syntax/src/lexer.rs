@@ -45,6 +45,7 @@ pub enum TokenKind {
     Char(char),
     Dot,
     Comma,
+    Semicolon,
     Colon,
     Equal,
     EqualEqual,
@@ -139,6 +140,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 }
                 '.' => tokens.push(token(TokenKind::Dot, line, column, line_text)),
                 ',' => tokens.push(token(TokenKind::Comma, line, column, line_text)),
+                ';' => tokens.push(token(TokenKind::Semicolon, line, column, line_text)),
                 ':' => tokens.push(token(TokenKind::Colon, line, column, line_text)),
                 '=' => {
                     if matches!(chars.peek(), Some((_, '>'))) {
@@ -283,17 +285,6 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                 ']' => tokens.push(token(TokenKind::RBracket, line, column, line_text)),
                 '{' => tokens.push(token(TokenKind::LBrace, line, column, line_text)),
                 '}' => tokens.push(token(TokenKind::RBrace, line, column, line_text)),
-                ';' => {
-                    return Err(Diagnostic::new(
-                        "E0102",
-                        "semicolons are not supported in v0.1; use a newline to separate statements",
-                        path,
-                        line,
-                        column,
-                        1,
-                        line_text,
-                    ));
-                }
                 '"' => {
                     let mut literal = String::new();
                     let mut terminated = false;

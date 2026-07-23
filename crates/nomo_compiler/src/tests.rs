@@ -243,6 +243,73 @@ fn main() -> void {
 }
 
 #[test]
+fn accepts_three_clause_for_ui64_alias_and_inferred_bindings() {
+    let source = r#"package app.main
+
+import std.io
+
+fn greeting() -> string {
+    return "Hello"
+}
+
+fn main() -> void {
+    let message = greeting()
+    for let i: ui64 = 0; i < 3; i++ {
+        io.println(message, i)
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(matches!(
+        main.body.as_slice(),
+        [
+            Statement::Let {
+                name,
+                value_type: ValueType::String,
+                ..
+            },
+            Statement::Loop {
+                kind:
+                    LoopKind::CStyle {
+                        binding,
+                        value_type: ValueType::U64,
+                        ..
+                    },
+                ..
+            }
+        ] if name == "message" && binding == "i"
+    ));
+}
+
+#[test]
+fn infers_three_clause_for_binding_without_type_annotation() {
+    let source = r#"package app.main
+
+fn main() -> void {
+    for let i = 0; i < 3; i++ {
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(matches!(
+        main.body.as_slice(),
+        [Statement::Loop {
+            kind:
+                LoopKind::CStyle {
+                    binding,
+                    value_type: ValueType::Int,
+                    ..
+                },
+            ..
+        }] if binding == "i"
+    ));
+}
+
+#[test]
 fn accepts_question_in_for_in_iterable() {
     let source = r#"package app.main
 

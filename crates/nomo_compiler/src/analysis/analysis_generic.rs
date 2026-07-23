@@ -160,6 +160,35 @@ fn collect_stmt_generic_function_instances(
                 }
                 Ok(())
             }
+            ForVariant::CStyle {
+                initializer,
+                condition,
+                update,
+                body,
+                ..
+            } => {
+                collect_expr_generic_function_instances(
+                    path,
+                    initializer,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    out,
+                )?;
+                collect_expr_generic_function_instances(
+                    path, condition, imports, signatures, structs, enums, out,
+                )?;
+                collect_stmt_generic_function_instances(
+                    path, update, imports, signatures, structs, enums, out,
+                )?;
+                for stmt in body {
+                    collect_stmt_generic_function_instances(
+                        path, stmt, imports, signatures, structs, enums, out,
+                    )?;
+                }
+                Ok(())
+            }
             ForVariant::Iterate { iterable, body, .. } => {
                 collect_expr_generic_function_instances(
                     path, iterable, imports, signatures, structs, enums, out,

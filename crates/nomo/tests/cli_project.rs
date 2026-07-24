@@ -1910,7 +1910,7 @@ fn nomo_new_run_and_clean_project() {
         )
     );
     let source_text = fs::read_to_string(&source).unwrap();
-    assert!(source_text.contains("package app.main"));
+    assert!(source_text.contains("package hello"));
     assert!(source_text.contains("import std.io"));
     assert!(source_text.contains("fn main() -> void"));
 
@@ -3775,7 +3775,7 @@ fn nomo_project_commands_use_file_registry_dependency_module_public_api() {
     .unwrap();
     fs::write(
         package.join("src/path.nomo"),
-        r#"package local_utils.path
+        r#"package utils.path
 
 pub struct Segment {
     value: i64
@@ -3861,9 +3861,9 @@ fn main() -> void {
         .any(|entry| entry.unwrap().path().join("source/src/path.nomo").is_file());
     assert!(cached_source_exists);
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_fn_join"));
     assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_struct_Segment"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_struct_Segment"));
     assert!(!generated_c.contains("nomo_pkg_app_main_struct_Segment"));
 
     let resolve_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -3962,7 +3962,7 @@ fn nomo_project_commands_use_http_registry_dependency_module_public_api() {
     .unwrap();
     fs::write(
         package.join("src/path.nomo"),
-        r#"package local_utils.path
+        r#"package utils.path
 
 pub fn join(a: i64, b: i64) -> i64 {
     return a + b
@@ -4089,7 +4089,7 @@ fn main() -> void {
     );
     server.join().unwrap();
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_fn_join"));
     assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
 
     fs::remove_dir_all(&root).unwrap();
@@ -6123,7 +6123,7 @@ fn nomo_project_commands_use_path_dependency_module_public_api() {
     fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
     fs::write(
         dependency.join("src/path.nomo"),
-        r#"package local_utils.path
+        r#"package utils.path
 
 pub struct Segment {
     value: i64
@@ -6171,9 +6171,9 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_fn_join"));
     assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_struct_Segment"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_struct_Segment"));
     assert!(!generated_c.contains("nomo_pkg_app_main_struct_Segment"));
     fs::remove_dir_all(&root).unwrap();
 }
@@ -6393,7 +6393,7 @@ fn nomo_project_commands_use_git_dependency_module_public_api() {
     fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
     fs::write(
         dependency.join("src/path.nomo"),
-        r#"package local_utils.path
+        r#"package utils.path
 
 pub fn join(a: i64, b: i64) -> i64 {
     return a + b
@@ -6447,7 +6447,7 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_local_utils_path_fn_join"));
+    assert!(generated_c.contains("nomo_pkg_utils_path_fn_join"));
     assert!(!generated_c.contains("nomo_pkg_app_main_fn_join"));
     fs::remove_dir_all(&root).unwrap();
 }

@@ -12,7 +12,7 @@ pub use nomo_manifest::{
     ConditionalFfiLinkMetadata, Dependency, DependencyAddSpec, DependencySource, FfiLinkMetadata,
     Manifest, PackageMetadata, TargetCondition, TransparencyTrustConfig, parse_manifest_at_root,
 };
-use nomo_manifest::{is_package_name, workspace_root_for_package};
+use nomo_manifest::{is_package_name, package_name_to_module_root, workspace_root_for_package};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -90,6 +90,7 @@ pub use workspace::{
 pub struct Project {
     pub root: PathBuf,
     pub name: String,
+    pub module_root: String,
     pub main: PathBuf,
     pub workspace_root: Option<PathBuf>,
 }
@@ -156,9 +157,10 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, String> {
         ),
     )
     .map_err(|err| err.to_string())?;
+    let module_root = package_name_to_module_root(name)?;
     fs::write(
         project_root.join("src/main.nomo"),
-        "package app.main\n\nimport std.io\n\nfn greeting() -> string {\n    return \"Hello, Nomo\"\n}\n\nfn main() -> void {\n    let message: string = greeting()\n    io.println(message)\n}\n",
+        format!("package {module_root}\n\nimport std.io\n\nfn greeting() -> string {{\n    return \"Hello, Nomo\"\n}}\n\nfn main() -> void {{\n    let message: string = greeting()\n    io.println(message)\n}}\n"),
     )
     .map_err(|err| err.to_string())?;
     discover_project(&project_root)
@@ -187,6 +189,7 @@ pub fn discover_project(path: &Path) -> Result<Project, String> {
     let workspace_root = workspace_root_for_package(&root)?;
     Ok(Project {
         root,
+        module_root: package_name_to_module_root(&manifest.package.name)?,
         name: manifest.package.name,
         main,
         workspace_root,
@@ -831,6 +834,7 @@ fn main() -> void {
             external_import_roots: vec!["local_utils".to_string()],
             external_modules: vec![ExternalModule {
                 import_root: "local_utils".to_string(),
+                source_import_root: "utils".to_string(),
                 source_root: dependency.join("src"),
             }],
         };

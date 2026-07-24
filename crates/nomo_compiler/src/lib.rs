@@ -266,7 +266,10 @@ pub use nomo_ir::{
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalModule {
+    /// The name used by the consuming project's imports.
     pub import_root: String,
+    /// The dependency's own, manifest-derived module root.
+    pub source_import_root: String,
     pub source_root: PathBuf,
 }
 

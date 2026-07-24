@@ -461,6 +461,21 @@ pub(super) fn expr_is_task_call(expr: &ValueExpr) -> bool {
     )
 }
 
+pub(super) fn expr_is_sqlite_call(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. }
+            if name == BUILTIN_SQLITE_OPEN_EXPR
+                || name == BUILTIN_SQLITE_OPEN_MEMORY_EXPR
+                || name == BUILTIN_SQLITE_EXECUTE_EXPR
+                || name == BUILTIN_SQLITE_QUERY_EXPR
+                || name == BUILTIN_SQLITE_NEXT_EXPR
+                || name == BUILTIN_SQLITE_RESET_EXPR
+                || name == BUILTIN_SQLITE_CLOSE_QUERY_EXPR
+                || name == BUILTIN_SQLITE_CLOSE_EXPR
+    )
+}
+
 pub(super) fn expr_is_http_stream_call(expr: &ValueExpr) -> bool {
     matches!(
         expr,

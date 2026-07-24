@@ -39,7 +39,7 @@ migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
 `fmt`, `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
 `collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
-`net`, `http`, `task`, and `ffi`.
+`net`, `http`, `sqlite`, `task`, and `ffi`.
 
 ## Propagation Carriers
 
@@ -311,6 +311,78 @@ os.arch() -> string
 os.path_separator() -> string
 os.line_ending() -> string
 ```
+
+## Durable SQLite Persistence
+
+`std.sqlite` provides bounded native persistence without application-side C
+FFI, a host SQLite package, a database subprocess, or a separate service. The
+toolchain carries the official SQLite 3.53.3 amalgamation, verifies its pinned
+digests, and compiles it as a separate translation unit only when typed IR uses
+this module. Programs that do not use `std.sqlite` do not materialize, compile,
+or link SQLite.
+
+The canonical API is:
+
+```nomo
+sqlite.open(path: string, mode: SqliteOpenMode, busy_timeout_millis: u64)
+    -> Result<SqliteDatabase, SqliteError>
+sqlite.open_memory(busy_timeout_millis: u64)
+    -> Result<SqliteDatabase, SqliteError>
+sqlite.execute(database: SqliteDatabase, sql: string, params: Array<SqliteValue>)
+    -> Result<SqliteExecuteResult, SqliteError>
+sqlite.query(database: SqliteDatabase, sql: string, params: Array<SqliteValue>)
+    -> Result<SqliteQuery, SqliteError>
+sqlite.next(query_value: SqliteQuery, max_row_bytes: u64)
+    -> Result<Option<SqliteRow>, SqliteError>
+sqlite.reset(query_value: SqliteQuery, params: Array<SqliteValue>)
+    -> Result<void, SqliteError>
+sqlite.close_query(query_value: SqliteQuery) -> Result<void, SqliteError>
+sqlite.close(database: SqliteDatabase) -> Result<void, SqliteError>
+```
+
+`SqliteOpenMode` is `ReadOnly`, `ReadWrite`, or `ReadWriteCreate`.
+`SqliteValue` maps SQLite `NULL`, signed 64-bit integers, doubles, UTF-8 text,
+and BLOBs to `Null`, `Integer(i64)`, `Real(f64)`, `Text(string)`, and
+`Blob(Array<u32>)`. BLOB elements must be in `0..=255`. Result columns preserve
+order and duplicate names.
+
+`execute` accepts exactly one parameterized statement and rejects a statement
+that returns rows. `query` creates a prepared pull handle; every `next` copies
+at most one complete row only after its columns pass encoding and byte limits.
+Repeated pulls after completion return `None`. `reset` clears and replaces all
+bindings for prepared-query reuse. Transactions are explicit SQL—there is no
+implicit begin, retry, commit, or rollback.
+
+`SqliteDatabase` and `SqliteQuery` are opaque runtime capabilities. They cannot
+be constructed or have their fields read or written. `close` returns
+`busy_handle` while a live query belongs to the connection. Closed and copied
+stale capabilities return `closed`. Normal process exit finalizes any remaining
+handles and prints only their counts, never paths, SQL, parameters, or rows.
+
+The fixed v0.1 limits are:
+
+- 32 live databases and 256 live queries per process;
+- 4096 bytes per persistent path and 1 MiB per SQL statement;
+- 1024 parameters, 8 MiB per text/BLOB value, and 16 MiB total parameter bytes;
+- 256 result columns, 8 MiB per text/BLOB result, and a caller row limit in
+  `1..=16 MiB`;
+- busy timeout in `0..=300_000` milliseconds.
+
+`SqliteError.code` is one of `invalid_request`, `limit`, `open`, `prepare`,
+`bind`, `step`, `busy`, `constraint`, `read_only`, `corrupt`, `full`,
+`encoding`, `unexpected_row`, `busy_handle`, `closed`,
+`runtime_unavailable`, or `internal`. Messages are bounded and generic; SQL,
+paths, schema identifiers, bound values, and SQLite error strings are not
+copied into diagnostics.
+
+SQLite handles are thread-confined. `std.sqlite` is rejected from `std.task`
+workers with `E0821`; serialized SQLite compilation does not make Nomo
+capabilities transferable. Browser WASM type-checks the API, but opening a
+database returns `runtime_unavailable` and adds no filesystem imports.
+
+See `examples/sqlite_memory` for pull/lifecycle basics and
+`examples/sqlite_agent_memory` for a parameterized Agent checkpoint written in
+an explicit transaction and recovered by a second process.
 
 ## Data, Hashing, And Text Processing
 

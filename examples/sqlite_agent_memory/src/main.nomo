@@ -1,0 +1,102 @@
+//! Durable Agent checkpoint storage backed by the bundled std.sqlite runtime.
+package sqlite_agent_memory.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.sqlite
+
+fn required_argument(args: Array<string>, index: u64, label: string) -> string {
+    let value: Option<string> = args.get(index)
+    return match value {
+        Some(text) => text
+        None => panic(label)
+    }
+}
+
+fn write_checkpoint(path: string) -> Result<void, SqliteError> {
+    let database: SqliteDatabase = sqlite.open(path, SqliteOpenMode.ReadWriteCreate, 1000)?
+    let empty: Array<SqliteValue> = Array.new<SqliteValue>()
+    let created: SqliteExecuteResult = sqlite.execute(database, "CREATE TABLE IF NOT EXISTS agent_checkpoint (session_id TEXT PRIMARY KEY, request_json TEXT NOT NULL, checkpoint_json TEXT NOT NULL)", empty)?
+    let begun: SqliteExecuteResult = sqlite.execute(database, "BEGIN IMMEDIATE", empty)?
+    let mut session: Array<SqliteValue> = Array.new<SqliteValue>()
+    session.push(SqliteValue.Text("session-001"))
+    let deleted: SqliteExecuteResult = sqlite.execute(database, "DELETE FROM agent_checkpoint WHERE session_id = ?", session)?
+    let mut checkpoint: Array<SqliteValue> = Array.new<SqliteValue>()
+    checkpoint.push(SqliteValue.Text("session-001"))
+    checkpoint.push(SqliteValue.Text("{\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}"))
+    checkpoint.push(SqliteValue.Text("{\"next_tool\":\"search\",\"attempt\":2}"))
+    let inserted: SqliteExecuteResult = sqlite.execute(database, "INSERT INTO agent_checkpoint(session_id, request_json, checkpoint_json) VALUES (?, ?, ?)", checkpoint)?
+    let committed: SqliteExecuteResult = sqlite.execute(database, "COMMIT", empty)?
+    sqlite.close(database)?
+    io.println("checkpoint-written", inserted.changes)
+    return Ok(void)
+}
+
+fn print_checkpoint(row: SqliteRow) -> void {
+    for column in row.columns {
+        match column.value {
+            SqliteValue.Text(value) => {
+                io.println(column.name, value)
+            }
+            SqliteValue.Null => {
+                panic("checkpoint column was null")
+            }
+            SqliteValue.Integer(value) => {
+                panic("checkpoint column was an integer")
+            }
+            SqliteValue.Real(value) => {
+                panic("checkpoint column was a real")
+            }
+            SqliteValue.Blob(value) => {
+                panic("checkpoint column was a blob")
+            }
+        }
+    }
+}
+
+fn read_checkpoint(path: string) -> Result<void, SqliteError> {
+    let database: SqliteDatabase = sqlite.open(path, SqliteOpenMode.ReadOnly, 1000)?
+    let mut session: Array<SqliteValue> = Array.new<SqliteValue>()
+    session.push(SqliteValue.Text("session-001"))
+    let query_value: SqliteQuery = sqlite.query(database, "SELECT request_json AS request, checkpoint_json AS checkpoint FROM agent_checkpoint WHERE session_id = ?", session)?
+    let row: Option<SqliteRow> = sqlite.next(query_value, 1048576)?
+    match row {
+        Some(value) => {
+            print_checkpoint(value)
+        }
+        None => {
+            panic("checkpoint was not found")
+        }
+    }
+    sqlite.close_query(query_value)?
+    sqlite.close(database)?
+    return Ok(void)
+}
+
+fn run() -> Result<void, SqliteError> {
+    let args: Array<string> = env.args()
+    let maybe_mode: Option<string> = args.get(1)
+    match maybe_mode {
+        None => {
+            io.println("usage: sqlite_agent_memory <write|read> <database-path>")
+            return Ok(void)
+        }
+        Some(mode) => {
+            let path: string = required_argument(args, 2, "expected a database path")
+            return if mode == "write" {
+                write_checkpoint(path)
+            } else {
+                if mode == "read" {
+                    read_checkpoint(path)
+                } else {
+                    panic("mode must be write or read")
+                }
+            }
+        }
+    }
+}
+
+fn main() -> Result<void, SqliteError> {
+    return run()
+}

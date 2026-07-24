@@ -56,7 +56,10 @@ pub fn run_standalone_script_with_args_and_diagnostics(
 
     let c_path = c_dir.join("main.c");
     let uses_native_tasks = super::build::generated_c_uses_native_tasks(&c);
+    let uses_bundled_sqlite = super::build::generated_c_uses_bundled_sqlite(&c);
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
+    super::build::materialize_bundled_sqlite(&c_dir, uses_bundled_sqlite)
+        .map_err(|err| BuildError::Message(err.to_string()))?;
     let bin_path = bin_dir.join(stem);
     let target = TargetTriple::host().map_err(BuildError::Message)?;
     let toolchain = target
@@ -71,6 +74,7 @@ pub fn run_standalone_script_with_args_and_diagnostics(
         &FfiLinkMetadata::default(),
         &target,
         uses_native_tasks,
+        uses_bundled_sqlite,
     );
     let output = command.output().map_err(|err| {
         BuildError::Message(format!(

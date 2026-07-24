@@ -304,6 +304,36 @@ fn collect_process_call_structs(
     }
 }
 
+fn collect_sqlite_call_structs(
+    name: &str,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    if !matches!(
+        name,
+        BUILTIN_SQLITE_OPEN_EXPR
+            | BUILTIN_SQLITE_OPEN_MEMORY_EXPR
+            | BUILTIN_SQLITE_EXECUTE_EXPR
+            | BUILTIN_SQLITE_QUERY_EXPR
+            | BUILTIN_SQLITE_NEXT_EXPR
+            | BUILTIN_SQLITE_RESET_EXPR
+            | BUILTIN_SQLITE_CLOSE_QUERY_EXPR
+            | BUILTIN_SQLITE_CLOSE_EXPR
+    ) {
+        return;
+    }
+    for item in [
+        "SqliteColumn",
+        "SqliteDatabase",
+        "SqliteError",
+        "SqliteExecuteResult",
+        "SqliteQuery",
+        "SqliteRow",
+    ] {
+        push_struct_instance(seen, out, item, &[]);
+    }
+}
+
 fn collect_expr_struct(
     expr: &ValueExpr,
     seen: &mut BTreeSet<String>,
@@ -362,6 +392,7 @@ fn collect_expr_struct(
         ValueExpr::Call { name, args } => {
             collect_http_call_structs(name, seen, out);
             collect_process_call_structs(name, seen, out);
+            collect_sqlite_call_structs(name, seen, out);
             for arg in args {
                 collect_expr_struct(arg, seen, out);
             }

@@ -559,6 +559,7 @@ fn is_forbidden_standard_module(module: &str) -> bool {
             | "log"
             | "net"
             | "process"
+            | "sqlite"
             | "testing"
             | "task"
             | "http"

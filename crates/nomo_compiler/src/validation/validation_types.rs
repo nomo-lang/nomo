@@ -313,6 +313,16 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "TaskError")?;
         reject_user_std_enum(path, enums, "TaskJoin")?;
     }
+    if needs.sqlite {
+        reject_user_std_struct(path, structs, "SqliteColumn")?;
+        reject_user_std_struct(path, structs, "SqliteDatabase")?;
+        reject_user_std_struct(path, structs, "SqliteError")?;
+        reject_user_std_struct(path, structs, "SqliteExecuteResult")?;
+        reject_user_std_struct(path, structs, "SqliteQuery")?;
+        reject_user_std_struct(path, structs, "SqliteRow")?;
+        reject_user_std_enum(path, enums, "SqliteOpenMode")?;
+        reject_user_std_enum(path, enums, "SqliteValue")?;
+    }
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
     }

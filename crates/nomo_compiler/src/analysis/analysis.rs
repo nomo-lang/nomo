@@ -33,6 +33,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
             .iter()
             .any(|item| item == "std.json" || item.starts_with("std.json."))
             || source_uses_json_builtin(ast),
+        sqlite: imports
+            .iter()
+            .any(|item| item == "std.sqlite" || item.starts_with("std.sqlite.")),
         regex: imports
             .iter()
             .any(|item| item == "std.regex" || item.starts_with("std.regex."))
@@ -65,6 +68,8 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
                     || item.starts_with("std.collections.")
                     || item == "std.regex"
                     || item.starts_with("std.regex.")
+                    || item == "std.sqlite"
+                    || item.starts_with("std.sqlite.")
             }),
         ffi: imports
             .iter()
@@ -127,6 +132,14 @@ pub(super) fn standard_struct_names(
         names.push(("JsonError".to_string(), 0));
         names.push(("JsonMember".to_string(), 0));
     }
+    if needs.sqlite {
+        names.push(("SqliteColumn".to_string(), 0));
+        names.push(("SqliteDatabase".to_string(), 0));
+        names.push(("SqliteError".to_string(), 0));
+        names.push(("SqliteExecuteResult".to_string(), 0));
+        names.push(("SqliteQuery".to_string(), 0));
+        names.push(("SqliteRow".to_string(), 0));
+    }
     if needs.regex {
         names.push(("Regex".to_string(), 0));
         names.push(("RegexError".to_string(), 0));
@@ -154,6 +167,10 @@ pub(super) fn standard_enum_names(
     if needs.json {
         names.push(("JsonKind".to_string(), 0));
     }
+    if needs.sqlite {
+        names.push(("SqliteOpenMode".to_string(), 0));
+        names.push(("SqliteValue".to_string(), 0));
+    }
     if needs.io
         || needs.fs
         || needs.net
@@ -162,6 +179,7 @@ pub(super) fn standard_enum_names(
         || needs.process
         || needs.task
         || needs.json
+        || needs.sqlite
         || needs.regex
         || needs.result
     {
@@ -175,6 +193,7 @@ pub(super) fn standard_enum_names(
         || needs.array
         || needs.collections
         || needs.json
+        || needs.sqlite
         || needs.regex
     {
         names.push(("Option".to_string(), 1));
@@ -719,6 +738,101 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteDatabase") {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteDatabase".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteQuery") {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteQuery".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteError") {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "native_code".to_string(),
+                    value_type: ValueType::Int,
+                },
+            ],
+        });
+    }
+    if needs.sqlite
+        && !structs
+            .iter()
+            .any(|item| item.name == "SqliteExecuteResult")
+    {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteExecuteResult".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "changes".to_string(),
+                    value_type: ValueType::U64,
+                },
+                StructField {
+                    name: "last_insert_rowid".to_string(),
+                    value_type: ValueType::Int,
+                },
+            ],
+        });
+    }
+    if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteColumn") {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteColumn".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "name".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::Enum("SqliteValue".to_string(), Vec::new()),
+                },
+            ],
+        });
+    }
+    if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteRow") {
+        structs.push(StructType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteRow".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "columns".to_string(),
+                value_type: ValueType::Array(Box::new(ValueType::Struct(
+                    "SqliteColumn".to_string(),
+                    Vec::new(),
+                ))),
+            }],
+        });
+    }
     if needs.regex && !structs.iter().any(|item| item.name == "Regex") {
         structs.push(StructType {
             package: "std.regex".to_string(),
@@ -859,12 +973,63 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.sqlite && !enums.iter().any(|item| item.name == "SqliteOpenMode") {
+        enums.push(EnumType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteOpenMode".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "ReadOnly".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "ReadWrite".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "ReadWriteCreate".to_string(),
+                    payload: None,
+                },
+            ],
+        });
+    }
+    if needs.sqlite && !enums.iter().any(|item| item.name == "SqliteValue") {
+        enums.push(EnumType {
+            package: "std.sqlite".to_string(),
+            name: "SqliteValue".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "Null".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Integer".to_string(),
+                    payload: Some(ValueType::Int),
+                },
+                EnumVariantType {
+                    name: "Real".to_string(),
+                    payload: Some(ValueType::Float),
+                },
+                EnumVariantType {
+                    name: "Text".to_string(),
+                    payload: Some(ValueType::String),
+                },
+                EnumVariantType {
+                    name: "Blob".to_string(),
+                    payload: Some(ValueType::Array(Box::new(ValueType::U32))),
+                },
+            ],
+        });
+    }
     if (needs.io
         || needs.fs
         || needs.num
         || needs.process
         || needs.task
         || needs.json
+        || needs.sqlite
         || needs.regex
         || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
@@ -893,6 +1058,7 @@ pub(super) fn inject_standard_types(
         || needs.array
         || needs.collections
         || needs.json
+        || needs.sqlite
         || needs.regex)
         && !enums.iter().any(|item| item.name == "Option")
     {

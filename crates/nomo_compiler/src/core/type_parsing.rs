@@ -34,6 +34,10 @@ pub(super) fn is_task_runtime_opaque_struct(item: &StructType) -> bool {
     item.package == "std.task" && matches!(item.name.as_str(), "Task" | "TaskContext")
 }
 
+pub(super) fn is_sqlite_runtime_opaque_struct(item: &StructType) -> bool {
+    item.package == "std.sqlite" && matches!(item.name.as_str(), "SqliteDatabase" | "SqliteQuery")
+}
+
 pub(super) fn parse_non_void_type(
     type_ref: &crate::ast::TypeRef,
     structs: &HashMap<String, StructType>,

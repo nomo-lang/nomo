@@ -72,9 +72,11 @@ jobs:
           --locked
       - name: Run isolated native task lifecycle
         run: cargo run --locked --bin nomo -- run examples/isolated_tasks
+      - name: Run bundled SQLite conformance and persistence gates
+        run: cargo test -p nomo --test cli_sqlite --locked
 
   macos-host-runtime:
-    name: Run structured JSON and task runtimes on macOS
+    name: Run JSON, task, and SQLite runtimes on macOS
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
@@ -86,3 +88,5 @@ jobs:
           --locked
       - name: Run isolated native task lifecycle
         run: cargo run --locked --bin nomo -- run examples/isolated_tasks
+      - name: Run bundled SQLite conformance and persistence gates
+        run: cargo test -p nomo --test cli_sqlite --locked

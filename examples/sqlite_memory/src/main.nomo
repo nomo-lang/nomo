@@ -1,0 +1,87 @@
+package sqlite_memory.main
+
+import std.array.Array
+import std.io
+import std.sqlite
+
+fn expect_text(row: SqliteRow) -> void {
+    let columns: Array<SqliteColumn> = row.columns
+    let first: Option<SqliteColumn> = columns.get(0)
+    match first {
+        None => {
+            panic("missing SQLite result column")
+        }
+        Some(column) => {
+            match column.value {
+                SqliteValue.Text(value) => {
+                    io.println(column.name, value)
+                }
+                SqliteValue.Null => {
+                    panic("unexpected null SQLite value")
+                }
+                SqliteValue.Integer(value) => {
+                    panic("unexpected integer SQLite value")
+                }
+                SqliteValue.Real(value) => {
+                    panic("unexpected real SQLite value")
+                }
+                SqliteValue.Blob(value) => {
+                    panic("unexpected blob SQLite value")
+                }
+            }
+        }
+    }
+}
+
+fn run_example() -> Result<void, SqliteError> {
+    let database: SqliteDatabase = sqlite.open_memory(1000)?
+    let empty: Array<SqliteValue> = Array.new<SqliteValue>()
+    let created: SqliteExecuteResult = sqlite.execute(database, "CREATE TABLE memory (id INTEGER PRIMARY KEY, value TEXT NOT NULL)", empty)?
+    let mut insert_values: Array<SqliteValue> = Array.new<SqliteValue>()
+    insert_values.push(SqliteValue.Text("hello from Nomo SQLite"))
+    let inserted: SqliteExecuteResult = sqlite.execute(database, "INSERT INTO memory(value) VALUES (?)", insert_values)?
+    io.println("inserted", inserted.changes, inserted.last_insert_rowid)
+    let query_value: SqliteQuery = sqlite.query(database, "SELECT value FROM memory WHERE id = 1", empty)?
+    let busy_close: Result<void, SqliteError> = sqlite.close(database)
+    match busy_close {
+        Ok(value) => {
+            panic("database closed while a query was live")
+        }
+        Err(error) => {
+            io.println("busy-close", error.code)
+        }
+    }
+    let row: Option<SqliteRow> = sqlite.next(query_value, 4096)?
+    match row {
+        None => {
+            panic("SQLite query returned no row")
+        }
+        Some(value) => {
+            expect_text(value)
+        }
+    }
+    let done: Option<SqliteRow> = sqlite.next(query_value, 4096)?
+    match done {
+        None => {
+            io.println("query-done")
+        }
+        Some(value) => {
+            panic("SQLite query returned an extra row")
+        }
+    }
+    sqlite.close_query(query_value)?
+    sqlite.close(database)?
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, SqliteError> = run_example()
+    match result {
+        Ok(value) => {
+            io.println("sqlite-ok")
+        }
+        Err(error) => {
+            io.println("sqlite-error", error.code, error.native_code)
+        }
+    }
+}

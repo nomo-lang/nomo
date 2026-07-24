@@ -728,6 +728,23 @@ mod tests {
             "pub fn parse(value: string) -> Result<JsonValue, JsonError>"
         );
 
+        let sqlite = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.sqlite")
+            .unwrap();
+        let open = sqlite
+            .items
+            .iter()
+            .find(|item| item.name == "open")
+            .unwrap();
+        assert_eq!(open.source, "std/src/sqlite.nomo");
+        assert!(open.docs.contains("persistent database"));
+        assert!(
+            open.signature
+                .contains("Result<SqliteDatabase, SqliteError>")
+        );
+
         let debug = package
             .modules
             .iter()

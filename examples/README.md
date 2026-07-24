@@ -28,6 +28,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `std_process`: `std.process` spawn, status, exec, and captured output helpers
 - `process_controlled`: shell-free long-lived child process with queued stdin and multiplexed stdout/stderr events
 - `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
+- `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
+- `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
 - `structured_json`: bounded structured JSON construction and nested OpenAI-compatible response traversal

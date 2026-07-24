@@ -634,6 +634,16 @@ Native applications do not write C FFI; browser WASM returns
 `runtime_unavailable` without invoking the worker. See
 `examples/isolated_tasks` and `examples/concurrent_openai_compatible`.
 
+`std.sqlite` provides bounded native SQLite persistence without application
+FFI or a host SQLite installation. It exposes opaque database/query handles,
+parameterized single-statement `execute` and `query`, pull-based bounded rows,
+query reset/rebind, and explicit close. The toolchain verifies and compiles the
+pinned SQLite 3.53.3 amalgamation only for programs that use the module.
+SQLite handles are unavailable inside isolated tasks, browser WASM returns
+`runtime_unavailable`, and secret-bearing paths, SQL, bindings, and row data
+are excluded from default errors. See `examples/sqlite_agent_memory` for a
+transactional checkpoint written by one process and restored by another.
+
 `std.process` keeps the blocking shell helpers `process.spawn`,
 `process.status`, `process.exec`, and `process.output` for source
 compatibility. New long-lived integrations should use `ProcessCommand` with

@@ -61,6 +61,17 @@ jobs:
       - name: Check Standard Library Formatting
         run: cargo run --bin nomo -- fmt --check std
 
+      - name: Run durable SQLite Agent checkpoint across two processes
+        shell: bash
+        run: |
+          database="$RUNNER_TEMP/nomo-agent-checkpoint.db"
+          cargo run --locked --bin nomo -- \
+            run examples/sqlite_agent_memory -- write "$database" \
+            | grep 'checkpoint-written 1'
+          cargo run --locked --bin nomo -- \
+            run examples/sqlite_agent_memory -- read "$database" \
+            | grep 'checkpoint {"next_tool":"search","attempt":2}'
+
       - name: Check Workspace Example
         run: cargo run --bin nomo -- check --workspace examples/workspace_basic
 
@@ -104,6 +115,15 @@ jobs:
           test "$(lipo -archs "$task_artifact")" = "x86_64"
           grep 'pthread_create' \
             examples/isolated_tasks/build/x86_64-apple-darwin-none/c/main.c
+          target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
+          sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
+          sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
+          test "$(lipo -archs "$sqlite_artifact")" = "x86_64"
+          file "$sqlite_artifact" | grep "Mach-O 64-bit executable x86_64"
+          nm "$sqlite_artifact" | grep '_sqlite3_open_v2'
+          grep 'nomo_sqlite_open_internal' "$sqlite_dir/c/main.c"
+          shasum -a 256 "$sqlite_dir/c/sqlite3.c" \
+            | grep '87497ab605bedd0dbee27a209c1eeff8c89b229b13f921a7efdbb81a13f779fd'
 
       - name: Upload cross-build evidence
         uses: actions/upload-artifact@v7
@@ -113,6 +133,7 @@ jobs:
             examples/result_helpers/build/x86_64-apple-darwin-none
             examples/structured_json/build/x86_64-apple-darwin-none
             examples/isolated_tasks/build/x86_64-apple-darwin-none
+            examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
   linux-cross-build:
@@ -155,6 +176,20 @@ jobs:
           readelf -h "$task_artifact" | grep 'Machine:.*AArch64'
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$task_artifact" \
             | grep 'cancelled:cooperative'
+          target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
+          sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
+          sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
+          readelf -h "$sqlite_artifact" | grep 'Machine:.*AArch64'
+          readelf --wide -s "$sqlite_artifact" | grep 'sqlite3_open_v2'
+          grep 'nomo_sqlite_open_internal' "$sqlite_dir/c/main.c"
+          sha256sum "$sqlite_dir/c/sqlite3.c" \
+            | grep '87497ab605bedd0dbee27a209c1eeff8c89b229b13f921a7efdbb81a13f779fd'
+          sqlite_database="$RUNNER_TEMP/nomo-agent-checkpoint-arm64.db"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$sqlite_artifact" \
+            write "$sqlite_database" | grep 'checkpoint-written 1'
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$sqlite_artifact" \
+            read "$sqlite_database" \
+            | grep 'checkpoint {"next_tool":"search","attempt":2}'
 
       - name: Upload cross-build evidence
         uses: actions/upload-artifact@v7
@@ -164,4 +199,5 @@ jobs:
             examples/result_helpers/build/aarch64-unknown-linux-gnu
             examples/structured_json/build/aarch64-unknown-linux-gnu
             examples/isolated_tasks/build/aarch64-unknown-linux-gnu
+            examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

@@ -45,6 +45,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.process" => Some(include_str!("process.nomo")),
         "std.regex" => Some(include_str!("regex.nomo")),
         "std.result" => Some(RESULT_SOURCE),
+        "std.sqlite" => Some(include_str!("sqlite.nomo")),
         "std.string" => Some(STRING_SOURCE),
         "std.task" => Some(include_str!("task.nomo")),
         "std.testing" => Some(include_str!("testing.nomo")),
@@ -260,6 +261,24 @@ const RESULT_ITEMS: &[&str] = &[
     "map",
     "map_err",
     "unwrap_or",
+];
+const SQLITE_ITEMS: &[&str] = &[
+    "SqliteColumn",
+    "SqliteDatabase",
+    "SqliteError",
+    "SqliteExecuteResult",
+    "SqliteOpenMode",
+    "SqliteQuery",
+    "SqliteRow",
+    "SqliteValue",
+    "close",
+    "close_query",
+    "execute",
+    "next",
+    "open",
+    "open_memory",
+    "query",
+    "reset",
 ];
 const STRING_ITEMS: &[&str] = &[
     "concat",
@@ -671,6 +690,12 @@ pub const MODULES: &[StandardModule] = &[
         doc_items: RESULT_DOC_ITEMS,
     },
     StandardModule {
+        path: "std.sqlite",
+        docs: "bounded SQLite persistence and pull-based queries",
+        items: SQLITE_ITEMS,
+        doc_items: &[],
+    },
+    StandardModule {
         path: "std.string",
         docs: "string helpers",
         items: STRING_ITEMS,
@@ -720,6 +745,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.process",
     "std.regex",
     "std.result",
+    "std.sqlite",
     "std.string",
     "std.task",
     "std.testing",
@@ -1282,7 +1308,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 257);
+        assert_eq!(imports.len(), 274);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

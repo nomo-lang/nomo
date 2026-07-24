@@ -395,6 +395,14 @@ impl<'a> Interpreter<'a> {
         if name == "__nomo_task_is_cancelled" {
             return Err(RuntimeError::capability("native tasks"));
         }
+        if name.starts_with("__nomo_sqlite_") {
+            let unavailable = matches!(name, "__nomo_sqlite_open" | "__nomo_sqlite_open_memory");
+            return Ok(sqlite_runtime_error_result(if unavailable {
+                "runtime_unavailable"
+            } else {
+                "closed"
+            }));
+        }
         if self.frames.len() >= self.limits.max_call_depth {
             return Err(RuntimeError::runtime("maximum call depth exceeded"));
         }
@@ -1377,6 +1385,26 @@ fn task_runtime_unavailable_result() -> Value {
                         "native tasks are unavailable in the browser sandbox".to_string(),
                     ),
                 ),
+            ]),
+        })),
+    }
+}
+
+fn sqlite_runtime_error_result(code: &str) -> Value {
+    let message = if code == "runtime_unavailable" {
+        "SQLite is unavailable in the browser sandbox"
+    } else {
+        "SQLite handle is closed"
+    };
+    Value::Enum {
+        name: "Result".to_string(),
+        variant: "Err".to_string(),
+        payload: Some(Box::new(Value::Struct {
+            name: "SqliteError".to_string(),
+            fields: HashMap::from([
+                ("code".to_string(), Value::String(code.to_string())),
+                ("message".to_string(), Value::String(message.to_string())),
+                ("native_code".to_string(), Value::I64(0)),
             ]),
         })),
     }

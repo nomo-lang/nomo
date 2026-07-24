@@ -1,0 +1,21 @@
+name: Pull Request Smoke
+
+on:
+  pull_request:
+
+jobs:
+  smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy, rustfmt
+      - name: Format
+        run: cargo fmt --check
+      - name: Lint affected compiler crates
+        run: cargo clippy -p nomo -p nomo-compiler -p nomo-manifest --locked -- -D warnings
+      - name: Test affected compiler crates
+        run: cargo test -p nomo -p nomo-compiler -p nomo-manifest --locked
+      - name: Check project fixture
+        run: cargo run --locked --bin nomo -- check examples/workspace_basic

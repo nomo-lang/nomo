@@ -277,6 +277,33 @@ fn collect_http_call_structs(
     }
 }
 
+fn collect_process_call_structs(
+    name: &str,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    if matches!(
+        name,
+        BUILTIN_PROCESS_START_EXPR
+            | BUILTIN_PROCESS_WRITE_STDIN_EXPR
+            | BUILTIN_PROCESS_CLOSE_STDIN_EXPR
+            | BUILTIN_PROCESS_NEXT_EVENT_EXPR
+            | BUILTIN_PROCESS_TRY_WAIT_EXPR
+            | BUILTIN_PROCESS_TERMINATE_EXPR
+            | BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+    ) {
+        for item in [
+            "ProcessEnv",
+            "ProcessCommand",
+            "ProcessChild",
+            "ProcessExit",
+            "ProcessControlError",
+        ] {
+            push_struct_instance(seen, out, item, &[]);
+        }
+    }
+}
+
 fn collect_expr_struct(
     expr: &ValueExpr,
     seen: &mut BTreeSet<String>,
@@ -334,6 +361,7 @@ fn collect_expr_struct(
         }
         ValueExpr::Call { name, args } => {
             collect_http_call_structs(name, seen, out);
+            collect_process_call_structs(name, seen, out);
             for arg in args {
                 collect_expr_struct(arg, seen, out);
             }

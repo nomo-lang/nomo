@@ -137,6 +137,85 @@ fn main() -> void {
 }
 
 #[test]
+fn accepts_controlled_process_builtins() {
+    let source = r#"package app.main
+
+import std.process
+
+fn launch(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError> {
+    return process.start(command)
+}
+
+fn write(child: ProcessChild) -> Result<void, ProcessControlError> {
+    return process.write_stdin(child, "message\n")
+}
+
+fn close_input(child: ProcessChild) -> Result<void, ProcessControlError> {
+    return process.close_stdin(child)
+}
+
+fn pull(child: ProcessChild) -> Result<ProcessEvent, ProcessControlError> {
+    return process.next_event(child, 4096, 1000)
+}
+
+fn observe(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessControlError> {
+    return process.try_wait(child)
+}
+
+fn stop(child: ProcessChild) -> Result<void, ProcessControlError> {
+    return process.terminate(child)
+}
+
+fn close(child: ProcessChild) -> void {
+    process.close_child(child)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    for name in [
+        "ProcessEnv",
+        "ProcessCommand",
+        "ProcessChild",
+        "ProcessExit",
+        "ProcessControlError",
+    ] {
+        assert!(program.structs.iter().any(|item| item.name == name));
+    }
+    assert!(program.enums.iter().any(|item| item.name == "ProcessEvent"));
+    for (function_name, intrinsic) in [
+        ("launch", BUILTIN_PROCESS_START_EXPR),
+        ("write", BUILTIN_PROCESS_WRITE_STDIN_EXPR),
+        ("close_input", BUILTIN_PROCESS_CLOSE_STDIN_EXPR),
+        ("pull", BUILTIN_PROCESS_NEXT_EVENT_EXPR),
+        ("observe", BUILTIN_PROCESS_TRY_WAIT_EXPR),
+        ("stop", BUILTIN_PROCESS_TERMINATE_EXPR),
+    ] {
+        let function = program
+            .functions
+            .iter()
+            .find(|function| function.name == function_name)
+            .unwrap();
+        assert!(matches!(
+            &function.body[0],
+            Statement::Return(Some(ValueExpr::Call { name, .. })) if name == intrinsic
+        ));
+    }
+    let close = program
+        .functions
+        .iter()
+        .find(|function| function.name == "close")
+        .unwrap();
+    assert!(matches!(
+        &close.body[0],
+        Statement::Expr(ValueExpr::Call { name, .. })
+            if name == BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+    ));
+}
+
+#[test]
 fn accepts_testing_builtins() {
     let source = r#"package app.main
 

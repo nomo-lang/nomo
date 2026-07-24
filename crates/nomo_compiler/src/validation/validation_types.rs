@@ -289,8 +289,14 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "NumError")?;
     }
     if needs.process {
+        reject_user_std_struct(path, structs, "ProcessChild")?;
+        reject_user_std_struct(path, structs, "ProcessCommand")?;
+        reject_user_std_struct(path, structs, "ProcessControlError")?;
+        reject_user_std_struct(path, structs, "ProcessEnv")?;
         reject_user_std_struct(path, structs, "ProcessError")?;
+        reject_user_std_struct(path, structs, "ProcessExit")?;
         reject_user_std_struct(path, structs, "ProcessOutput")?;
+        reject_user_std_enum(path, enums, "ProcessEvent")?;
     }
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
@@ -305,7 +311,7 @@ pub(super) fn validate_standard_type_conflicts(
     {
         reject_user_std_enum(path, enums, "Result")?;
     }
-    if needs.env || needs.http || needs.num || needs.option || needs.array {
+    if needs.env || needs.http || needs.num || needs.process || needs.option || needs.array {
         reject_user_std_enum(path, enums, "Option")?;
     }
     Ok(())

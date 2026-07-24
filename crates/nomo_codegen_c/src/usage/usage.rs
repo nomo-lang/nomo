@@ -412,6 +412,15 @@ pub(super) fn uses_process_output(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_process_control(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_process_control_call))
+    })
+}
+
 pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
     match statement {
         Statement::Let { initializer, .. } => expr_uses_fs_read_to_string(initializer),

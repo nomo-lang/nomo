@@ -462,3 +462,185 @@ pub(super) fn emit_env_args_helper(out: &mut String) {
     out.push_str("    return args;\n");
     out.push_str("}\n");
 }
+
+pub(super) fn emit_process_control_helpers(out: &mut String) {
+    let process_env_type = ValueType::Struct("ProcessEnv".to_string(), Vec::new());
+    let process_child_type = ValueType::Struct("ProcessChild".to_string(), Vec::new());
+    let process_exit_type = ValueType::Struct("ProcessExit".to_string(), Vec::new());
+    let process_event_type = ValueType::Enum("ProcessEvent".to_string(), Vec::new());
+    let control_error_type = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
+    let exit_option_type = ValueType::Enum("Option".to_string(), vec![process_exit_type.clone()]);
+    let start_result_type = ValueType::Enum(
+        "Result".to_string(),
+        vec![process_child_type.clone(), control_error_type.clone()],
+    );
+    let void_result_type = ValueType::Enum(
+        "Result".to_string(),
+        vec![ValueType::Void, control_error_type.clone()],
+    );
+    let event_result_type = ValueType::Enum(
+        "Result".to_string(),
+        vec![process_event_type.clone(), control_error_type.clone()],
+    );
+    let wait_result_type = ValueType::Enum(
+        "Result".to_string(),
+        vec![exit_option_type.clone(), control_error_type.clone()],
+    );
+
+    let rendered = include_str!("host_process_control.c")
+        .replace("@PROCESS_ENV@", &c_struct_ident("ProcessEnv", &[]))
+        .replace("@PROCESS_COMMAND@", &c_struct_ident("ProcessCommand", &[]))
+        .replace("@PROCESS_CHILD@", &c_struct_ident("ProcessChild", &[]))
+        .replace("@PROCESS_EXIT@", &c_struct_ident("ProcessExit", &[]))
+        .replace("@PROCESS_EVENT@", &c_enum_ident("ProcessEvent", &[]))
+        .replace(
+            "@PROCESS_CONTROL_ERROR@",
+            &c_struct_ident("ProcessControlError", &[]),
+        )
+        .replace("@STRING_ARRAY@", &c_array_ident(&ValueType::String))
+        .replace("@ENV_ARRAY@", &c_array_ident(&process_env_type))
+        .replace(
+            "@CWD_OPTION@",
+            &c_enum_ident("Option", &[ValueType::String]),
+        )
+        .replace("@EXIT_OPTION@", &c_type(&exit_option_type))
+        .replace("@START_RESULT@", &c_type(&start_result_type))
+        .replace("@VOID_RESULT@", &c_type(&void_result_type))
+        .replace("@EVENT_RESULT@", &c_type(&event_result_type))
+        .replace("@WAIT_RESULT@", &c_type(&wait_result_type))
+        .replace(
+            "@START_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[process_child_type.clone(), control_error_type.clone()],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@START_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[process_child_type, control_error_type.clone()],
+                "Err",
+            ),
+        )
+        .replace(
+            "@VOID_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[ValueType::Void, control_error_type.clone()],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@VOID_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[ValueType::Void, control_error_type.clone()],
+                "Err",
+            ),
+        )
+        .replace(
+            "@EVENT_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[process_event_type.clone(), control_error_type.clone()],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@EVENT_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[process_event_type, control_error_type.clone()],
+                "Err",
+            ),
+        )
+        .replace(
+            "@WAIT_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[exit_option_type.clone(), control_error_type.clone()],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@WAIT_ERR@",
+            &c_enum_variant_ident("Result", &[exit_option_type, control_error_type], "Err"),
+        )
+        .replace(
+            "@CWD_SOME@",
+            &c_enum_variant_ident("Option", &[ValueType::String], "Some"),
+        )
+        .replace(
+            "@CWD_NONE@",
+            &c_enum_variant_ident("Option", &[ValueType::String], "None"),
+        )
+        .replace(
+            "@EXIT_SOME@",
+            &c_enum_variant_ident("Option", &[process_exit_type.clone()], "Some"),
+        )
+        .replace(
+            "@EXIT_NONE@",
+            &c_enum_variant_ident("Option", &[process_exit_type], "None"),
+        )
+        .replace(
+            "@EVENT_STDIN_FLUSHED@",
+            &c_enum_variant_ident("ProcessEvent", &[], "StdinFlushed"),
+        )
+        .replace(
+            "@EVENT_STDOUT@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Stdout"),
+        )
+        .replace(
+            "@EVENT_STDERR@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Stderr"),
+        )
+        .replace(
+            "@EVENT_EXITED@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Exited"),
+        )
+        .replace("@OK_PAYLOAD@", &c_payload_ident("Ok"))
+        .replace("@ERR_PAYLOAD@", &c_payload_ident("Err"))
+        .replace("@SOME_PAYLOAD@", &c_payload_ident("Some"))
+        .replace("@STDOUT_PAYLOAD@", &c_payload_ident("Stdout"))
+        .replace("@STDERR_PAYLOAD@", &c_payload_ident("Stderr"))
+        .replace("@EXITED_PAYLOAD@", &c_payload_ident("Exited"))
+        .replace("@PROGRAM_MEMBER@", &c_member_ident("program"))
+        .replace("@ARGS_MEMBER@", &c_member_ident("args"))
+        .replace("@CWD_MEMBER@", &c_member_ident("cwd"))
+        .replace("@ENV_MEMBER@", &c_member_ident("env"))
+        .replace("@INHERIT_ENV_MEMBER@", &c_member_ident("inherit_env"))
+        .replace("@NAME_MEMBER@", &c_member_ident("name"))
+        .replace("@VALUE_MEMBER@", &c_member_ident("value"))
+        .replace("@HANDLE_MEMBER@", &c_member_ident("handle"))
+        .replace("@CODE_MEMBER@", &c_member_ident("code"))
+        .replace("@SIGNAL_MEMBER@", &c_member_ident("signal"))
+        .replace("@MESSAGE_MEMBER@", &c_member_ident("message"))
+        .replace("@START_NAME@", &c_fn_ident(BUILTIN_PROCESS_START_EXPR))
+        .replace(
+            "@WRITE_STDIN_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_WRITE_STDIN_EXPR),
+        )
+        .replace(
+            "@CLOSE_STDIN_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_STDIN_EXPR),
+        )
+        .replace(
+            "@NEXT_EVENT_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_NEXT_EVENT_EXPR),
+        )
+        .replace(
+            "@TRY_WAIT_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_TRY_WAIT_EXPR),
+        )
+        .replace(
+            "@TERMINATE_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_TERMINATE_EXPR),
+        )
+        .replace(
+            "@CLOSE_CHILD_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_CHILD_EXPR),
+        );
+    out.push_str(&rendered);
+}

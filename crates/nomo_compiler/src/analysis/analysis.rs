@@ -85,7 +85,12 @@ pub(super) fn standard_struct_names(
         names.push(("NumError".to_string(), 0));
     }
     if needs.process {
+        names.push(("ProcessChild".to_string(), 0));
+        names.push(("ProcessCommand".to_string(), 0));
+        names.push(("ProcessControlError".to_string(), 0));
+        names.push(("ProcessEnv".to_string(), 0));
         names.push(("ProcessError".to_string(), 0));
+        names.push(("ProcessExit".to_string(), 0));
         names.push(("ProcessOutput".to_string(), 0));
     }
     if needs.net {
@@ -131,6 +136,9 @@ pub(super) fn standard_enum_names(
     needs: StandardTypeNeeds,
 ) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
+    if needs.process {
+        names.push(("ProcessEvent".to_string(), 0));
+    }
     if needs.io
         || needs.fs
         || needs.net
@@ -146,6 +154,7 @@ pub(super) fn standard_enum_names(
     if needs.env
         || needs.http
         || needs.num
+        || needs.process
         || needs.option
         || needs.array
         || needs.collections
@@ -496,6 +505,104 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessEnv") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessEnv".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "name".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessCommand") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessCommand".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "program".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "args".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::String)),
+                },
+                StructField {
+                    name: "cwd".to_string(),
+                    value_type: ValueType::Enum("Option".to_string(), vec![ValueType::String]),
+                },
+                StructField {
+                    name: "env".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "ProcessEnv".to_string(),
+                        Vec::new(),
+                    ))),
+                },
+                StructField {
+                    name: "inherit_env".to_string(),
+                    value_type: ValueType::Bool,
+                },
+            ],
+        });
+    }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessChild") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessChild".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.process && !structs.iter().any(|item| item.name == "ProcessExit") {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessExit".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::I32,
+                },
+                StructField {
+                    name: "signal".to_string(),
+                    value_type: ValueType::I32,
+                },
+            ],
+        });
+    }
+    if needs.process
+        && !structs
+            .iter()
+            .any(|item| item.name == "ProcessControlError")
+    {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "ProcessControlError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
     if needs.hash && !structs.iter().any(|item| item.name == "HashState") {
         structs.push(StructType {
             package: "std.hash".to_string(),
@@ -590,7 +697,38 @@ pub(super) fn inject_standard_types(
             }],
         });
     }
-    if (needs.io || needs.fs || needs.num || needs.json || needs.regex || needs.result)
+    if needs.process && !enums.iter().any(|item| item.name == "ProcessEvent") {
+        enums.push(EnumType {
+            package: "std.process".to_string(),
+            name: "ProcessEvent".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "StdinFlushed".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Stdout".to_string(),
+                    payload: Some(ValueType::String),
+                },
+                EnumVariantType {
+                    name: "Stderr".to_string(),
+                    payload: Some(ValueType::String),
+                },
+                EnumVariantType {
+                    name: "Exited".to_string(),
+                    payload: Some(ValueType::Struct("ProcessExit".to_string(), Vec::new())),
+                },
+            ],
+        });
+    }
+    if (needs.io
+        || needs.fs
+        || needs.num
+        || needs.process
+        || needs.json
+        || needs.regex
+        || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
         enums.push(EnumType {
@@ -612,6 +750,7 @@ pub(super) fn inject_standard_types(
     if (needs.env
         || needs.http
         || needs.num
+        || needs.process
         || needs.option
         || needs.array
         || needs.collections

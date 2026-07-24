@@ -206,13 +206,26 @@ const PATH_ITEMS: &[&str] = &[
     "normalize",
 ];
 const PROCESS_ITEMS: &[&str] = &[
+    "ProcessChild",
+    "ProcessCommand",
+    "ProcessControlError",
+    "ProcessEnv",
     "ProcessError",
+    "ProcessEvent",
+    "ProcessExit",
     "ProcessOutput",
+    "close_child",
+    "close_stdin",
     "exec",
     "exit",
+    "next_event",
     "output",
     "spawn",
+    "start",
     "status",
+    "terminate",
+    "try_wait",
+    "write_stdin",
 ];
 const REGEX_ITEMS: &[&str] = &["Regex", "RegexError", "captures", "compile", "is_match"];
 const RESULT_ITEMS: &[&str] = &[

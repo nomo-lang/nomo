@@ -526,6 +526,52 @@ fn main() -> void {
     }
 
     #[test]
+    fn rejects_controlled_processes_without_leaking_command_secrets() {
+        let source = r#"package app.main
+
+import std.array.Array
+import std.process
+
+fn main() -> void {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("argv-browser-secret")
+    let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    environment.push(ProcessEnv {
+        name: "NOMO_BROWSER_TOKEN",
+        value: "environment-browser-secret"
+    })
+    let command: ProcessCommand = ProcessCommand {
+        program: "program-browser-secret",
+        args: args,
+        cwd: Some("cwd-browser-secret"),
+        env: environment,
+        inherit_env: false
+    }
+    let result: Result<ProcessChild, ProcessControlError> = process.start(command)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("controlled process should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("process"));
+        assert!(error.message.contains("browser sandbox"));
+        assert!(!error.message.contains("__nomo_process_start"));
+        for secret in [
+            "argv-browser-secret",
+            "environment-browser-secret",
+            "program-browser-secret",
+            "cwd-browser-secret",
+        ] {
+            assert!(!error.message.contains(secret), "{error:#?}");
+        }
+    }
+
+    #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
         let source = r#"package app.main
 

@@ -263,6 +263,27 @@ pub(super) fn resolve_specific_value_builtin(
         "output" if imports.iter().any(|item| item == "std.process.output") => {
             vec!["process".to_string(), "output".to_string()]
         }
+        "start" if imports.iter().any(|item| item == "std.process.start") => {
+            vec!["process".to_string(), "start".to_string()]
+        }
+        "write_stdin" if imports.iter().any(|item| item == "std.process.write_stdin") => {
+            vec!["process".to_string(), "write_stdin".to_string()]
+        }
+        "close_stdin" if imports.iter().any(|item| item == "std.process.close_stdin") => {
+            vec!["process".to_string(), "close_stdin".to_string()]
+        }
+        "next_event" if imports.iter().any(|item| item == "std.process.next_event") => {
+            vec!["process".to_string(), "next_event".to_string()]
+        }
+        "try_wait" if imports.iter().any(|item| item == "std.process.try_wait") => {
+            vec!["process".to_string(), "try_wait".to_string()]
+        }
+        "terminate" if imports.iter().any(|item| item == "std.process.terminate") => {
+            vec!["process".to_string(), "terminate".to_string()]
+        }
+        "close_child" if imports.iter().any(|item| item == "std.process.close_child") => {
+            vec!["process".to_string(), "close_child".to_string()]
+        }
         "assert" if imports.iter().any(|item| item == "std.testing.assert") => {
             vec!["testing".to_string(), "assert".to_string()]
         }

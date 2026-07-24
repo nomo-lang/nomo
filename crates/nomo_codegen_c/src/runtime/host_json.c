@@ -594,7 +594,7 @@ static @RESULT@ nomo_json_parse(nomo_string text) {
 }
 
 static nomo_string nomo_json_stringify(@JSON_VALUE@ value) {
-    return nomo_string_retain(value.@RAW_MEMBER@);
+    return value.@RAW_MEMBER@;
 }
 
 /* NOMO_STRUCTURED_JSON_BEGIN */

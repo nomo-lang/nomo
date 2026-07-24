@@ -130,6 +130,7 @@ fn main() -> Result<void, JsonError> {
     assert!(c.contains("#define NOMO_JSON_MAX_VALUES 262144U"));
     assert!(c.contains("nomo_json_object_members"));
     assert!(c.contains("nomo_json_from_object"));
+    assert!(c.contains("return value.nomo_member_raw;"));
     assert!(c.contains("nomo_array_struct_JsonValue"));
     assert!(c.contains("nomo_array_struct_JsonMember"));
     assert!(

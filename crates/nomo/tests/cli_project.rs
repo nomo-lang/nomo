@@ -8069,7 +8069,7 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
     assert_eq!(
         stdout,
         "{\"model\":\"fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello \\\"Nomo\\\"\\n😀\"}],\"stream\":false,\"max_tokens\":64,\"penalty\":-2,\"metadata\":null}\nobject\n1E+2\nHello from model\n2\n2\nunsupported_string 1\nsyntax 36 invalid json syntax\n"
@@ -8112,7 +8112,7 @@ fn structured_json_conformance_fixture_matches_native_runtime() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
     assert_eq!(
         stdout,
         "true\n6\nnull\nboolean\nnumber\nstring\narray\nobject\ntrue\ntrue\nwrong-kind-none\n1E+2\ntrue\n0\n0\nnon-object-none\n2\nname\nname\n2\nmissing-none\n\"A\\n\\\"\\\\😀\"\n{\"null\":null,\"bool\":false,\"i64\":-9223372036854775808,\"u64\":18446744073709551615}\n😀\ninvalid_number 1 invalid json number\nunsupported_string 1\nunsupported_string 1\nsyntax 29 invalid json syntax\n"
@@ -8298,7 +8298,7 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
         format!(
             "ok {MAX_BYTES}\nlimit {MAX_BYTES}\nok 260\nlimit {MAX_DEPTH}\nok 1310716\nlimit 1310716\nok {MAX_BYTES}\nlimit 0\nok 260\nlimit 0\nok 1310716\nlimit 0\n-9223372036854775808\n18446744073709551615\ninvalid_number 1\nok 4\nok 2\nok 2\nfalse\ntrue\nnone\n"
         )

@@ -455,6 +455,12 @@ typedef int (WINAPI *nomo_winhttp_set_timeouts_fn)(
     int,
     int
 );
+typedef int (WINAPI *nomo_winhttp_set_option_fn)(
+    nomo_winhttp_handle,
+    unsigned long,
+    void *,
+    unsigned long
+);
 typedef int (WINAPI *nomo_winhttp_close_handle_fn)(nomo_winhttp_handle);
 
 typedef struct nomo_winhttp_api {
@@ -470,6 +476,7 @@ typedef struct nomo_winhttp_api {
     nomo_winhttp_query_headers_fn query_headers;
     nomo_winhttp_read_data_fn read_data;
     nomo_winhttp_set_timeouts_fn set_timeouts;
+    nomo_winhttp_set_option_fn set_option;
     nomo_winhttp_close_handle_fn close_handle;
 } nomo_winhttp_api;
 
@@ -503,6 +510,7 @@ static int nomo_winhttp_load(void) {
     NOMO_WINHTTP_SYMBOL(query_headers, nomo_winhttp_query_headers_fn, "WinHttpQueryHeaders")
     NOMO_WINHTTP_SYMBOL(read_data, nomo_winhttp_read_data_fn, "WinHttpReadData")
     NOMO_WINHTTP_SYMBOL(set_timeouts, nomo_winhttp_set_timeouts_fn, "WinHttpSetTimeouts")
+    NOMO_WINHTTP_SYMBOL(set_option, nomo_winhttp_set_option_fn, "WinHttpSetOption")
     NOMO_WINHTTP_SYMBOL(close_handle, nomo_winhttp_close_handle_fn, "WinHttpCloseHandle")
 #undef NOMO_WINHTTP_SYMBOL
     nomo_winhttp.available = 1;

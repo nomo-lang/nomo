@@ -799,7 +799,13 @@ static int nomo_http_stream_open_winhttp(
 static int nomo_http_stream_winhttp_read_more(nomo_http_stream_state *state) {
     if (state->eof || state->failure_code != NULL || state->too_large) { return 0; }
     int timeout = (int)state->idle_timeout_millis;
-    if (!nomo_winhttp.set_timeouts(
+    unsigned long receive_timeout = (unsigned long)state->idle_timeout_millis;
+    if (!nomo_winhttp.set_option(
+            state->request,
+            6UL,
+            &receive_timeout,
+            (unsigned long)sizeof(receive_timeout))
+        || !nomo_winhttp.set_timeouts(
             state->request,
             timeout,
             timeout,

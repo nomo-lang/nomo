@@ -209,6 +209,15 @@ pub(super) fn collect_value_type_dependencies(
             }
             collect_value_type_dependencies(return_type, nominal_names, out);
         }
+        ValueType::TaskCallback {
+            params,
+            return_type,
+        } => {
+            for param in params {
+                collect_value_type_dependencies(param, nominal_names, out);
+            }
+            collect_value_type_dependencies(return_type, nominal_names, out);
+        }
         ValueType::Array(_) => {}
         ValueType::String
         | ValueType::CString
@@ -298,6 +307,12 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "ProcessOutput")?;
         reject_user_std_enum(path, enums, "ProcessEvent")?;
     }
+    if needs.task {
+        reject_user_std_struct(path, structs, "Task")?;
+        reject_user_std_struct(path, structs, "TaskContext")?;
+        reject_user_std_struct(path, structs, "TaskError")?;
+        reject_user_std_enum(path, enums, "TaskJoin")?;
+    }
     if needs.hash {
         reject_user_std_struct(path, structs, "HashState")?;
     }
@@ -307,7 +322,14 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_enum(path, enums, "CString")?;
         reject_user_std_enum(path, enums, "Opaque")?;
     }
-    if needs.io || needs.fs || needs.net || needs.http || needs.num || needs.process || needs.result
+    if needs.io
+        || needs.fs
+        || needs.net
+        || needs.http
+        || needs.num
+        || needs.process
+        || needs.task
+        || needs.result
     {
         reject_user_std_enum(path, enums, "Result")?;
     }

@@ -60,6 +60,8 @@ mod host_num_checked_helpers;
 mod host_num_parse_helpers;
 #[path = "runtime/host_regex_helpers.rs"]
 mod host_regex_helpers;
+#[path = "runtime/host_task_helpers.rs"]
+mod host_task_helpers;
 #[path = "runtime/host_udp_helpers.rs"]
 mod host_udp_helpers;
 #[path = "core/instances.rs"]
@@ -126,6 +128,7 @@ use host_net_helpers::*;
 use host_num_checked_helpers::*;
 use host_num_parse_helpers::*;
 use host_regex_helpers::*;
+use host_task_helpers::*;
 use host_udp_helpers::*;
 use instances::*;
 use names::*;
@@ -178,6 +181,11 @@ const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
 const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";
 const BUILTIN_HTTP_CLOSE_SERVER_EXPR: &str = "__nomo_http_close_server";
 const BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR: &str = "__nomo_http_close_exchange";
+const BUILTIN_TASK_SPAWN_EXPR: &str = "__nomo_task_spawn";
+const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
+const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";
+const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
+const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
 const BUILTIN_PROCESS_START_EXPR: &str = "__nomo_process_start";
 const BUILTIN_PROCESS_WRITE_STDIN_EXPR: &str = "__nomo_process_write_stdin";
 const BUILTIN_PROCESS_CLOSE_STDIN_EXPR: &str = "__nomo_process_close_stdin";

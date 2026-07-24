@@ -153,6 +153,8 @@ the same code.
 - [E0521](E0521.md) - non-diverging let-else body
 - [E0607](E0607.md) - cyclic module import
 - [E0800](E0800.md) - invalid standard-library intrinsic manifest
+- [E0820](E0820.md) - invalid isolated task type or worker
+- [E0821](E0821.md) - task-unsafe worker call graph
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error
 - [E0903](E0903.md) - module not found

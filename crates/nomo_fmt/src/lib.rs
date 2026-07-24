@@ -826,4 +826,19 @@ mod tests {
             formatted
         );
     }
+
+    #[test]
+    fn formats_task_worker_types_without_exposing_the_internal_type_path() {
+        let source = "package std.task\n\nstruct TaskContext{\nhandle:u64\n}\n\npub fn spawn(worker:task fn(TaskContext,string)->string,input:string)->void{\n}\n";
+        let formatted = format_source(Path::new("task.nomo"), source).unwrap();
+
+        assert!(formatted.contains(
+            "pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> void"
+        ));
+        assert!(!formatted.contains("__nomo_task_callback"));
+        assert_eq!(
+            format_source(Path::new("task.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
 }

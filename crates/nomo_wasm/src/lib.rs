@@ -662,6 +662,37 @@ fn main() -> void {
     }
 
     #[test]
+    fn returns_task_runtime_unavailable_without_invoking_the_worker() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+
+fn worker(context: TaskContext, input: string) -> string {
+    panic("worker must not run")
+}
+
+fn main() -> void {
+    let started: Result<Task, TaskError> = task.spawn(worker, "browser-task-secret")
+    match started {
+        Ok(task_value) => {
+            io.println("unexpected")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "runtime_unavailable\n");
+        assert!(!response.stderr.contains("worker must not run"));
+        assert!(!response.stderr.contains("browser-task-secret"));
+    }
+
+    #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
         let source = r#"package app.main
 

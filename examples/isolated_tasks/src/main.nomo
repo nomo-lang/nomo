@@ -1,0 +1,222 @@
+package app.main
+
+import std.array
+import std.io
+import std.string
+import std.task
+import std.time
+
+fn worker(context: TaskContext, input: string) -> string {
+    if task.is_cancelled(context) {
+        "cancelled"
+    } else {
+        string.concat("completed:", input)
+    }
+}
+
+fn cancellation_worker(context: TaskContext, input: string) -> string {
+    for !task.is_cancelled(context) {
+        time.sleep_millis(1)
+    }
+    return input
+}
+
+fn copy_worker(context: TaskContext, input: string) -> string {
+    time.sleep_millis(10)
+    return input
+}
+
+fn oversized_output_worker(context: TaskContext, input: string) -> string {
+    let mut output: string = input
+    for let i: u64 = 0; i < 24; i++ {
+        output = string.concat(output, output)
+    }
+    return output
+}
+
+fn large_message() -> string {
+    let mut output: string = "x"
+    for let i: u64 = 0; i < 24; i++ {
+        output = string.concat(output, output)
+    }
+    return output
+}
+
+fn run_live_limit() -> Result<void, TaskError> {
+    let mut tasks: Array<Task> = Array.new<Task>()
+    for let i: u64 = 0; i < 64; i++ {
+        let task_value: Task = task.spawn(cancellation_worker, "limit")?
+        tasks.push(task_value)
+    }
+    let overflow: Result<Task, TaskError> = task.spawn(cancellation_worker, "overflow")
+    match overflow {
+        Ok(extra) => {
+            panic("task live limit was not enforced")
+        }
+        Err(error) => {
+            io.println("live-limit", error.code)
+        }
+    }
+    for task_value in tasks {
+        task.cancel(task_value)?
+    }
+    for task_value in tasks {
+        let joined: TaskJoin = task.join(task_value, 5000)?
+        task.close(task_value)?
+    }
+    return Ok(void)
+}
+
+fn run_message_limits() -> Result<void, TaskError> {
+    let large: string = large_message()
+    let oversized_input: Result<Task, TaskError> = task.spawn(copy_worker, large)
+    match oversized_input {
+        Ok(unexpected) => {
+            panic("task input limit was not enforced")
+        }
+        Err(error) => {
+            io.println("input-limit", error.code)
+        }
+    }
+    let output_task: Task = task.spawn(oversized_output_worker, "x")?
+    let oversized_output: Result<TaskJoin, TaskError> = task.join(output_task, 5000)
+    match oversized_output {
+        Ok(unexpected) => {
+            panic("task output limit was not enforced")
+        }
+        Err(error) => {
+            io.println("output-limit", error.code)
+        }
+    }
+    task.close(output_task)?
+    return Ok(void)
+}
+
+fn run_tasks() -> Result<void, TaskError> {
+    let first: Task = task.spawn(worker, "alpha")?
+    let second: Task = task.spawn(worker, "beta")?
+    let first_join: TaskJoin = task.join(first, 5000)?
+    let second_join: TaskJoin = task.join(second, 5000)?
+    match first_join {
+        TaskJoin.Completed(value) => {
+            io.println(value)
+        }
+        TaskJoin.Cancelled => {
+            io.println("cancelled:first")
+        }
+        TaskJoin.Timeout => {
+            io.println("timeout:first")
+        }
+    }
+    match second_join {
+        TaskJoin.Completed(value) => {
+            io.println(value)
+        }
+        TaskJoin.Cancelled => {
+            io.println("cancelled:second")
+        }
+        TaskJoin.Timeout => {
+            io.println("timeout:second")
+        }
+    }
+    task.cancel(first)?
+    let repeated_join: TaskJoin = task.join(first, 0)?
+    match repeated_join {
+        TaskJoin.Completed(value) => {
+            io.println("rejoin", value)
+        }
+        TaskJoin.Cancelled => {
+            panic("completed task was replaced by cancellation")
+        }
+        TaskJoin.Timeout => {
+            panic("completed task timed out")
+        }
+    }
+    task.close(first)?
+    task.close(second)?
+    let invalid_join: Result<TaskJoin, TaskError> = task.join(first, 900001)
+    match invalid_join {
+        Ok(unexpected) => {
+            panic("task join timeout limit was not enforced")
+        }
+        Err(error) => {
+            io.println("join-limit", error.code)
+        }
+    }
+    let cancellable: Task = task.spawn(cancellation_worker, "cancel")?
+    let busy_close: Result<void, TaskError> = task.close(cancellable)
+    match busy_close {
+        Ok(done) => {
+            panic("running task was closed")
+        }
+        Err(error) => {
+            io.println("busy-close", error.code)
+        }
+    }
+    let pending_join: TaskJoin = task.join(cancellable, 0)?
+    match pending_join {
+        TaskJoin.Completed(value) => {
+            io.println("unexpected:completed")
+        }
+        TaskJoin.Cancelled => {
+            io.println("unexpected:cancelled")
+        }
+        TaskJoin.Timeout => {
+            io.println("timeout:pending")
+        }
+    }
+    task.cancel(cancellable)?
+    task.cancel(cancellable)?
+    let cancelled_join: TaskJoin = task.join(cancellable, 5000)?
+    match cancelled_join {
+        TaskJoin.Completed(value) => {
+            io.println("unexpected:completed")
+        }
+        TaskJoin.Cancelled => {
+            io.println("cancelled:cooperative")
+        }
+        TaskJoin.Timeout => {
+            io.println("unexpected:timeout")
+        }
+    }
+    task.close(cancellable)?
+    let closed_handle: Result<void, TaskError> = task.close(cancellable)
+    match closed_handle {
+        Ok(done) => {
+            panic("closed task handle was accepted")
+        }
+        Err(error) => {
+            io.println("closed-handle", error.code)
+        }
+    }
+    let mut payload: string = "before-copy"
+    let copied: Task = task.spawn(copy_worker, payload)?
+    payload = "after-copy"
+    let copied_join: TaskJoin = task.join(copied, 5000)?
+    match copied_join {
+        TaskJoin.Completed(value) => {
+            io.println(value)
+        }
+        TaskJoin.Cancelled => {
+            io.println("unexpected:cancelled")
+        }
+        TaskJoin.Timeout => {
+            io.println("unexpected:timeout")
+        }
+    }
+    task.close(copied)?
+    run_live_limit()?
+    run_message_limits()?
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, TaskError> = run_tasks()
+    match result {
+        Ok(done) => {
+        }
+        Err(error) => {
+            io.println(error.message)
+        }
+    }
+}

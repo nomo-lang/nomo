@@ -1,6 +1,7 @@
 pub use nomo_spans::Span;
 
 pub const EXTERN_C_CALLBACK_TYPE_PATH: &str = "__nomo_extern_c_callback";
+pub const TASK_CALLBACK_TYPE_PATH: &str = "__nomo_task_callback";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct SourceFile {

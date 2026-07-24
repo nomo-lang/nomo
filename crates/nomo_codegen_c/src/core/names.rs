@@ -204,6 +204,7 @@ pub(super) fn c_type(value_type: &ValueType) -> String {
             params,
             return_type,
         } => c_callback_type(params, return_type),
+        ValueType::TaskCallback { .. } => "nomo_task_worker_fn".to_string(),
         ValueType::Int => "long long".to_string(),
         ValueType::I32 => "int32_t".to_string(),
         ValueType::U32 => "uint32_t".to_string(),
@@ -238,6 +239,7 @@ pub(super) fn c_extern_type(value_type: &ValueType) -> String {
             params,
             return_type,
         } => c_callback_type(params, return_type),
+        ValueType::TaskCallback { .. } => "nomo_task_worker_fn".to_string(),
         _ => c_type(value_type),
     }
 }
@@ -269,7 +271,7 @@ pub(super) fn c_zero_value(value_type: &ValueType) -> String {
         ValueType::OwnedHandle(_) => "NULL".to_string(),
         ValueType::BorrowedHandle(_) => "NULL".to_string(),
         ValueType::Nullable(_) => "NULL".to_string(),
-        ValueType::ExternCallback { .. } => "NULL".to_string(),
+        ValueType::ExternCallback { .. } | ValueType::TaskCallback { .. } => "NULL".to_string(),
         ValueType::Int => "0".to_string(),
         ValueType::I32 | ValueType::U32 | ValueType::U64 => "0".to_string(),
         ValueType::Float => "0.0".to_string(),
@@ -315,6 +317,7 @@ pub(super) fn c_type_name_part(value_type: &ValueType) -> String {
                 .join("_"),
             c_type_name_part(return_type)
         ),
+        ValueType::TaskCallback { .. } => "task_worker".to_string(),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),

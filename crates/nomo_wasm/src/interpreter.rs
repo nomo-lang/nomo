@@ -383,6 +383,18 @@ impl<'a> Interpreter<'a> {
         if name.starts_with("__nomo_process_") {
             return Err(RuntimeError::capability("process"));
         }
+        if name == "__nomo_task_spawn" {
+            return Ok(task_runtime_unavailable_result());
+        }
+        if matches!(
+            name,
+            "__nomo_task_join" | "__nomo_task_cancel" | "__nomo_task_close"
+        ) {
+            return Ok(task_runtime_unavailable_result());
+        }
+        if name == "__nomo_task_is_cancelled" {
+            return Err(RuntimeError::capability("native tasks"));
+        }
         if self.frames.len() >= self.limits.max_call_depth {
             return Err(RuntimeError::runtime("maximum call depth exceeded"));
         }
@@ -1345,6 +1357,28 @@ impl<'a> Interpreter<'a> {
             _ => {}
         }
         numeric_operation(left, op, right)
+    }
+}
+
+fn task_runtime_unavailable_result() -> Value {
+    Value::Enum {
+        name: "Result".to_string(),
+        variant: "Err".to_string(),
+        payload: Some(Box::new(Value::Struct {
+            name: "TaskError".to_string(),
+            fields: HashMap::from([
+                (
+                    "code".to_string(),
+                    Value::String("runtime_unavailable".to_string()),
+                ),
+                (
+                    "message".to_string(),
+                    Value::String(
+                        "native tasks are unavailable in the browser sandbox".to_string(),
+                    ),
+                ),
+            ]),
+        })),
     }
 }
 

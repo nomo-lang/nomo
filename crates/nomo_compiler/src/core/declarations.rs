@@ -218,6 +218,7 @@ pub(super) struct StandardTypeNeeds {
     pub(super) fs: bool,
     pub(super) env: bool,
     pub(super) process: bool,
+    pub(super) task: bool,
     pub(super) net: bool,
     pub(super) http: bool,
     pub(super) hash: bool,
@@ -246,7 +247,8 @@ pub(super) fn function_signature(
     let params = function
         .params
         .iter()
-        .map(|param| {
+        .enumerate()
+        .map(|(index, param)| {
             let value_type = parse_value_type_with_names(
                 &param.type_ref,
                 &struct_names,
@@ -263,7 +265,36 @@ pub(super) fn function_signature(
                     &enum_names,
                 )
             })?;
-            ensure_supported_value_type(path, &value_type, &synthetic_span())?;
+            if let ValueType::TaskCallback {
+                params,
+                return_type,
+            } = &value_type
+            {
+                let canonical_worker = function.package.as_slice() == ["std", "task"]
+                    && function.name == "spawn"
+                    && index == 0
+                    && param.name == "worker"
+                    && !param.mutable
+                    && params.as_slice()
+                        == [
+                            ValueType::Struct("TaskContext".to_string(), Vec::new()),
+                            ValueType::String,
+                        ]
+                    && return_type.as_ref() == &ValueType::String;
+                if !canonical_worker {
+                    return Err(Diagnostic::new(
+                        "E0820",
+                        "`task fn` is restricted to the canonical `std.task.spawn` worker parameter",
+                        path,
+                        function.span.line,
+                        function.span.column,
+                        function.span.length,
+                        &function.span.text,
+                    ));
+                }
+            } else {
+                ensure_supported_value_type(path, &value_type, &synthetic_span())?;
+            }
             Ok(ParamSignature {
                 value_type,
                 mutable: param.mutable,

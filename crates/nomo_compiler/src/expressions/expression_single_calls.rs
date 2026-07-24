@@ -98,6 +98,11 @@ pub(super) fn lower_single_segment_call_value_expr(
                 path, &qualified, args, scope, imports, signatures, structs, enums, span,
             );
         }
+        if qualified[0] == "task" {
+            return lower_task_builtin(
+                path, &qualified, args, scope, imports, signatures, structs, enums, span,
+            );
+        }
         if qualified[0] == "path" {
             return lower_path_builtin(
                 path, &qualified, args, scope, imports, signatures, structs, enums, span,

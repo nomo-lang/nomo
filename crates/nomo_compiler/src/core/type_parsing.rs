@@ -30,6 +30,10 @@ pub(super) fn is_opaque_handle_struct(item: &StructType) -> bool {
     item.package == OPAQUE_HANDLE_STRUCT_PACKAGE
 }
 
+pub(super) fn is_task_runtime_opaque_struct(item: &StructType) -> bool {
+    item.package == "std.task" && matches!(item.name.as_str(), "Task" | "TaskContext")
+}
+
 pub(super) fn parse_non_void_type(
     type_ref: &crate::ast::TypeRef,
     structs: &HashMap<String, StructType>,
@@ -69,6 +73,21 @@ pub(super) fn parse_value_type_with_names(
             let return_type =
                 parse_value_type_with_names(return_ref, struct_names, enum_names, type_params)?;
             Some(ValueType::ExternCallback {
+                params,
+                return_type: Box::new(return_type),
+            })
+        }
+        [name] if name == crate::ast::TASK_CALLBACK_TYPE_PATH => {
+            let (return_ref, param_refs) = type_ref.args.split_last()?;
+            let params = param_refs
+                .iter()
+                .map(|param| {
+                    parse_value_type_with_names(param, struct_names, enum_names, type_params)
+                })
+                .collect::<Option<Vec<_>>>()?;
+            let return_type =
+                parse_value_type_with_names(return_ref, struct_names, enum_names, type_params)?;
+            Some(ValueType::TaskCallback {
                 params,
                 return_type: Box::new(return_type),
             })

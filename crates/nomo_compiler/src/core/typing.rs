@@ -53,6 +53,11 @@ pub(super) fn ensure_supported_value_type(
             span,
             "extern C callback types may only appear as parameters of extern C functions",
         )),
+        ValueType::TaskCallback { .. } => Err(type_mismatch(
+            path,
+            span,
+            "task worker types may only appear in the canonical `std.task.spawn` parameter",
+        )),
         ValueType::Struct(_, args) | ValueType::Enum(_, args) => {
             for arg in args {
                 ensure_supported_value_type(path, arg, span)?;
@@ -519,6 +524,7 @@ pub(super) fn value_type_key_part(value_type: &ValueType) -> String {
                 .join("_"),
             value_type_key_part(return_type)
         ),
+        ValueType::TaskCallback { .. } => "task_worker".to_string(),
         ValueType::Int => "i64".to_string(),
         ValueType::I32 => "i32".to_string(),
         ValueType::U32 => "u32".to_string(),

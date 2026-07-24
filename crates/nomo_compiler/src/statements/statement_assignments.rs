@@ -109,6 +109,17 @@ pub(super) fn lower_assign_stmt(
             let struct_type = structs
                 .get(struct_name)
                 .expect("struct binding must refer to a known struct");
+            if is_task_runtime_opaque_struct(struct_type) {
+                return Err(Diagnostic::new(
+                    "E0820",
+                    format!("runtime-owned task type `{struct_name}` does not expose its fields"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
             let Some(field_type) = struct_type
                 .fields
                 .iter()

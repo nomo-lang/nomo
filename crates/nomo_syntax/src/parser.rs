@@ -169,6 +169,11 @@ impl Parser<'_> {
         if matches!(self.peek().kind, TokenKind::Extern) {
             return self.parse_extern_c_callback_type_ref();
         }
+        if matches!(&self.peek().kind, TokenKind::Ident(name) if name == "task")
+            && matches!(self.peek_n(1).kind, TokenKind::Fn)
+        {
+            return self.parse_task_callback_type_ref();
+        }
         if matches!(self.peek().kind, TokenKind::Void) {
             self.advance();
             return Ok(TypeRef {
@@ -219,6 +224,51 @@ impl Parser<'_> {
         args.push(self.parse_type_ref()?);
         Ok(TypeRef {
             path: vec![crate::ast::EXTERN_C_CALLBACK_TYPE_PATH.to_string()],
+            args,
+        })
+    }
+
+    fn parse_task_callback_type_ref(&mut self) -> Result<TypeRef, Diagnostic> {
+        match self.peek().kind.clone() {
+            TokenKind::Ident(name) if name == "task" => self.advance(),
+            _ => return Err(self.error("E0820", "expected `task`", 1)),
+        }
+        self.expect_kind(TokenKind::Fn, "E0820", "expected `fn` in task worker type")?;
+        self.expect_kind(
+            TokenKind::LParen,
+            "E0820",
+            "expected `(` before task worker parameter types",
+        )?;
+        let mut args = Vec::new();
+        if !matches!(self.peek().kind, TokenKind::RParen) {
+            loop {
+                args.push(self.parse_type_ref()?);
+                match self.peek().kind {
+                    TokenKind::Comma => self.advance(),
+                    TokenKind::RParen => break,
+                    _ => {
+                        return Err(self.error(
+                            "E0820",
+                            "expected `,` or `)` after task worker parameter type",
+                            self.peek().length(),
+                        ));
+                    }
+                }
+            }
+        }
+        self.expect_kind(
+            TokenKind::RParen,
+            "E0820",
+            "expected `)` after task worker parameter types",
+        )?;
+        self.expect_kind(
+            TokenKind::Arrow,
+            "E0820",
+            "expected `->` in task worker type",
+        )?;
+        args.push(self.parse_type_ref()?);
+        Ok(TypeRef {
+            path: vec![crate::ast::TASK_CALLBACK_TYPE_PATH.to_string()],
             args,
         })
     }

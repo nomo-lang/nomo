@@ -70,9 +70,11 @@ jobs:
           cargo test -p nomo --test cli_project
           structured_json_
           --locked
+      - name: Run isolated native task lifecycle
+        run: cargo run --locked --bin nomo -- run examples/isolated_tasks
 
-  macos-json-runtime:
-    name: Run structured JSON runtime on macOS
+  macos-host-runtime:
+    name: Run structured JSON and task runtimes on macOS
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
@@ -82,3 +84,5 @@ jobs:
           cargo test -p nomo --test cli_project
           structured_json_
           --locked
+      - name: Run isolated native task lifecycle
+        run: cargo run --locked --bin nomo -- run examples/isolated_tasks

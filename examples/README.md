@@ -27,11 +27,13 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `std_path`: `std.path` join, component extraction, normalization, and absolute checks
 - `std_process`: `std.process` spawn, status, exec, and captured output helpers
 - `process_controlled`: shell-free long-lived child process with queued stdin and multiplexed stdout/stderr events
+- `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
 - `structured_json`: bounded structured JSON construction and nested OpenAI-compatible response traversal
 - `std_http`: `std.http` blocking GET and POST client helpers
 - `openai_compatible`: bounded HTTPS POST with headers against an OpenAI-compatible endpoint
+- `concurrent_openai_compatible`: two isolated native workers issuing bounded OpenAI-compatible HTTPS requests through the task-safe HTTP client
 - `openai_streaming`: bounded HTTPS streaming plus incremental OpenAI-compatible SSE events
 - `nomo_test_basic`: package-level `#[test]` functions and `std.testing` helpers
 - `nomo_doc_basic`: Rust-style doc comments consumed by `nomo doc`

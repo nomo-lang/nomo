@@ -1,0 +1,52 @@
+//! Isolated native tasks with bounded string message passing.
+package std.task
+
+import std.task
+
+/// Opaque handle for one isolated native task.
+pub struct Task {
+    handle: u64
+}
+
+/// Read-only context made available to a task worker.
+pub struct TaskContext {
+    handle: u64
+}
+
+/// Stable error returned by task lifecycle operations.
+pub struct TaskError {
+    pub code: string
+    pub message: string
+}
+
+/// Terminal or polling outcome returned by `join`.
+pub enum TaskJoin {
+    Completed(string)
+    Cancelled
+    Timeout
+}
+
+/// Starts a non-capturing top-level worker with one deeply copied string input.
+pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
+    return task.spawn(worker, input)
+}
+
+/// Reports whether cancellation has been requested for the current worker.
+pub fn is_cancelled(context: TaskContext) -> bool {
+    return task.is_cancelled(context)
+}
+
+/// Waits up to `timeout_millis` for one terminal task outcome.
+pub fn join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError> {
+    return task.join(task_value, timeout_millis)
+}
+
+/// Cooperatively requests task cancellation.
+pub fn cancel(task_value: Task) -> Result<void, TaskError> {
+    return task.cancel(task_value)
+}
+
+/// Releases a finished task handle.
+pub fn close(task_value: Task) -> Result<void, TaskError> {
+    return task.close(task_value)
+}

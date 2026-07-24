@@ -148,6 +148,16 @@ fn type_params_with_bounds(params: &[String], bounds: &[TypeParamBound]) -> Stri
 }
 
 pub(super) fn type_ref(type_ref_value: &TypeRef) -> String {
+    if type_ref_value.path.as_slice() == [nomo_syntax::ast::TASK_CALLBACK_TYPE_PATH] {
+        let Some((return_type, params)) = type_ref_value.args.split_last() else {
+            return "task fn() -> void".to_string();
+        };
+        return format!(
+            "task fn({}) -> {}",
+            params.iter().map(type_ref).collect::<Vec<_>>().join(", "),
+            type_ref(return_type)
+        );
+    }
     let base = type_ref_value.path.join(".");
     if type_ref_value.args.is_empty() {
         base
@@ -166,4 +176,32 @@ pub(super) fn type_ref(type_ref_value: &TypeRef) -> String {
 
 fn visibility_prefix(public: bool) -> &'static str {
     if public { "pub " } else { "" }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn renders_task_worker_type_syntax() {
+        let worker = TypeRef {
+            path: vec![nomo_syntax::ast::TASK_CALLBACK_TYPE_PATH.to_string()],
+            args: vec![
+                TypeRef {
+                    path: vec!["TaskContext".to_string()],
+                    args: Vec::new(),
+                },
+                TypeRef {
+                    path: vec!["string".to_string()],
+                    args: Vec::new(),
+                },
+                TypeRef {
+                    path: vec!["string".to_string()],
+                    args: Vec::new(),
+                },
+            ],
+        };
+
+        assert_eq!(type_ref(&worker), "task fn(TaskContext, string) -> string");
+    }
 }

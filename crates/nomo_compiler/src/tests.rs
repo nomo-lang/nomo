@@ -32,6 +32,8 @@ mod tests_std_io_string_path;
 mod tests_std_json_http_regex;
 #[path = "tests_std_process_debug_crypto.rs"]
 mod tests_std_process_debug_crypto;
+#[path = "tests_std_task.rs"]
+mod tests_std_task;
 
 fn parse_inline(source: &str) -> Result<Program, Diagnostic> {
     let path = Path::new("main.nomo");

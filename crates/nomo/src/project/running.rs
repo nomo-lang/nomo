@@ -55,6 +55,7 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     fs::create_dir_all(&bin_dir).map_err(|err| BuildError::Message(err.to_string()))?;
 
     let c_path = c_dir.join("main.c");
+    let uses_native_tasks = super::build::generated_c_uses_native_tasks(&c);
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
     let bin_path = bin_dir.join(stem);
     let target = TargetTriple::host().map_err(BuildError::Message)?;
@@ -69,6 +70,7 @@ pub fn run_standalone_script_with_args_and_diagnostics(
         &bin_path,
         &FfiLinkMetadata::default(),
         &target,
+        uses_native_tasks,
     );
     let output = command.output().map_err(|err| {
         BuildError::Message(format!(

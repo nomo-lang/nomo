@@ -259,6 +259,10 @@ pub enum ValueType {
         params: Vec<ValueType>,
         return_type: Box<ValueType>,
     },
+    TaskCallback {
+        params: Vec<ValueType>,
+        return_type: Box<ValueType>,
+    },
     Int,
     I32,
     U32,
@@ -285,6 +289,7 @@ impl ValueType {
             ValueType::BorrowedHandle(name) => name,
             ValueType::Nullable(_) => "Nullable",
             ValueType::ExternCallback { .. } => "extern C callback",
+            ValueType::TaskCallback { .. } => "task worker",
             ValueType::Int => "i64",
             ValueType::I32 => "i32",
             ValueType::U32 => "u32",

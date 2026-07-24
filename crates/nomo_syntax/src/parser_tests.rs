@@ -843,6 +843,27 @@ fn parses_extern_c_callback_parameter_type() {
 }
 
 #[test]
+fn parses_task_worker_parameter_type_without_reserving_task_as_a_keyword() {
+    let source = "package std.task\n\nstruct TaskContext {\n    handle: u64\n}\n\nfn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> void {\n    task.spawn(worker, input)\n}\n";
+    let tokens = lex(Path::new("task.nomo"), source).unwrap();
+    let ast = parse(Path::new("task.nomo"), &tokens).unwrap();
+
+    let worker = &ast.functions[0].params[0].type_ref;
+    assert_eq!(worker.path, [crate::ast::TASK_CALLBACK_TYPE_PATH]);
+    assert_eq!(worker.args.len(), 3);
+    assert_eq!(worker.args[0].path, ["TaskContext"]);
+    assert_eq!(worker.args[1].path, ["string"]);
+    assert_eq!(worker.args[2].path, ["string"]);
+    assert!(matches!(
+        &ast.functions[0].body[0],
+        crate::ast::Stmt::Expr {
+            expr: crate::ast::Expr::Call { callee, .. },
+            ..
+        } if callee == &["task", "spawn"]
+    ));
+}
+
+#[test]
 fn parses_repr_c_struct_attribute() {
     let source = "package app.main\n\n#[repr(C)]\nstruct Header {\n    tag: i32\n    value: u64\n}\n\nfn main() -> void {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

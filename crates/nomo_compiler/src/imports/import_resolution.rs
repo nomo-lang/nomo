@@ -303,6 +303,9 @@ pub(super) fn resolve_specific_value_builtin(
         "exit" if imports.iter().any(|item| item == "std.process.exit") => {
             vec!["process".to_string(), "exit".to_string()]
         }
+        "spawn" if imports.iter().any(|item| item == "std.task.spawn") => {
+            vec!["task".to_string(), "spawn".to_string()]
+        }
         "spawn" if imports.iter().any(|item| item == "std.process.spawn") => {
             vec!["process".to_string(), "spawn".to_string()]
         }
@@ -335,6 +338,18 @@ pub(super) fn resolve_specific_value_builtin(
         }
         "close_child" if imports.iter().any(|item| item == "std.process.close_child") => {
             vec!["process".to_string(), "close_child".to_string()]
+        }
+        "is_cancelled" if imports.iter().any(|item| item == "std.task.is_cancelled") => {
+            vec!["task".to_string(), "is_cancelled".to_string()]
+        }
+        "join" if imports.iter().any(|item| item == "std.task.join") => {
+            vec!["task".to_string(), "join".to_string()]
+        }
+        "cancel" if imports.iter().any(|item| item == "std.task.cancel") => {
+            vec!["task".to_string(), "cancel".to_string()]
+        }
+        "close" if imports.iter().any(|item| item == "std.task.close") => {
+            vec!["task".to_string(), "close".to_string()]
         }
         "assert" if imports.iter().any(|item| item == "std.testing.assert") => {
             vec!["testing".to_string(), "assert".to_string()]

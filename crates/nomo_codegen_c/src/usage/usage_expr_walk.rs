@@ -449,6 +449,18 @@ pub(super) fn expr_is_http_client_call(expr: &ValueExpr) -> bool {
     )
 }
 
+pub(super) fn expr_is_task_call(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. }
+            if name == BUILTIN_TASK_SPAWN_EXPR
+                || name == BUILTIN_TASK_IS_CANCELLED_EXPR
+                || name == BUILTIN_TASK_JOIN_EXPR
+                || name == BUILTIN_TASK_CANCEL_EXPR
+                || name == BUILTIN_TASK_CLOSE_EXPR
+    )
+}
+
 pub(super) fn expr_is_http_stream_call(expr: &ValueExpr) -> bool {
     matches!(
         expr,

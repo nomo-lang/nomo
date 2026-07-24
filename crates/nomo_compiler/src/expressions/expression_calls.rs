@@ -275,6 +275,19 @@ pub(super) fn lower_call_value_expr(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_task_builtin_call(callee) {
+                require_import(path, imports, span, "std.task", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "task builtins do not accept explicit type arguments",
+                    ));
+                }
+                return lower_task_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if is_path_builtin_call(callee) {
                 require_import(path, imports, span, "std.path", &callee.join("."))?;
                 if !type_args.is_empty() {

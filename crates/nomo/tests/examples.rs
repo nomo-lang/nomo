@@ -1120,6 +1120,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "prelude_variants" => "prelude variants ok\n",
         "prelude_shadow" => "shadow ok / qualified ok\n",
         "primitives" => "primitives ok\n",
+        "process_controlled" => "set NOMO_PROCESS_FIXTURE to a line-oriented executable\n",
         "pub_visibility" => "pub visibility ok\n",
         "read_file" => "file ok\n",
         "result_chain" => "result ok\n",

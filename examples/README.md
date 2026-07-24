@@ -26,6 +26,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `file_handle`: `std.fs.open`, `File.close`, and `defer`
 - `std_path`: `std.path` join, component extraction, normalization, and absolute checks
 - `std_process`: `std.process` spawn, status, exec, and captured output helpers
+- `process_controlled`: shell-free long-lived child process with queued stdin and multiplexed stdout/stderr events
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
 - `std_http`: `std.http` blocking GET and POST client helpers

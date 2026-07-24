@@ -60,8 +60,8 @@ jobs:
           cargo test -p nomo --test cli_project
           structured_http_stream_
           --locked
-      - name: Run shell-free controlled process stdio
+      - name: Run shell-free controlled process stdio and safety gates
         run: >-
           cargo test -p nomo --test cli_project
-          nomo_run_executes_controlled_process_stdio_without_a_shell
-          --locked -- --exact
+          controlled_process
+          --locked

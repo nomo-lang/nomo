@@ -828,12 +828,13 @@ mod tests {
         write_source(&main, main_source);
         write_source(
             &dep_module,
-            "package local_utils.path\n\n/// Joins values.\npub fn join(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn hidden() -> i64 {\n    return 1\n}\n",
+            "package utils.path\n\n/// Joins values.\npub fn join(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn hidden() -> i64 {\n    return 1\n}\n",
         );
         let project = Project {
             main: main.clone(),
             root: project_root,
             name: "hello".to_string(),
+            module_root: "hello".to_string(),
             workspace_root: None,
         };
 
@@ -914,6 +915,7 @@ mod tests {
             main: project_root.join("src/main.nomo"),
             root: project_root,
             name: "hello".to_string(),
+            module_root: "hello".to_string(),
             workspace_root: None,
         };
 
@@ -1513,6 +1515,7 @@ mod tests {
             main: root.join("src/main.nomo"),
             root,
             name: "main".to_string(),
+            module_root: "main".to_string(),
             workspace_root: None,
         }
     }

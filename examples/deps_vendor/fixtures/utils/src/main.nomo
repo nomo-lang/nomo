@@ -1,4 +1,4 @@
-package local_utils.main
+package utils.main
 
 fn main() -> void {
 }

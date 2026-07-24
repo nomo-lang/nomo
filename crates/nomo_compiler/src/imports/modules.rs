@@ -1,5 +1,11 @@
 use super::*;
 
+struct ResolvedImportedModule<'a> {
+    source_root: &'a Path,
+    module_path: Vec<String>,
+    expected_package: Vec<String>,
+}
+
 pub(super) fn merge_imported_public_api(
     importer_path: &Path,
     ast: &mut SourceFile,
@@ -14,7 +20,11 @@ pub(super) fn merge_imported_public_api(
         if import.first().is_some_and(|root| root == "std") {
             continue;
         }
-        let Some((source_root, module_path)) = resolve_imported_module(
+        let Some(ResolvedImportedModule {
+            source_root,
+            module_path,
+            expected_package,
+        }) = resolve_imported_module(
             importer_path,
             &import,
             local_source_root,
@@ -60,7 +70,7 @@ pub(super) fn merge_imported_public_api(
             &module_ast,
             "imported modules cannot contain top-level script statements",
         )?;
-        if module_ast.package != import {
+        if module_ast.package != expected_package {
             return Err(Diagnostic::new(
                 "E0904",
                 format!(
@@ -122,7 +132,7 @@ fn resolve_imported_module<'a>(
     local_source_root: Option<&'a Path>,
     local_import_root: Option<&str>,
     external_modules: &'a [ExternalModule],
-) -> Result<Option<(&'a Path, Vec<String>)>, Diagnostic> {
+) -> Result<Option<ResolvedImportedModule<'a>>, Diagnostic> {
     let Some(import_root) = import.first() else {
         return Ok(None);
     };
@@ -130,18 +140,26 @@ fn resolve_imported_module<'a>(
         let Some(source_root) = local_source_root else {
             return Ok(None);
         };
-        return Ok(Some((source_root, import[1..].to_vec())));
+        return Ok(Some(ResolvedImportedModule {
+            source_root,
+            module_path: import[1..].to_vec(),
+            expected_package: import.to_vec(),
+        }));
     }
-    if let Some(module) = external_modules
-        .iter()
-        .find(|module| module.import_root == *import_root)
-    {
-        return Ok(Some((module.source_root.as_path(), import[1..].to_vec())));
+    if let Some(module) = external_modules.iter().find(|module| {
+        module.import_root == *import_root || module.source_import_root == *import_root
+    }) {
+        let mut expected_package = vec![module.source_import_root.clone()];
+        expected_package.extend(import[1..].iter().cloned());
+        return Ok(Some(ResolvedImportedModule {
+            source_root: module.source_root.as_path(),
+            module_path: import[1..].to_vec(),
+            expected_package,
+        }));
     }
-    if external_modules
-        .iter()
-        .any(|module| module.import_root == *import_root)
-    {
+    if external_modules.iter().any(|module| {
+        module.import_root == *import_root || module.source_import_root == *import_root
+    }) {
         return Ok(None);
     }
     let _ = importer_path;

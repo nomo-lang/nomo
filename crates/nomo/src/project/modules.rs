@@ -12,7 +12,9 @@ use crate::compiler::{
 };
 use crate::diagnostic::Diagnostic;
 use nomo_lockfile::{ResolvedDependency, filter_dependencies_for_target};
-use nomo_manifest::{Dependency, DependencySource, parse_manifest_at_root};
+use nomo_manifest::{
+    Dependency, DependencySource, package_name_to_module_root, parse_manifest_at_root,
+};
 use nomo_resolver::{
     registry_cached_source_root, resolve_registry_source, resolve_registry_version,
 };
@@ -165,8 +167,11 @@ pub fn project_module_context_for_target_with_options(
         }
         if let Some(dep_root) = dependency_module_root(&project.root, &dependency, options.offline)?
         {
+            let source_import_root =
+                package_name_to_module_root(&parse_manifest_at_root(&dep_root)?.package.name)?;
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
+                source_import_root,
                 source_root: dep_root.join("src"),
             });
         }
@@ -188,8 +193,11 @@ fn project_module_context_from_resolved_dependencies(
     let mut modules = Vec::new();
     for dependency in dependencies {
         if let Some(dep_root) = resolved_dependency_module_root(source_base, dependency)? {
+            let source_import_root =
+                package_name_to_module_root(&parse_manifest_at_root(&dep_root)?.package.name)?;
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
+                source_import_root,
                 source_root: dep_root.join("src"),
             });
         }

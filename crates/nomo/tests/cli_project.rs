@@ -1,8 +1,12 @@
+use rcgen::{CertifiedKey, generate_simple_self_signed};
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket as RustUdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
+use std::sync::Arc;
 use std::thread;
 use std::time::{Duration, Instant};
 
@@ -10091,12 +10095,24 @@ fn structured_http_requests_enforce_limits_and_redact_secrets() {
         std::thread::sleep(Duration::from_millis(300));
     });
 
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let tls_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+        )
+        .unwrap();
     let tls_listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let tls_port = tls_listener.local_addr().unwrap().port();
     let tls_server = std::thread::spawn(move || {
-        let (mut stream, _) = tls_listener.accept().unwrap();
-        let mut handshake = [0_u8; 256];
-        let _ = stream.read(&mut handshake);
+        let (stream, _) = tls_listener.accept().unwrap();
+        let connection = ServerConnection::new(Arc::new(tls_config)).unwrap();
+        let mut stream = StreamOwned::new(connection, stream);
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request);
     });
 
     let root = temp_test_root("structured-http-limits");
@@ -10189,7 +10205,7 @@ fn tls_failure() -> void {
     })
     let request: HttpRequest = HttpRequest {
         method: "POST",
-        url: "https://localhost:__TLS_PORT__/failure?api_key=query-secret",
+        url: "https://127.0.0.1:__TLS_PORT__/failure?api_key=query-secret",
         headers: headers,
         body: "tls-body-secret",
         timeout_millis: 1000,

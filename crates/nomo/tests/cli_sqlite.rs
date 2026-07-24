@@ -108,7 +108,7 @@ fn main() -> Result<void, SqliteError> {
     .unwrap();
     let second = run_nomo(&root);
     assert_success(&second);
-    assert_eq!(String::from_utf8_lossy(&second.stdout), "persisted-state\n");
+    assert_eq!(normalized_text(&second.stdout), "persisted-state\n");
     assert!(second.stderr.is_empty(), "{}", output_text(&second));
 
     fs::remove_dir_all(root).unwrap();
@@ -326,7 +326,7 @@ fn main() -> Result<void, SqliteError> {
     let output = run_nomo(&root);
     assert_success(&output);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        normalized_text(&output.stdout),
         concat!(
             "inserted 1 1\n",
             "stored row\n",
@@ -521,7 +521,7 @@ fn main() -> Result<void, SqliteError> {
     let output = run_nomo(&root);
     assert_success(&output);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        normalized_text(&output.stdout),
         concat!(
             "timeout invalid_request\n",
             "path invalid_request\n",
@@ -612,7 +612,7 @@ fn main() -> Result<void, SqliteError> {
     let output = run_nomo(&root);
     assert_success(&output);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        normalized_text(&output.stdout),
         concat!(
             "database-limit limit\n",
             "query-limit limit\n",
@@ -771,7 +771,7 @@ fn main() -> Result<void, SqliteError> {
     let output = run_nomo(&root);
     assert_success(&output);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        normalized_text(&output.stdout),
         concat!(
             "constraint constraint\n",
             "busy busy\n",
@@ -825,7 +825,7 @@ fn main() -> Result<void, SqliteError> {
     assert_success(&cleanup);
     assert!(cleanup.stdout.is_empty(), "{}", output_text(&cleanup));
     assert_eq!(
-        String::from_utf8_lossy(&cleanup.stderr),
+        normalized_text(&cleanup.stderr),
         "nomo: closed 1 SQLite query handle(s) and 1 database handle(s) at shutdown\n"
     );
     let cleanup_text = output_text(&cleanup);
@@ -1097,7 +1097,7 @@ fn main() -> Result<void, SqliteError> {
     let output = run_nomo(&root);
     assert_success(&output);
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        normalized_text(&output.stdout),
         concat!(
             "timeout-over invalid_request\n",
             "path-exact open\n",
@@ -1229,10 +1229,7 @@ fn sqlite_agent_memory_example_persists_checkpoint_for_a_second_process() {
         .output()
         .unwrap();
     assert_success(&write);
-    assert_eq!(
-        String::from_utf8_lossy(&write.stdout),
-        "checkpoint-written 1\n"
-    );
+    assert_eq!(normalized_text(&write.stdout), "checkpoint-written 1\n");
     assert!(write.stderr.is_empty(), "{}", output_text(&write));
     assert!(database.is_file());
 
@@ -1246,7 +1243,7 @@ fn sqlite_agent_memory_example_persists_checkpoint_for_a_second_process() {
         .unwrap();
     assert_success(&read);
     assert_eq!(
-        String::from_utf8_lossy(&read.stdout),
+        normalized_text(&read.stdout),
         concat!(
             "request {\"messages\":[{\"role\":\"user\",\"content\":\"hello\"}]}\n",
             "checkpoint {\"next_tool\":\"search\",\"attempt\":2}\n"
@@ -1304,7 +1301,7 @@ fn main() -> void {
         .unwrap();
     assert_success(&tested);
     assert!(
-        String::from_utf8_lossy(&tested.stdout)
+        normalized_text(&tested.stdout)
             .contains("ok sqlite_fixture.main.sqlite_runtime_is_available"),
         "{}",
         output_text(&tested)
@@ -1319,7 +1316,7 @@ fn main() -> void {
         .output()
         .unwrap();
     assert_success(&documented);
-    let docs = String::from_utf8_lossy(&documented.stdout);
+    let docs = normalized_text(&documented.stdout);
     assert!(docs.contains("\"name\":\"std.sqlite\""), "{docs}");
     assert!(docs.contains("\"name\":\"SqliteDatabase\""), "{docs}");
     assert!(docs.contains("\"name\":\"open_memory\""), "{docs}");
@@ -1428,9 +1425,13 @@ fn assert_success(output: &Output) {
 fn output_text(output: &Output) -> String {
     format!(
         "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        normalized_text(&output.stdout),
+        normalized_text(&output.stderr)
     )
+}
+
+fn normalized_text(bytes: &[u8]) -> String {
+    String::from_utf8_lossy(bytes).replace("\r\n", "\n")
 }
 
 fn sha256_file(path: &Path) -> String {

@@ -325,7 +325,7 @@ collections.set_remove(set: StringSet, value: string) -> StringSet
 
 ## Processes And Networking
 
-`std.process` provides synchronous process helpers:
+`std.process` retains these legacy blocking shell helpers:
 
 ```nomo
 process.exit(code: i64) -> void
@@ -339,6 +339,82 @@ process.output(command: string) -> Result<ProcessOutput, ProcessError>
 captures stdout and treats a non-zero exit status as an error. `output` captures
 stdout and stderr and returns `Ok(ProcessOutput)` even when the command exits
 non-zero so callers can inspect `status`.
+
+New code that needs a long-lived child or incremental I/O uses the shell-free
+controlled API:
+
+```nomo
+pub struct ProcessEnv {
+    pub name: string
+    pub value: string
+}
+
+pub struct ProcessCommand {
+    pub program: string
+    pub args: Array<string>
+    pub cwd: Option<string>
+    pub env: Array<ProcessEnv>
+    pub inherit_env: bool
+}
+
+pub struct ProcessExit {
+    pub code: i32
+    pub signal: i32
+}
+
+pub struct ProcessControlError {
+    pub code: string
+    pub message: string
+}
+
+pub enum ProcessEvent {
+    StdinFlushed
+    Stdout(string)
+    Stderr(string)
+    Exited(ProcessExit)
+}
+
+process.start(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError>
+process.write_stdin(child: ProcessChild, data: string) -> Result<void, ProcessControlError>
+process.close_stdin(child: ProcessChild) -> Result<void, ProcessControlError>
+process.next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError>
+process.try_wait(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessControlError>
+process.terminate(child: ProcessChild) -> Result<void, ProcessControlError>
+process.close_child(child: ProcessChild) -> void
+```
+
+`start` invokes `program` directly and never a shell. A program containing a
+path separator is resolved directly; a bare name is searched in the final
+child `PATH`. `cwd = None` inherits the current directory. With
+`inherit_env = true`, explicit entries override inherited variables; with
+`false`, only explicit variables and platform-required entries are present.
+Environment names must be non-empty, contain neither `=` nor NUL, and be
+unique (case-insensitively on Windows).
+
+`write_stdin` accepts one non-empty UTF-8 payload of at most 1 MiB. Only one
+payload may be pending. The caller waits for `StdinFlushed` before queuing the
+next payload; a timeout preserves the pending suffix. `close_stdin` is
+idempotent after the payload has flushed and returns `busy` while data remains
+pending.
+
+`next_event` accepts chunk sizes from 4 bytes through 1 MiB and positive
+timeouts through 15 minutes. It preserves ordering independently within
+stdout and stderr, does not split a UTF-8 scalar, and emits `Exited` only after
+both streams reach EOF. Invalid UTF-8 or NUL is a `protocol` error and closes
+the child. After `Exited`, `try_wait`, `terminate`, and `close_child` remain
+safe; another `next_event` returns `invalid_request`.
+
+Call `defer process.close_child(child)` immediately after `start`.
+`close_child` is idempotent and forcibly terminates and reaps a child that is
+still running. `ProcessControlError.code` is one of `invalid_request`, `busy`,
+`spawn`, `io`, `timeout`, `protocol`, or `runtime_unavailable`. Its message and
+default diagnostics never include program, argv, environment, cwd, stdin,
+stdout, or stderr values. Native Unix-like and Windows adapters are owned by
+the toolchain; application code declares no C FFI. Browser WASM rejects this
+controlled API before argument evaluation.
+
+See `examples/process_controlled` for two queued stdin messages and
+multiplexed output/exit handling.
 
 `std.net` provides blocking TCP and UDP helpers:
 

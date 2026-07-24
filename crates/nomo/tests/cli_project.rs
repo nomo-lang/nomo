@@ -9710,6 +9710,10 @@ int main(int argc, char **argv) {
             fwrite(err, 1, sizeof(err), stderr);
             fflush(stderr);
         }
+        fputs("stdout-order:0|1|2", stdout);
+        fflush(stdout);
+        fputs("stderr-order:0|1|2", stderr);
+        fflush(stderr);
         return 0;
     }
     if (strcmp(mode, "split-utf8") == 0) {
@@ -9725,6 +9729,23 @@ int main(int argc, char **argv) {
         fputc(0xff, stdout);
         fflush(stdout);
         nomo_fixture_sleep(2000UL);
+        return 0;
+    }
+    if (strcmp(mode, "secret-output") == 0) {
+        fputs("stdout-secret-token", stdout);
+        fputc(0xff, stdout);
+        fflush(stdout);
+        fputs("stderr-secret-token", stderr);
+        fputc(0xff, stderr);
+        fflush(stderr);
+        nomo_fixture_sleep(2000UL);
+        return 0;
+    }
+    if (strcmp(mode, "environment") == 0) {
+        const char *visible = getenv("VISIBLE");
+        const char *inherited = getenv("NOMO_INHERITED_MARKER");
+        printf("env:%s\n", visible == NULL ? "" : visible);
+        printf("inherited:%s\n", inherited == NULL ? "" : inherited);
         return 0;
     }
 
@@ -9835,6 +9856,23 @@ fn write_message(child: ProcessChild, message: string) -> Result<void, ProcessCo
     return Ok(void)
 }
 
+fn run_inherited_environment(program: string) -> Result<void, ProcessControlError> {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("environment")
+    let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    environment.push(ProcessEnv { name: "VISIBLE", value: "overridden-value" })
+    let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+    let child: ProcessChild = process.start(command)?
+    defer process.close_child(child)
+    process.close_stdin(child)?
+    process.close_stdin(child)?
+    let mut done: bool = false
+    for !done {
+        done = print_event(process.next_event(child, 4096, 5000)?)
+    }
+    return Ok(void)
+}
+
 fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     let mut args: Array<string> = Array.new<string>()
     args.push("echo")
@@ -9857,10 +9895,35 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     write_message(child, "first message\n")?
     write_message(child, "second message\n")?
     process.close_stdin(child)?
+    process.close_stdin(child)?
     let mut done: bool = false
     for !done {
         done = print_event(process.next_event(child, 4096, 5000)?)
     }
+    let final_status: Option<ProcessExit> = process.try_wait(child)?
+    match final_status {
+        Some(status) => {
+            io.println("wait", status.code, status.signal)
+        }
+        None => {
+            io.println("wait missing")
+        }
+    }
+    process.terminate(child)?
+    process.terminate(child)?
+    let after_exit: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 100)
+    match after_exit {
+        Ok(event) => {
+            io.println("after-exit unexpected")
+        }
+        Err(error) => {
+            io.println("after-exit", error.code)
+        }
+    }
+    let copied: ProcessChild = child
+    process.close_child(child)
+    process.close_child(copied)
+    run_inherited_environment(program)?
     return Ok(void)
 }
 
@@ -9899,6 +9962,7 @@ fn main() -> void {
         .arg(&project)
         .env("NOMO_PROCESS_FIXTURE", &fixture_binary)
         .env("NOMO_PROCESS_CWD", &child_cwd)
+        .env("NOMO_INHERITED_MARKER", "parent-value")
         .output()
         .unwrap();
 
@@ -9920,6 +9984,11 @@ fn main() -> void {
         "out:second message\n",
         "err:second message\n",
         "exit 7 0\n",
+        "wait 7 0\n",
+        "after-exit invalid_request\n",
+        "env:overridden-value\n",
+        "inherited:parent-value\n",
+        "exit 0 0\n",
     ] {
         assert!(
             stdout.contains(expected),
@@ -10020,6 +10089,8 @@ fn run_pressure(program: string) -> Result<void, ProcessControlError> {
     process.close_stdin(child)?
     let mut stdout_bytes: u64 = 0
     let mut stderr_bytes: u64 = 0
+    let mut stdout_text: string = ""
+    let mut stderr_text: string = ""
     let mut done: bool = false
     for !done {
         let event: ProcessEvent = process.next_event(child, 4096, 5000)?
@@ -10028,12 +10099,21 @@ fn run_pressure(program: string) -> Result<void, ProcessControlError> {
             }
             ProcessEvent.Stdout(text) => {
                 stdout_bytes += string.len(text)
+                stdout_text = string.concat(stdout_text, text)
             }
             ProcessEvent.Stderr(text) => {
                 stderr_bytes += string.len(text)
+                stderr_text = string.concat(stderr_text, text)
             }
             ProcessEvent.Exited(status) => {
-                io.println("pressure", stdout_bytes, stderr_bytes, status.code)
+                io.println(
+                    "pressure",
+                    stdout_bytes,
+                    stderr_bytes,
+                    string.ends_with(stdout_text, "stdout-order:0|1|2"),
+                    string.ends_with(stderr_text, "stderr-order:0|1|2"),
+                    status.code
+                )
                 done = true
             }
         }
@@ -10100,6 +10180,51 @@ fn run_invalid_utf8(program: string) -> void {
     }
 }
 
+fn run_secret_output(program: string) -> void {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "secret-output"))
+    match started {
+        Ok(child) => {
+            let closed: Result<void, ProcessControlError> = process.close_stdin(child)
+            match closed {
+                Ok(done) => {
+                }
+                Err(error) => {
+                    io.println("secret-output close", error.code, error.message)
+                }
+            }
+            let mut done: bool = false
+            for !done {
+                let next: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+                match next {
+                    Ok(event) => {
+                        match event {
+                            ProcessEvent.StdinFlushed => {
+                            }
+                            ProcessEvent.Stdout(text) => {
+                            }
+                            ProcessEvent.Stderr(text) => {
+                            }
+                            ProcessEvent.Exited(status) => {
+                                io.println("secret-output unexpected")
+                                done = true
+                            }
+                        }
+                    }
+                    Err(error) => {
+                        io.println("secret-output", error.code, error.message)
+                        done = true
+                    }
+                }
+            }
+            process.close_child(child)
+            process.close_child(child)
+        }
+        Err(error) => {
+            io.println("secret-output start", error.code, error.message)
+        }
+    }
+}
+
 fn run_bounds(program: string) -> Result<void, ProcessControlError> {
     let child: ProcessChild = process.start(command(program, "hold"))?
     defer process.close_child(child)
@@ -10121,7 +10246,110 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
             io.println("zero", error.code)
         }
     }
+    let maximum: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 1048576, 10)
+    match maximum {
+        Ok(event) => {
+            io.println("maximum unexpected")
+        }
+        Err(error) => {
+            io.println("maximum", error.code)
+        }
+    }
+    let above: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 1048577, 10)
+    match above {
+        Ok(event) => {
+            io.println("above unexpected")
+        }
+        Err(error) => {
+            io.println("above", error.code)
+        }
+    }
     process.terminate(child)?
+    return Ok(void)
+}
+
+fn run_close_reaps(program: string) -> void {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "hold"))
+    match started {
+        Ok(child) => {
+            let copied: ProcessChild = child
+            process.close_child(child)
+            process.close_child(copied)
+            let stale: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait(copied)
+            match stale {
+                Ok(value) => {
+                    io.println("close-reaped unexpected")
+                }
+                Err(error) => {
+                    io.println("close-reaped", error.code)
+                }
+            }
+        }
+        Err(error) => {
+            io.println("close-reaped start", error.code)
+        }
+    }
+}
+
+fn run_command_secret_errors(program: string) -> void {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("argv-secret-token")
+    let mut invalid_environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    invalid_environment.push(ProcessEnv { name: "BAD=env-name-secret-token", value: "env-value-secret-token" })
+    let invalid: ProcessCommand = ProcessCommand {
+        program: program,
+        args: args,
+        cwd: Some("cwd-secret-token"),
+        env: invalid_environment,
+        inherit_env: true
+    }
+    let invalid_started: Result<ProcessChild, ProcessControlError> = process.start(invalid)
+    match invalid_started {
+        Ok(child) => {
+            io.println("invalid-name unexpected")
+            process.close_child(child)
+        }
+        Err(error) => {
+            io.println("invalid-name", error.code, error.message)
+        }
+    }
+
+    let duplicate_args: Array<string> = Array.new<string>()
+    let mut duplicate_environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    duplicate_environment.push(ProcessEnv { name: "DUPLICATE_SECRET", value: "first-secret-token" })
+    duplicate_environment.push(ProcessEnv { name: "DUPLICATE_SECRET", value: "second-secret-token" })
+    let duplicate: ProcessCommand = ProcessCommand {
+        program: program,
+        args: duplicate_args,
+        cwd: None,
+        env: duplicate_environment,
+        inherit_env: true
+    }
+    let duplicate_started: Result<ProcessChild, ProcessControlError> = process.start(duplicate)
+    match duplicate_started {
+        Ok(child) => {
+            io.println("duplicate unexpected")
+            process.close_child(child)
+        }
+        Err(error) => {
+            io.println("duplicate", error.code, error.message)
+        }
+    }
+}
+
+fn run_stdin_secret_error(program: string) -> Result<void, ProcessControlError> {
+    let child: ProcessChild = process.start(command(program, "hold"))?
+    defer process.close_child(child)
+    process.close_stdin(child)?
+    let rejected: Result<void, ProcessControlError> = process.write_stdin(child, "stdin-secret-token")
+    match rejected {
+        Ok(done) => {
+            io.println("stdin-secret unexpected")
+        }
+        Err(error) => {
+            io.println("stdin-secret", error.code, error.message)
+        }
+    }
     return Ok(void)
 }
 
@@ -10147,7 +10375,11 @@ fn main() -> void {
             report_void("pressure-run", run_pressure(program))
             report_void("utf8-run", run_split_utf8(program))
             run_invalid_utf8(program)
+            run_secret_output(program)
             report_void("bounds-run", run_bounds(program))
+            run_close_reaps(program)
+            run_command_secret_errors(program)
+            report_void("stdin-secret-run", run_stdin_secret_error(program))
         }
         None => {
             io.println("missing fixture")
@@ -10194,15 +10426,23 @@ fn main() -> void {
         "too-large invalid_request\n",
         "terminate idempotent\n",
         "timeout-run ok\n",
-        "pressure 262144 262144 0\n",
+        "pressure 262162 262162 true true 0\n",
         "pressure-run ok\n",
         utf8_summary,
         "utf8-run ok\n",
         "protocol protocol\n",
         "stale invalid_request\n",
+        "secret-output protocol process output is not valid supported text\n",
         "small invalid_request\n",
         "zero invalid_request\n",
+        "maximum timeout\n",
+        "above invalid_request\n",
         "bounds-run ok\n",
+        "close-reaped invalid_request\n",
+        "invalid-name invalid_request invalid process command\n",
+        "duplicate invalid_request invalid process command\n",
+        "stdin-secret invalid_request process stdin is closed\n",
+        "stdin-secret-run ok\n",
         "missing spawn failed to start process\n",
     ] {
         assert!(
@@ -10211,7 +10451,25 @@ fn main() -> void {
         );
     }
     assert!(!stdout.contains("unexpected"), "{stdout}");
-    assert!(!stdout.contains("missing-program-secret-token"), "{stdout}");
+    for secret in [
+        "missing-program-secret-token",
+        "argv-secret-token",
+        "env-name-secret-token",
+        "env-value-secret-token",
+        "cwd-secret-token",
+        "first-secret-token",
+        "second-secret-token",
+        "stdin-secret-token",
+        "stdout-secret-token",
+        "stderr-secret-token",
+    ] {
+        assert!(!stdout.contains(secret), "leaked {secret:?} in:\n{stdout}");
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains(secret),
+            "leaked {secret:?} in stderr:\n{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
     assert!(
         output.stderr.is_empty(),
         "{}",

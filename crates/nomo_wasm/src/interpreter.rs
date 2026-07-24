@@ -1,10 +1,11 @@
 use nomo_ir::{
-    BinaryOp, DeferredCall, JsonOperation, LoopKind, MathBinaryFunction, MathUnaryFunction,
-    NumBinaryFunction, Program, Statement, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, JsonOperation, JsonRpcOperation, LoopKind, MathBinaryFunction,
+    MathUnaryFunction, NumBinaryFunction, Program, Statement, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::HashMap;
 
 use crate::json::{self, JsonKind, JsonNodeValue};
+use crate::jsonrpc::{self, MessageKind};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionLimits {
@@ -657,10 +658,44 @@ impl<'a> Interpreter<'a> {
                 let message = self.eval_expr(expr)?.display();
                 Err(RuntimeError::runtime(format!("panic: {message}")))
             }
-            Statement::LetIf { .. }
-            | Statement::LetMatch { .. }
-            | Statement::QuestionLet { .. }
-            | Statement::QuestionReturn { .. } => Err(RuntimeError::runtime(
+            Statement::QuestionLet {
+                carrier,
+                name,
+                value_type,
+                result_expr,
+                ..
+            } => {
+                let value = self.eval_expr(result_expr)?;
+                let Value::Enum {
+                    variant, payload, ..
+                } = &value
+                else {
+                    return Err(RuntimeError::runtime(
+                        "question operand is not an Option or Result",
+                    ));
+                };
+                let (success, early) = match carrier {
+                    nomo_ir::QuestionCarrier::Result => ("Ok", "Err"),
+                    nomo_ir::QuestionCarrier::Option => ("Some", "None"),
+                };
+                if variant == early {
+                    return Ok(Signal::Return(value));
+                }
+                if variant != success {
+                    return Err(RuntimeError::runtime("question carrier variant is invalid"));
+                }
+                let payload = payload
+                    .as_deref()
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::runtime("question success has no payload"))?
+                    .coerce(value_type)?;
+                self.current_frame_mut()?.insert(name.clone(), payload);
+                Ok(Signal::Next)
+            }
+            Statement::QuestionReturn { result_expr, .. } => {
+                Ok(Signal::Return(self.eval_expr(result_expr)?))
+            }
+            Statement::LetIf { .. } | Statement::LetMatch { .. } => Err(RuntimeError::runtime(
                 "this control-flow form is not implemented by the browser interpreter yet",
             )),
         }
@@ -883,6 +918,7 @@ impl<'a> Interpreter<'a> {
             ValueExpr::JsonStructured { operation, args } => {
                 self.eval_json_structured(*operation, args)
             }
+            ValueExpr::JsonRpc { operation, args } => self.eval_jsonrpc(*operation, args),
             ValueExpr::ArrayNew { .. } => Ok(Value::Array(Vec::new())),
             ValueExpr::ArrayLen { array } => match self.eval_expr(array)? {
                 Value::Array(values) => Ok(Value::U64(values.len() as u64)),
@@ -1331,6 +1367,109 @@ impl<'a> Interpreter<'a> {
         }
     }
 
+    fn eval_jsonrpc(
+        &mut self,
+        operation: JsonRpcOperation,
+        args: &[ValueExpr],
+    ) -> RuntimeResult<Value> {
+        let result = match operation {
+            JsonRpcOperation::Decoder => {
+                let Value::U64(limit) = self.eval_expr(&args[0])? else {
+                    return Err(RuntimeError::runtime("expected a u64 JSON-RPC limit"));
+                };
+                jsonrpc::decoder(limit)
+                    .map(jsonrpc_decoder_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Feed => {
+                let decoder = self.eval_expr(&args[0])?;
+                let decoder = jsonrpc_decoder_parts(&decoder)?;
+                let chunk = self.eval_expr(&args[1])?.as_string()?.to_string();
+                jsonrpc::feed(decoder, &chunk)
+                    .map(jsonrpc_batch_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Finish => {
+                let decoder = self.eval_expr(&args[0])?;
+                let decoder = jsonrpc_decoder_parts(&decoder)?;
+                jsonrpc::finish(&decoder)
+                    .map(|()| Value::Void)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Parse => {
+                let value = self.eval_expr(&args[0])?;
+                let raw = json_raw(&value)?.to_string();
+                let Value::U64(limit) = self.eval_expr(&args[1])? else {
+                    return Err(RuntimeError::runtime("expected a u64 JSON-RPC limit"));
+                };
+                jsonrpc::parse(&raw, limit)
+                    .map(jsonrpc_message_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Encode => {
+                let message = self.eval_expr(&args[0])?;
+                let raw = jsonrpc_raw(&message)?.to_string();
+                let Value::U64(limit) = self.eval_expr(&args[1])? else {
+                    return Err(RuntimeError::runtime("expected a u64 JSON-RPC limit"));
+                };
+                jsonrpc::encode(&raw, limit)
+                    .map(Value::String)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Value => {
+                let message = self.eval_expr(&args[0])?;
+                return Ok(json_value(jsonrpc_raw(&message)?.to_string()));
+            }
+            JsonRpcOperation::Kind => {
+                let message = self.eval_expr(&args[0])?;
+                return jsonrpc::kind(jsonrpc_raw(&message)?)
+                    .map(jsonrpc_kind_value)
+                    .map_err(|error| RuntimeError::runtime(error.message));
+            }
+            JsonRpcOperation::Request => {
+                let id = self.eval_expr(&args[0])?;
+                let id = json_raw(&id)?.to_string();
+                let method = self.eval_expr(&args[1])?.as_string()?.to_string();
+                let params = self.eval_expr(&args[2])?;
+                let params = optional_json_raw(&params)?;
+                jsonrpc::request(&id, &method, params.as_deref())
+                    .map(jsonrpc_message_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Notification => {
+                let method = self.eval_expr(&args[0])?.as_string()?.to_string();
+                let params = self.eval_expr(&args[1])?;
+                let params = optional_json_raw(&params)?;
+                jsonrpc::notification(&method, params.as_deref())
+                    .map(jsonrpc_message_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Success => {
+                let id = self.eval_expr(&args[0])?;
+                let id = json_raw(&id)?.to_string();
+                let value = self.eval_expr(&args[1])?;
+                let value = json_raw(&value)?.to_string();
+                jsonrpc::success(&id, &value)
+                    .map(jsonrpc_message_value)
+                    .map_err(jsonrpc_error_value)
+            }
+            JsonRpcOperation::Failure => {
+                let id = self.eval_expr(&args[0])?;
+                let id = json_raw(&id)?.to_string();
+                let Value::I64(code) = self.eval_expr(&args[1])? else {
+                    return Err(RuntimeError::runtime("expected an i64 JSON-RPC error code"));
+                };
+                let message = self.eval_expr(&args[2])?.as_string()?.to_string();
+                let data = self.eval_expr(&args[3])?;
+                let data = optional_json_raw(&data)?;
+                jsonrpc::failure(&id, code, &message, data.as_deref())
+                    .map(jsonrpc_message_value)
+                    .map_err(jsonrpc_error_value)
+            }
+        };
+        Ok(result_value("Result", result))
+    }
+
     fn eval_binary(
         &mut self,
         left: &ValueExpr,
@@ -1718,6 +1857,128 @@ fn json_error_value(error: json::JsonError) -> Value {
             ),
             ("offset".to_string(), Value::U64(error.offset as u64)),
         ]),
+    }
+}
+
+fn jsonrpc_error_value(error: jsonrpc::ProtocolError) -> Value {
+    Value::Struct {
+        name: "JsonRpcProtocolError".to_string(),
+        fields: HashMap::from([
+            ("code".to_string(), Value::String(error.code.to_string())),
+            (
+                "message".to_string(),
+                Value::String(error.message.to_string()),
+            ),
+        ]),
+    }
+}
+
+fn jsonrpc_message_value(raw: String) -> Value {
+    Value::Struct {
+        name: "JsonRpcMessage".to_string(),
+        fields: HashMap::from([("raw".to_string(), Value::String(raw))]),
+    }
+}
+
+fn jsonrpc_raw(value: &Value) -> RuntimeResult<&str> {
+    let Value::Struct { name, fields } = value else {
+        return Err(RuntimeError::runtime("expected a JsonRpcMessage"));
+    };
+    if name != "JsonRpcMessage" {
+        return Err(RuntimeError::runtime("expected a JsonRpcMessage"));
+    }
+    fields
+        .get("raw")
+        .ok_or_else(|| RuntimeError::runtime("JsonRpcMessage has no raw field"))?
+        .as_string()
+}
+
+fn jsonrpc_decoder_value(decoder: jsonrpc::Decoder) -> Value {
+    Value::Struct {
+        name: "JsonRpcDecoder".to_string(),
+        fields: HashMap::from([
+            ("pending".to_string(), Value::String(decoder.pending)),
+            (
+                "max_message_bytes".to_string(),
+                Value::U64(decoder.max_message_bytes as u64),
+            ),
+        ]),
+    }
+}
+
+fn jsonrpc_decoder_parts(value: &Value) -> RuntimeResult<jsonrpc::Decoder> {
+    let Value::Struct { name, fields } = value else {
+        return Err(RuntimeError::runtime("expected a JsonRpcDecoder"));
+    };
+    if name != "JsonRpcDecoder" {
+        return Err(RuntimeError::runtime("expected a JsonRpcDecoder"));
+    }
+    let pending = fields
+        .get("pending")
+        .ok_or_else(|| RuntimeError::runtime("JsonRpcDecoder has no pending field"))?
+        .as_string()?
+        .to_string();
+    let Some(Value::U64(max_message_bytes)) = fields.get("max_message_bytes") else {
+        return Err(RuntimeError::runtime(
+            "JsonRpcDecoder has no u64 message limit",
+        ));
+    };
+    Ok(jsonrpc::Decoder {
+        pending,
+        max_message_bytes: usize::try_from(*max_message_bytes)
+            .map_err(|_| RuntimeError::runtime("JSON-RPC message limit is invalid"))?,
+    })
+}
+
+fn jsonrpc_batch_value(batch: jsonrpc::DecodeBatch) -> Value {
+    Value::Struct {
+        name: "JsonRpcDecodeBatch".to_string(),
+        fields: HashMap::from([
+            ("decoder".to_string(), jsonrpc_decoder_value(batch.decoder)),
+            (
+                "messages".to_string(),
+                Value::Array(
+                    batch
+                        .messages
+                        .into_iter()
+                        .map(jsonrpc_message_value)
+                        .collect(),
+                ),
+            ),
+        ]),
+    }
+}
+
+fn optional_json_raw(value: &Value) -> RuntimeResult<Option<String>> {
+    let Value::Enum {
+        name,
+        variant,
+        payload,
+    } = value
+    else {
+        return Err(RuntimeError::runtime("expected an Option<JsonValue>"));
+    };
+    if name != "Option" {
+        return Err(RuntimeError::runtime("expected an Option<JsonValue>"));
+    }
+    match (variant.as_str(), payload.as_deref()) {
+        ("None", None) => Ok(None),
+        ("Some", Some(value)) => Ok(Some(json_raw(value)?.to_string())),
+        _ => Err(RuntimeError::runtime("invalid Option<JsonValue>")),
+    }
+}
+
+fn jsonrpc_kind_value(kind: MessageKind) -> Value {
+    let variant = match kind {
+        MessageKind::Request => "Request",
+        MessageKind::Notification => "Notification",
+        MessageKind::Success => "Success",
+        MessageKind::Error => "Error",
+    };
+    Value::Enum {
+        name: "JsonRpcMessageKind".to_string(),
+        variant: variant.to_string(),
+        payload: None,
     }
 }
 

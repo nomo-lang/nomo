@@ -25,6 +25,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "concurrent_openai_compatible",
     "openai_streaming",
     "isolated_tasks",
+    "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
     "workspace_basic",
@@ -1268,6 +1269,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         }
         "let_else" => "let else ok\n",
         "loops" => "counted\ncounted\ncounted\na\nb\nonce\n",
+        "mcp_stdio" => "set NOMO_MCP_FIXTURE to an MCP stdio server executable\n",
         "mut_field_borrow" => "mut field borrow ok\n",
         "mut_methods" => "mut method ok\n",
         "newline_dot" => "newline dot ok\n",

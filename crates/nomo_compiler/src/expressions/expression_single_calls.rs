@@ -68,6 +68,11 @@ pub(super) fn lower_single_segment_call_value_expr(
                 path, &qualified, args, scope, imports, signatures, structs, enums, span,
             );
         }
+        if qualified[0] == "jsonrpc" {
+            return lower_jsonrpc_builtin(
+                path, &qualified, args, scope, imports, signatures, structs, enums, span,
+            );
+        }
         if qualified[0] == "http" {
             return lower_http_builtin(
                 path, &qualified, args, scope, imports, signatures, structs, enums, span,

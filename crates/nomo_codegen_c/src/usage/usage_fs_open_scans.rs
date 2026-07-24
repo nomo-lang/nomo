@@ -200,7 +200,9 @@ pub(super) fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             expr_uses_fs_open(index) || expr_uses_fs_open(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_open),
-        ValueExpr::JsonStructured { args, .. } => args.iter().any(expr_uses_fs_open),
+        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
+            args.iter().any(expr_uses_fs_open)
+        }
         ValueExpr::StringLen { value }
         | ValueExpr::StringIsEmpty { value }
         | ValueExpr::StringTrim { value }

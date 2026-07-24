@@ -294,6 +294,15 @@ pub(super) fn uses_structured_json_builtin(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_jsonrpc_builtin(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_jsonrpc_builtin))
+    })
+}
+
 pub(super) fn uses_regex_builtin(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function

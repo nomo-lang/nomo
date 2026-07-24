@@ -7332,6 +7332,7 @@ fn generated_c_runtime_smoke_passes_with_address_sanitizer_when_available() {
 import std.array
 import std.io
 import std.json
+import std.jsonrpc
 
 struct Bag {
     items: Array<string>
@@ -7383,6 +7384,15 @@ fn json_roundtrip() -> Result<string, JsonError> {
             }
         }
     }
+}
+
+fn jsonrpc_roundtrip() -> Result<u64, JsonRpcProtocolError> {
+    let initial: JsonRpcDecoder = jsonrpc.decoder(4096 as u64)?
+    let partial: JsonRpcDecodeBatch = jsonrpc.feed(initial, "{\"jsonrpc\":\"2.0\",\"id\":1,\"meth")?
+    let complete: JsonRpcDecodeBatch = jsonrpc.feed(partial.decoder, "od\":\"initialize\"}\n{\"jsonrpc\":\"2.0\",\"method\":\"ready\"}\n")?
+    let messages: Array<JsonRpcMessage> = complete.messages
+    jsonrpc.finish(complete.decoder)?
+    return Ok(messages.len())
 }
 
 fn run() -> Result<string, string> {
@@ -7441,6 +7451,20 @@ fn main() -> void {
                     panic("json traversal failed")
                 } else {
                     value
+                }
+            }
+        }
+
+        let rpc_result: Result<u64, JsonRpcProtocolError> = jsonrpc_roundtrip()
+        match rpc_result {
+            Err(err) => {
+                panic(err.message)
+            }
+            Ok(count) => {
+                let rpc_checked: u64 = if count != 2 {
+                    panic("JSON-RPC decoder replacement failed")
+                } else {
+                    count
                 }
             }
         }
@@ -7855,6 +7879,221 @@ fn main() -> void {
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
         "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json syntax\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_bounded_jsonrpc_framing_conformance() {
+    let root = temp_test_root("std-jsonrpc-conformance");
+    reset_dir(&root);
+    let project = root.join("jsonrpc_conformance");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"jsonrpc_conformance\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/jsonrpc_conformance.nomo");
+    fs::copy(fixture, project.join("src/main.nomo")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "0\n2\nrequest\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\nnotification\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":true}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32601,\"message\":\"missing\"}}\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn jsonrpc_native_errors_are_bounded_and_secret_safe() {
+    let root = temp_test_root("std-jsonrpc-errors");
+    reset_dir(&root);
+    let project = root.join("jsonrpc_errors");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"jsonrpc_errors\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let fixture =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/jsonrpc_errors.nomo");
+    fs::copy(fixture, project.join("src/main.nomo")).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    for expected in [
+        "zero invalid_request invalid JSON-RPC argument\n",
+        "array protocol invalid JSON-RPC 2.0 envelope\n",
+        "newline framing invalid JSON-RPC newline framing\n",
+        "duplicate protocol invalid JSON-RPC 2.0 envelope\n",
+        "fractional-code protocol invalid JSON-RPC 2.0 envelope\n",
+        "extension ok\n",
+        "empty-line framing invalid JSON-RPC newline framing\n",
+        "malformed json invalid bounded JSON input\n",
+        "partial framing invalid JSON-RPC newline framing\n",
+        "line-limit limit JSON-RPC limit exceeded\n",
+        "bool-id protocol invalid JSON-RPC 2.0 envelope\n",
+        "scalar-params protocol invalid JSON-RPC 2.0 envelope\n",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in:\n{stdout}"
+        );
+    }
+    assert!(!stdout.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn jsonrpc_native_limits_accept_exact_boundaries_and_reject_overflow() {
+    const MAX_MESSAGE_BYTES: usize = 1_048_575;
+    const MAX_CHUNK_BYTES: usize = 1_048_576;
+    const MAX_BATCH_MESSAGES: usize = 4_096;
+
+    let root = temp_test_root("std-jsonrpc-boundaries");
+    reset_dir(&root);
+    let project = root.join("jsonrpc_boundaries");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"jsonrpc_boundaries\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let prefix = r#"{"jsonrpc":"2.0","method":"m","_pad":""#;
+    let suffix = r#""}"#;
+    let exact_message = format!(
+        "{prefix}{}{suffix}",
+        "x".repeat(MAX_MESSAGE_BYTES - prefix.len() - suffix.len())
+    );
+    assert_eq!(exact_message.len(), MAX_MESSAGE_BYTES);
+    let exact_chunk = exact_message + "\n";
+    assert_eq!(exact_chunk.len(), MAX_CHUNK_BYTES);
+    fs::write(project.join("exact.txt"), exact_chunk).unwrap();
+    fs::write(
+        project.join("chunk_over.txt"),
+        "x".repeat(MAX_CHUNK_BYTES + 1),
+    )
+    .unwrap();
+
+    let line = "{\"jsonrpc\":\"2.0\",\"method\":\"m\"}\n";
+    fs::write(
+        project.join("batch_exact.txt"),
+        line.repeat(MAX_BATCH_MESSAGES),
+    )
+    .unwrap();
+    fs::write(
+        project.join("batch_over.txt"),
+        line.repeat(MAX_BATCH_MESSAGES + 1),
+    )
+    .unwrap();
+
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package jsonrpc_boundaries.main
+
+import std.fs
+import std.io
+import std.jsonrpc
+import std.array.Array
+
+fn read_fixture(path: string) -> string {
+    match fs.read_to_string(path) {
+        Ok(value) => {
+            return value
+        }
+        Err(error) => {
+            io.println(path, "read-error")
+            return ""
+        }
+    }
+}
+
+fn feed_case(label: string, input: string) -> void {
+    match jsonrpc.decoder(1048575 as u64) {
+        Ok(decoder_value) => {
+            match jsonrpc.feed(decoder_value, input) {
+                Ok(batch) => {
+                    let messages: Array<JsonRpcMessage> = batch.messages
+                    let count: u64 = messages.len()
+                    io.println(label, "ok", count)
+                }
+                Err(error) => {
+                    io.println(label, error.code)
+                }
+            }
+        }
+        Err(error) => {
+            io.println(label, error.code)
+        }
+    }
+}
+
+fn main() -> void {
+    feed_case("message-exact", read_fixture("exact.txt"))
+    feed_case("chunk-over", read_fixture("chunk_over.txt"))
+    feed_case("batch-exact", read_fixture("batch_exact.txt"))
+    feed_case("batch-over", read_fixture("batch_over.txt"))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(".")
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "message-exact ok 1\nchunk-over limit\nbatch-exact ok 4096\nbatch-over limit\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -10341,6 +10580,28 @@ int main(int argc, char **argv) {
         printf("inherited:%s\n", inherited == NULL ? "" : inherited);
         return 0;
     }
+    if (strcmp(mode, "mcp") == 0) {
+        char line[65536];
+        fputs("mcp-fixture-ready\n", stderr);
+        fflush(stderr);
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            return 2;
+        }
+        fputs("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",", stdout);
+        fflush(stdout);
+        nomo_fixture_sleep(50UL);
+        fputs("\"capabilities\":{},\"serverInfo\":{\"name\":\"fixture\",\"version\":\"1\"}}}\n", stdout);
+        fflush(stdout);
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            return 3;
+        }
+        fputs("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"step\":1}}\n", stdout);
+        fputs("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[]}}\n", stdout);
+        fputs("mcp-fixture-complete\n", stderr);
+        fflush(stdout);
+        fflush(stderr);
+        return 0;
+    }
 
     char cwd[4096];
     const char *visible = getenv("VISIBLE");
@@ -10379,6 +10640,38 @@ int main(int argc, char **argv) {
         String::from_utf8_lossy(&compiled.stderr)
     );
     fs::canonicalize(fixture_binary).unwrap()
+}
+
+#[test]
+fn mcp_stdio_example_completes_two_jsonrpc_exchanges() {
+    let root = temp_test_root("mcp-stdio-example");
+    reset_dir(&root);
+    let fixture_binary = build_controlled_process_fixture(&root);
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp_stdio");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(example)
+        .env("NOMO_MCP_FIXTURE", fixture_binary)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "response 1 success\nserver notification\nresponse 2 success\nMCP stdio exchange complete\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "");
+    assert!(stderr.contains("mcp-fixture-ready\n"), "{stderr}");
+    assert!(stderr.contains("mcp-fixture-complete\n"), "{stderr}");
+    assert!(!stderr.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

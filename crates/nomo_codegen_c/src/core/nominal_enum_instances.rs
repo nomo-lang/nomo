@@ -58,6 +58,22 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
         );
         push_enum_instance(&mut seen, &mut out, "Option", &[json_value]);
     }
+    if uses_jsonrpc_builtin(program) {
+        let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
+        let message = ValueType::Struct("JsonRpcMessage".to_string(), Vec::new());
+        let decoder = ValueType::Struct("JsonRpcDecoder".to_string(), Vec::new());
+        let batch = ValueType::Struct("JsonRpcDecodeBatch".to_string(), Vec::new());
+        let error = ValueType::Struct("JsonRpcProtocolError".to_string(), Vec::new());
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "Option",
+            std::slice::from_ref(&json_value),
+        );
+        for ok in [decoder, batch, ValueType::Void, message, ValueType::String] {
+            push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
+        }
+    }
     out
 }
 
@@ -502,7 +518,7 @@ fn collect_expr_enum(
                 collect_expr_enum(arg, seen, out);
             }
         }
-        ValueExpr::JsonStructured { args, .. } => {
+        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
             for arg in args {
                 collect_expr_enum(arg, seen, out);
             }

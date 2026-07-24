@@ -1,6 +1,29 @@
 use super::*;
 
 #[test]
+fn omits_jsonrpc_runtime_when_unused() {
+    let program = Program {
+        consts: Vec::new(),
+        package: "app.main".to_string(),
+        imports: Vec::new(),
+        extern_functions: Vec::new(),
+        structs: Vec::new(),
+        enums: Vec::new(),
+        functions: vec![Function {
+            package: "app.main".to_string(),
+            name: "main".to_string(),
+            params: Vec::new(),
+            return_type: ValueType::Void,
+            body: Vec::new(),
+        }],
+    };
+
+    let c = emit_c(&program);
+    assert!(!c.contains("nomo_jsonrpc_decoder"));
+    assert!(!c.contains("NOMO_JSONRPC_MAX_MESSAGE_BYTES"));
+}
+
+#[test]
 fn emits_canonical_target_contract_for_cross_codegen() {
     let program = Program {
         consts: Vec::new(),

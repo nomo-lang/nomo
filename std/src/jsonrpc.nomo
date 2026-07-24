@@ -1,0 +1,92 @@
+//! Bounded JSON-RPC 2.0 envelopes and incremental newline framing.
+package std.jsonrpc
+
+import std.jsonrpc
+
+/// The four supported JSON-RPC 2.0 envelope kinds.
+pub enum JsonRpcMessageKind {
+    Request
+    Notification
+    Success
+    Error
+}
+
+/// Stable, secret-safe JSON-RPC codec error.
+pub struct JsonRpcProtocolError {
+    /// Stable error category.
+    pub code: string
+    /// Human-readable description that never reproduces message data.
+    pub message: string
+}
+
+/// One validated JSON-RPC 2.0 message.
+pub struct JsonRpcMessage {
+    raw: string
+}
+
+/// Immutable incremental newline-decoder state.
+pub struct JsonRpcDecoder {
+    pending: string
+    max_message_bytes: u64
+}
+
+/// Complete messages and the replacement decoder state returned by `feed`.
+pub struct JsonRpcDecodeBatch {
+    pub decoder: JsonRpcDecoder
+    pub messages: Array<JsonRpcMessage>
+}
+
+/// Creates an empty decoder with a per-message byte limit.
+pub fn decoder(max_message_bytes: u64) -> Result<JsonRpcDecoder, JsonRpcProtocolError> {
+    return jsonrpc.decoder(max_message_bytes)
+}
+
+/// Decodes every complete newline-delimited message in one arbitrary chunk.
+pub fn feed(decoder_value: JsonRpcDecoder, chunk: string) -> Result<JsonRpcDecodeBatch, JsonRpcProtocolError> {
+    return jsonrpc.feed(decoder_value, chunk)
+}
+
+/// Verifies that no unterminated message remains.
+pub fn finish(decoder_value: JsonRpcDecoder) -> Result<void, JsonRpcProtocolError> {
+    return jsonrpc.finish(decoder_value)
+}
+
+/// Validates one existing JSON value as a JSON-RPC message.
+pub fn parse(value: JsonValue, max_message_bytes: u64) -> Result<JsonRpcMessage, JsonRpcProtocolError> {
+    return jsonrpc.parse(value, max_message_bytes)
+}
+
+/// Encodes one message followed by exactly one newline.
+pub fn encode(message: JsonRpcMessage, max_message_bytes: u64) -> Result<string, JsonRpcProtocolError> {
+    return jsonrpc.encode(message, max_message_bytes)
+}
+
+/// Returns the validated envelope as a normal JSON value.
+pub fn value(message: JsonRpcMessage) -> JsonValue {
+    return jsonrpc.value(message)
+}
+
+/// Returns the validated envelope kind.
+pub fn kind(message: JsonRpcMessage) -> JsonRpcMessageKind {
+    return jsonrpc.kind(message)
+}
+
+/// Constructs one request.
+pub fn request(id: JsonValue, method: string, params: Option<JsonValue>) -> Result<JsonRpcMessage, JsonRpcProtocolError> {
+    return jsonrpc.request(id, method, params)
+}
+
+/// Constructs one notification.
+pub fn notification(method: string, params: Option<JsonValue>) -> Result<JsonRpcMessage, JsonRpcProtocolError> {
+    return jsonrpc.notification(method, params)
+}
+
+/// Constructs one successful response.
+pub fn success(id: JsonValue, result: JsonValue) -> Result<JsonRpcMessage, JsonRpcProtocolError> {
+    return jsonrpc.success(id, result)
+}
+
+/// Constructs one error response.
+pub fn failure(id: JsonValue, code: i64, message: string, data: Option<JsonValue>) -> Result<JsonRpcMessage, JsonRpcProtocolError> {
+    return jsonrpc.failure(id, code, message, data)
+}

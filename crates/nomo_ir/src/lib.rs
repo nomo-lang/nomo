@@ -246,6 +246,21 @@ pub enum JsonOperation {
     FromObject,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonRpcOperation {
+    Decoder,
+    Feed,
+    Finish,
+    Parse,
+    Encode,
+    Value,
+    Kind,
+    Request,
+    Notification,
+    Success,
+    Failure,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -467,6 +482,10 @@ pub enum ValueExpr {
     },
     JsonStructured {
         operation: JsonOperation,
+        args: Vec<ValueExpr>,
+    },
+    JsonRpc {
+        operation: JsonRpcOperation,
         args: Vec<ValueExpr>,
     },
     RegexCompile {

@@ -187,6 +187,43 @@ pub(super) fn resolve_specific_value_builtin(
         "from_object" if imports.iter().any(|item| item == "std.json.from_object") => {
             vec!["json".to_string(), "from_object".to_string()]
         }
+        "decoder" if imports.iter().any(|item| item == "std.jsonrpc.decoder") => {
+            vec!["jsonrpc".to_string(), "decoder".to_string()]
+        }
+        "feed" if imports.iter().any(|item| item == "std.jsonrpc.feed") => {
+            vec!["jsonrpc".to_string(), "feed".to_string()]
+        }
+        "finish" if imports.iter().any(|item| item == "std.jsonrpc.finish") => {
+            vec!["jsonrpc".to_string(), "finish".to_string()]
+        }
+        "parse" if imports.iter().any(|item| item == "std.jsonrpc.parse") => {
+            vec!["jsonrpc".to_string(), "parse".to_string()]
+        }
+        "encode" if imports.iter().any(|item| item == "std.jsonrpc.encode") => {
+            vec!["jsonrpc".to_string(), "encode".to_string()]
+        }
+        "value" if imports.iter().any(|item| item == "std.jsonrpc.value") => {
+            vec!["jsonrpc".to_string(), "value".to_string()]
+        }
+        "kind" if imports.iter().any(|item| item == "std.jsonrpc.kind") => {
+            vec!["jsonrpc".to_string(), "kind".to_string()]
+        }
+        "request" if imports.iter().any(|item| item == "std.jsonrpc.request") => {
+            vec!["jsonrpc".to_string(), "request".to_string()]
+        }
+        "notification"
+            if imports
+                .iter()
+                .any(|item| item == "std.jsonrpc.notification") =>
+        {
+            vec!["jsonrpc".to_string(), "notification".to_string()]
+        }
+        "success" if imports.iter().any(|item| item == "std.jsonrpc.success") => {
+            vec!["jsonrpc".to_string(), "success".to_string()]
+        }
+        "failure" if imports.iter().any(|item| item == "std.jsonrpc.failure") => {
+            vec!["jsonrpc".to_string(), "failure".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.http.get") => {
             vec!["http".to_string(), "get".to_string()]
         }

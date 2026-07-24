@@ -6,6 +6,7 @@
 
 mod interpreter;
 mod json;
+mod jsonrpc;
 
 use interpreter::{ExecutionLimits, Interpreter};
 use nomo_compiler::{Program, check_source_text};
@@ -419,6 +420,49 @@ fn main() -> void {
             "true\n6\nnull\nboolean\nnumber\nstring\narray\nobject\ntrue\ntrue\nwrong-kind-none\n1E+2\ntrue\n0\n0\nnon-object-none\n2\nname\nname\n2\nmissing-none\n\"A\\n\\\"\\\\😀\"\n{\"null\":null,\"bool\":false,\"i64\":-9223372036854775808,\"u64\":18446744073709551615}\n😀\ninvalid_number 1 invalid json number\nunsupported_string 1\nunsupported_string 1\nsyntax 29 invalid json syntax\n"
         );
         assert!(!response.stdout.contains("NOMO_JSON_SECRET_SENTINEL"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn jsonrpc_conformance_fixture_matches_browser_runtime() {
+        let source = include_str!("../../../tests/fixtures/jsonrpc_conformance.nomo");
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "0\n2\nrequest\n{\"jsonrpc\":\"2.0\",\"id\":1,\"method\":\"initialize\"}\nnotification\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"method\":\"tools/list\"}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"result\":true}\n{\"jsonrpc\":\"2.0\",\"id\":7,\"error\":{\"code\":-32601,\"message\":\"missing\"}}\n"
+        );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn jsonrpc_error_fixture_matches_browser_runtime_without_secret_echo() {
+        let source = include_str!("../../../tests/fixtures/jsonrpc_errors.nomo");
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        for expected in [
+            "zero invalid_request invalid JSON-RPC argument\n",
+            "array protocol invalid JSON-RPC 2.0 envelope\n",
+            "newline framing invalid JSON-RPC newline framing\n",
+            "duplicate protocol invalid JSON-RPC 2.0 envelope\n",
+            "fractional-code protocol invalid JSON-RPC 2.0 envelope\n",
+            "extension ok\n",
+            "empty-line framing invalid JSON-RPC newline framing\n",
+            "malformed json invalid bounded JSON input\n",
+            "partial framing invalid JSON-RPC newline framing\n",
+            "line-limit limit JSON-RPC limit exceeded\n",
+            "bool-id protocol invalid JSON-RPC 2.0 envelope\n",
+            "scalar-params protocol invalid JSON-RPC 2.0 envelope\n",
+        ] {
+            assert!(
+                response.stdout.contains(expected),
+                "missing {expected:?} in:\n{}",
+                response.stdout
+            );
+        }
+        assert!(!response.stdout.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
         assert!(response.diagnostic.is_none());
     }
 

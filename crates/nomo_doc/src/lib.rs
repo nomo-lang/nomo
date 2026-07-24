@@ -737,6 +737,22 @@ mod tests {
             "pub fn parse(value: string) -> Result<JsonValue, JsonError>"
         );
 
+        let jsonrpc = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.jsonrpc")
+            .unwrap();
+        let feed = jsonrpc
+            .items
+            .iter()
+            .find(|item| item.name == "feed")
+            .unwrap();
+        assert_eq!(feed.source, "std/src/jsonrpc.nomo");
+        assert!(
+            feed.signature
+                .contains("Result<JsonRpcDecodeBatch, JsonRpcProtocolError>")
+        );
+
         let sqlite = package
             .modules
             .iter()

@@ -197,6 +197,19 @@ pub(super) fn lower_call_value_expr(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_jsonrpc_builtin_call(callee) {
+                require_import(path, imports, span, "std.jsonrpc", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "jsonrpc builtins do not accept type arguments",
+                    ));
+                }
+                return lower_jsonrpc_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if is_http_builtin_call(callee) {
                 require_import(path, imports, span, "std.http", &callee.join("."))?;
                 if !type_args.is_empty() {

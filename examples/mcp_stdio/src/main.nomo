@@ -1,0 +1,267 @@
+package mcp_stdio.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.json
+import std.jsonrpc
+import std.process
+import std.result
+
+enum McpExampleError {
+    Process(ProcessControlError)
+    Protocol(JsonRpcProtocolError)
+    Json(JsonError)
+    Unexpected(string)
+}
+
+fn from_process(error: ProcessControlError) -> McpExampleError {
+    return McpExampleError.Process(error)
+}
+
+fn from_protocol(error: JsonRpcProtocolError) -> McpExampleError {
+    return McpExampleError.Protocol(error)
+}
+
+fn from_json(error: JsonError) -> McpExampleError {
+    return McpExampleError.Json(error)
+}
+
+fn json_string_value(value: string) -> Result<JsonValue, McpExampleError> {
+    let raw: Result<JsonValue, JsonError> = json.from_string(value)
+    return raw.map_err(from_json)
+}
+
+fn json_object_value(members: Array<JsonMember>) -> Result<JsonValue, McpExampleError> {
+    let raw: Result<JsonValue, JsonError> = json.from_object(members)
+    return raw.map_err(from_json)
+}
+
+fn request_message(id: JsonValue, method: string, params: Option<JsonValue>) -> Result<JsonRpcMessage, McpExampleError> {
+    let raw: Result<JsonRpcMessage, JsonRpcProtocolError> = jsonrpc.request(id, method, params)
+    return raw.map_err(from_protocol)
+}
+
+fn encode_message(message: JsonRpcMessage) -> Result<string, McpExampleError> {
+    let raw: Result<string, JsonRpcProtocolError> = jsonrpc.encode(message, 1048575 as u64)
+    return raw.map_err(from_protocol)
+}
+
+fn decode_chunk(decoder_value: JsonRpcDecoder, chunk: string) -> Result<JsonRpcDecodeBatch, McpExampleError> {
+    let raw: Result<JsonRpcDecodeBatch, JsonRpcProtocolError> = jsonrpc.feed(decoder_value, chunk)
+    return raw.map_err(from_protocol)
+}
+
+fn new_decoder() -> Result<JsonRpcDecoder, McpExampleError> {
+    let raw: Result<JsonRpcDecoder, JsonRpcProtocolError> = jsonrpc.decoder(1048575 as u64)
+    return raw.map_err(from_protocol)
+}
+
+fn finish_decoder(decoder_value: JsonRpcDecoder) -> Result<void, McpExampleError> {
+    let raw: Result<void, JsonRpcProtocolError> = jsonrpc.finish(decoder_value)
+    return raw.map_err(from_protocol)
+}
+
+fn start_child(command: ProcessCommand) -> Result<ProcessChild, McpExampleError> {
+    let raw: Result<ProcessChild, ProcessControlError> = process.start(command)
+    return raw.map_err(from_process)
+}
+
+fn write_child(child: ProcessChild, text: string) -> Result<void, McpExampleError> {
+    let raw: Result<void, ProcessControlError> = process.write_stdin(child, text)
+    return raw.map_err(from_process)
+}
+
+fn next_child(child: ProcessChild) -> Result<ProcessEvent, McpExampleError> {
+    let raw: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 65536, 5000)
+    return raw.map_err(from_process)
+}
+
+fn close_child_input(child: ProcessChild) -> Result<void, McpExampleError> {
+    let raw: Result<void, ProcessControlError> = process.close_stdin(child)
+    return raw.map_err(from_process)
+}
+
+fn verify_exit(status: ProcessExit) -> Result<void, McpExampleError> {
+    if status.code == 0 {
+        Ok(void)
+    } else {
+        Err(McpExampleError.Unexpected("MCP server returned a non-zero status"))
+    }
+}
+
+fn initialize_request() -> Result<JsonRpcMessage, McpExampleError> {
+    let empty_members: Array<JsonMember> = Array.new<JsonMember>()
+    let capabilities: JsonValue = json_object_value(empty_members)?
+    let mut client_members: Array<JsonMember> = Array.new<JsonMember>()
+    let client_name: JsonValue = json_string_value("nomo-mcp-example")?
+    let client_version: JsonValue = json_string_value("0.1")?
+    client_members.push(JsonMember { key: "name", value: client_name })
+    client_members.push(JsonMember { key: "version", value: client_version })
+    let client: JsonValue = json_object_value(client_members)?
+    let mut params_members: Array<JsonMember> = Array.new<JsonMember>()
+    let protocol_version: JsonValue = json_string_value("2025-06-18")?
+    params_members.push(JsonMember { key: "protocolVersion", value: protocol_version })
+    params_members.push(JsonMember { key: "capabilities", value: capabilities })
+    params_members.push(JsonMember { key: "clientInfo", value: client })
+    let params: JsonValue = json_object_value(params_members)?
+    let optional_params: Option<JsonValue> = Some(params)
+    return request_message(json.from_i64(1), "initialize", optional_params)
+}
+
+fn tools_list_request() -> Result<JsonRpcMessage, McpExampleError> {
+    let empty_members: Array<JsonMember> = Array.new<JsonMember>()
+    let params: JsonValue = json_object_value(empty_members)?
+    let optional_params: Option<JsonValue> = Some(params)
+    return request_message(json.from_i64(2), "tools/list", optional_params)
+}
+
+fn response_id(message: JsonRpcMessage) -> Option<string> {
+    let envelope: JsonValue = jsonrpc.value(message)
+    match json.get(envelope, "id") {
+        None => {
+            return None
+        }
+        Some(value) => {
+            return json.number_text(value)
+        }
+    }
+}
+
+fn observe_message(message: JsonRpcMessage, expected_id: string) -> bool {
+    match jsonrpc.kind(message) {
+        JsonRpcMessageKind.Request => {
+            io.println("unexpected server request")
+        }
+        JsonRpcMessageKind.Notification => {
+            io.println("server notification")
+        }
+        JsonRpcMessageKind.Success => {
+            match response_id(message) {
+                Some(id) => {
+                    io.println("response", id, "success")
+                    return id == expected_id
+                }
+                None => {
+                    io.println("response without id")
+                }
+            }
+        }
+        JsonRpcMessageKind.Error => {
+            match response_id(message) {
+                Some(id) => {
+                    io.println("response", id, "error")
+                    return id == expected_id
+                }
+                None => {
+                    io.println("error response without id")
+                }
+            }
+        }
+    }
+    return false
+}
+
+fn exchange(child: ProcessChild, decoder_value: JsonRpcDecoder, request: JsonRpcMessage, expected_id: string) -> Result<JsonRpcDecoder, McpExampleError> {
+    let encoded: string = encode_message(request)?
+    write_child(child, encoded)?
+    let mut decoder_state: JsonRpcDecoder = decoder_value
+    let mut flushed: bool = false
+    let mut received: bool = false
+    for !(flushed && received) {
+        let event: ProcessEvent = next_child(child)?
+        match event {
+            ProcessEvent.StdinFlushed => {
+                flushed = true
+            }
+            ProcessEvent.Stdout(text) => {
+                let batch: JsonRpcDecodeBatch = decode_chunk(decoder_state, text)?
+                decoder_state = batch.decoder
+                let messages: Array<JsonRpcMessage> = batch.messages
+                for message in messages {
+                    received = observe_message(message, expected_id) || received
+                }
+            }
+            ProcessEvent.Stderr(text) => {
+                io.eprint(text)
+            }
+            ProcessEvent.Exited(status) => {
+                return Err(McpExampleError.Unexpected("MCP server exited before its response"))
+            }
+        }
+    }
+    return Ok(decoder_state)
+}
+
+fn run(program: string) -> Result<void, McpExampleError> {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("mcp")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+    let child: ProcessChild = start_child(command)?
+    defer process.close_child(child)
+    let mut decoder_state: JsonRpcDecoder = new_decoder()?
+    decoder_state = exchange(child, decoder_state, initialize_request()?, "1")?
+    decoder_state = exchange(child, decoder_state, tools_list_request()?, "2")?
+    close_child_input(child)?
+    let mut exited: bool = false
+    for !exited {
+        let event: ProcessEvent = next_child(child)?
+        match event {
+            ProcessEvent.StdinFlushed => {
+            }
+            ProcessEvent.Stdout(text) => {
+                let batch: JsonRpcDecodeBatch = decode_chunk(decoder_state, text)?
+                decoder_state = batch.decoder
+                let messages: Array<JsonRpcMessage> = batch.messages
+                for message in messages {
+                    let observed: bool = observe_message(message, "")
+                }
+            }
+            ProcessEvent.Stderr(text) => {
+                io.eprint(text)
+            }
+            ProcessEvent.Exited(status) => {
+                verify_exit(status)?
+                exited = true
+            }
+        }
+    }
+    finish_decoder(decoder_state)?
+    io.println("MCP stdio exchange complete")
+    return Ok(void)
+}
+
+fn print_error(error: McpExampleError) -> void {
+    match error {
+        McpExampleError.Process(value) => {
+            io.println("process error", value.code, value.message)
+        }
+        McpExampleError.Protocol(value) => {
+            io.println("protocol error", value.code, value.message)
+        }
+        McpExampleError.Json(value) => {
+            io.println("json error", value.code, value.message)
+        }
+        McpExampleError.Unexpected(message) => {
+            io.println("MCP error", message)
+        }
+    }
+}
+
+fn main() -> void {
+    match env.get("NOMO_MCP_FIXTURE") {
+        None => {
+            io.println("set NOMO_MCP_FIXTURE to an MCP stdio server executable")
+        }
+        Some(program) => {
+            match run(program) {
+                Ok(done) => {
+                }
+                Err(error) => {
+                    print_error(error)
+                }
+            }
+        }
+    }
+}

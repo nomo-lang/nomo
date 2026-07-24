@@ -18,4 +18,4 @@ jobs:
       - name: Test affected compiler crates
         run: cargo test -p nomo -p nomo-compiler -p nomo-manifest --locked
       - name: Check project fixture
-        run: cargo run --locked --bin nomo -- check examples/workspace_basic
+        run: cargo run --locked --bin nomo -- check --workspace examples/workspace_basic

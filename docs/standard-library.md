@@ -360,6 +360,11 @@ server helpers:
 http.send(request: HttpRequest) -> Result<HttpResponse, HttpError>
 http.get(url: string) -> Result<HttpResponse, HttpError>
 http.post(url: string, body: string) -> Result<HttpResponse, HttpError>
+http.open_stream(request: HttpRequest, idle_timeout_millis: u64) -> Result<HttpStream, HttpError>
+http.read_text(stream: HttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError>
+http.next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError>
+http.cancel_stream(stream: HttpStream) -> void
+http.close_stream(stream: HttpStream) -> void
 http.listen(host: string, port: i64) -> Result<HttpServer, HttpError>
 http.accept(server: HttpServer) -> Result<HttpExchange, HttpError>
 http.respond_string(exchange: HttpExchange, status: i64, body: string) -> Result<void, HttpError>
@@ -373,6 +378,28 @@ contains `status`, ordered `headers`, and `body`; HTTP 4xx/5xx statuses remain
 successful transport responses. `HttpError.code` is one of
 `invalid_request`, `runtime_unavailable`, `dns`, `connect`, `tls`, `timeout`,
 `response_too_large`, `protocol`, or `transport`.
+
+`open_stream` returns after the response head is available. For streaming
+requests, `HttpRequest.timeout_millis` bounds connect, TLS, request send, and
+response-head receipt; `idle_timeout_millis` bounds each later pull that makes
+no progress. `HttpStream` exposes `status` and ordered `headers`.
+`max_response_bytes` remains a cumulative body limit with a 128 MiB hard
+ceiling.
+
+`read_text` returns non-empty UTF-8 chunks without splitting a Unicode scalar,
+then `{ data: "", done: true }` at EOF. `max_chunk_bytes` is from 4 bytes
+through 1 MiB. `next_sse` parses CRLF, CR, and LF framing, a leading BOM,
+comments, multi-line `data`, `event`, persistent `id`, and decimal `retry`
+fields. Its positive `max_event_bytes` limit has a 1 MiB ceiling. `[DONE]`
+remains ordinary event data for the application to interpret. The first
+`read_text` or `next_sse` call selects the stream mode; mixing modes returns
+`invalid_request`.
+
+Register `defer http.close_stream(stream)` immediately after opening.
+`close_stream` and cooperative `cancel_stream` are idempotent, including for
+copied stale handles. Cancellation takes effect between blocking pulls;
+`idle_timeout_millis` bounds a currently blocked pull. Reads after close or
+cancel return `invalid_request`.
 
 HTTPS verifies certificates and host names through platform trust. There is no
 insecure mode, redirects are disabled, response headers are limited to 64 KiB,
@@ -393,8 +420,8 @@ A browser host-capability design remains a later RFC.
 
 Use `defer http.close_exchange(exchange)` and
 `defer http.close_server(server)` so cleanup runs on both normal returns and
-`?` early returns. Streaming bodies/SSE, cancellation, connection pooling,
-routing, and concurrent server helpers remain later slices.
+`?` early returns. Binary streaming, connection pooling, routing, and
+concurrent server helpers remain later slices.
 
 ## Native FFI Values
 

@@ -481,6 +481,51 @@ fn main() -> void {
     }
 
     #[test]
+    fn rejects_http_streaming_without_evaluating_or_leaking_request_secrets() {
+        let source = r#"package app.main
+
+import std.array.Array
+import std.http
+import std.result
+
+fn main() -> void {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader {
+        name: "Authorization",
+        value: "Bearer browser-stream-secret"
+    })
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://example.invalid/v1/chat/completions?token=stream-query-secret",
+        headers: headers,
+        body: "stream-body-secret",
+        timeout_millis: 1000,
+        max_response_bytes: 1024
+    }
+    let result: Result<HttpStream, HttpError> = http.open_stream(request, 1000)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("HTTP streaming should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("network"));
+        assert!(error.message.contains("browser sandbox"));
+        assert!(!error.message.contains("__nomo_http_open_stream"));
+        for secret in [
+            "browser-stream-secret",
+            "stream-query-secret",
+            "stream-body-secret",
+        ] {
+            assert!(!error.message.contains(secret), "{error:#?}");
+        }
+    }
+
+    #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
         let source = r#"package app.main
 

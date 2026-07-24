@@ -10,6 +10,11 @@ pub(super) fn is_http_builtin_call(callee: &[String]) -> bool {
                     "get"
                         | "post"
                         | "send"
+                        | "open_stream"
+                        | "read_text"
+                        | "next_sse"
+                        | "cancel_stream"
+                        | "close_stream"
                         | "listen"
                         | "accept"
                         | "respond_string"
@@ -36,6 +41,9 @@ pub(super) fn lower_http_builtin(
     debug_assert_eq!(module, "http");
     let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
     let http_response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
+    let http_stream = ValueType::Struct("HttpStream".to_string(), Vec::new());
+    let http_stream_chunk = ValueType::Struct("HttpStreamChunk".to_string(), Vec::new());
+    let sse_event = ValueType::Struct("SseEvent".to_string(), Vec::new());
     let http_server = ValueType::Struct("HttpServer".to_string(), Vec::new());
     let http_exchange = ValueType::Struct("HttpExchange".to_string(), Vec::new());
     let response_result_type = ValueType::Enum(
@@ -156,6 +164,214 @@ pub(super) fn lower_http_builtin(
                 ValueExpr::Call {
                     name: BUILTIN_HTTP_SEND_EXPR.to_string(),
                     args: vec![request],
+                },
+            ))
+        }
+        "open_stream" => {
+            let [request_arg, idle_timeout_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.open_stream` expects an HttpRequest and idle timeout",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (request_type, request) = lower_value_expr(
+                path,
+                request_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            let expected_request = ValueType::Struct("HttpRequest".to_string(), Vec::new());
+            if request_type != expected_request {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.open_stream` expects an HttpRequest value",
+                    &expected_request,
+                    &request_type,
+                ));
+            }
+            let (idle_timeout_type, idle_timeout) = lower_value_expr_with_expected(
+                path,
+                idle_timeout_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if idle_timeout_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.open_stream` expects a u64 idle timeout",
+                    &ValueType::U64,
+                    &idle_timeout_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![http_stream.clone(), http_error.clone()],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_OPEN_STREAM_EXPR.to_string(),
+                    args: vec![request, idle_timeout],
+                },
+            ))
+        }
+        "read_text" => {
+            let [stream_arg, max_chunk_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.read_text` expects an HttpStream and chunk limit",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (stream_type, stream) = lower_value_expr(
+                path, stream_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if stream_type != http_stream {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.read_text` expects an HttpStream value",
+                    &http_stream,
+                    &stream_type,
+                ));
+            }
+            let (max_chunk_type, max_chunk) = lower_value_expr_with_expected(
+                path,
+                max_chunk_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if max_chunk_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.read_text` expects a u64 chunk limit",
+                    &ValueType::U64,
+                    &max_chunk_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![http_stream_chunk, http_error.clone()],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_READ_TEXT_EXPR.to_string(),
+                    args: vec![stream, max_chunk],
+                },
+            ))
+        }
+        "next_sse" => {
+            let [stream_arg, max_event_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.next_sse` expects an HttpStream and event limit",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (stream_type, stream) = lower_value_expr(
+                path, stream_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if stream_type != http_stream {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.next_sse` expects an HttpStream value",
+                    &http_stream,
+                    &stream_type,
+                ));
+            }
+            let (max_event_type, max_event) = lower_value_expr_with_expected(
+                path,
+                max_event_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if max_event_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.next_sse` expects a u64 event limit",
+                    &ValueType::U64,
+                    &max_event_type,
+                ));
+            }
+            let event_option = ValueType::Enum("Option".to_string(), vec![sse_event]);
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![event_option, http_error.clone()]),
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_NEXT_SSE_EXPR.to_string(),
+                    args: vec![stream, max_event],
+                },
+            ))
+        }
+        "cancel_stream" | "close_stream" => {
+            let [stream_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`http.{name}` expects exactly one HttpStream"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (stream_type, stream) = lower_value_expr(
+                path, stream_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            if stream_type != http_stream {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`http.{name}` expects an HttpStream value"),
+                    &http_stream,
+                    &stream_type,
+                ));
+            }
+            let intrinsic = if name == "cancel_stream" {
+                BUILTIN_HTTP_CANCEL_STREAM_EXPR
+            } else {
+                BUILTIN_HTTP_CLOSE_STREAM_EXPR
+            };
+            Ok((
+                ValueType::Void,
+                ValueExpr::Call {
+                    name: intrinsic.to_string(),
+                    args: vec![stream],
                 },
             ))
         }

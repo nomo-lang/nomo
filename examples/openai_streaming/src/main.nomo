@@ -1,0 +1,69 @@
+package openai_streaming.main
+
+import std.array.Array
+import std.env
+import std.http
+import std.io
+import std.string.concat
+
+fn consume_events(stream: HttpStream) -> Result<void, HttpError> {
+    let mut done: bool = false
+    for !done {
+        let next: Option<SseEvent> = http.next_sse(stream, 1048576)?
+        match next {
+            Some(event) => {
+                io.println(event.event)
+                io.println(event.data)
+                done = event.data == "[DONE]"
+            }
+            None => {
+                done = true
+            }
+        }
+    }
+    return Ok(void)
+}
+
+fn request_completion(endpoint: string, token: string) -> Result<void, HttpError> {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader { name: "Authorization", value: concat("Bearer ", token) })
+    headers.push(HttpHeader { name: "Content-Type", value: "application/json" })
+    headers.push(HttpHeader { name: "Accept", value: "text/event-stream" })
+    let request: HttpRequest = HttpRequest { method: "POST", url: concat(endpoint, "/v1/chat/completions"), headers: headers, body: "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Stream from Nomo\"}],\"stream\":true}", timeout_millis: 5000, max_response_bytes: 1048576 }
+    let stream: HttpStream = http.open_stream(request, 5000)?
+    defer http.close_stream(stream)
+    io.println(stream.status)
+    consume_events(stream)?
+    return Ok(void)
+}
+
+fn run_with_endpoint(endpoint: string) -> void {
+    let token: Option<string> = env.get("NOMO_OPENAI_API_KEY")
+    match token {
+        Some(value) => {
+            let result: Result<void, HttpError> = request_completion(endpoint, value)
+            match result {
+                Ok(done) => {
+                }
+                Err(err) => {
+                    io.println(err.code, err.message)
+                }
+            }
+        }
+        None => {
+            io.println("missing NOMO_OPENAI_API_KEY")
+        }
+    }
+}
+
+fn main() -> void {
+    let endpoint: Option<string> = env.get("NOMO_OPENAI_BASE_URL")
+    match endpoint {
+        Some(value) => {
+            run_with_endpoint(value)
+        }
+        None => {
+            io.println("missing NOMO_OPENAI_BASE_URL")
+        }
+    }
+}

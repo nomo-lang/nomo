@@ -363,6 +363,23 @@ fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[V
         out.push_str("};\n");
         return;
     }
+    if struct_type.name == "HttpStream" && struct_args.is_empty() {
+        out.push_str("struct ");
+        out.push_str(&c_struct_ident(&struct_type.name, struct_args));
+        out.push_str(" {\n");
+        out.push_str("    uint64_t ");
+        out.push_str(&c_member_ident("handle"));
+        out.push_str(";\n");
+        for field in &struct_type.fields {
+            out.push_str("    ");
+            out.push_str(&c_type(&field.value_type));
+            out.push(' ');
+            out.push_str(&c_member_ident(&field.name));
+            out.push_str(";\n");
+        }
+        out.push_str("};\n");
+        return;
+    }
     out.push_str("struct ");
     out.push_str(&c_struct_ident(&struct_type.name, struct_args));
     out.push_str(" {\n");

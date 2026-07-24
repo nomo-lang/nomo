@@ -157,6 +157,84 @@ fn main() -> Result<void, HttpError> {
             ..
         } if name == BUILTIN_HTTP_SEND_EXPR
     )));
+    let c = nomo_codegen_c::emit_c(&program);
+    assert!(
+        c.contains("nomo_enum_Option_u64"),
+        "unused standard structs must still collect enum-typed field dependencies"
+    );
+}
+
+#[test]
+fn accepts_http_streaming_and_sse_builtins() {
+    let source = r#"package app.main
+
+import std.array.Array
+import std.http
+
+fn stream(request: HttpRequest) -> Result<void, HttpError> {
+    let response: HttpStream = http.open_stream(request, 1000)?
+    defer http.close_stream(response)
+    let chunk: HttpStreamChunk = http.read_text(response, 4096)?
+    let event: Option<SseEvent> = http.next_sse(response, 65536)?
+    http.cancel_stream(response)
+    return Ok(void)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    for name in [
+        "HttpError",
+        "HttpHeader",
+        "HttpRequest",
+        "HttpStream",
+        "HttpStreamChunk",
+        "SseEvent",
+    ] {
+        assert!(program.structs.iter().any(|item| item.name == name));
+    }
+    let stream = program
+        .functions
+        .iter()
+        .find(|function| function.name == "stream")
+        .unwrap();
+    for intrinsic in [
+        BUILTIN_HTTP_OPEN_STREAM_EXPR,
+        BUILTIN_HTTP_READ_TEXT_EXPR,
+        BUILTIN_HTTP_NEXT_SSE_EXPR,
+        BUILTIN_HTTP_CANCEL_STREAM_EXPR,
+        BUILTIN_HTTP_CLOSE_STREAM_EXPR,
+    ] {
+        assert!(stream.body.iter().any(|statement| match statement {
+            Statement::QuestionLet {
+                result_expr: ValueExpr::Call { name, .. },
+                ..
+            }
+            | Statement::Expr(ValueExpr::Call { name, .. }) => name == intrinsic,
+            Statement::Defer {
+                call: DeferredCall::Expr(ValueExpr::Call { name, .. }),
+            } => name == intrinsic,
+            _ => false,
+        }));
+    }
+    let c = nomo_codegen_c::emit_c(&program);
+    for symbol in [
+        "__nomo_http_open_stream",
+        "__nomo_http_read_text",
+        "__nomo_http_next_sse",
+        "__nomo_http_cancel_stream",
+        "__nomo_http_close_stream",
+        "nomo_enum_Option_u64",
+        "curl_multi_perform",
+    ] {
+        assert!(c.contains(symbol), "missing generated C symbol `{symbol}`");
+    }
+    assert!(!c.contains("@HTTP_"));
+    assert!(!c.contains("@OPEN_"));
+    assert!(!c.contains("@READ_"));
+    assert!(!c.contains("@SSE_"));
 }
 
 #[test]

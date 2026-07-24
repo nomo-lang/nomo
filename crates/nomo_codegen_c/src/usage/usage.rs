@@ -153,6 +153,15 @@ pub(super) fn uses_http_client(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_http_stream(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_http_stream_call))
+    })
+}
+
 pub(super) fn uses_http_server(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function

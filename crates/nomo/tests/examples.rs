@@ -22,6 +22,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_json",
     "std_http",
     "openai_compatible",
+    "openai_streaming",
     "nomo_test_basic",
     "nomo_doc_basic",
     "workspace_basic",
@@ -216,6 +217,16 @@ fn assert_cli_run(example: &Path) {
                 .arg(example)
                 .env("NOMO_OPENAI_BASE_URL", endpoint)
                 .env("NOMO_OPENAI_API_KEY", "local-test-token")
+                .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        }),
+        "openai_streaming" => run_with_openai_streaming_tls_server(|endpoint, ca_bundle| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_OPENAI_BASE_URL", endpoint)
+                .env("NOMO_OPENAI_API_KEY", "local-streaming-token")
                 .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
@@ -649,6 +660,15 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
         }),
+        "openai_streaming" => run_with_openai_streaming_tls_server(|endpoint, ca_bundle| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_OPENAI_BASE_URL", endpoint)
+                .env("NOMO_OPENAI_API_KEY", "local-streaming-token")
+                .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        }),
         _ => Command::new(bin)
             .current_dir(project_root)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
@@ -806,6 +826,99 @@ where
     });
     let ca_bundle =
         std::env::temp_dir().join(format!("nomo-openai-ca-{}-{port}.pem", std::process::id()));
+    fs::write(&ca_bundle, cert.pem()).unwrap();
+    let endpoint = format!("https://localhost:{port}");
+    let output = run(&endpoint, &ca_bundle);
+    server.join().unwrap();
+    fs::remove_file(ca_bundle).unwrap();
+    output
+}
+
+fn run_with_openai_streaming_tls_server<F>(run: F) -> Output
+where
+    F: FnOnce(&str, &Path) -> Output,
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+        )
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) => panic!("failed to accept streaming HTTPS client connection: {err}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let connection = ServerConnection::new(Arc::new(server_config)).unwrap();
+        let mut stream = StreamOwned::new(connection, stream);
+        let request = read_http_request(&mut stream);
+        assert!(
+            request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"),
+            "request was:\n{request}"
+        );
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("authorization: bearer local-streaming-token\r\n"),
+            "request was:\n{request}"
+        );
+        assert!(
+            lower.contains("content-type: application/json\r\n"),
+            "request was:\n{request}"
+        );
+        assert!(
+            lower.contains("accept: text/event-stream\r\n"),
+            "request was:\n{request}"
+        );
+        let body_start = request.find("\r\n\r\n").map(|index| index + 4).unwrap();
+        assert_eq!(
+            &request[body_start..],
+            "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Stream from Nomo\"}],\"stream\":true}"
+        );
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nX-Nomo-Fixture: tls-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        stream.flush().unwrap();
+        for chunk in [
+            "event: token\r\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\r\n\r\n",
+            "event: token\n",
+            "data: {\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\n\n",
+            "data: [DONE]\r\n\r\n",
+        ] {
+            stream.write_all(chunk.as_bytes()).unwrap();
+            stream.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+    let ca_bundle = std::env::temp_dir().join(format!(
+        "nomo-openai-streaming-ca-{}-{port}.pem",
+        std::process::id()
+    ));
     fs::write(&ca_bundle, cert.pem()).unwrap();
     let endpoint = format!("https://localhost:{port}");
     let output = run(&endpoint, &ca_bundle);
@@ -1021,6 +1134,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "std_http" => "get-ok\npost-ok\n",
         "openai_compatible" => {
             "200\ntls\n{\"id\":\"chatcmpl-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"}}]}\n"
+        }
+        "openai_streaming" => {
+            "200\ntoken\n{\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\ntoken\n{\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\nmessage\n[DONE]\n"
         }
         "std_fmt" => "display=Nomo debug=Nomo braces={}\nNomo\n",
         "std_path" => "/tmp/nomo.txt\nnomo.txt\n/tmp\ngz\n/tmp/b\n../b\nabsolute\n",

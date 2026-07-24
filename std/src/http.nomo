@@ -61,9 +61,63 @@ pub struct HttpResponse {
     pub body: string
 }
 
+/// An opaque bounded blocking HTTP response stream.
+pub struct HttpStream {
+    handle: u64
+    /// Numeric HTTP status code.
+    pub status: i64
+    /// Response headers in received order.
+    pub headers: Array<HttpHeader>
+}
+
+/// One incrementally decoded UTF-8 response chunk.
+pub struct HttpStreamChunk {
+    /// Non-empty text when the stream has more data.
+    pub data: string
+    /// True after the response body reaches EOF.
+    pub done: bool
+}
+
+/// One parsed Server-Sent Event.
+pub struct SseEvent {
+    /// Event type, defaulting to `message`.
+    pub event: string
+    /// Joined `data:` field values.
+    pub data: string
+    /// Last event identifier.
+    pub id: string
+    /// Optional server-requested reconnection delay.
+    pub retry_millis: Option<u64>
+}
+
 /// Performs one bounded blocking HTTP or HTTPS request.
 pub fn send(request: HttpRequest) -> Result<HttpResponse, HttpError> {
     return http.send(request)
+}
+
+/// Opens a bounded blocking HTTP or HTTPS text response stream.
+pub fn open_stream(request: HttpRequest, idle_timeout_millis: u64) -> Result<HttpStream, HttpError> {
+    return http.open_stream(request, idle_timeout_millis)
+}
+
+/// Pulls one 4-byte-to-1-MiB bounded UTF-8 text chunk from a response stream.
+pub fn read_text(stream: HttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError> {
+    return http.read_text(stream, max_chunk_bytes)
+}
+
+/// Pulls and parses the next positive, at-most-1-MiB Server-Sent Event.
+pub fn next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError> {
+    return http.next_sse(stream, max_event_bytes)
+}
+
+/// Cooperatively cancels an unfinished response stream.
+pub fn cancel_stream(stream: HttpStream) -> void {
+    http.cancel_stream(stream)
+}
+
+/// Closes a completed or abandoned response stream.
+pub fn close_stream(stream: HttpStream) -> void {
+    http.close_stream(stream)
 }
 
 /// Performs a blocking HTTP GET request.

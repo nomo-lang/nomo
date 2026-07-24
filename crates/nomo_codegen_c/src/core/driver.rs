@@ -200,6 +200,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_http_client_helpers(&mut out);
         out.push('\n');
     }
+    if uses_http_stream(program) {
+        emit_http_stream_helpers(&mut out);
+        out.push('\n');
+    }
     if uses_http_server(program) {
         emit_http_server_helpers(&mut out);
         out.push('\n');

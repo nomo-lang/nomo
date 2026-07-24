@@ -6,6 +6,18 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
     for enum_type in &program.enums {
         if enum_type.type_params.is_empty() {
             push_enum_instance(&mut seen, &mut out, &enum_type.name, &[]);
+            for variant in &enum_type.variants {
+                if let Some(payload) = &variant.payload {
+                    collect_type_enum(payload, &mut seen, &mut out);
+                }
+            }
+        }
+    }
+    for struct_type in &program.structs {
+        if struct_type.type_params.is_empty() {
+            for field in &struct_type.fields {
+                collect_type_enum(&field.value_type, &mut seen, &mut out);
+            }
         }
     }
     for function in &program.functions {
@@ -265,6 +277,23 @@ fn collect_http_call_enums(
                     http_error,
                 ],
             );
+        }
+        BUILTIN_HTTP_OPEN_STREAM_EXPR
+        | BUILTIN_HTTP_READ_TEXT_EXPR
+        | BUILTIN_HTTP_NEXT_SSE_EXPR
+        | BUILTIN_HTTP_CANCEL_STREAM_EXPR
+        | BUILTIN_HTTP_CLOSE_STREAM_EXPR => {
+            let response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
+            let stream = ValueType::Struct("HttpStream".to_string(), Vec::new());
+            let chunk = ValueType::Struct("HttpStreamChunk".to_string(), Vec::new());
+            let event = ValueType::Struct("SseEvent".to_string(), Vec::new());
+            let event_option = ValueType::Enum("Option".to_string(), vec![event.clone()]);
+            push_enum_instance(seen, out, "Result", &[response, http_error.clone()]);
+            push_enum_instance(seen, out, "Result", &[stream, http_error.clone()]);
+            push_enum_instance(seen, out, "Result", &[chunk, http_error.clone()]);
+            push_enum_instance(seen, out, "Option", &[event]);
+            push_enum_instance(seen, out, "Option", &[ValueType::U64]);
+            push_enum_instance(seen, out, "Result", &[event_option, http_error]);
         }
         BUILTIN_HTTP_LISTEN_EXPR => {
             push_enum_instance(

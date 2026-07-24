@@ -309,6 +309,43 @@ pub struct PackageMetadata {
     pub edition: String,
 }
 
+/// Returns the stable Nomo module root derived from a package name.
+///
+/// Package names are normally lowercase kebab-case, but this also supports
+/// legacy CamelCase names so migration can be deterministic.
+pub fn package_name_to_module_root(name: &str) -> Result<String, String> {
+    let mut root = String::new();
+    let mut previous_was_lower_or_digit = false;
+    for ch in name.chars() {
+        if ch.is_ascii_uppercase() {
+            if previous_was_lower_or_digit && !root.ends_with('_') {
+                root.push('_');
+            }
+            root.push(ch.to_ascii_lowercase());
+            previous_was_lower_or_digit = false;
+        } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
+            root.push(ch);
+            previous_was_lower_or_digit = true;
+        } else if ch == '-' || ch == '_' {
+            if !root.is_empty() && !root.ends_with('_') {
+                root.push('_');
+            }
+            previous_was_lower_or_digit = false;
+        } else {
+            return Err(format!(
+                "package name `{name}` cannot derive a Nomo module root"
+            ));
+        }
+    }
+    let root = root.trim_matches('_');
+    if root.is_empty() || validate_dependency_alias(root).is_err() {
+        return Err(format!(
+            "package name `{name}` cannot derive a Nomo module root"
+        ));
+    }
+    Ok(root.to_string())
+}
+
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct WorkspacePackageDefaults {
     pub namespace: Option<String>,
@@ -2248,6 +2285,25 @@ pub fn is_package_name(value: &str) -> bool {
             .chars()
             .last()
             .is_some_and(|ch| ch.is_ascii_lowercase() || ch.is_ascii_digit())
+}
+
+#[cfg(test)]
+mod module_root_tests {
+    use super::package_name_to_module_root;
+
+    #[test]
+    fn derives_stable_module_roots_from_current_and_legacy_names() {
+        assert_eq!(package_name_to_module_root("hello").unwrap(), "hello");
+        assert_eq!(
+            package_name_to_module_root("hello-world").unwrap(),
+            "hello_world"
+        );
+        assert_eq!(
+            package_name_to_module_root("HelloWorld").unwrap(),
+            "hello_world"
+        );
+        assert!(package_name_to_module_root("hello world").is_err());
+    }
 }
 
 fn is_legacy_package_name(value: &str) -> bool {

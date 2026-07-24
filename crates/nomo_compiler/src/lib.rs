@@ -271,10 +271,10 @@ const BUILTIN_PROCESS_TERMINATE_EXPR: &str = "__nomo_process_terminate";
 const BUILTIN_PROCESS_CLOSE_CHILD_EXPR: &str = "__nomo_process_close_child";
 
 pub use nomo_ir::{
-    BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function, LoopKind,
-    MatchStatementArm, MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction,
-    Parameter, Program, QuestionCarrier, Statement, StructField, StructType, UnaryOp, ValueExpr,
-    ValueType,
+    BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function,
+    JsonOperation, LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction,
+    MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier, Statement,
+    StructField, StructType, UnaryOp, ValueExpr, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

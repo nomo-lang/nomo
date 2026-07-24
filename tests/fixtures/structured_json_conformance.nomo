@@ -1,0 +1,282 @@
+package structured_json_conformance.main
+
+import std.array.Array
+import std.io
+import std.json
+
+fn print_kind(value: JsonValue) -> void {
+    match json.kind(value) {
+        JsonKind.Null => {
+            io.println("null")
+        }
+        JsonKind.Boolean => {
+            io.println("boolean")
+        }
+        JsonKind.Number => {
+            io.println("number")
+        }
+        JsonKind.String => {
+            io.println("string")
+        }
+        JsonKind.Array => {
+            io.println("array")
+        }
+        JsonKind.Object => {
+            io.println("object")
+        }
+    }
+}
+
+fn main() -> void {
+    let input: string = " \t[null,true,1E+2,\"A\\n\\\"\\\\😀\",[],{}]\r\n"
+    let parsed: Result<JsonValue, JsonError> = json.parse(input)
+    match parsed {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(root) => {
+            io.println(json.stringify(root) == input)
+            match json.array_items(root) {
+                None => {
+                    io.println("not an array")
+                }
+                Some(values) => {
+                    io.println(values.len())
+                    for value in values {
+                        print_kind(value)
+                    }
+                    match values.get(0) {
+                        None => {
+                            io.println("missing null")
+                        }
+                        Some(value) => {
+                            io.println(json.is_null(value))
+                        }
+                    }
+                    match values.get(1) {
+                        None => {
+                            io.println("missing boolean")
+                        }
+                        Some(value) => {
+                            match json.as_bool(value) {
+                                None => {
+                                    io.println("not a boolean")
+                                }
+                                Some(flag) => {
+                                    io.println(flag)
+                                }
+                            }
+                            match json.as_string(value) {
+                                None => {
+                                    io.println("wrong-kind-none")
+                                }
+                                Some(text) => {
+                                    io.println(text)
+                                }
+                            }
+                        }
+                    }
+                    match values.get(2) {
+                        None => {
+                            io.println("missing number")
+                        }
+                        Some(value) => {
+                            match json.number_text(value) {
+                                None => {
+                                    io.println("not a number")
+                                }
+                                Some(text) => {
+                                    io.println(text)
+                                }
+                            }
+                        }
+                    }
+                    match values.get(3) {
+                        None => {
+                            io.println("missing string")
+                        }
+                        Some(value) => {
+                            match json.as_string(value) {
+                                None => {
+                                    io.println("not a string")
+                                }
+                                Some(text) => {
+                                    io.println(text == "A\n\"\\😀")
+                                }
+                            }
+                        }
+                    }
+                    match values.get(4) {
+                        None => {
+                            io.println("missing array")
+                        }
+                        Some(value) => {
+                            match json.array_items(value) {
+                                None => {
+                                    io.println("not a nested array")
+                                }
+                                Some(items) => {
+                                    io.println(items.len())
+                                }
+                            }
+                        }
+                    }
+                    match values.get(5) {
+                        None => {
+                            io.println("missing object")
+                        }
+                        Some(value) => {
+                            match json.object_members(value) {
+                                None => {
+                                    io.println("not an object")
+                                }
+                                Some(members) => {
+                                    io.println(members.len())
+                                }
+                            }
+                        }
+                    }
+                    match json.get(root, "missing") {
+                        None => {
+                            io.println("non-object-none")
+                        }
+                        Some(value) => {
+                            io.println(json.stringify(value))
+                        }
+                    }
+                }
+            }
+        }
+    }
+    let duplicate: Result<JsonValue, JsonError> = json.parse("{\"\\u006eame\":1,\"name\":2}")
+    match duplicate {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            match json.object_members(value) {
+                None => {
+                    io.println("not an object")
+                }
+                Some(members) => {
+                    io.println(members.len())
+                    match members.get(0) {
+                        None => {
+                            io.println("missing first")
+                        }
+                        Some(member) => {
+                            io.println(member.key)
+                        }
+                    }
+                    match members.get(1) {
+                        None => {
+                            io.println("missing second")
+                        }
+                        Some(member) => {
+                            io.println(member.key)
+                        }
+                    }
+                }
+            }
+            match json.get(value, "name") {
+                None => {
+                    io.println("missing name")
+                }
+                Some(selected) => {
+                    match json.number_text(selected) {
+                        None => {
+                            io.println("name is not a number")
+                        }
+                        Some(text) => {
+                            io.println(text)
+                        }
+                    }
+                }
+            }
+            match json.get(value, "absent") {
+                None => {
+                    io.println("missing-none")
+                }
+                Some(selected) => {
+                    io.println(json.stringify(selected))
+                }
+            }
+        }
+    }
+    let escaped: Result<JsonValue, JsonError> = json.from_string("A\n\"\\😀")
+    match escaped {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+    }
+    let mut members: Array<JsonMember> = Array.new<JsonMember>()
+    members.push(JsonMember { key: "null", value: json.from_null() })
+    members.push(JsonMember { key: "bool", value: json.from_bool(false) })
+    members.push(JsonMember { key: "i64", value: json.from_i64(-9223372036854775807 - 1) })
+    let largest_number: u64 = 9223372036854775807 as u64 * 2 + 1
+    members.push(JsonMember { key: "u64", value: json.from_u64(largest_number) })
+    let constructed: Result<JsonValue, JsonError> = json.from_object(members)
+    match constructed {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+    }
+    let surrogate: Result<JsonValue, JsonError> = json.parse("\"\\ud83d\\ude00\"")
+    match surrogate {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            match json.as_string(value) {
+                None => {
+                    io.println("not a string")
+                }
+                Some(text) => {
+                    io.println(text)
+                }
+            }
+        }
+    }
+    let invalid_number: Result<JsonValue, JsonError> = json.from_number_text("01")
+    match invalid_number {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset, err.message)
+        }
+    }
+    let unpaired: Result<JsonValue, JsonError> = json.parse("\"\\ud800\"")
+    match unpaired {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+    }
+    let nul: Result<JsonValue, JsonError> = json.parse("\"\\u0000\"")
+    match nul {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+    }
+    let secret: Result<JsonValue, JsonError> = json.parse("{\"NOMO_JSON_SECRET_SENTINEL\":")
+    match secret {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset, err.message)
+        }
+    }
+}

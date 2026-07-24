@@ -65,3 +65,20 @@ jobs:
           cargo test -p nomo --test cli_project
           controlled_process
           --locked
+      - name: Run structured JSON conformance and boundary gates
+        run: >-
+          cargo test -p nomo --test cli_project
+          structured_json_
+          --locked
+
+  macos-json-runtime:
+    name: Run structured JSON runtime on macOS
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Run structured JSON conformance and boundary gates
+        run: >-
+          cargo test -p nomo --test cli_project
+          structured_json_
+          --locked

@@ -3,6 +3,18 @@ use super::*;
 pub(super) fn collect_array_element_types(program: &Program) -> Vec<ValueType> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
+    if uses_structured_json_builtin(program) {
+        push_array_element_type(
+            &mut seen,
+            &mut out,
+            &ValueType::Struct("JsonValue".to_string(), Vec::new()),
+        );
+        push_array_element_type(
+            &mut seen,
+            &mut out,
+            &ValueType::Struct("JsonMember".to_string(), Vec::new()),
+        );
+    }
     for struct_type in &program.structs {
         for field in &struct_type.fields {
             collect_type_array_elements(&field.value_type, &mut seen, &mut out);
@@ -571,6 +583,11 @@ pub(super) fn collect_expr_array_elements(
             collect_expr_array_elements(value, seen, out);
         }
         ValueExpr::Call { args, .. } => {
+            for arg in args {
+                collect_expr_array_elements(arg, seen, out);
+            }
+        }
+        ValueExpr::JsonStructured { args, .. } => {
             for arg in args {
                 collect_expr_array_elements(arg, seen, out);
             }

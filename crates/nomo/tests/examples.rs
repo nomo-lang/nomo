@@ -1131,7 +1131,10 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "specific_import" => "specific import ok\n",
         "specific_type_import" => "specific type import ok\n",
         "specific_value_import" => "specific value import ok\n",
-        "std_json" => "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n",
+        "std_json" => "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json syntax\n",
+        "structured_json" => {
+            "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello \\\"Nomo\\\"\"}],\"stream\":false,\"max_tokens\":64}\nHello from structured JSON\n"
+        }
         "std_http" => "get-ok\npost-ok\n",
         "openai_compatible" => {
             "200\ntls\n{\"id\":\"chatcmpl-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"}}]}\n"

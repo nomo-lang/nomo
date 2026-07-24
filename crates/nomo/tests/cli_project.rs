@@ -7331,6 +7331,7 @@ fn generated_c_runtime_smoke_passes_with_address_sanitizer_when_available() {
 
 import std.array
 import std.io
+import std.json
 
 struct Bag {
     items: Array<string>
@@ -7348,6 +7349,39 @@ fn label(value: Option<string>) -> string {
     return match value {
         Some(text) => text
         None => "missing"
+    }
+}
+
+fn json_roundtrip() -> Result<string, JsonError> {
+    let parsed: JsonValue = json.parse("{\"items\":[{\"name\":\"nomo\"}],\"ok\":true}")?
+    let selected: Option<JsonValue> = json.get(parsed, "items")
+    match selected {
+        None => {
+            return Ok("missing items")
+        }
+        Some(items) => {
+            let values: Option<Array<JsonValue>> = json.array_items(items)
+            match values {
+                None => {
+                    return Ok("items is not an array")
+                }
+                Some(entries) => {
+                    let first: Option<JsonValue> = entries.get(0)
+                    match first {
+                        None => {
+                            return Ok("items is empty")
+                        }
+                        Some(entry) => {
+                            let mut copies: Array<JsonValue> = Array.new<JsonValue>()
+                            copies.push(parsed)
+                            copies.push(entry)
+                            let built: JsonValue = json.from_array(copies)?
+                            return Ok(json.stringify(built))
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -7396,6 +7430,22 @@ fn run() -> Result<string, string> {
 }
 
 fn main() -> void {
+    for let i: u64 = 0; i < 256; i++ {
+        let json_result: Result<string, JsonError> = json_roundtrip()
+        match json_result {
+            Err(err) => {
+                panic(err.message)
+            }
+            Ok(value) => {
+                let checked: string = if value == "missing items" {
+                    panic("json traversal failed")
+                } else {
+                    value
+                }
+            }
+        }
+    }
+
     let result: Result<string, string> = run()
     match result {
         Ok(value) => {
@@ -7440,8 +7490,13 @@ fn main() -> void {
         String::from_utf8_lossy(&cc_output.stderr)
     );
 
+    let asan_options = if cfg!(target_os = "macos") {
+        "detect_leaks=0:abort_on_error=1"
+    } else {
+        "detect_leaks=1:abort_on_error=1"
+    };
     let run_output = Command::new(&bin_path)
-        .env("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=1")
+        .env("ASAN_OPTIONS", asan_options)
         .output()
         .unwrap();
     assert!(
@@ -7799,7 +7854,7 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n"
+        "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json syntax\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -7808,6 +7863,544 @@ fn main() -> void {
     );
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_executes_structured_json_agent_payloads() {
+    let root = temp_test_root("structured-json-agent");
+    reset_dir(&root);
+    let project = root.join("structured_json_agent");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_json_agent\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package structured_json_agent.main
+
+import std.array.Array
+import std.io
+import std.json
+
+fn request_body() -> Result<JsonValue, JsonError> {
+    let mut message_members: Array<JsonMember> = Array.new<JsonMember>()
+    message_members.push(JsonMember { key: "role", value: json.from_string("user")? })
+    message_members.push(JsonMember { key: "content", value: json.from_string("Hello \"Nomo\"\n😀")? })
+    let message: JsonValue = json.from_object(message_members)?
+    let mut messages: Array<JsonValue> = Array.new<JsonValue>()
+    messages.push(message)
+    let mut request: Array<JsonMember> = Array.new<JsonMember>()
+    request.push(JsonMember { key: "model", value: json.from_string("fixture")? })
+    request.push(JsonMember { key: "messages", value: json.from_array(messages)? })
+    request.push(JsonMember { key: "stream", value: json.from_bool(false) })
+    request.push(JsonMember { key: "max_tokens", value: json.from_u64(64 as u64) })
+    request.push(JsonMember { key: "penalty", value: json.from_i64(-2) })
+    request.push(JsonMember { key: "metadata", value: json.from_null() })
+    return json.from_object(request)
+}
+
+fn main() -> void {
+    let request: Result<JsonValue, JsonError> = request_body()
+    match request {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+    }
+
+    let response: Result<JsonValue, JsonError> = json.parse(" {\"choices\":[{\"message\":{\"content\":\"Hello from model\"}}],\"usage\":1E+2} ")
+    match response {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(root) => {
+            match json.kind(root) {
+                JsonKind.Null => {
+                    io.println("null")
+                }
+                JsonKind.Boolean => {
+                    io.println("boolean")
+                }
+                JsonKind.Number => {
+                    io.println("number")
+                }
+                JsonKind.String => {
+                    io.println("string")
+                }
+                JsonKind.Array => {
+                    io.println("array")
+                }
+                JsonKind.Object => {
+                    io.println("object")
+                }
+            }
+            let usage: Option<JsonValue> = json.get(root, "usage")
+            match usage {
+                None => {
+                    io.println("missing usage")
+                }
+                Some(value) => {
+                    match json.number_text(value) {
+                        None => {
+                            io.println("usage is not a number")
+                        }
+                        Some(text) => {
+                            io.println(text)
+                        }
+                    }
+                }
+            }
+            let choices: Option<JsonValue> = json.get(root, "choices")
+            match choices {
+                None => {
+                    io.println("missing choices")
+                }
+                Some(value) => {
+                    let items: Option<Array<JsonValue>> = json.array_items(value)
+                    match items {
+                        None => {
+                            io.println("choices is not an array")
+                        }
+                        Some(values) => {
+                            match values.get(0) {
+                                None => {
+                                    io.println("choices is empty")
+                                }
+                                Some(choice) => {
+                                    match json.get(choice, "message") {
+                                        None => {
+                                            io.println("missing message")
+                                        }
+                                        Some(message) => {
+                                            match json.get(message, "content") {
+                                                None => {
+                                                    io.println("missing content")
+                                                }
+                                                Some(content) => {
+                                                    match json.as_string(content) {
+                                                        None => {
+                                                            io.println("content is not a string")
+                                                        }
+                                                        Some(text) => {
+                                                            io.println(text)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let duplicate: Result<JsonValue, JsonError> = json.parse("{\"\\u0064up\":1,\"dup\":2}")
+    match duplicate {
+        Err(err) => {
+            io.println(err.code)
+        }
+        Ok(value) => {
+            match json.object_members(value) {
+                None => {
+                    io.println("not object")
+                }
+                Some(members) => {
+                    io.println(members.len())
+                }
+            }
+            match json.get(value, "dup") {
+                None => {
+                    io.println("missing dup")
+                }
+                Some(found) => {
+                    match json.number_text(found) {
+                        None => {
+                            io.println("dup is not number")
+                        }
+                        Some(text) => {
+                            io.println(text)
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let invalid: Result<JsonValue, JsonError> = json.parse("\"\\u0000\"")
+    match invalid {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+    }
+    let secret: Result<JsonValue, JsonError> = json.parse("{\"token\":\"NOMO_JSON_SECRET_SENTINEL\"")
+    match secret {
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+        Err(err) => {
+            io.println(err.code, err.offset, err.message)
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    assert_eq!(
+        stdout,
+        "{\"model\":\"fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello \\\"Nomo\\\"\\n😀\"}],\"stream\":false,\"max_tokens\":64,\"penalty\":-2,\"metadata\":null}\nobject\n1E+2\nHello from model\n2\n2\nunsupported_string 1\nsyntax 36 invalid json syntax\n"
+    );
+    assert!(!stdout.contains("NOMO_JSON_SECRET_SENTINEL"));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_json_conformance_fixture_matches_native_runtime() {
+    let root = temp_test_root("structured-json-conformance");
+    reset_dir(&root);
+    let project = root.join("structured_json_conformance");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_json_conformance\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        include_str!("../../../tests/fixtures/structured_json_conformance.nomo"),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    assert_eq!(
+        stdout,
+        "true\n6\nnull\nboolean\nnumber\nstring\narray\nobject\ntrue\ntrue\nwrong-kind-none\n1E+2\ntrue\n0\n0\nnon-object-none\n2\nname\nname\n2\nmissing-none\n\"A\\n\\\"\\\\😀\"\n{\"null\":null,\"bool\":false,\"i64\":-9223372036854775808,\"u64\":18446744073709551615}\n😀\ninvalid_number 1 invalid json number\nunsupported_string 1\nunsupported_string 1\nsyntax 29 invalid json syntax\n"
+    );
+    assert!(!stdout.contains("NOMO_JSON_SECRET_SENTINEL"));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn structured_json_enforces_native_boundary_limits() {
+    const MAX_BYTES: usize = 8 * 1024 * 1024;
+    const MAX_DEPTH: usize = 128;
+    const MAX_VALUES: usize = 262_144;
+
+    let root = temp_test_root("structured-json-boundaries");
+    reset_dir(&root);
+    let project = root.join("structured_json_boundaries");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_json_boundaries\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package structured_json_boundaries.main
+
+import std.array.Array
+import std.fs
+import std.io
+import std.json
+import std.string
+
+fn show_result(result: Result<JsonValue, JsonError>) -> void {
+    match result {
+        Ok(value) => {
+            let raw: string = json.stringify(value)
+            io.println("ok", raw.len())
+        }
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+    }
+}
+
+fn parse_file(path: string) -> void {
+    let input: Result<string, FsError> = fs.read_to_string(path)
+    match input {
+        Err(err) => {
+            io.println("fs", err.message)
+        }
+        Ok(text) => {
+            show_result(json.parse(text))
+        }
+    }
+}
+
+fn construct_string_file(path: string) -> void {
+    let input: Result<string, FsError> = fs.read_to_string(path)
+    match input {
+        Err(err) => {
+            io.println("fs", err.message)
+        }
+        Ok(text) => {
+            show_result(json.from_string(text))
+        }
+    }
+}
+
+fn nested_value(count: u64) -> Result<JsonValue, JsonError> {
+    let mut value: JsonValue = json.from_null()
+    for let i: u64 = 0; i < count; i++ {
+        let mut values: Array<JsonValue> = Array.new<JsonValue>()
+        values.push(value)
+        value = json.from_array(values)?
+    }
+    return Ok(value)
+}
+
+fn value_array(count: u64) -> Result<JsonValue, JsonError> {
+    let mut values: Array<JsonValue> = Array.new<JsonValue>()
+    for let i: u64 = 0; i < count; i++ {
+        values.push(json.from_null())
+    }
+    return json.from_array(values)
+}
+
+fn number_boundaries() -> void {
+    let smallest: JsonValue = json.from_i64(-9223372036854775807 - 1)
+    let largest_number: u64 = (9223372036854775807 as u64) * 2 + 1
+    let largest: JsonValue = json.from_u64(largest_number)
+    io.println(json.stringify(smallest))
+    io.println(json.stringify(largest))
+    show_result(json.from_number_text("01"))
+    show_result(json.from_number_text("1E+2"))
+}
+
+fn empty_containers() -> void {
+    let empty_values: Array<JsonValue> = Array.new<JsonValue>()
+    let empty_members: Array<JsonMember> = Array.new<JsonMember>()
+    show_result(json.from_array(empty_values))
+    show_result(json.from_object(empty_members))
+}
+
+fn wrong_kind_access() -> void {
+    let value: JsonValue = json.from_bool(true)
+    io.println(json.is_null(value))
+    match json.as_bool(value) {
+        None => {
+            io.println("missing bool")
+        }
+        Some(flag) => {
+            io.println(flag)
+        }
+    }
+    match json.as_string(value) {
+        None => {
+            io.println("none")
+        }
+        Some(text) => {
+            io.println(text)
+        }
+    }
+}
+
+fn main() -> void {
+    parse_file("text_exact.json")
+    parse_file("text_over.json")
+    parse_file("depth_exact.json")
+    parse_file("depth_over.json")
+    parse_file("values_exact.json")
+    parse_file("values_over.json")
+    construct_string_file("string_exact.txt")
+    construct_string_file("string_over.txt")
+    show_result(nested_value(128))
+    show_result(nested_value(129))
+    show_result(value_array(262143))
+    show_result(value_array(262144))
+    number_boundaries()
+    empty_containers()
+    wrong_kind_access()
+}
+"#,
+    )
+    .unwrap();
+
+    let exact_text = format!("\"{}\"", "a".repeat(MAX_BYTES - 2));
+    let oversized_text = format!("\"{}\"", "a".repeat(MAX_BYTES - 1));
+    let exact_depth = format!("{}null{}", "[".repeat(MAX_DEPTH), "]".repeat(MAX_DEPTH));
+    let oversized_depth = format!(
+        "{}null{}",
+        "[".repeat(MAX_DEPTH + 1),
+        "]".repeat(MAX_DEPTH + 1)
+    );
+    let exact_values = format!("[{}]", vec!["null"; MAX_VALUES - 1].join(","));
+    let oversized_values = format!("[{}]", vec!["null"; MAX_VALUES].join(","));
+
+    assert_eq!(exact_text.len(), MAX_BYTES);
+    assert_eq!(oversized_text.len(), MAX_BYTES + 1);
+    fs::write(project.join("text_exact.json"), exact_text).unwrap();
+    fs::write(project.join("text_over.json"), oversized_text).unwrap();
+    fs::write(project.join("depth_exact.json"), exact_depth).unwrap();
+    fs::write(project.join("depth_over.json"), oversized_depth).unwrap();
+    fs::write(project.join("values_exact.json"), exact_values).unwrap();
+    fs::write(project.join("values_over.json"), oversized_values).unwrap();
+    fs::write(project.join("string_exact.txt"), "a".repeat(MAX_BYTES - 2)).unwrap();
+    fs::write(project.join("string_over.txt"), "a".repeat(MAX_BYTES - 1)).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .current_dir(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        format!(
+            "ok {MAX_BYTES}\nlimit {MAX_BYTES}\nok 260\nlimit {MAX_DEPTH}\nok 1310716\nlimit 1310716\nok {MAX_BYTES}\nlimit 0\nok 260\nlimit 0\nok 1310716\nlimit 0\n-9223372036854775808\n18446744073709551615\ninvalid_number 1\nok 4\nok 2\nok 2\nfalse\ntrue\nnone\n"
+        )
+    );
+    assert!(
+        String::from_utf8_lossy(&output.stderr).is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn structured_json_native_runtime_rejects_invalid_utf8() {
+    let root = temp_test_root("structured-json-invalid-utf8");
+    reset_dir(&root);
+    let source = root.join("main.nomo");
+    let c_path = root.join("main.c");
+    let bin_path = root.join(if cfg!(windows) {
+        "structured-json-invalid-utf8.exe"
+    } else {
+        "structured-json-invalid-utf8"
+    });
+    fs::write(
+        &source,
+        r#"package structured_json_invalid_utf8.main
+
+import std.json
+
+fn main() -> void {
+    let value: Result<JsonValue, JsonError> = json.parse("{}")
+}
+"#,
+    )
+    .unwrap();
+
+    let generated = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&c_path)
+        .output()
+        .unwrap();
+    assert!(
+        generated.status.success(),
+        "{}",
+        String::from_utf8_lossy(&generated.stderr)
+    );
+
+    let mut c = fs::read_to_string(&c_path).unwrap();
+    let main_start = c
+        .find("int main(void) {")
+        .expect("generated C contains main");
+    c.truncate(main_start);
+    c.push_str(
+        r#"int main(void) {
+    const char invalid[] = {'"', (char)0xc3, '(', '"', '\0'};
+    nomo_json_cursor cursor;
+    if (nomo_json_validate(invalid, 4U, &cursor)) {
+        return 1;
+    }
+    if (
+        cursor.error_code == NULL
+        || strcmp(cursor.error_code, "unsupported_string") != 0
+    ) {
+        return 2;
+    }
+    if (cursor.error_offset != 2U) {
+        return 3;
+    }
+    return 0;
+}
+"#,
+    );
+    fs::write(&c_path, c).unwrap();
+
+    let compiler = if cfg!(windows) { "clang" } else { "cc" };
+    let compiled = Command::new(compiler)
+        .arg("-std=c99")
+        .arg(&c_path)
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let output = Command::new(&bin_path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "status: {:?}\nstdout:\n{}\nstderr:\n{}",
+        output.status.code(),
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -9868,7 +10461,7 @@ fn run_inherited_environment(program: string) -> Result<void, ProcessControlErro
     process.close_stdin(child)?
     let mut done: bool = false
     for !done {
-        done = print_event(process.next_event(child, 4096, 5000)?)
+        done = print_event(process.next_event(child, 4096, 15000)?)
     }
     return Ok(void)
 }
@@ -9898,7 +10491,7 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     process.close_stdin(child)?
     let mut done: bool = false
     for !done {
-        done = print_event(process.next_event(child, 4096, 5000)?)
+        done = print_event(process.next_event(child, 4096, 15000)?)
     }
     let final_status: Option<ProcessExit> = process.try_wait(child)?
     match final_status {

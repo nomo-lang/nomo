@@ -258,6 +258,7 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
         | ValueExpr::CryptoRandomBytes { .. }
         | ValueExpr::JsonParse { .. }
         | ValueExpr::JsonStringify { .. }
+        | ValueExpr::JsonStructured { .. }
         | ValueExpr::RegexCompile { .. }
         | ValueExpr::RegexIsMatch { .. }
         | ValueExpr::RegexCaptures { .. } => {

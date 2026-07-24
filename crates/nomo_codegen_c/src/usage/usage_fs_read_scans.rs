@@ -204,6 +204,7 @@ pub(super) fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
             expr_uses_fs_read_to_string(index) || expr_uses_fs_read_to_string(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_fs_read_to_string),
+        ValueExpr::JsonStructured { args, .. } => args.iter().any(expr_uses_fs_read_to_string),
         ValueExpr::StringLen { value }
         | ValueExpr::StringIsEmpty { value }
         | ValueExpr::StringTrim { value }

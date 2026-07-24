@@ -32,6 +32,32 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
     for element_type in collect_array_element_types(program) {
         push_enum_instance(&mut seen, &mut out, "Option", &[element_type]);
     }
+    if uses_structured_json_builtin(program) {
+        let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
+        let json_error = ValueType::Struct("JsonError".to_string(), Vec::new());
+        let json_member = ValueType::Struct("JsonMember".to_string(), Vec::new());
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "Result",
+            &[json_value.clone(), json_error],
+        );
+        push_enum_instance(&mut seen, &mut out, "Option", &[ValueType::Bool]);
+        push_enum_instance(&mut seen, &mut out, "Option", &[ValueType::String]);
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "Option",
+            &[ValueType::Array(Box::new(json_value.clone()))],
+        );
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "Option",
+            &[ValueType::Array(Box::new(json_member))],
+        );
+        push_enum_instance(&mut seen, &mut out, "Option", &[json_value]);
+    }
     out
 }
 
@@ -437,6 +463,11 @@ fn collect_expr_enum(
         ValueExpr::Call { name, args } => {
             collect_http_call_enums(name, seen, out);
             collect_process_call_enums(name, seen, out);
+            for arg in args {
+                collect_expr_enum(arg, seen, out);
+            }
+        }
+        ValueExpr::JsonStructured { args, .. } => {
             for arg in args {
                 collect_expr_enum(arg, seen, out);
             }

@@ -243,6 +243,9 @@ pub(super) fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool)
                 || expr_contains(value, predicate)
         }
         ValueExpr::Call { args, .. } => args.iter().any(|arg| expr_contains(arg, predicate)),
+        ValueExpr::JsonStructured { args, .. } => {
+            args.iter().any(|arg| expr_contains(arg, predicate))
+        }
         ValueExpr::ArrayGet { array, index, .. } => {
             expr_contains(array, predicate) || expr_contains(index, predicate)
         }
@@ -574,8 +577,14 @@ pub(super) fn expr_is_crypto_builtin(expr: &ValueExpr) -> bool {
 pub(super) fn expr_is_json_builtin(expr: &ValueExpr) -> bool {
     matches!(
         expr,
-        ValueExpr::JsonParse { .. } | ValueExpr::JsonStringify { .. }
+        ValueExpr::JsonParse { .. }
+            | ValueExpr::JsonStringify { .. }
+            | ValueExpr::JsonStructured { .. }
     )
+}
+
+pub(super) fn expr_is_structured_json_builtin(expr: &ValueExpr) -> bool {
+    matches!(expr, ValueExpr::JsonStructured { .. })
 }
 
 pub(super) fn expr_is_regex_builtin(expr: &ValueExpr) -> bool {

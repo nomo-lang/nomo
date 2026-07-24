@@ -257,7 +257,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     if uses_json_builtin(program) {
-        emit_json_helpers(&mut out);
+        emit_json_helpers(&mut out, uses_structured_json_builtin(program));
         out.push('\n');
     }
     if uses_regex_builtin(program) {

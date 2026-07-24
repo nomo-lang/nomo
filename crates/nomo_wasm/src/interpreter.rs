@@ -1,8 +1,10 @@
 use nomo_ir::{
-    BinaryOp, DeferredCall, LoopKind, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction,
-    Program, Statement, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, JsonOperation, LoopKind, MathBinaryFunction, MathUnaryFunction,
+    NumBinaryFunction, Program, Statement, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::HashMap;
+
+use crate::json::{self, JsonKind, JsonNodeValue};
 
 #[derive(Debug, Clone, Copy)]
 pub struct ExecutionLimits {
@@ -845,6 +847,22 @@ impl<'a> Interpreter<'a> {
                         .map_err(|_| Value::String("invalid f64".into())),
                 ))
             }
+            ValueExpr::JsonParse { value } => {
+                let text = self.eval_expr(value)?.as_string()?.to_string();
+                Ok(result_value(
+                    "Result",
+                    json::parse(&text)
+                        .map(|_| json_value(text))
+                        .map_err(json_error_value),
+                ))
+            }
+            ValueExpr::JsonStringify { value } => {
+                let value = self.eval_expr(value)?;
+                Ok(Value::String(json_raw(&value)?.to_string()))
+            }
+            ValueExpr::JsonStructured { operation, args } => {
+                self.eval_json_structured(*operation, args)
+            }
             ValueExpr::ArrayNew { .. } => Ok(Value::Array(Vec::new())),
             ValueExpr::ArrayLen { array } => match self.eval_expr(array)? {
                 Value::Array(values) => Ok(Value::U64(values.len() as u64)),
@@ -948,6 +966,38 @@ impl<'a> Interpreter<'a> {
             ValueExpr::FieldAccess { base, field } => {
                 let Value::Struct { fields, .. } = self.get_variable(base)? else {
                     return Err(RuntimeError::runtime("field base is not a struct"));
+                };
+                fields.get(field).cloned().ok_or_else(|| {
+                    RuntimeError::runtime(format!("unknown runtime field `{field}`"))
+                })
+            }
+            ValueExpr::EnumPayloadFieldAccess {
+                value,
+                variant,
+                field,
+            } => {
+                let Value::Enum {
+                    variant: actual,
+                    payload,
+                    ..
+                } = self.eval_expr(value)?
+                else {
+                    return Err(RuntimeError::runtime(
+                        "enum payload field source is not an enum",
+                    ));
+                };
+                if actual != *variant {
+                    return Err(RuntimeError::runtime("enum variant mismatch"));
+                }
+                let Some(payload) = payload else {
+                    return Err(RuntimeError::runtime(
+                        "enum variant does not carry a payload",
+                    ));
+                };
+                let Value::Struct { fields, .. } = *payload else {
+                    return Err(RuntimeError::runtime(
+                        "enum payload field source is not a struct",
+                    ));
                 };
                 fields.get(field).cloned().ok_or_else(|| {
                     RuntimeError::runtime(format!("unknown runtime field `{field}`"))
@@ -1121,6 +1171,143 @@ impl<'a> Interpreter<'a> {
             other => Err(RuntimeError::runtime(format!(
                 "typed IR operation is not implemented by the browser interpreter: {other:?}"
             ))),
+        }
+    }
+
+    fn eval_json_structured(
+        &mut self,
+        operation: JsonOperation,
+        args: &[ValueExpr],
+    ) -> RuntimeResult<Value> {
+        match operation {
+            JsonOperation::FromNull => Ok(json_value("null".to_string())),
+            JsonOperation::FromBool => {
+                let value = self.eval_expr(&args[0])?.as_bool()?;
+                Ok(json_value(if value { "true" } else { "false" }.to_string()))
+            }
+            JsonOperation::FromI64 => {
+                let Value::I64(value) = self.eval_expr(&args[0])? else {
+                    return Err(RuntimeError::runtime("expected an i64 value"));
+                };
+                Ok(json_value(value.to_string()))
+            }
+            JsonOperation::FromU64 => {
+                let Value::U64(value) = self.eval_expr(&args[0])? else {
+                    return Err(RuntimeError::runtime("expected a u64 value"));
+                };
+                Ok(json_value(value.to_string()))
+            }
+            JsonOperation::FromNumberText => {
+                let value = self.eval_expr(&args[0])?.as_string()?.to_string();
+                Ok(result_value(
+                    "Result",
+                    json::from_number_text(&value)
+                        .map(json_value)
+                        .map_err(json_error_value),
+                ))
+            }
+            JsonOperation::FromString => {
+                let value = self.eval_expr(&args[0])?.as_string()?.to_string();
+                Ok(result_value(
+                    "Result",
+                    json::from_string(&value)
+                        .map(json_value)
+                        .map_err(json_error_value),
+                ))
+            }
+            JsonOperation::FromArray => {
+                let Value::Array(values) = self.eval_expr(&args[0])? else {
+                    return Err(RuntimeError::runtime("expected an Array<JsonValue>"));
+                };
+                let raw = values
+                    .iter()
+                    .map(json_raw)
+                    .collect::<RuntimeResult<Vec<_>>>()?
+                    .into_iter()
+                    .map(str::to_string)
+                    .collect::<Vec<_>>();
+                Ok(result_value(
+                    "Result",
+                    json::from_array(&raw)
+                        .map(json_value)
+                        .map_err(json_error_value),
+                ))
+            }
+            JsonOperation::FromObject => {
+                let Value::Array(values) = self.eval_expr(&args[0])? else {
+                    return Err(RuntimeError::runtime("expected an Array<JsonMember>"));
+                };
+                let mut members = Vec::with_capacity(values.len());
+                for value in values {
+                    members.push(json_member_parts(&value)?);
+                }
+                Ok(result_value(
+                    "Result",
+                    json::from_object(&members)
+                        .map(json_value)
+                        .map_err(json_error_value),
+                ))
+            }
+            JsonOperation::Kind
+            | JsonOperation::IsNull
+            | JsonOperation::AsBool
+            | JsonOperation::NumberText
+            | JsonOperation::AsString
+            | JsonOperation::ArrayItems
+            | JsonOperation::ObjectMembers
+            | JsonOperation::Get => {
+                let value = self.eval_expr(&args[0])?;
+                let node = json::parse(json_raw(&value)?)
+                    .map_err(|_| RuntimeError::runtime("opaque JsonValue is invalid"))?;
+                match operation {
+                    JsonOperation::Kind => Ok(json_kind_value(node.kind())),
+                    JsonOperation::IsNull => {
+                        Ok(Value::Bool(matches!(node.value, JsonNodeValue::Null)))
+                    }
+                    JsonOperation::AsBool => Ok(option_value(match node.value {
+                        JsonNodeValue::Boolean(value) => Some(Value::Bool(value)),
+                        _ => None,
+                    })),
+                    JsonOperation::NumberText => Ok(option_value(match node.value {
+                        JsonNodeValue::Number(value) => Some(Value::String(value)),
+                        _ => None,
+                    })),
+                    JsonOperation::AsString => Ok(option_value(match node.value {
+                        JsonNodeValue::String(value) => Some(Value::String(value)),
+                        _ => None,
+                    })),
+                    JsonOperation::ArrayItems => Ok(option_value(match node.value {
+                        JsonNodeValue::Array(values) => Some(Value::Array(
+                            values
+                                .into_iter()
+                                .map(|value| json_value(value.raw))
+                                .collect(),
+                        )),
+                        _ => None,
+                    })),
+                    JsonOperation::ObjectMembers => Ok(option_value(match node.value {
+                        JsonNodeValue::Object(values) => Some(Value::Array(
+                            values
+                                .into_iter()
+                                .map(|(key, value)| json_member_value(key, value.raw))
+                                .collect(),
+                        )),
+                        _ => None,
+                    })),
+                    JsonOperation::Get => {
+                        let key = self.eval_expr(&args[1])?.as_string()?.to_string();
+                        Ok(option_value(match node.value {
+                            JsonNodeValue::Object(values) => values
+                                .into_iter()
+                                .rev()
+                                .find(|(name, _)| name == &key)
+                                .map(|(_, value)| json_value(value.raw)),
+                            _ => None,
+                        }))
+                    }
+                    _ => unreachable!("structured JSON accessor operation"),
+                }
+            }
         }
     }
 
@@ -1448,5 +1635,83 @@ fn result_value(name: &str, result: Result<Value, Value>) -> Value {
         name: name.to_string(),
         variant: variant.to_string(),
         payload: Some(Box::new(payload)),
+    }
+}
+
+fn json_value(raw: String) -> Value {
+    Value::Struct {
+        name: "JsonValue".to_string(),
+        fields: HashMap::from([("raw".to_string(), Value::String(raw))]),
+    }
+}
+
+fn json_error_value(error: json::JsonError) -> Value {
+    Value::Struct {
+        name: "JsonError".to_string(),
+        fields: HashMap::from([
+            ("code".to_string(), Value::String(error.code.to_string())),
+            (
+                "message".to_string(),
+                Value::String(error.message.to_string()),
+            ),
+            ("offset".to_string(), Value::U64(error.offset as u64)),
+        ]),
+    }
+}
+
+fn json_raw(value: &Value) -> RuntimeResult<&str> {
+    let Value::Struct { name, fields } = value else {
+        return Err(RuntimeError::runtime("expected a JsonValue"));
+    };
+    if name != "JsonValue" {
+        return Err(RuntimeError::runtime("expected a JsonValue"));
+    }
+    fields
+        .get("raw")
+        .ok_or_else(|| RuntimeError::runtime("JsonValue has no raw field"))?
+        .as_string()
+}
+
+fn json_member_value(key: String, raw: String) -> Value {
+    Value::Struct {
+        name: "JsonMember".to_string(),
+        fields: HashMap::from([
+            ("key".to_string(), Value::String(key)),
+            ("value".to_string(), json_value(raw)),
+        ]),
+    }
+}
+
+fn json_member_parts(value: &Value) -> RuntimeResult<(String, String)> {
+    let Value::Struct { name, fields } = value else {
+        return Err(RuntimeError::runtime("expected a JsonMember"));
+    };
+    if name != "JsonMember" {
+        return Err(RuntimeError::runtime("expected a JsonMember"));
+    }
+    let key = fields
+        .get("key")
+        .ok_or_else(|| RuntimeError::runtime("JsonMember has no key field"))?
+        .as_string()?
+        .to_string();
+    let value = fields
+        .get("value")
+        .ok_or_else(|| RuntimeError::runtime("JsonMember has no value field"))?;
+    Ok((key, json_raw(value)?.to_string()))
+}
+
+fn json_kind_value(kind: JsonKind) -> Value {
+    let variant = match kind {
+        JsonKind::Null => "Null",
+        JsonKind::Boolean => "Boolean",
+        JsonKind::Number => "Number",
+        JsonKind::String => "String",
+        JsonKind::Array => "Array",
+        JsonKind::Object => "Object",
+    };
+    Value::Enum {
+        name: "JsonKind".to_string(),
+        variant: variant.to_string(),
+        payload: None,
     }
 }

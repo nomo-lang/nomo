@@ -5,6 +5,7 @@
 //! granting host filesystem, process, environment, or network capabilities.
 
 mod interpreter;
+mod json;
 
 use interpreter::{ExecutionLimits, Interpreter};
 use nomo_compiler::{Program, check_source_text};
@@ -329,6 +330,95 @@ fn main() -> void {
             response.stdout,
             "Hello, final audit 0\nHello, final audit 1\nHello, final audit 2\n"
         );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn runs_structured_json_with_native_semantics() {
+        let source = r#"package app.main
+
+import std.array.Array
+import std.io
+import std.json
+
+fn main() -> void {
+    let text_result: Result<JsonValue, JsonError> = json.from_string("Nomo\n😀")
+    let number_result: Result<JsonValue, JsonError> = json.from_number_text("1e+2")
+    match text_result {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(text) => {
+            match number_result {
+                Err(err) => {
+                    io.println(err.code, err.offset)
+                }
+                Ok(number) => {
+                    let mut members: Array<JsonMember> = Array.new<JsonMember>()
+                    members.push(JsonMember { key: "text", value: text })
+                    members.push(JsonMember { key: "count", value: number })
+                    let built: Result<JsonValue, JsonError> = json.from_object(members)
+                    match built {
+                        Err(err) => {
+                            io.println(err.code, err.offset)
+                        }
+                        Ok(value) => {
+                            io.println(json.stringify(value))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let parsed: Result<JsonValue, JsonError> = json.parse("{\"x\":1,\"x\":\"last\",\"items\":[true]}")
+    match parsed {
+        Err(err) => {
+            io.println(err.code)
+        }
+        Ok(root) => {
+            let selected: Option<JsonValue> = json.get(root, "x")
+            match selected {
+                None => {
+                    io.println("missing")
+                }
+                Some(item) => {
+                    let text: Option<string> = json.as_string(item)
+                    match text {
+                        None => {
+                            io.println("wrong kind")
+                        }
+                        Some(value) => {
+                            io.println(value)
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "{\"text\":\"Nomo\\n😀\",\"count\":1e+2}\nlast\n"
+        );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn structured_json_conformance_fixture_matches_browser_runtime() {
+        let source = include_str!("../../../tests/fixtures/structured_json_conformance.nomo");
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "true\n6\nnull\nboolean\nnumber\nstring\narray\nobject\ntrue\ntrue\nwrong-kind-none\n1E+2\ntrue\n0\n0\nnon-object-none\n2\nname\nname\n2\nmissing-none\n\"A\\n\\\"\\\\😀\"\n{\"null\":null,\"bool\":false,\"i64\":-9223372036854775808,\"u64\":18446744073709551615}\n😀\ninvalid_number 1 invalid json number\nunsupported_string 1\nunsupported_string 1\nsyntax 29 invalid json syntax\n"
+        );
+        assert!(!response.stdout.contains("NOMO_JSON_SECRET_SENTINEL"));
         assert!(response.diagnostic.is_none());
     }
 

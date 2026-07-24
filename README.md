@@ -699,9 +699,14 @@ placeholder string in v0.1.
 filtered by `NOMO_LOG`; accepted levels are `debug`, `info`, `warn`, `error`,
 and `off`. The default threshold is `info`.
 
-`std.json` provides `json.parse` and `json.stringify`. In v0.1 `JsonValue`
-stores validated raw JSON text; `parse` returns `Result<JsonValue, JsonError>`
-and `stringify` returns the stored JSON text.
+`std.json` provides bounded parsing, traversal, and construction for all six
+JSON kinds. `JsonValue` stores validated raw JSON text, so
+`json.stringify(json.parse(text)?)` preserves the original document byte for
+byte. `json.kind`, scalar accessors, `array_items`, `object_members`, and
+last-member-wins `get` inspect nested values; `from_*` functions construct
+compact JSON without application-side string concatenation. Documents are
+limited to 8 MiB, 128 container levels, and 262,144 values, and `JsonError`
+contains only a stable code, generic secret-safe message, and byte offset.
 
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,

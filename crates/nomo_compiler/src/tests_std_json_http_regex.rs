@@ -71,6 +71,113 @@ fn main() -> Result<void, JsonError> {
 }
 
 #[test]
+fn accepts_structured_json_accessors_and_constructors() {
+    let source = r#"package app.main
+
+import std.array.Array
+import std.json
+
+fn main() -> Result<void, JsonError> {
+    let root: JsonValue = json.parse("{\"items\":[1],\"ok\":true}")?
+    let root_kind: JsonKind = json.kind(root)
+    let ok: Option<JsonValue> = json.get(root, "ok")
+    let truth: Option<bool> = json.as_bool(json.from_bool(true))
+    let number: JsonValue = json.from_number_text("1e+2")?
+    let exact: Option<string> = json.number_text(number)
+    let text: JsonValue = json.from_string("nomo")?
+    let decoded: Option<string> = json.as_string(text)
+    let mut values: Array<JsonValue> = Array.new<JsonValue>()
+    values.push(json.from_i64(-1))
+    values.push(json.from_u64(2 as u64))
+    values.push(json.from_null())
+    let array: JsonValue = json.from_array(values)?
+    let items: Option<Array<JsonValue>> = json.array_items(array)
+    let mut members: Array<JsonMember> = Array.new<JsonMember>()
+    members.push(JsonMember { key: "value", value: array })
+    let object: JsonValue = json.from_object(members)?
+    let all: Option<Array<JsonMember>> = json.object_members(object)
+    return Ok(void)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    assert!(program.enums.iter().any(|item| item.name == "JsonKind"));
+    assert!(program.structs.iter().any(|item| item.name == "JsonMember"));
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    let debug = format!("{:?}", main.body);
+    for operation in [
+        "Kind",
+        "Get",
+        "AsBool",
+        "FromBool",
+        "FromNumberText",
+        "NumberText",
+        "FromString",
+        "AsString",
+        "FromI64",
+        "FromU64",
+        "FromNull",
+        "FromArray",
+        "ArrayItems",
+        "FromObject",
+        "ObjectMembers",
+    ] {
+        assert!(debug.contains(operation), "missing {operation} in {debug}");
+    }
+    let c = nomo_codegen_c::emit_c(&program);
+    assert!(c.contains("#define NOMO_JSON_MAX_BYTES (8U * 1024U * 1024U)"));
+    assert!(c.contains("#define NOMO_JSON_MAX_DEPTH 128U"));
+    assert!(c.contains("#define NOMO_JSON_MAX_VALUES 262144U"));
+    assert!(c.contains("nomo_json_object_members"));
+    assert!(c.contains("nomo_json_from_object"));
+    assert!(c.contains("return value.nomo_member_raw;"));
+    assert!(c.contains("nomo_array_struct_JsonValue"));
+    assert!(c.contains("nomo_array_struct_JsonMember"));
+    assert!(
+        c.contains("nomo_enum_JsonKind_release(nomo_enum_JsonKind value) {\n    (void)value;\n}")
+    );
+    assert!(!c.contains("@JSON_"));
+}
+
+#[test]
+fn accepts_specific_structured_json_imports() {
+    let source = r#"package app.main
+
+import std.json.JsonValue
+import std.json.from_null
+import std.json.is_null
+
+fn main() -> void {
+    let value: JsonValue = from_null()
+    let absent: bool = is_null(value)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(matches!(
+        main.body[0],
+        Statement::Let {
+            initializer: ValueExpr::JsonStructured {
+                operation: JsonOperation::FromNull,
+                ..
+            },
+            ..
+        }
+    ));
+    assert!(matches!(
+        main.body[1],
+        Statement::Let {
+            initializer: ValueExpr::JsonStructured {
+                operation: JsonOperation::IsNull,
+                ..
+            },
+            ..
+        }
+    ));
+}
+
+#[test]
 fn accepts_http_client_builtins() {
     let source = r#"package app.main
 

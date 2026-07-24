@@ -1,167 +1,144 @@
 use super::*;
 
-pub(super) fn emit_json_helpers(out: &mut String) {
+pub(super) fn emit_json_helpers(out: &mut String, structured: bool) {
     let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
     let json_error = ValueType::Struct("JsonError".to_string(), Vec::new());
-    let result = c_enum_ident("Result", &[json_value.clone(), json_error.clone()]);
-    let ok = c_enum_variant_ident("Result", &[json_value.clone(), json_error.clone()], "Ok");
-    let err = c_enum_variant_ident("Result", &[json_value.clone(), json_error.clone()], "Err");
+    let json_member = ValueType::Struct("JsonMember".to_string(), Vec::new());
     let json_value_struct = c_struct_ident("JsonValue", &[]);
     let json_error_struct = c_struct_ident("JsonError", &[]);
-    out.push_str(
-        "static void nomo_json_skip_ws(const char *text, size_t *index) {\n\
-    while (text[*index] == ' ' || text[*index] == '\\n' || text[*index] == '\\r' || text[*index] == '\\t') { *index += 1; }\n\
-}\n\
-\n\
-static int nomo_json_parse_value(const char *text, size_t *index);\n\
-\n\
-static int nomo_json_parse_hex4(const char *text, size_t *index) {\n\
-    for (int i = 0; i < 4; i += 1) {\n\
-        unsigned char ch = (unsigned char)text[*index];\n\
-        if (!((ch >= '0' && ch <= '9') || (ch >= 'a' && ch <= 'f') || (ch >= 'A' && ch <= 'F'))) { return 0; }\n\
-        *index += 1;\n\
-    }\n\
-    return 1;\n\
-}\n\
-\n\
-static int nomo_json_parse_string_token(const char *text, size_t *index) {\n\
-    if (text[*index] != '\\\"') { return 0; }\n\
-    *index += 1;\n\
-    while (text[*index] != '\\0') {\n\
-        unsigned char ch = (unsigned char)text[*index];\n\
-        if (ch == '\\\"') { *index += 1; return 1; }\n\
-        if (ch < 0x20) { return 0; }\n\
-        if (ch == '\\\\') {\n\
-            *index += 1;\n\
-            char esc = text[*index];\n\
-            if (esc == '\\\"' || esc == '\\\\' || esc == '/' || esc == 'b' || esc == 'f' || esc == 'n' || esc == 'r' || esc == 't') { *index += 1; continue; }\n\
-            if (esc == 'u') { *index += 1; if (!nomo_json_parse_hex4(text, index)) { return 0; } continue; }\n\
-            return 0;\n\
-        }\n\
-        *index += 1;\n\
-    }\n\
-    return 0;\n\
-}\n\
-\n\
-static int nomo_json_parse_literal(const char *text, size_t *index, const char *literal) {\n\
-    size_t len = strlen(literal);\n\
-    if (strncmp(text + *index, literal, len) != 0) { return 0; }\n\
-    *index += len;\n\
-    return 1;\n\
-}\n\
-\n\
-static int nomo_json_parse_number(const char *text, size_t *index) {\n\
-    if (text[*index] == '-') { *index += 1; }\n\
-    if (text[*index] == '0') {\n\
-        *index += 1;\n\
-    } else if (text[*index] >= '1' && text[*index] <= '9') {\n\
-        while (text[*index] >= '0' && text[*index] <= '9') { *index += 1; }\n\
-    } else {\n\
-        return 0;\n\
-    }\n\
-    if (text[*index] == '.') {\n\
-        *index += 1;\n\
-        if (!(text[*index] >= '0' && text[*index] <= '9')) { return 0; }\n\
-        while (text[*index] >= '0' && text[*index] <= '9') { *index += 1; }\n\
-    }\n\
-    if (text[*index] == 'e' || text[*index] == 'E') {\n\
-        *index += 1;\n\
-        if (text[*index] == '+' || text[*index] == '-') { *index += 1; }\n\
-        if (!(text[*index] >= '0' && text[*index] <= '9')) { return 0; }\n\
-        while (text[*index] >= '0' && text[*index] <= '9') { *index += 1; }\n\
-    }\n\
-    return 1;\n\
-}\n\
-\n\
-static int nomo_json_parse_array(const char *text, size_t *index) {\n\
-    if (text[*index] != '[') { return 0; }\n\
-    *index += 1;\n\
-    nomo_json_skip_ws(text, index);\n\
-    if (text[*index] == ']') { *index += 1; return 1; }\n\
-    while (1) {\n\
-        if (!nomo_json_parse_value(text, index)) { return 0; }\n\
-        nomo_json_skip_ws(text, index);\n\
-        if (text[*index] == ']') { *index += 1; return 1; }\n\
-        if (text[*index] != ',') { return 0; }\n\
-        *index += 1;\n\
-        nomo_json_skip_ws(text, index);\n\
-    }\n\
-}\n\
-\n\
-static int nomo_json_parse_object(const char *text, size_t *index) {\n\
-    if (text[*index] != '{') { return 0; }\n\
-    *index += 1;\n\
-    nomo_json_skip_ws(text, index);\n\
-    if (text[*index] == '}') { *index += 1; return 1; }\n\
-    while (1) {\n\
-        if (!nomo_json_parse_string_token(text, index)) { return 0; }\n\
-        nomo_json_skip_ws(text, index);\n\
-        if (text[*index] != ':') { return 0; }\n\
-        *index += 1;\n\
-        if (!nomo_json_parse_value(text, index)) { return 0; }\n\
-        nomo_json_skip_ws(text, index);\n\
-        if (text[*index] == '}') { *index += 1; return 1; }\n\
-        if (text[*index] != ',') { return 0; }\n\
-        *index += 1;\n\
-        nomo_json_skip_ws(text, index);\n\
-    }\n\
-}\n\
-\n\
-static int nomo_json_parse_value(const char *text, size_t *index) {\n\
-    nomo_json_skip_ws(text, index);\n\
-    char ch = text[*index];\n\
-    if (ch == '\\\"') { return nomo_json_parse_string_token(text, index); }\n\
-    if (ch == '{') { return nomo_json_parse_object(text, index); }\n\
-    if (ch == '[') { return nomo_json_parse_array(text, index); }\n\
-    if (ch == '-' || (ch >= '0' && ch <= '9')) { return nomo_json_parse_number(text, index); }\n\
-    if (ch == 't') { return nomo_json_parse_literal(text, index, \"true\"); }\n\
-    if (ch == 'f') { return nomo_json_parse_literal(text, index, \"false\"); }\n\
-    if (ch == 'n') { return nomo_json_parse_literal(text, index, \"null\"); }\n\
-    return 0;\n\
-}\n\
-",
-    );
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push_str(" nomo_json_parse(nomo_string text) {\n");
-    out.push_str("    size_t index = 0;\n");
-    out.push_str("    if (!nomo_json_parse_value(text.data, &index)) {\n");
-    emit_json_parse_error(out, &result, &err, &json_error_struct);
-    out.push_str("    }\n");
-    out.push_str("    nomo_json_skip_ws(text.data, &index);\n");
-    out.push_str("    if (text.data[index] != '\\0') {\n");
-    emit_json_parse_error(out, &result, &err, &json_error_struct);
-    out.push_str("    }\n");
-    out.push_str("    return (");
-    out.push_str(&result);
-    out.push_str("){.tag = ");
-    out.push_str(&ok);
-    out.push_str(", .payload.");
-    out.push_str(&c_payload_ident("Ok"));
-    out.push_str(" = (");
-    out.push_str(&json_value_struct);
-    out.push_str("){.");
-    out.push_str(&c_member_ident("raw"));
-    out.push_str(" = nomo_string_retain(text)}};\n");
-    out.push_str("}\n\nstatic nomo_string nomo_json_stringify(");
-    out.push_str(&json_value_struct);
-    out.push_str(" value) {\n");
-    out.push_str("    return nomo_string_retain(value.");
-    out.push_str(&c_member_ident("raw"));
-    out.push_str(");\n");
-    out.push_str("}\n");
-}
+    let json_member_struct = c_struct_ident("JsonMember", &[]);
+    let json_kind = c_enum_ident("JsonKind", &[]);
+    let result_args = [json_value.clone(), json_error];
+    let result = c_enum_ident("Result", &result_args);
+    let option_bool = c_enum_ident("Option", &[ValueType::Bool]);
+    let option_string = c_enum_ident("Option", &[ValueType::String]);
+    let json_value_array_type = ValueType::Array(Box::new(json_value.clone()));
+    let json_member_array_type = ValueType::Array(Box::new(json_member.clone()));
+    let option_value_array = c_enum_ident("Option", std::slice::from_ref(&json_value_array_type));
+    let option_member_array = c_enum_ident("Option", std::slice::from_ref(&json_member_array_type));
+    let option_value = c_enum_ident("Option", std::slice::from_ref(&json_value));
+    let json_value_array = c_array_ident(&json_value);
+    let json_member_array = c_array_ident(&json_member);
 
-fn emit_json_parse_error(out: &mut String, result: &str, err: &str, json_error: &str) {
-    out.push_str("        return (");
-    out.push_str(result);
-    out.push_str("){.tag = ");
-    out.push_str(err);
-    out.push_str(", .payload.");
-    out.push_str(&c_payload_ident("Err"));
-    out.push_str(" = (");
-    out.push_str(json_error);
-    out.push_str("){.");
-    out.push_str(&c_member_ident("message"));
-    out.push_str(" = nomo_string_literal(\"invalid json\")}};\n");
+    let replacements: Vec<(&str, String)> = vec![
+        ("@JSON_VALUE@", json_value_struct),
+        ("@JSON_ERROR@", json_error_struct),
+        ("@JSON_MEMBER@", json_member_struct),
+        ("@JSON_KIND@", json_kind),
+        ("@RESULT@", result),
+        ("@OPTION_BOOL@", option_bool),
+        ("@OPTION_STRING@", option_string),
+        ("@OPTION_VALUE_ARRAY@", option_value_array),
+        ("@OPTION_MEMBER_ARRAY@", option_member_array),
+        ("@OPTION_VALUE@", option_value),
+        ("@VALUE_ARRAY@", json_value_array),
+        ("@MEMBER_ARRAY@", json_member_array),
+        ("@RAW_MEMBER@", c_member_ident("raw")),
+        ("@CODE_MEMBER@", c_member_ident("code")),
+        ("@MESSAGE_MEMBER@", c_member_ident("message")),
+        ("@OFFSET_MEMBER@", c_member_ident("offset")),
+        ("@KEY_MEMBER@", c_member_ident("key")),
+        ("@VALUE_MEMBER@", c_member_ident("value")),
+        (
+            "@OK_TAG@",
+            c_enum_variant_ident("Result", &result_args, "Ok"),
+        ),
+        (
+            "@ERR_TAG@",
+            c_enum_variant_ident("Result", &result_args, "Err"),
+        ),
+        ("@OK_PAYLOAD@", c_payload_ident("Ok")),
+        ("@ERR_PAYLOAD@", c_payload_ident("Err")),
+        (
+            "@SOME_BOOL_TAG@",
+            c_enum_variant_ident("Option", &[ValueType::Bool], "Some"),
+        ),
+        (
+            "@NONE_BOOL_TAG@",
+            c_enum_variant_ident("Option", &[ValueType::Bool], "None"),
+        ),
+        (
+            "@SOME_STRING_TAG@",
+            c_enum_variant_ident("Option", &[ValueType::String], "Some"),
+        ),
+        (
+            "@NONE_STRING_TAG@",
+            c_enum_variant_ident("Option", &[ValueType::String], "None"),
+        ),
+        (
+            "@SOME_VALUE_ARRAY_TAG@",
+            c_enum_variant_ident(
+                "Option",
+                std::slice::from_ref(&json_value_array_type),
+                "Some",
+            ),
+        ),
+        (
+            "@NONE_VALUE_ARRAY_TAG@",
+            c_enum_variant_ident(
+                "Option",
+                std::slice::from_ref(&json_value_array_type),
+                "None",
+            ),
+        ),
+        (
+            "@SOME_MEMBER_ARRAY_TAG@",
+            c_enum_variant_ident(
+                "Option",
+                std::slice::from_ref(&json_member_array_type),
+                "Some",
+            ),
+        ),
+        (
+            "@NONE_MEMBER_ARRAY_TAG@",
+            c_enum_variant_ident(
+                "Option",
+                std::slice::from_ref(&json_member_array_type),
+                "None",
+            ),
+        ),
+        (
+            "@SOME_VALUE_TAG@",
+            c_enum_variant_ident("Option", std::slice::from_ref(&json_value), "Some"),
+        ),
+        (
+            "@NONE_VALUE_TAG@",
+            c_enum_variant_ident("Option", std::slice::from_ref(&json_value), "None"),
+        ),
+        ("@SOME_PAYLOAD@", c_payload_ident("Some")),
+        ("@KIND_NULL@", c_enum_variant_ident("JsonKind", &[], "Null")),
+        (
+            "@KIND_BOOLEAN@",
+            c_enum_variant_ident("JsonKind", &[], "Boolean"),
+        ),
+        (
+            "@KIND_NUMBER@",
+            c_enum_variant_ident("JsonKind", &[], "Number"),
+        ),
+        (
+            "@KIND_STRING@",
+            c_enum_variant_ident("JsonKind", &[], "String"),
+        ),
+        (
+            "@KIND_ARRAY@",
+            c_enum_variant_ident("JsonKind", &[], "Array"),
+        ),
+        (
+            "@KIND_OBJECT@",
+            c_enum_variant_ident("JsonKind", &[], "Object"),
+        ),
+    ];
+
+    let mut source = include_str!("host_json.c").to_string();
+    for (placeholder, replacement) in replacements {
+        source = source.replace(placeholder, &replacement);
+    }
+    if !structured {
+        source.truncate(
+            source
+                .find("/* NOMO_STRUCTURED_JSON_BEGIN */")
+                .expect("structured JSON template marker exists"),
+        );
+    }
+    out.push_str(&source);
 }

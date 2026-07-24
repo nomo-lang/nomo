@@ -24,6 +24,10 @@ pub(super) fn source_uses_json_builtin(ast: &SourceFile) -> bool {
     analysis_usage_builtins::source_uses_json_builtin(ast)
 }
 
+pub(super) fn source_uses_jsonrpc_builtin(ast: &SourceFile) -> bool {
+    analysis_usage_builtins::source_uses_jsonrpc_builtin(ast)
+}
+
 pub(super) fn source_uses_regex_builtin(ast: &SourceFile) -> bool {
     analysis_usage_builtins::source_uses_regex_builtin(ast)
 }

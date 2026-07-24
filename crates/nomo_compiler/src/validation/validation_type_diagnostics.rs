@@ -78,6 +78,11 @@ pub(super) fn missing_standard_type_import(
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
         "JsonValue" | "JsonError" | "JsonMember" | "JsonKind" => Some("std.json"),
+        "JsonRpcDecodeBatch"
+        | "JsonRpcDecoder"
+        | "JsonRpcMessage"
+        | "JsonRpcMessageKind"
+        | "JsonRpcProtocolError" => Some("std.jsonrpc"),
         "SqliteDatabase"
         | "SqliteQuery"
         | "SqliteError"

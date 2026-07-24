@@ -35,6 +35,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.http" => Some(include_str!("http.nomo")),
         "std.io" => Some(include_str!("io.nomo")),
         "std.json" => Some(include_str!("json.nomo")),
+        "std.jsonrpc" => Some(include_str!("jsonrpc.nomo")),
         "std.log" => Some(include_str!("log.nomo")),
         "std.math" => Some(include_str!("math.nomo")),
         "std.net" => Some(include_str!("net.nomo")),
@@ -185,6 +186,24 @@ const JSON_ITEMS: &[&str] = &[
     "object_members",
     "parse",
     "stringify",
+];
+const JSONRPC_ITEMS: &[&str] = &[
+    "JsonRpcDecodeBatch",
+    "JsonRpcDecoder",
+    "JsonRpcMessage",
+    "JsonRpcMessageKind",
+    "JsonRpcProtocolError",
+    "decoder",
+    "encode",
+    "failure",
+    "feed",
+    "finish",
+    "kind",
+    "notification",
+    "parse",
+    "request",
+    "success",
+    "value",
 ];
 const LOG_ITEMS: &[&str] = &["debug", "enabled", "error", "info", "warn"];
 const MATH_ITEMS: &[&str] = &[
@@ -630,6 +649,12 @@ pub const MODULES: &[StandardModule] = &[
         doc_items: &[],
     },
     StandardModule {
+        path: "std.jsonrpc",
+        docs: "bounded JSON-RPC envelopes and incremental newline framing",
+        items: JSONRPC_ITEMS,
+        doc_items: &[],
+    },
+    StandardModule {
         path: "std.log",
         docs: "leveled logging helpers",
         items: LOG_ITEMS,
@@ -734,6 +759,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.hash",
     "std.http",
     "std.json",
+    "std.jsonrpc",
     "std.io",
     "std.log",
     "std.math",
@@ -1308,11 +1334,12 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 274);
+        assert_eq!(imports.len(), 291);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
         assert!(is_supported_import("std.num.to_string"));
+        assert!(is_supported_import("std.jsonrpc.feed"));
         assert!(!is_supported_import("std.io.flush"));
     }
 

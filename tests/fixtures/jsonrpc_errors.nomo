@@ -1,0 +1,108 @@
+package jsonrpc_errors.main
+
+import std.io
+import std.json
+import std.jsonrpc
+
+fn report_message(label: string, result: Result<JsonRpcMessage, JsonRpcProtocolError>) -> void {
+    match result {
+        Ok(message) => {
+            io.println(label, "ok")
+        }
+        Err(error) => {
+            io.println(label, error.code, error.message)
+        }
+    }
+}
+
+fn report_batch(label: string, result: Result<JsonRpcDecodeBatch, JsonRpcProtocolError>) -> void {
+    match result {
+        Ok(batch) => {
+            io.println(label, "ok")
+        }
+        Err(error) => {
+            io.println(label, error.code, error.message)
+        }
+    }
+}
+
+fn report_finish(label: string, result: Result<void, JsonRpcProtocolError>) -> void {
+    match result {
+        Ok(done) => {
+            io.println(label, "ok")
+        }
+        Err(error) => {
+            io.println(label, error.code, error.message)
+        }
+    }
+}
+
+fn report_decoder(label: string, result: Result<JsonRpcDecoder, JsonRpcProtocolError>) -> void {
+    match result {
+        Ok(decoder_value) => {
+            io.println(label, "ok")
+        }
+        Err(error) => {
+            io.println(label, error.code, error.message)
+        }
+    }
+}
+
+fn parse_protocol(label: string, text: string) -> void {
+    match json.parse(text) {
+        Err(error) => {
+            io.println(label, "json-setup", error.code)
+        }
+        Ok(value) => {
+            report_message(label, jsonrpc.parse(value, 4096 as u64))
+        }
+    }
+}
+
+fn main() -> void {
+    report_decoder("zero", jsonrpc.decoder(0 as u64))
+    parse_protocol("array", "[]")
+    parse_protocol("newline", "{\n\"jsonrpc\":\"2.0\",\"method\":\"ready\"}")
+    parse_protocol("duplicate", "{\"jsonrpc\":\"2.0\",\"method\":\"NOMO_JSONRPC_SECRET_SENTINEL\",\"method\":\"again\"}")
+    parse_protocol("fractional-code", "{\"jsonrpc\":\"2.0\",\"id\":null,\"error\":{\"code\":1.5,\"message\":\"bad\"}}")
+    parse_protocol("extension", "{\"jsonrpc\":\"2.0\",\"method\":\"ready\\nnow\",\"_meta\":{\"ok\":true}}")
+
+    match jsonrpc.decoder(4096 as u64) {
+        Err(error) => {
+            io.println("setup", error.code)
+        }
+        Ok(decoder_value) => {
+            report_batch("empty-line", jsonrpc.feed(decoder_value, "\n"))
+            match jsonrpc.feed(decoder_value, "{\"jsonrpc\":\n") {
+                Ok(batch) => {
+                    io.println("malformed", "unexpected")
+                }
+                Err(error) => {
+                    io.println("malformed", error.code, error.message)
+                }
+            }
+            match jsonrpc.feed(decoder_value, "{\"jsonrpc\":\"2.0\"") {
+                Err(error) => {
+                    io.println("partial-setup", error.code)
+                }
+                Ok(batch) => {
+                    report_finish("partial", jsonrpc.finish(batch.decoder))
+                }
+            }
+        }
+    }
+
+    match jsonrpc.decoder(8 as u64) {
+        Err(error) => {
+            io.println("limit-setup", error.code)
+        }
+        Ok(decoder_value) => {
+            report_batch("line-limit", jsonrpc.feed(decoder_value, "{\"jsonrpc\":\"2.0\",\"method\":\"ready\"}\n"))
+        }
+    }
+
+    let no_value: Option<JsonValue> = None
+    report_message("bool-id", jsonrpc.request(json.from_bool(true), "ready", no_value))
+    let scalar: Option<JsonValue> = Some(json.from_i64(1))
+    report_message("scalar-params", jsonrpc.notification("ready", scalar))
+}

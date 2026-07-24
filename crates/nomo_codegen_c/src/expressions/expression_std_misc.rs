@@ -141,6 +141,30 @@ pub(super) fn emit_std_misc_expr(out: &mut String, expr: &ValueExpr) -> bool {
             }
             out.push(')');
         }
+        ValueExpr::JsonRpc { operation, args } => {
+            let function = match operation {
+                JsonRpcOperation::Decoder => "nomo_jsonrpc_decoder",
+                JsonRpcOperation::Feed => "nomo_jsonrpc_feed",
+                JsonRpcOperation::Finish => "nomo_jsonrpc_finish",
+                JsonRpcOperation::Parse => "nomo_jsonrpc_parse",
+                JsonRpcOperation::Encode => "nomo_jsonrpc_encode",
+                JsonRpcOperation::Value => "nomo_jsonrpc_value",
+                JsonRpcOperation::Kind => "nomo_jsonrpc_kind",
+                JsonRpcOperation::Request => "nomo_jsonrpc_request",
+                JsonRpcOperation::Notification => "nomo_jsonrpc_notification",
+                JsonRpcOperation::Success => "nomo_jsonrpc_success",
+                JsonRpcOperation::Failure => "nomo_jsonrpc_failure",
+            };
+            out.push_str(function);
+            out.push('(');
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                emit_expr(out, arg);
+            }
+            out.push(')');
+        }
         ValueExpr::RegexCompile { pattern } => {
             out.push_str("nomo_regex_compile(");
             emit_expr(out, pattern);

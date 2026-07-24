@@ -11,9 +11,10 @@
 )]
 
 use nomo_ir::{
-    BinaryOp, DeferredCall, EnumType, ExternFunction, Function, JsonOperation, LoopKind,
-    MatchStatementArm, MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction,
-    Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, EnumType, ExternFunction, Function, JsonOperation, JsonRpcOperation,
+    LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction, MathUnaryFunction,
+    NumBinaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr,
+    ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -52,6 +53,8 @@ mod host_http_stream_helpers;
 mod host_io_helpers;
 #[path = "runtime/host_json_helpers.rs"]
 mod host_json_helpers;
+#[path = "runtime/host_jsonrpc_helpers.rs"]
+mod host_jsonrpc_helpers;
 #[path = "runtime/host_net_helpers.rs"]
 mod host_net_helpers;
 #[path = "runtime/host_num_checked_helpers.rs"]
@@ -126,6 +129,7 @@ use host_http_server_helpers::*;
 use host_http_stream_helpers::*;
 use host_io_helpers::*;
 use host_json_helpers::*;
+use host_jsonrpc_helpers::*;
 use host_net_helpers::*;
 use host_num_checked_helpers::*;
 use host_num_parse_helpers::*;

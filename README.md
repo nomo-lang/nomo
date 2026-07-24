@@ -727,6 +727,18 @@ compact JSON without application-side string concatenation. Documents are
 limited to 8 MiB, 128 container levels, and 262,144 values, and `JsonError`
 contains only a stable code, generic secret-safe message, and byte offset.
 
+`std.jsonrpc` provides bounded JSON-RPC 2.0 envelopes and incremental
+newline-delimited framing for long-lived subprocess protocols. The immutable
+decoder accepts arbitrarily split or coalesced stdout chunks, preserves a
+partial suffix between calls, strips one CR before a delimiter, and returns
+only validated request, notification, success, or error messages. Encoding
+adds exactly one newline. Messages are limited to 1,048,575 bytes, chunks to
+1 MiB, and batches to 4096 messages; stable errors never reproduce protocol
+payloads. `JsonRpcMessage` and `JsonRpcDecoder` are opaque so applications
+cannot bypass validation. See `examples/mcp_stdio` for a native MCP
+initialize and `tools/list` exchange composed with `std.process`, with no
+application-side C FFI.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,

@@ -1,0 +1,58 @@
+package jsonrpc_conformance.main
+
+import std.array.Array
+import std.io
+import std.json
+import std.jsonrpc
+
+fn print_kind(message: JsonRpcMessage) -> void {
+    match jsonrpc.kind(message) {
+        JsonRpcMessageKind.Request => {
+            io.println("request")
+        }
+        JsonRpcMessageKind.Notification => {
+            io.println("notification")
+        }
+        JsonRpcMessageKind.Success => {
+            io.println("success")
+        }
+        JsonRpcMessageKind.Error => {
+            io.println("error")
+        }
+    }
+}
+
+fn run() -> Result<void, JsonRpcProtocolError> {
+    let initial: JsonRpcDecoder = jsonrpc.decoder(4096 as u64)?
+    let first: JsonRpcDecodeBatch = jsonrpc.feed(initial, "{\"jsonrpc\":\"2.0\",\"id\":1,\"meth")?
+    let first_messages: Array<JsonRpcMessage> = first.messages
+    io.println(first_messages.len())
+    let second: JsonRpcDecodeBatch = jsonrpc.feed(first.decoder, "od\":\"initialize\"}\r\n{\"jsonrpc\":\"2.0\",\"method\":\"notifications/initialized\"}\n")?
+    let second_messages: Array<JsonRpcMessage> = second.messages
+    io.println(second_messages.len())
+    for message in second_messages {
+        print_kind(message)
+        io.println(json.stringify(jsonrpc.value(message)))
+    }
+    jsonrpc.finish(second.decoder)?
+
+    let id: JsonValue = json.from_i64(7)
+    let no_value: Option<JsonValue> = None
+    let request: JsonRpcMessage = jsonrpc.request(id, "tools/list", no_value)?
+    io.print(jsonrpc.encode(request, 4096 as u64)?)
+    let success: JsonRpcMessage = jsonrpc.success(id, json.from_bool(true))?
+    io.print(jsonrpc.encode(success, 4096 as u64)?)
+    let failure: JsonRpcMessage = jsonrpc.failure(id, -32601, "missing", no_value)?
+    io.print(jsonrpc.encode(failure, 4096 as u64)?)
+    return Ok(void)
+}
+
+fn main() -> void {
+    match run() {
+        Ok(done) => {
+        }
+        Err(error) => {
+            io.println(error.code, error.message)
+        }
+    }
+}

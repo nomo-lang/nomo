@@ -29,10 +29,17 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
             .iter()
             .any(|item| item == "std.hash" || item.starts_with("std.hash."))
             || source_uses_hash_builtin(ast),
-        json: imports
+        json: imports.iter().any(|item| {
+            item == "std.json"
+                || item.starts_with("std.json.")
+                || item == "std.jsonrpc"
+                || item.starts_with("std.jsonrpc.")
+        }) || source_uses_json_builtin(ast)
+            || source_uses_jsonrpc_builtin(ast),
+        jsonrpc: imports
             .iter()
-            .any(|item| item == "std.json" || item.starts_with("std.json."))
-            || source_uses_json_builtin(ast),
+            .any(|item| item == "std.jsonrpc" || item.starts_with("std.jsonrpc."))
+            || source_uses_jsonrpc_builtin(ast),
         sqlite: imports
             .iter()
             .any(|item| item == "std.sqlite" || item.starts_with("std.sqlite.")),
@@ -70,6 +77,8 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
                     || item.starts_with("std.regex.")
                     || item == "std.sqlite"
                     || item.starts_with("std.sqlite.")
+                    || item == "std.jsonrpc"
+                    || item.starts_with("std.jsonrpc.")
             }),
         ffi: imports
             .iter()
@@ -132,6 +141,12 @@ pub(super) fn standard_struct_names(
         names.push(("JsonError".to_string(), 0));
         names.push(("JsonMember".to_string(), 0));
     }
+    if needs.jsonrpc {
+        names.push(("JsonRpcDecodeBatch".to_string(), 0));
+        names.push(("JsonRpcDecoder".to_string(), 0));
+        names.push(("JsonRpcMessage".to_string(), 0));
+        names.push(("JsonRpcProtocolError".to_string(), 0));
+    }
     if needs.sqlite {
         names.push(("SqliteColumn".to_string(), 0));
         names.push(("SqliteDatabase".to_string(), 0));
@@ -167,6 +182,9 @@ pub(super) fn standard_enum_names(
     if needs.json {
         names.push(("JsonKind".to_string(), 0));
     }
+    if needs.jsonrpc {
+        names.push(("JsonRpcMessageKind".to_string(), 0));
+    }
     if needs.sqlite {
         names.push(("SqliteOpenMode".to_string(), 0));
         names.push(("SqliteValue".to_string(), 0));
@@ -179,6 +197,7 @@ pub(super) fn standard_enum_names(
         || needs.process
         || needs.task
         || needs.json
+        || needs.jsonrpc
         || needs.sqlite
         || needs.regex
         || needs.result
@@ -193,6 +212,7 @@ pub(super) fn standard_enum_names(
         || needs.array
         || needs.collections
         || needs.json
+        || needs.jsonrpc
         || needs.sqlite
         || needs.regex
     {
@@ -738,6 +758,75 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.jsonrpc
+        && !structs
+            .iter()
+            .any(|item| item.name == "JsonRpcProtocolError")
+    {
+        structs.push(StructType {
+            package: "std.jsonrpc".to_string(),
+            name: "JsonRpcProtocolError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.jsonrpc && !structs.iter().any(|item| item.name == "JsonRpcMessage") {
+        structs.push(StructType {
+            package: "std.jsonrpc".to_string(),
+            name: "JsonRpcMessage".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "raw".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.jsonrpc && !structs.iter().any(|item| item.name == "JsonRpcDecoder") {
+        structs.push(StructType {
+            package: "std.jsonrpc".to_string(),
+            name: "JsonRpcDecoder".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "pending".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "max_message_bytes".to_string(),
+                    value_type: ValueType::U64,
+                },
+            ],
+        });
+    }
+    if needs.jsonrpc && !structs.iter().any(|item| item.name == "JsonRpcDecodeBatch") {
+        structs.push(StructType {
+            package: "std.jsonrpc".to_string(),
+            name: "JsonRpcDecodeBatch".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "decoder".to_string(),
+                    value_type: ValueType::Struct("JsonRpcDecoder".to_string(), Vec::new()),
+                },
+                StructField {
+                    name: "messages".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "JsonRpcMessage".to_string(),
+                        Vec::new(),
+                    ))),
+                },
+            ],
+        });
+    }
     if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteDatabase") {
         structs.push(StructType {
             package: "std.sqlite".to_string(),
@@ -973,6 +1062,31 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.jsonrpc && !enums.iter().any(|item| item.name == "JsonRpcMessageKind") {
+        enums.push(EnumType {
+            package: "std.jsonrpc".to_string(),
+            name: "JsonRpcMessageKind".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "Request".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Notification".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Success".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Error".to_string(),
+                    payload: None,
+                },
+            ],
+        });
+    }
     if needs.sqlite && !enums.iter().any(|item| item.name == "SqliteOpenMode") {
         enums.push(EnumType {
             package: "std.sqlite".to_string(),
@@ -1029,6 +1143,7 @@ pub(super) fn inject_standard_types(
         || needs.process
         || needs.task
         || needs.json
+        || needs.jsonrpc
         || needs.sqlite
         || needs.regex
         || needs.result)
@@ -1058,6 +1173,7 @@ pub(super) fn inject_standard_types(
         || needs.array
         || needs.collections
         || needs.json
+        || needs.jsonrpc
         || needs.sqlite
         || needs.regex)
         && !enums.iter().any(|item| item.name == "Option")

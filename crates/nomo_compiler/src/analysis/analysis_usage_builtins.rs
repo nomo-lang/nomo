@@ -24,6 +24,10 @@ pub(super) fn source_uses_json_builtin(ast: &SourceFile) -> bool {
     source_uses_builtin(ast, |expr| expr_uses_builtin(expr, is_json_builtin_call))
 }
 
+pub(super) fn source_uses_jsonrpc_builtin(ast: &SourceFile) -> bool {
+    source_uses_builtin(ast, |expr| expr_uses_builtin(expr, is_jsonrpc_builtin_call))
+}
+
 pub(super) fn source_uses_regex_builtin(ast: &SourceFile) -> bool {
     source_uses_builtin(ast, |expr| expr_uses_builtin(expr, is_regex_builtin_call))
 }
@@ -168,6 +172,28 @@ fn is_fs_builtin_call(callee: &[String]) -> bool {
 
 fn is_io_read_line_call(callee: &[String]) -> bool {
     matches!(callee, [module, name] if module == "io" && name == "read_line")
+}
+
+fn is_jsonrpc_builtin_call(callee: &[String]) -> bool {
+    matches!(
+        callee,
+        [module, name]
+            if module == "jsonrpc"
+                && matches!(
+                    name.as_str(),
+                    "decoder"
+                        | "feed"
+                        | "finish"
+                        | "parse"
+                        | "encode"
+                        | "value"
+                        | "kind"
+                        | "request"
+                        | "notification"
+                        | "success"
+                        | "failure"
+                )
+    )
 }
 
 fn is_num_builtin_call(callee: &[String]) -> bool {

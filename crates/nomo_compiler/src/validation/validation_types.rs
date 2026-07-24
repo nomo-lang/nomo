@@ -313,6 +313,13 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "TaskError")?;
         reject_user_std_enum(path, enums, "TaskJoin")?;
     }
+    if needs.jsonrpc {
+        reject_user_std_struct(path, structs, "JsonRpcDecodeBatch")?;
+        reject_user_std_struct(path, structs, "JsonRpcDecoder")?;
+        reject_user_std_struct(path, structs, "JsonRpcMessage")?;
+        reject_user_std_struct(path, structs, "JsonRpcProtocolError")?;
+        reject_user_std_enum(path, enums, "JsonRpcMessageKind")?;
+    }
     if needs.sqlite {
         reject_user_std_struct(path, structs, "SqliteColumn")?;
         reject_user_std_struct(path, structs, "SqliteDatabase")?;
@@ -339,11 +346,19 @@ pub(super) fn validate_standard_type_conflicts(
         || needs.num
         || needs.process
         || needs.task
+        || needs.jsonrpc
         || needs.result
     {
         reject_user_std_enum(path, enums, "Result")?;
     }
-    if needs.env || needs.http || needs.num || needs.process || needs.option || needs.array {
+    if needs.env
+        || needs.http
+        || needs.num
+        || needs.process
+        || needs.jsonrpc
+        || needs.option
+        || needs.array
+    {
         reject_user_std_enum(path, enums, "Option")?;
     }
     Ok(())

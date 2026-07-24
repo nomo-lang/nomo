@@ -445,6 +445,64 @@ values. Because v0.1 strings are NUL-terminated, escaped U+0000 and unpaired
 surrogates are rejected as `unsupported_string`. Native C and browser WASM
 provide the same pure JSON operations.
 
+`std.jsonrpc` builds on `std.json` with validated JSON-RPC 2.0 envelopes and
+incremental newline-delimited framing:
+
+```nomo
+jsonrpc.decoder(max_message_bytes: u64)
+    -> Result<JsonRpcDecoder, JsonRpcProtocolError>
+jsonrpc.feed(decoder_value: JsonRpcDecoder, chunk: string)
+    -> Result<JsonRpcDecodeBatch, JsonRpcProtocolError>
+jsonrpc.finish(decoder_value: JsonRpcDecoder)
+    -> Result<void, JsonRpcProtocolError>
+jsonrpc.parse(value: JsonValue, max_message_bytes: u64)
+    -> Result<JsonRpcMessage, JsonRpcProtocolError>
+jsonrpc.encode(message: JsonRpcMessage, max_message_bytes: u64)
+    -> Result<string, JsonRpcProtocolError>
+jsonrpc.value(message: JsonRpcMessage) -> JsonValue
+jsonrpc.kind(message: JsonRpcMessage) -> JsonRpcMessageKind
+
+jsonrpc.request(id: JsonValue, method: string, params: Option<JsonValue>)
+    -> Result<JsonRpcMessage, JsonRpcProtocolError>
+jsonrpc.notification(method: string, params: Option<JsonValue>)
+    -> Result<JsonRpcMessage, JsonRpcProtocolError>
+jsonrpc.success(id: JsonValue, result: JsonValue)
+    -> Result<JsonRpcMessage, JsonRpcProtocolError>
+jsonrpc.failure(
+    id: JsonValue,
+    code: i64,
+    message: string,
+    data: Option<JsonValue>
+) -> Result<JsonRpcMessage, JsonRpcProtocolError>
+```
+
+`JsonRpcMessageKind` is `Request`, `Notification`, `Success`, or `Error`.
+`JsonRpcDecoder` and `JsonRpcMessage` are opaque value-state types. `feed`
+returns a replacement decoder plus every complete message in the input chunk;
+the original decoder remains unchanged. Chunks may split a UTF-8 message at
+any byte position or contain multiple messages. One CR immediately before LF
+is stripped, empty frames are rejected, and `finish` rejects any unterminated
+suffix. `encode` emits the validated raw envelope followed by exactly one LF.
+
+Requests require a string or number `id`, a string `method`, and
+optional object/array `params`; notifications omit `id`. Success and error
+responses accept string, number, or null `id`. Error objects require an exact
+signed 64-bit integer `code` and string `message`. Reserved fields may not be
+duplicated, while extension fields and their order are preserved.
+
+The transport ceilings are 1,048,575 bytes per message, 1 MiB per `feed`
+chunk, and 4096 decoded messages per call. `max_message_bytes` must be in
+`1..=1,048,575`. `JsonRpcProtocolError.code` is `invalid_request`, `limit`,
+`framing`, `json`, or `protocol`; messages are bounded and never copy input
+payloads, method names, ids, error data, or other secret-bearing values.
+
+Native C and browser WASM implement the same pure codec. The module does not
+launch processes itself. Compose it with the shell-free `std.process`
+controlled API, write only encoded messages to child stdin, feed only stdout
+to the decoder, and route stderr separately as logs. See `examples/mcp_stdio`
+for a two-request MCP client that handles fragmented/coalesced output and
+correlates response ids without application-side C FFI.
+
 `std.regex` provides compiled regular expression helpers:
 
 ```nomo

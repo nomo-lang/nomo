@@ -30,6 +30,8 @@ mod tests_std_fmt;
 mod tests_std_io_string_path;
 #[path = "tests_std_json_http_regex.rs"]
 mod tests_std_json_http_regex;
+#[path = "tests_std_jsonrpc.rs"]
+mod tests_std_jsonrpc;
 #[path = "tests_std_process_debug_crypto.rs"]
 mod tests_std_process_debug_crypto;
 #[path = "tests_std_sqlite.rs"]

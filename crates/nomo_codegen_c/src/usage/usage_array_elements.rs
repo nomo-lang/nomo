@@ -587,7 +587,7 @@ pub(super) fn collect_expr_array_elements(
                 collect_expr_array_elements(arg, seen, out);
             }
         }
-        ValueExpr::JsonStructured { args, .. } => {
+        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
             for arg in args {
                 collect_expr_array_elements(arg, seen, out);
             }

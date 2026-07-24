@@ -65,6 +65,8 @@ mod builtins_hash;
 mod builtins_http;
 #[path = "builtins/builtins_io.rs"]
 mod builtins_io;
+#[path = "builtins/builtins_jsonrpc.rs"]
+mod builtins_jsonrpc;
 #[path = "builtins/builtins_math.rs"]
 mod builtins_math;
 #[path = "builtins/builtins_net_methods.rs"]
@@ -187,6 +189,7 @@ use builtins_fs::*;
 use builtins_hash::*;
 use builtins_http::*;
 use builtins_io::*;
+use builtins_jsonrpc::*;
 use builtins_math::*;
 use builtins_net_methods::*;
 use builtins_num::*;
@@ -293,9 +296,9 @@ const BUILTIN_SQLITE_CLOSE_EXPR: &str = "__nomo_sqlite_close";
 
 pub use nomo_ir::{
     BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function,
-    JsonOperation, LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction,
-    MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier, Statement,
-    StructField, StructType, UnaryOp, ValueExpr, ValueType,
+    JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm,
+    MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier,
+    Statement, StructField, StructType, UnaryOp, ValueExpr, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

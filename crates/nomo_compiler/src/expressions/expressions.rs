@@ -179,6 +179,17 @@ pub(super) fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             }
+            if is_jsonrpc_opaque_struct(struct_type) {
+                return Err(Diagnostic::new(
+                    "E0840",
+                    format!("opaque JSON-RPC type `{type_name}` does not expose its fields"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
             let Some(field_type) = struct_type
                 .fields
                 .iter()

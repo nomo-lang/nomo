@@ -264,6 +264,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_json_helpers(&mut out, uses_structured_json_builtin(program));
         out.push('\n');
     }
+    if uses_jsonrpc_builtin(program) {
+        emit_jsonrpc_helpers(&mut out);
+        out.push('\n');
+    }
     if uses_regex_builtin(program) {
         emit_regex_helpers(&mut out);
         out.push('\n');

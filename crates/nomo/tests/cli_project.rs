@@ -10004,7 +10004,10 @@ fn nomo_run_executes_std_http_client_helpers_without_std_dependency() {
                 }
                 Err(err)
                     if err.kind() == ErrorKind::WouldBlock
-                        && started.elapsed() < Duration::from_secs(10) =>
+                        // `nomo run` compiles generated C before opening the
+                        // connection; that startup can exceed ten seconds on
+                        // the Windows CI runner.
+                        && started.elapsed() < Duration::from_secs(60) =>
                 {
                     std::thread::sleep(Duration::from_millis(25));
                 }

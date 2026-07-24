@@ -287,14 +287,44 @@ crypto.sha512(value: string) -> string
 crypto.random_bytes(count: u64) -> Array<u32>
 ```
 
-`std.json` currently stores validated raw JSON text:
+`std.json` stores bounded, validated raw JSON text and exposes structured
+traversal and construction:
 
 ```nomo
 json.parse(value: string) -> Result<JsonValue, JsonError>
 json.stringify(value: JsonValue) -> string
+
+json.kind(value: JsonValue) -> JsonKind
+json.is_null(value: JsonValue) -> bool
+json.as_bool(value: JsonValue) -> Option<bool>
+json.number_text(value: JsonValue) -> Option<string>
+json.as_string(value: JsonValue) -> Option<string>
+json.array_items(value: JsonValue) -> Option<Array<JsonValue>>
+json.object_members(value: JsonValue) -> Option<Array<JsonMember>>
+json.get(value: JsonValue, key: string) -> Option<JsonValue>
+
+json.from_null() -> JsonValue
+json.from_bool(value: bool) -> JsonValue
+json.from_number_text(value: string) -> Result<JsonValue, JsonError>
+json.from_i64(value: i64) -> JsonValue
+json.from_u64(value: u64) -> JsonValue
+json.from_string(value: string) -> Result<JsonValue, JsonError>
+json.from_array(values: Array<JsonValue>) -> Result<JsonValue, JsonError>
+json.from_object(members: Array<JsonMember>) -> Result<JsonValue, JsonError>
 ```
 
-Structured JSON field or index access is not part of v0.1.
+`parse` preserves the complete input text for exact `stringify` round trips.
+Nested arrays and object members retain document order. Object duplicates are
+preserved, while `get` compares decoded names and returns the last match.
+`number_text` preserves the exact JSON number token; use `std.num` for explicit
+numeric conversion.
+
+Every value is limited to 8 MiB, 128 nested arrays/objects, and 262,144 total
+values. `JsonError.code` is `syntax`, `limit`, `unsupported_string`, or
+`invalid_number`; its message never includes source text or secret-bearing
+values. Because v0.1 strings are NUL-terminated, escaped U+0000 and unpaired
+surrogates are rejected as `unsupported_string`. Native C and browser WASM
+provide the same pure JSON operations.
 
 `std.regex` provides compiled regular expression helpers:
 

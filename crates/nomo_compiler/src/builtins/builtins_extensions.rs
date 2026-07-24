@@ -11,7 +11,29 @@ pub(super) fn is_crypto_builtin_call(callee: &[String]) -> bool {
 pub(super) fn is_json_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
-        [module, name] if module == "json" && matches!(name.as_str(), "parse" | "stringify")
+        [module, name]
+            if module == "json"
+                && matches!(
+                    name.as_str(),
+                    "parse"
+                        | "stringify"
+                        | "kind"
+                        | "is_null"
+                        | "as_bool"
+                        | "number_text"
+                        | "as_string"
+                        | "array_items"
+                        | "object_members"
+                        | "get"
+                        | "from_null"
+                        | "from_bool"
+                        | "from_number_text"
+                        | "from_i64"
+                        | "from_u64"
+                        | "from_string"
+                        | "from_array"
+                        | "from_object"
+                )
     )
 }
 
@@ -127,6 +149,81 @@ pub(super) fn lower_json_builtin(
         unreachable!("json builtin dispatcher only passes qualified calls")
     };
     debug_assert_eq!(module, "json");
+    let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
+    let json_error = ValueType::Struct("JsonError".to_string(), Vec::new());
+    let json_member = ValueType::Struct("JsonMember".to_string(), Vec::new());
+    let json_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![json_value.clone(), json_error.clone()],
+    );
+    let option = |value_type: ValueType| ValueType::Enum("Option".to_string(), vec![value_type]);
+
+    if name == "from_null" {
+        if !args.is_empty() {
+            return Err(Diagnostic::new(
+                "E0407",
+                "`json.from_null` expects no arguments",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        return Ok((
+            json_value,
+            ValueExpr::JsonStructured {
+                operation: JsonOperation::FromNull,
+                args: Vec::new(),
+            },
+        ));
+    }
+
+    if name == "get" {
+        let [value_arg, key_arg] = args else {
+            return Err(Diagnostic::new(
+                "E0407",
+                "`json.get` expects a JsonValue and string key",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        };
+        let (value_type, value) = lower_value_expr(
+            path, value_arg, scope, imports, signatures, structs, enums, span,
+        )?;
+        if value_type != json_value {
+            return Err(type_mismatch_expected_found(
+                path,
+                span,
+                "`json.get` expects a JsonValue first argument",
+                &json_value,
+                &value_type,
+            ));
+        }
+        let (key_type, key) = lower_value_expr(
+            path, key_arg, scope, imports, signatures, structs, enums, span,
+        )?;
+        if key_type != ValueType::String {
+            return Err(type_mismatch_expected_found(
+                path,
+                span,
+                "`json.get` expects a string key",
+                &ValueType::String,
+                &key_type,
+            ));
+        }
+        return Ok((
+            option(json_value),
+            ValueExpr::JsonStructured {
+                operation: JsonOperation::Get,
+                args: vec![value, key],
+            },
+        ));
+    }
+
     let [value_arg] = args else {
         return Err(Diagnostic::new(
             "E0407",
@@ -153,20 +250,13 @@ pub(super) fn lower_json_builtin(
                 ));
             }
             Ok((
-                ValueType::Enum(
-                    "Result".to_string(),
-                    vec![
-                        ValueType::Struct("JsonValue".to_string(), Vec::new()),
-                        ValueType::Struct("JsonError".to_string(), Vec::new()),
-                    ],
-                ),
+                json_result,
                 ValueExpr::JsonParse {
                     value: Box::new(value),
                 },
             ))
         }
         "stringify" => {
-            let json_value = ValueType::Struct("JsonValue".to_string(), Vec::new());
             if value_type != json_value {
                 return Err(type_mismatch_expected_found(
                     path,
@@ -180,6 +270,185 @@ pub(super) fn lower_json_builtin(
                 ValueType::String,
                 ValueExpr::JsonStringify {
                     value: Box::new(value),
+                },
+            ))
+        }
+        "kind" | "is_null" | "as_bool" | "number_text" | "as_string" | "array_items"
+        | "object_members" => {
+            if value_type != json_value {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`json.{name}` expects a JsonValue value"),
+                    &json_value,
+                    &value_type,
+                ));
+            }
+            match name.as_str() {
+                "kind" => Ok((
+                    ValueType::Enum("JsonKind".to_string(), Vec::new()),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::Kind,
+                        args: vec![value],
+                    },
+                )),
+                "is_null" => Ok((
+                    ValueType::Bool,
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::IsNull,
+                        args: vec![value],
+                    },
+                )),
+                "as_bool" => Ok((
+                    option(ValueType::Bool),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::AsBool,
+                        args: vec![value],
+                    },
+                )),
+                "number_text" => Ok((
+                    option(ValueType::String),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::NumberText,
+                        args: vec![value],
+                    },
+                )),
+                "as_string" => Ok((
+                    option(ValueType::String),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::AsString,
+                        args: vec![value],
+                    },
+                )),
+                "array_items" => Ok((
+                    option(ValueType::Array(Box::new(json_value))),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::ArrayItems,
+                        args: vec![value],
+                    },
+                )),
+                "object_members" => Ok((
+                    option(ValueType::Array(Box::new(json_member))),
+                    ValueExpr::JsonStructured {
+                        operation: JsonOperation::ObjectMembers,
+                        args: vec![value],
+                    },
+                )),
+                _ => unreachable!("matched structured JSON accessor"),
+            }
+        }
+        "from_bool" => {
+            if value_type != ValueType::Bool {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.from_bool` expects a bool value",
+                    &ValueType::Bool,
+                    &value_type,
+                ));
+            }
+            Ok((
+                json_value,
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromBool,
+                    args: vec![value],
+                },
+            ))
+        }
+        "from_number_text" | "from_string" => {
+            if value_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`json.{name}` expects a string value"),
+                    &ValueType::String,
+                    &value_type,
+                ));
+            }
+            let expression = if name == "from_number_text" {
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromNumberText,
+                    args: vec![value],
+                }
+            } else {
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromString,
+                    args: vec![value],
+                }
+            };
+            Ok((json_result, expression))
+        }
+        "from_i64" => {
+            if value_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.from_i64` expects an i64 value",
+                    &ValueType::Int,
+                    &value_type,
+                ));
+            }
+            Ok((
+                json_value,
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromI64,
+                    args: vec![value],
+                },
+            ))
+        }
+        "from_u64" => {
+            if value_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.from_u64` expects a u64 value",
+                    &ValueType::U64,
+                    &value_type,
+                ));
+            }
+            Ok((
+                json_value,
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromU64,
+                    args: vec![value],
+                },
+            ))
+        }
+        "from_array" => {
+            let expected = ValueType::Array(Box::new(json_value));
+            if value_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.from_array` expects Array<JsonValue>",
+                    &expected,
+                    &value_type,
+                ));
+            }
+            Ok((
+                json_result,
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromArray,
+                    args: vec![value],
+                },
+            ))
+        }
+        "from_object" => {
+            let expected = ValueType::Array(Box::new(json_member));
+            if value_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`json.from_object` expects Array<JsonMember>",
+                    &expected,
+                    &value_type,
+                ));
+            }
+            Ok((
+                json_result,
+                ValueExpr::JsonStructured {
+                    operation: JsonOperation::FromObject,
+                    args: vec![value],
                 },
             ))
         }

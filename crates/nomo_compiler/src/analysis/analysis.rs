@@ -117,6 +117,7 @@ pub(super) fn standard_struct_names(
     if needs.json {
         names.push(("JsonValue".to_string(), 0));
         names.push(("JsonError".to_string(), 0));
+        names.push(("JsonMember".to_string(), 0));
     }
     if needs.regex {
         names.push(("Regex".to_string(), 0));
@@ -139,6 +140,9 @@ pub(super) fn standard_enum_names(
     if needs.process {
         names.push(("ProcessEvent".to_string(), 0));
     }
+    if needs.json {
+        names.push(("JsonKind".to_string(), 0));
+    }
     if needs.io
         || needs.fs
         || needs.net
@@ -158,6 +162,7 @@ pub(super) fn standard_enum_names(
         || needs.option
         || needs.array
         || needs.collections
+        || needs.json
         || needs.regex
     {
         names.push(("Option".to_string(), 1));
@@ -630,10 +635,37 @@ pub(super) fn inject_standard_types(
             package: "std.json".to_string(),
             name: "JsonError".to_string(),
             type_params: Vec::new(),
-            fields: vec![StructField {
-                name: "message".to_string(),
-                value_type: ValueType::String,
-            }],
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "offset".to_string(),
+                    value_type: ValueType::U64,
+                },
+            ],
+        });
+    }
+    if needs.json && !structs.iter().any(|item| item.name == "JsonMember") {
+        structs.push(StructType {
+            package: "std.json".to_string(),
+            name: "JsonMember".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "key".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::Struct("JsonValue".to_string(), Vec::new()),
+                },
+            ],
         });
     }
     if needs.regex && !structs.iter().any(|item| item.name == "Regex") {
@@ -722,6 +754,39 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.json && !enums.iter().any(|item| item.name == "JsonKind") {
+        enums.push(EnumType {
+            package: "std.json".to_string(),
+            name: "JsonKind".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "Null".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Boolean".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Number".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "String".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Array".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Object".to_string(),
+                    payload: None,
+                },
+            ],
+        });
+    }
     if (needs.io
         || needs.fs
         || needs.num
@@ -754,6 +819,7 @@ pub(super) fn inject_standard_types(
         || needs.option
         || needs.array
         || needs.collections
+        || needs.json
         || needs.regex)
         && !enums.iter().any(|item| item.name == "Option")
     {

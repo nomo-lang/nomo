@@ -1,0 +1,93 @@
+package structured_json.main
+
+import std.array.Array
+import std.io
+import std.json
+
+fn request_body() -> Result<JsonValue, JsonError> {
+    let mut user_message: Array<JsonMember> = Array.new<JsonMember>()
+    user_message.push(JsonMember { key: "role", value: json.from_string("user")? })
+    user_message.push(JsonMember { key: "content", value: json.from_string("Hello \"Nomo\"")? })
+    let message: JsonValue = json.from_object(user_message)?
+    let mut messages: Array<JsonValue> = Array.new<JsonValue>()
+    messages.push(message)
+    let mut request: Array<JsonMember> = Array.new<JsonMember>()
+    request.push(JsonMember { key: "model", value: json.from_string("nomo-fixture")? })
+    request.push(JsonMember { key: "messages", value: json.from_array(messages)? })
+    request.push(JsonMember { key: "stream", value: json.from_bool(false) })
+    request.push(JsonMember { key: "max_tokens", value: json.from_u64(64 as u64) })
+    return json.from_object(request)
+}
+
+fn print_completion(body: string) -> void {
+    let parsed: Result<JsonValue, JsonError> = json.parse(body)
+    match parsed {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(root) => {
+            let choices: Option<JsonValue> = json.get(root, "choices")
+            match choices {
+                None => {
+                    io.println("missing choices")
+                }
+                Some(choice_value) => {
+                    let items: Option<Array<JsonValue>> = json.array_items(choice_value)
+                    match items {
+                        None => {
+                            io.println("choices is not an array")
+                        }
+                        Some(values) => {
+                            let first: Option<JsonValue> = values.get(0)
+                            match first {
+                                None => {
+                                    io.println("choices is empty")
+                                }
+                                Some(choice) => {
+                                    let message: Option<JsonValue> = json.get(choice, "message")
+                                    match message {
+                                        None => {
+                                            io.println("missing message")
+                                        }
+                                        Some(message_value) => {
+                                            let content: Option<JsonValue> = json.get(message_value, "content")
+                                            match content {
+                                                None => {
+                                                    io.println("missing content")
+                                                }
+                                                Some(content_value) => {
+                                                    let text: Option<string> = json.as_string(content_value)
+                                                    match text {
+                                                        None => {
+                                                            io.println("content is not a string")
+                                                        }
+                                                        Some(value) => {
+                                                            io.println(value)
+                                                        }
+                                                    }
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+fn main() -> void {
+    let request: Result<JsonValue, JsonError> = request_body()
+    match request {
+        Err(err) => {
+            io.println(err.code, err.offset)
+        }
+        Ok(value) => {
+            io.println(json.stringify(value))
+        }
+    }
+    print_completion("{\"choices\":[{\"message\":{\"content\":\"Hello from structured JSON\"}}]}")
+}

@@ -226,6 +226,26 @@ pub enum NumBinaryFunction {
     Wrapping,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum JsonOperation {
+    Kind,
+    IsNull,
+    AsBool,
+    NumberText,
+    AsString,
+    ArrayItems,
+    ObjectMembers,
+    Get,
+    FromNull,
+    FromBool,
+    FromNumberText,
+    FromI64,
+    FromU64,
+    FromString,
+    FromArray,
+    FromObject,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -439,6 +459,10 @@ pub enum ValueExpr {
     },
     JsonStringify {
         value: Box<ValueExpr>,
+    },
+    JsonStructured {
+        operation: JsonOperation,
+        args: Vec<ValueExpr>,
     },
     RegexCompile {
         pattern: Box<ValueExpr>,

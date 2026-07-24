@@ -29,6 +29,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `process_controlled`: shell-free long-lived child process with queued stdin and multiplexed stdout/stderr events
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
+- `structured_json`: bounded structured JSON construction and nested OpenAI-compatible response traversal
 - `std_http`: `std.http` blocking GET and POST client helpers
 - `openai_compatible`: bounded HTTPS POST with headers against an OpenAI-compatible endpoint
 - `openai_streaming`: bounded HTTPS streaming plus incremental OpenAI-compatible SSE events

@@ -1,20 +1,40 @@
-//! JSON parse and stringify helpers.
+//! Bounded JSON parsing, traversal, and construction helpers.
 package std.json
 
 import std.json
 
-/// A validated JSON document stored as raw text.
+/// The six JSON value kinds.
+pub enum JsonKind {
+    Null
+    Boolean
+    Number
+    String
+    Array
+    Object
+}
+
+/// A validated JSON document or nested value stored as opaque raw text.
 pub struct JsonValue {
     raw: string
 }
 
-/// Error returned when JSON parsing fails.
-pub struct JsonError {
-    /// Human-readable error description.
-    pub message: string
+/// One object member. Member order and duplicates are preserved.
+pub struct JsonMember {
+    pub key: string
+    pub value: JsonValue
 }
 
-/// Parses and validates a JSON document.
+/// Error returned when JSON parsing fails.
+pub struct JsonError {
+    /// Stable error category.
+    pub code: string
+    /// Secret-safe human-readable error description.
+    pub message: string
+    /// Zero-based UTF-8 byte offset, or zero for aggregate constructor limits.
+    pub offset: u64
+}
+
+/// Parses and validates a bounded JSON document.
 pub fn parse(value: string) -> Result<JsonValue, JsonError> {
     return json.parse(value)
 }
@@ -22,4 +42,84 @@ pub fn parse(value: string) -> Result<JsonValue, JsonError> {
 /// Returns the validated JSON text.
 pub fn stringify(value: JsonValue) -> string {
     return json.stringify(value)
+}
+
+/// Returns the represented JSON kind.
+pub fn kind(value: JsonValue) -> JsonKind {
+    return json.kind(value)
+}
+
+/// Returns whether the value is JSON null.
+pub fn is_null(value: JsonValue) -> bool {
+    return json.is_null(value)
+}
+
+/// Returns a boolean value, or None for another kind.
+pub fn as_bool(value: JsonValue) -> Option<bool> {
+    return json.as_bool(value)
+}
+
+/// Returns the exact JSON number token, or None for another kind.
+pub fn number_text(value: JsonValue) -> Option<string> {
+    return json.number_text(value)
+}
+
+/// Returns a decoded string value, or None for another kind.
+pub fn as_string(value: JsonValue) -> Option<string> {
+    return json.as_string(value)
+}
+
+/// Returns array items in document order, or None for another kind.
+pub fn array_items(value: JsonValue) -> Option<Array<JsonValue>> {
+    return json.array_items(value)
+}
+
+/// Returns all object members in document order, or None for another kind.
+pub fn object_members(value: JsonValue) -> Option<Array<JsonMember>> {
+    return json.object_members(value)
+}
+
+/// Returns the last matching object member, or None when absent or not an object.
+pub fn get(value: JsonValue, key: string) -> Option<JsonValue> {
+    return json.get(value, key)
+}
+
+/// Constructs JSON null.
+pub fn from_null() -> JsonValue {
+    return json.from_null()
+}
+
+/// Constructs a JSON boolean.
+pub fn from_bool(value: bool) -> JsonValue {
+    return json.from_bool(value)
+}
+
+/// Constructs a JSON number from one exact number token.
+pub fn from_number_text(value: string) -> Result<JsonValue, JsonError> {
+    return json.from_number_text(value)
+}
+
+/// Constructs a JSON signed integer.
+pub fn from_i64(value: i64) -> JsonValue {
+    return json.from_i64(value)
+}
+
+/// Constructs a JSON unsigned integer.
+pub fn from_u64(value: u64) -> JsonValue {
+    return json.from_u64(value)
+}
+
+/// Constructs an escaped JSON string.
+pub fn from_string(value: string) -> Result<JsonValue, JsonError> {
+    return json.from_string(value)
+}
+
+/// Constructs a bounded JSON array.
+pub fn from_array(values: Array<JsonValue>) -> Result<JsonValue, JsonError> {
+    return json.from_array(values)
+}
+
+/// Constructs a bounded JSON object while preserving order and duplicates.
+pub fn from_object(members: Array<JsonMember>) -> Result<JsonValue, JsonError> {
+    return json.from_object(members)
 }

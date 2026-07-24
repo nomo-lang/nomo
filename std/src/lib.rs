@@ -160,7 +160,30 @@ const HTTP_ITEMS: &[&str] = &[
     "send",
 ];
 const IO_ITEMS: &[&str] = &["eprint", "eprintln", "print", "println", "read_line"];
-const JSON_ITEMS: &[&str] = &["JsonError", "JsonValue", "parse", "stringify"];
+const JSON_ITEMS: &[&str] = &[
+    "JsonError",
+    "JsonKind",
+    "JsonMember",
+    "JsonValue",
+    "array_items",
+    "as_bool",
+    "as_string",
+    "from_array",
+    "from_bool",
+    "from_i64",
+    "from_null",
+    "from_number_text",
+    "from_object",
+    "from_string",
+    "from_u64",
+    "get",
+    "is_null",
+    "kind",
+    "number_text",
+    "object_members",
+    "parse",
+    "stringify",
+];
 const LOG_ITEMS: &[&str] = &["debug", "enabled", "error", "info", "warn"];
 const MATH_ITEMS: &[&str] = &[
     "abs", "ceil", "cos", "floor", "max", "min", "pow", "round", "sin", "sqrt",
@@ -571,7 +594,7 @@ pub const MODULES: &[StandardModule] = &[
     },
     StandardModule {
         path: "std.json",
-        docs: "JSON parse and stringify helpers",
+        docs: "bounded JSON parsing, traversal, and construction helpers",
         items: JSON_ITEMS,
         doc_items: &[],
     },
@@ -1240,7 +1263,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 229);
+        assert_eq!(imports.len(), 247);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

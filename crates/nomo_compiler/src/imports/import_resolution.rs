@@ -135,6 +135,58 @@ pub(super) fn resolve_specific_value_builtin(
         "stringify" if imports.iter().any(|item| item == "std.json.stringify") => {
             vec!["json".to_string(), "stringify".to_string()]
         }
+        "kind" if imports.iter().any(|item| item == "std.json.kind") => {
+            vec!["json".to_string(), "kind".to_string()]
+        }
+        "is_null" if imports.iter().any(|item| item == "std.json.is_null") => {
+            vec!["json".to_string(), "is_null".to_string()]
+        }
+        "as_bool" if imports.iter().any(|item| item == "std.json.as_bool") => {
+            vec!["json".to_string(), "as_bool".to_string()]
+        }
+        "number_text" if imports.iter().any(|item| item == "std.json.number_text") => {
+            vec!["json".to_string(), "number_text".to_string()]
+        }
+        "as_string" if imports.iter().any(|item| item == "std.json.as_string") => {
+            vec!["json".to_string(), "as_string".to_string()]
+        }
+        "array_items" if imports.iter().any(|item| item == "std.json.array_items") => {
+            vec!["json".to_string(), "array_items".to_string()]
+        }
+        "object_members" if imports.iter().any(|item| item == "std.json.object_members") => {
+            vec!["json".to_string(), "object_members".to_string()]
+        }
+        "get" if imports.iter().any(|item| item == "std.json.get") => {
+            vec!["json".to_string(), "get".to_string()]
+        }
+        "from_null" if imports.iter().any(|item| item == "std.json.from_null") => {
+            vec!["json".to_string(), "from_null".to_string()]
+        }
+        "from_bool" if imports.iter().any(|item| item == "std.json.from_bool") => {
+            vec!["json".to_string(), "from_bool".to_string()]
+        }
+        "from_number_text"
+            if imports
+                .iter()
+                .any(|item| item == "std.json.from_number_text") =>
+        {
+            vec!["json".to_string(), "from_number_text".to_string()]
+        }
+        "from_i64" if imports.iter().any(|item| item == "std.json.from_i64") => {
+            vec!["json".to_string(), "from_i64".to_string()]
+        }
+        "from_u64" if imports.iter().any(|item| item == "std.json.from_u64") => {
+            vec!["json".to_string(), "from_u64".to_string()]
+        }
+        "from_string" if imports.iter().any(|item| item == "std.json.from_string") => {
+            vec!["json".to_string(), "from_string".to_string()]
+        }
+        "from_array" if imports.iter().any(|item| item == "std.json.from_array") => {
+            vec!["json".to_string(), "from_array".to_string()]
+        }
+        "from_object" if imports.iter().any(|item| item == "std.json.from_object") => {
+            vec!["json".to_string(), "from_object".to_string()]
+        }
         "get" if imports.iter().any(|item| item == "std.http.get") => {
             vec!["http".to_string(), "get".to_string()]
         }

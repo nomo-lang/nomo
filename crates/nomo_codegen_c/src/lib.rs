@@ -11,9 +11,9 @@
 )]
 
 use nomo_ir::{
-    BinaryOp, DeferredCall, EnumType, ExternFunction, Function, LoopKind, MatchStatementArm,
-    MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Program,
-    QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, DeferredCall, EnumType, ExternFunction, Function, JsonOperation, LoopKind,
+    MatchStatementArm, MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction,
+    Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 

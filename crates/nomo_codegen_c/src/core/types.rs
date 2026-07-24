@@ -25,7 +25,7 @@ pub(super) fn emit_type_name_macros(out: &mut String, program: &Program) {
             .enums
             .iter()
             .find(|item| item.name == enum_name)
-            .expect("checked programs only use known enums");
+            .unwrap_or_else(|| panic!("checked programs only use known enum `{enum_name}`"));
         let package = c_package_ident(&enum_type.package);
         let suffix = c_type_suffix(&enum_args);
         out.push_str("#define ");
@@ -498,12 +498,17 @@ fn emit_struct_lifecycle_helpers(
     out.push('(');
     out.push_str(&c_type_name);
     out.push_str(" value) {\n");
+    let mut releases_field = false;
     for field in &struct_type.fields {
         let field_type = subst_type(&field.value_type, &struct_type.type_params, struct_args);
         if value_type_needs_release(&field_type) {
+            releases_field = true;
             let field = format!("value.{}", c_member_ident(&field.name));
             emit_value_release_in_place(out, &field_type, &field, 1);
         }
+    }
+    if !releases_field {
+        out.push_str("    (void)value;\n");
     }
     out.push_str("}\n");
 }
@@ -518,12 +523,14 @@ fn emit_enum_lifecycle_helpers(out: &mut String, enum_type: &EnumType, enum_args
     out.push('(');
     out.push_str(&c_type_name);
     out.push_str(" value) {\n");
+    let mut releases_payload = false;
     for variant in &enum_type.variants {
         let Some(payload_type) = &variant.payload else {
             continue;
         };
         let payload_type = subst_type(payload_type, &enum_type.type_params, enum_args);
         if value_type_needs_release(&payload_type) {
+            releases_payload = true;
             write_indent(out, 1);
             out.push_str("if (value.tag == ");
             out.push_str(&c_enum_variant_ident(
@@ -563,6 +570,9 @@ fn emit_enum_lifecycle_helpers(out: &mut String, enum_type: &EnumType, enum_args
             emit_value_release_in_place(out, &payload_type, &payload, 2);
             out.push_str("    }\n");
         }
+    }
+    if !releases_payload {
+        out.push_str("    (void)value;\n");
     }
     out.push_str("}\n");
 }

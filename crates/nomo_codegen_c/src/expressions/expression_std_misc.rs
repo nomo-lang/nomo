@@ -112,6 +112,35 @@ pub(super) fn emit_std_misc_expr(out: &mut String, expr: &ValueExpr) -> bool {
             emit_expr(out, value);
             out.push(')');
         }
+        ValueExpr::JsonStructured { operation, args } => {
+            let function = match operation {
+                JsonOperation::Kind => "nomo_json_kind",
+                JsonOperation::IsNull => "nomo_json_is_null",
+                JsonOperation::AsBool => "nomo_json_as_bool",
+                JsonOperation::NumberText => "nomo_json_number_text",
+                JsonOperation::AsString => "nomo_json_as_string",
+                JsonOperation::ArrayItems => "nomo_json_array_items",
+                JsonOperation::ObjectMembers => "nomo_json_object_members",
+                JsonOperation::Get => "nomo_json_get",
+                JsonOperation::FromNull => "nomo_json_from_null",
+                JsonOperation::FromBool => "nomo_json_from_bool",
+                JsonOperation::FromNumberText => "nomo_json_from_number_text",
+                JsonOperation::FromI64 => "nomo_json_from_i64",
+                JsonOperation::FromU64 => "nomo_json_from_u64",
+                JsonOperation::FromString => "nomo_json_from_string",
+                JsonOperation::FromArray => "nomo_json_from_array",
+                JsonOperation::FromObject => "nomo_json_from_object",
+            };
+            out.push_str(function);
+            out.push('(');
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                emit_expr(out, arg);
+            }
+            out.push(')');
+        }
         ValueExpr::RegexCompile { pattern } => {
             out.push_str("nomo_regex_compile(");
             emit_expr(out, pattern);

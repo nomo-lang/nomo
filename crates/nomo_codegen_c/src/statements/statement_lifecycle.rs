@@ -439,6 +439,7 @@ pub(super) fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::ArrayNew { .. }
         | ValueExpr::ArrayIter { .. }
         | ValueExpr::ArrayGet { .. }
+        | ValueExpr::JsonStructured { .. }
         | ValueExpr::EnumVariant { payload: None, .. } => false,
     }
 }

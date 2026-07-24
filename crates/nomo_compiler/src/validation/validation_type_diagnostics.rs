@@ -77,7 +77,7 @@ pub(super) fn missing_standard_type_import(
         "IoError" => Some("std.io"),
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
-        "JsonValue" | "JsonError" => Some("std.json"),
+        "JsonValue" | "JsonError" | "JsonMember" | "JsonKind" => Some("std.json"),
         "Regex" | "RegexError" => Some("std.regex"),
         "StringMap" | "StringSet" => Some("std.collections"),
         "Duration" => Some("std.time"),

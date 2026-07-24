@@ -518,6 +518,11 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
                 collect_expr_result_map_err(arg, out);
             }
         }
+        ValueExpr::JsonStructured { args, .. } => {
+            for arg in args {
+                collect_expr_result_map_err(arg, out);
+            }
+        }
         ValueExpr::ArrayGet { array, index, .. } => {
             collect_expr_result_map_err(array, out);
             collect_expr_result_map_err(index, out);
@@ -935,6 +940,11 @@ where
             walk_expr(value, visit);
         }
         ValueExpr::Call { args, .. } => {
+            for arg in args {
+                walk_expr(arg, visit);
+            }
+        }
+        ValueExpr::JsonStructured { args, .. } => {
             for arg in args {
                 walk_expr(arg, visit);
             }

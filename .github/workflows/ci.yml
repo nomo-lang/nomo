@@ -94,12 +94,19 @@ jobs:
           file "$artifact" | grep "Mach-O 64-bit executable x86_64"
           grep 'nomo target: x86_64-apple-darwin-none' \
             examples/result_helpers/build/x86_64-apple-darwin-none/c/main.c
+          target/release/nomo build examples/structured_json --target x86_64-apple-darwin
+          json_artifact="examples/structured_json/build/x86_64-apple-darwin-none/bin/structured_json"
+          test "$(lipo -archs "$json_artifact")" = "x86_64"
+          grep 'nomo_json_from_object' \
+            examples/structured_json/build/x86_64-apple-darwin-none/c/main.c
 
       - name: Upload cross-build evidence
         uses: actions/upload-artifact@v7
         with:
           name: nomo-macos-arm64-to-x86_64
-          path: examples/result_helpers/build/x86_64-apple-darwin-none
+          path: |
+            examples/result_helpers/build/x86_64-apple-darwin-none
+            examples/structured_json/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
   linux-cross-build:
@@ -132,10 +139,17 @@ jobs:
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$artifact"
           grep 'nomo target: aarch64-unknown-linux-gnu' \
             examples/result_helpers/build/aarch64-unknown-linux-gnu/c/main.c
+          target/release/nomo build examples/structured_json --target aarch64-unknown-linux-gnu
+          json_artifact="examples/structured_json/build/aarch64-unknown-linux-gnu/bin/structured_json"
+          readelf -h "$json_artifact" | grep 'Machine:.*AArch64'
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$json_artifact" \
+            | grep 'Hello from structured JSON'
 
       - name: Upload cross-build evidence
         uses: actions/upload-artifact@v7
         with:
           name: nomo-linux-x86_64-to-arm64
-          path: examples/result_helpers/build/aarch64-unknown-linux-gnu
+          path: |
+            examples/result_helpers/build/aarch64-unknown-linux-gnu
+            examples/structured_json/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

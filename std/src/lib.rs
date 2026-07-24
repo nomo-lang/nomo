@@ -142,12 +142,20 @@ const HTTP_ITEMS: &[&str] = &[
     "HttpRequest",
     "HttpResponse",
     "HttpServer",
+    "HttpStream",
+    "HttpStreamChunk",
+    "SseEvent",
     "accept",
+    "cancel_stream",
     "close_exchange",
     "close_server",
+    "close_stream",
     "get",
     "listen",
+    "next_sse",
+    "open_stream",
     "post",
+    "read_text",
     "respond_string",
     "send",
 ];
@@ -538,7 +546,7 @@ pub const MODULES: &[StandardModule] = &[
     },
     StandardModule {
         path: "std.http",
-        docs: "bounded blocking HTTP/HTTPS client and basic plain-HTTP server helpers",
+        docs: "bounded blocking HTTP/HTTPS, text streaming, SSE, and basic plain-HTTP server helpers",
         items: HTTP_ITEMS,
         doc_items: &[],
     },
@@ -1219,7 +1227,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 208);
+        assert_eq!(imports.len(), 216);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

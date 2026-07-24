@@ -46,6 +46,8 @@ mod host_fs_helpers;
 mod host_http_helpers;
 #[path = "runtime/host_http_server_helpers.rs"]
 mod host_http_server_helpers;
+#[path = "runtime/host_http_stream_helpers.rs"]
+mod host_http_stream_helpers;
 #[path = "runtime/host_io_helpers.rs"]
 mod host_io_helpers;
 #[path = "runtime/host_json_helpers.rs"]
@@ -117,6 +119,7 @@ use host_file_helpers::*;
 use host_fs_helpers::*;
 use host_http_helpers::*;
 use host_http_server_helpers::*;
+use host_http_stream_helpers::*;
 use host_io_helpers::*;
 use host_json_helpers::*;
 use host_net_helpers::*;
@@ -165,6 +168,11 @@ const BUILTIN_OWNED_BORROW_EXPR: &str = "__nomo_owned_borrow";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
 const BUILTIN_HTTP_SEND_EXPR: &str = "__nomo_http_send";
+const BUILTIN_HTTP_OPEN_STREAM_EXPR: &str = "__nomo_http_open_stream";
+const BUILTIN_HTTP_READ_TEXT_EXPR: &str = "__nomo_http_read_text";
+const BUILTIN_HTTP_NEXT_SSE_EXPR: &str = "__nomo_http_next_sse";
+const BUILTIN_HTTP_CANCEL_STREAM_EXPR: &str = "__nomo_http_cancel_stream";
+const BUILTIN_HTTP_CLOSE_STREAM_EXPR: &str = "__nomo_http_close_stream";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
 const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
 const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";

@@ -10293,6 +10293,580 @@ fn main() -> void {
 }
 
 #[test]
+fn structured_http_stream_parses_incremental_sse_events() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\n",
+            )
+            .unwrap();
+        stream.flush().unwrap();
+
+        let first_scalar = "你".as_bytes();
+        let chunks: [&[u8]; 8] = [
+            b"\xef\xbb",
+            b"\xbf: comment\r\n",
+            b"event: token\r\nid: 7\r\nretry: 1500\r\ndata: ",
+            &first_scalar[..1],
+            &first_scalar[1..],
+            "好\r\ndata: world\n\r\n".as_bytes(),
+            b"data: [DONE]\r\n\r\n",
+            b"",
+        ];
+        for chunk in chunks {
+            stream.write_all(chunk).unwrap();
+            stream.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(10));
+        }
+    });
+
+    let root = temp_test_root("structured-http-stream-sse");
+    reset_dir(&root);
+    let project = root.join("structured_http_stream_sse");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_http_stream_sse\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package structured_http_stream_sse.main
+
+import std.array.Array
+import std.http
+import std.io
+
+fn print_retry(retry: Option<u64>) -> void {
+    match retry {
+        Some(value) => {
+            io.println(value)
+        }
+        None => {
+            io.println("none")
+        }
+    }
+}
+
+fn run() -> Result<void, HttpError> {
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "GET",
+        url: "http://127.0.0.1:__PORT__/events",
+        headers: headers,
+        body: "",
+        timeout_millis: 1000,
+        max_response_bytes: 1048576
+    }
+    let stream: HttpStream = http.open_stream(request, 1000)?
+    defer http.close_stream(stream)
+
+    let first: Option<SseEvent> = http.next_sse(stream, 1024)?
+    match first {
+        Some(event) => {
+            io.println(event.event)
+            io.println(event.data)
+            io.println(event.id)
+            print_retry(event.retry_millis)
+        }
+        None => {
+            io.println("unexpected first eof")
+        }
+    }
+
+    let second: Option<SseEvent> = http.next_sse(stream, 1024)?
+    match second {
+        Some(event) => {
+            io.println(event.event)
+            io.println(event.data)
+            io.println(event.id)
+            print_retry(event.retry_millis)
+        }
+        None => {
+            io.println("unexpected second eof")
+        }
+    }
+
+    let third: Option<SseEvent> = http.next_sse(stream, 1024)?
+    match third {
+        Some(event) => {
+            io.println("unexpected third event")
+        }
+        None => {
+            io.println("eof")
+        }
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, HttpError> = run()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println("error", err.code, err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(
+        stdout,
+        "token\n你好\nworld\n7\n1500\nmessage\n[DONE]\n7\nnone\neof\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_http_stream_reads_utf8_text_and_rejects_closed_or_mixed_modes() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        let body = "A你好B🙂C";
+        stream
+            .write_all(
+                format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: text/plain; charset=utf-8\r\nContent-Length: {}\r\nConnection: close\r\n\r\n",
+                    body.len()
+                )
+                .as_bytes(),
+            )
+            .unwrap();
+        for chunk in body.as_bytes().chunks(2) {
+            stream.write_all(chunk).unwrap();
+            stream.flush().unwrap();
+            std::thread::sleep(Duration::from_millis(5));
+        }
+    });
+
+    let root = temp_test_root("structured-http-stream-text");
+    reset_dir(&root);
+    let project = root.join("structured_http_stream_text");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_http_stream_text\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package structured_http_stream_text.main
+
+import std.array.Array
+import std.http
+import std.io
+import std.string
+
+fn finish_text(text: string, chunks: u64) -> Result<void, HttpError> {
+    io.println(text)
+    io.println(chunks > 1)
+    return Ok(void)
+}
+
+fn collect_text(stream: HttpStream, text: string, chunks: u64) -> Result<void, HttpError> {
+    let chunk: HttpStreamChunk = http.read_text(stream, 4)?
+    return if chunk.done {
+        finish_text(text, chunks)
+    } else {
+        collect_text(stream, text.concat(chunk.data), chunks + 1)
+    }
+}
+
+fn run() -> Result<void, HttpError> {
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "GET",
+        url: "http://127.0.0.1:__PORT__/text",
+        headers: headers,
+        body: "",
+        timeout_millis: 1000,
+        max_response_bytes: 1024
+    }
+    let stream: HttpStream = http.open_stream(request, 1000)?
+    collect_text(stream, "", 0)?
+
+    let mixed: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 1024)
+    match mixed {
+        Ok(event) => {
+            io.println("unexpected mixed mode")
+        }
+        Err(err) => {
+            io.println(err.code)
+        }
+    }
+
+    http.close_stream(stream)
+    http.close_stream(stream)
+    let closed: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 4)
+    match closed {
+        Ok(chunk) => {
+            io.println("unexpected closed read")
+        }
+        Err(err) => {
+            io.println(err.code)
+        }
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, HttpError> = run()
+    match result {
+        Ok(value) => {
+        }
+        Err(err) => {
+            io.println("error", err.code, err.message)
+        }
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(
+        stdout,
+        "A你好B🙂C\ntrue\ninvalid_request\ninvalid_request\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_http_stream_enforces_limits_timeouts_cancel_and_secret_redaction() {
+    let limit_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let limit_port = limit_listener.local_addr().unwrap().port();
+    let limit_server = std::thread::spawn(move || {
+        let (mut stream, _) = limit_listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 16\r\nConnection: close\r\n\r\n0123456789abcdef",
+            )
+            .unwrap();
+    });
+
+    let timeout_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let timeout_port = timeout_listener.local_addr().unwrap().port();
+    let timeout_server = std::thread::spawn(move || {
+        let (mut stream, _) = timeout_listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        stream.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+    });
+
+    let utf8_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let utf8_port = utf8_listener.local_addr().unwrap().port();
+    let utf8_server = std::thread::spawn(move || {
+        let (mut stream, _) = utf8_listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n\xff")
+            .unwrap();
+    });
+
+    let cancel_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let cancel_port = cancel_listener.local_addr().unwrap().port();
+    let cancel_server = std::thread::spawn(move || {
+        let (mut stream, _) = cancel_listener.accept().unwrap();
+        let mut request = Vec::new();
+        let mut buffer = [0_u8; 512];
+        loop {
+            let read = stream.read(&mut buffer).unwrap();
+            request.extend_from_slice(&buffer[..read]);
+            if read == 0 || request.windows(4).any(|window| window == b"\r\n\r\n") {
+                break;
+            }
+        }
+        stream
+            .write_all(b"HTTP/1.1 200 OK\r\nContent-Length: 1\r\nConnection: close\r\n\r\n")
+            .unwrap();
+        stream.flush().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut closed = [0_u8; 1];
+        assert_eq!(stream.read(&mut closed).unwrap(), 0);
+    });
+
+    let sse_limit_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let sse_limit_port = sse_limit_listener.local_addr().unwrap().port();
+    let sse_limit_server = std::thread::spawn(move || {
+        let (mut stream, _) = sse_limit_listener.accept().unwrap();
+        let mut request = [0_u8; 2048];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Type: text/event-stream\r\nConnection: close\r\n\r\ndata: received-sse-secret-and-too-large\r\n\r\n",
+            )
+            .unwrap();
+    });
+
+    let root = temp_test_root("structured-http-stream-failures");
+    reset_dir(&root);
+    let project = root.join("structured_http_stream_failures");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_http_stream_failures\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package structured_http_stream_failures.main
+
+import std.array.Array
+import std.http
+import std.io
+
+fn request_for(url: string, max_response_bytes: u64) -> HttpRequest {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader {
+        name: "Authorization",
+        value: "Bearer stream-header-secret"
+    })
+    return HttpRequest {
+        method: "GET",
+        url: url,
+        headers: headers,
+        body: "",
+        timeout_millis: 1000,
+        max_response_bytes: max_response_bytes
+    }
+}
+
+fn response_limit() -> Result<void, HttpError> {
+    let stream: HttpStream = http.open_stream(
+        request_for("http://127.0.0.1:__LIMIT_PORT__/large?api_key=query-secret", 8),
+        1000
+    )?
+    defer http.close_stream(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    match result {
+        Ok(chunk) => {
+            io.println("limit unexpected-ok")
+        }
+        Err(err) => {
+            io.println("limit", err.code, err.message)
+        }
+    }
+    return Ok(void)
+}
+
+fn idle_timeout() -> Result<void, HttpError> {
+    let stream: HttpStream = http.open_stream(
+        request_for("http://127.0.0.1:__TIMEOUT_PORT__/slow?token=timeout-secret", 1024),
+        100
+    )?
+    defer http.close_stream(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    match result {
+        Ok(chunk) => {
+            io.println("timeout unexpected-ok")
+        }
+        Err(err) => {
+            io.println("timeout", err.code, err.message)
+        }
+    }
+    return Ok(void)
+}
+
+fn invalid_utf8() -> Result<void, HttpError> {
+    let stream: HttpStream = http.open_stream(
+        request_for("http://127.0.0.1:__UTF8_PORT__/invalid", 1024),
+        1000
+    )?
+    defer http.close_stream(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    match result {
+        Ok(chunk) => {
+            io.println("utf8 unexpected-ok")
+        }
+        Err(err) => {
+            io.println("utf8", err.code, err.message)
+        }
+    }
+    return Ok(void)
+}
+
+fn canceled_stream() -> Result<void, HttpError> {
+    let stream: HttpStream = http.open_stream(
+        request_for("http://127.0.0.1:__CANCEL_PORT__/cancel", 1024),
+        1000
+    )?
+    let invalid_limit: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 3)
+    match invalid_limit {
+        Ok(chunk) => {
+            io.println("chunk-limit unexpected-ok")
+        }
+        Err(err) => {
+            io.println("chunk-limit", err.code, err.message)
+        }
+    }
+    http.cancel_stream(stream)
+    http.cancel_stream(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    match result {
+        Ok(chunk) => {
+            io.println("cancel unexpected-ok")
+        }
+        Err(err) => {
+            io.println("cancel", err.code, err.message)
+        }
+    }
+    return Ok(void)
+}
+
+fn oversized_sse_event() -> Result<void, HttpError> {
+    let stream: HttpStream = http.open_stream(
+        request_for("http://127.0.0.1:__SSE_LIMIT_PORT__/events", 1024),
+        1000
+    )?
+    defer http.close_stream(stream)
+    let result: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 8)
+    match result {
+        Ok(event) => {
+            io.println("sse-limit unexpected-ok")
+        }
+        Err(err) => {
+            io.println("sse-limit", err.code, err.message)
+        }
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let limit_result: Result<void, HttpError> = response_limit()
+    let timeout_result: Result<void, HttpError> = idle_timeout()
+    let utf8_result: Result<void, HttpError> = invalid_utf8()
+    let cancel_result: Result<void, HttpError> = canceled_stream()
+    let sse_limit_result: Result<void, HttpError> = oversized_sse_event()
+}
+"#
+    .replace("__LIMIT_PORT__", &limit_port.to_string())
+    .replace("__TIMEOUT_PORT__", &timeout_port.to_string())
+    .replace("__UTF8_PORT__", &utf8_port.to_string())
+    .replace("__CANCEL_PORT__", &cancel_port.to_string())
+    .replace("__SSE_LIMIT_PORT__", &sse_limit_port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert!(
+        stdout.contains("limit response_too_large HTTP response exceeded its configured limit\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("timeout timeout HTTP request timed out\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("utf8 protocol HTTP response stream was not valid UTF-8 text\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("chunk-limit invalid_request invalid HTTP stream chunk limit\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("cancel invalid_request invalid or closed HTTP stream\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("sse-limit response_too_large SSE event exceeded its configured limit\n"),
+        "{stdout}"
+    );
+    for secret in [
+        "stream-header-secret",
+        "query-secret",
+        "timeout-secret",
+        "received-sse-secret",
+    ] {
+        assert!(
+            !stdout.contains(secret),
+            "secret leaked in stdout: {stdout}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains(secret),
+            "secret leaked in stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    limit_server.join().unwrap();
+    timeout_server.join().unwrap();
+    utf8_server.join().unwrap();
+    cancel_server.join().unwrap();
+    sse_limit_server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_http_server_helpers_without_std_dependency() {
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();

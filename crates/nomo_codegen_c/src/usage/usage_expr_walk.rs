@@ -424,6 +424,23 @@ pub(super) fn expr_is_http_client_call(expr: &ValueExpr) -> bool {
             if name == BUILTIN_HTTP_GET_EXPR
                 || name == BUILTIN_HTTP_POST_EXPR
                 || name == BUILTIN_HTTP_SEND_EXPR
+                || name == BUILTIN_HTTP_OPEN_STREAM_EXPR
+                || name == BUILTIN_HTTP_READ_TEXT_EXPR
+                || name == BUILTIN_HTTP_NEXT_SSE_EXPR
+                || name == BUILTIN_HTTP_CANCEL_STREAM_EXPR
+                || name == BUILTIN_HTTP_CLOSE_STREAM_EXPR
+    )
+}
+
+pub(super) fn expr_is_http_stream_call(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. }
+            if name == BUILTIN_HTTP_OPEN_STREAM_EXPR
+                || name == BUILTIN_HTTP_READ_TEXT_EXPR
+                || name == BUILTIN_HTTP_NEXT_SSE_EXPR
+                || name == BUILTIN_HTTP_CANCEL_STREAM_EXPR
+                || name == BUILTIN_HTTP_CLOSE_STREAM_EXPR
     )
 }
 

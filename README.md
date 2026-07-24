@@ -657,6 +657,15 @@ host names, redirects are disabled, and `HttpResponse` exposes numeric
 `HttpError.code` provides stable transport categories without copying request
 headers, bodies, or URL query secrets into errors.
 
+`http.open_stream` returns an `HttpStream` after the response head and supports
+bounded pull-based UTF-8 chunks through `http.read_text` or parsed SSE events
+through `http.next_sse`. Each stream has a per-pull idle timeout plus the
+request's cumulative response limit. The first consuming call selects raw-text
+or SSE mode. `close_stream` and cooperative `cancel_stream` are idempotent;
+callers should register `defer http.close_stream(stream)` immediately after
+open. See `examples/openai_streaming` for a native OpenAI-compatible HTTPS/SSE
+loop that stops on `[DONE]`.
+
 The native HTTP adapter is toolchain-owned; application code does not write C
 FFI or linker metadata. Unix-like targets use a compatible libcurl runtime and
 Windows uses WinHTTP. Browser WASM rejects network access with the stable
@@ -664,9 +673,8 @@ Windows uses WinHTTP. Browser WASM rejects network access with the stable
 `http.accept` returns one `HttpExchange` with `method`, `path`, and `body`, and
 `http.respond_string` writes a string response. Use
 `defer http.close_exchange(exchange)` and `defer http.close_server(server)` to
-close server handles on normal returns and `?` early returns. Streaming/SSE,
-cancellation, redirects, and multi-connection server helpers remain later
-slices.
+close server handles on normal returns and `?` early returns. Redirects, binary
+bodies, and multi-connection server helpers remain later slices.
 
 `std.testing` provides helpers for `#[test]` functions: `testing.assert`,
 `testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool

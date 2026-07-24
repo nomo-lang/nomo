@@ -55,3 +55,8 @@ jobs:
           cargo test -p nomo --test cli_project
           structured_http_requests_enforce_limits_and_redact_secrets
           --locked -- --exact
+      - name: Run text and SSE streaming paths through WinHTTP
+        run: >-
+          cargo test -p nomo --test cli_project
+          structured_http_stream_
+          --locked

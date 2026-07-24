@@ -102,6 +102,9 @@ pub(super) fn standard_struct_names(
         names.push(("HttpRequest".to_string(), 0));
         names.push(("HttpResponse".to_string(), 0));
         names.push(("HttpServer".to_string(), 0));
+        names.push(("HttpStream".to_string(), 0));
+        names.push(("HttpStreamChunk".to_string(), 0));
+        names.push(("SseEvent".to_string(), 0));
     }
     if needs.hash {
         names.push(("HashState".to_string(), 0));
@@ -384,6 +387,68 @@ pub(super) fn inject_standard_types(
                 StructField {
                     name: "body".to_string(),
                     value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpStream") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpStream".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "status".to_string(),
+                    value_type: ValueType::Int,
+                },
+                StructField {
+                    name: "headers".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "HttpHeader".to_string(),
+                        Vec::new(),
+                    ))),
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpStreamChunk") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpStreamChunk".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "data".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "done".to_string(),
+                    value_type: ValueType::Bool,
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "SseEvent") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "SseEvent".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "event".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "data".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "id".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "retry_millis".to_string(),
+                    value_type: ValueType::Enum("Option".to_string(), vec![ValueType::U64]),
                 },
             ],
         });

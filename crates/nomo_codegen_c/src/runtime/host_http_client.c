@@ -17,16 +17,46 @@ typedef void *nomo_http_library;
 #define NOMO_HTTP_MAX_RESPONSE_HEADER_BYTES (UINT64_C(64) * UINT64_C(1024))
 
 typedef void nomo_curl_easy;
+typedef void nomo_curl_multi;
 typedef struct nomo_curl_slist nomo_curl_slist;
+typedef struct nomo_curl_msg {
+    int msg;
+    nomo_curl_easy *easy_handle;
+    union {
+        void *whatever;
+        int result;
+    } data;
+} nomo_curl_msg;
 typedef int (*nomo_curl_global_init_fn)(long);
 typedef nomo_curl_easy *(*nomo_curl_easy_init_fn)(void);
 typedef int (*nomo_curl_easy_setopt_fn)(nomo_curl_easy *, int, ...);
 typedef int (*nomo_curl_easy_perform_fn)(nomo_curl_easy *);
 typedef int (*nomo_curl_easy_getinfo_fn)(nomo_curl_easy *, int, ...);
+typedef int (*nomo_curl_easy_pause_fn)(nomo_curl_easy *, int);
 typedef void (*nomo_curl_easy_cleanup_fn)(nomo_curl_easy *);
 typedef const char *(*nomo_curl_easy_strerror_fn)(int);
 typedef nomo_curl_slist *(*nomo_curl_slist_append_fn)(nomo_curl_slist *, const char *);
 typedef void (*nomo_curl_slist_free_all_fn)(nomo_curl_slist *);
+typedef nomo_curl_multi *(*nomo_curl_multi_init_fn)(void);
+typedef int (*nomo_curl_multi_add_handle_fn)(nomo_curl_multi *, nomo_curl_easy *);
+typedef int (*nomo_curl_multi_remove_handle_fn)(nomo_curl_multi *, nomo_curl_easy *);
+typedef int (*nomo_curl_multi_perform_fn)(nomo_curl_multi *, int *);
+typedef int (*nomo_curl_multi_poll_fn)(
+    nomo_curl_multi *,
+    void *,
+    unsigned int,
+    int,
+    int *
+);
+typedef int (*nomo_curl_multi_wait_fn)(
+    nomo_curl_multi *,
+    void *,
+    unsigned int,
+    int,
+    int *
+);
+typedef nomo_curl_msg *(*nomo_curl_multi_info_read_fn)(nomo_curl_multi *, int *);
+typedef int (*nomo_curl_multi_cleanup_fn)(nomo_curl_multi *);
 
 typedef struct nomo_http_curl_api {
     int attempted;
@@ -37,10 +67,19 @@ typedef struct nomo_http_curl_api {
     nomo_curl_easy_setopt_fn easy_setopt;
     nomo_curl_easy_perform_fn easy_perform;
     nomo_curl_easy_getinfo_fn easy_getinfo;
+    nomo_curl_easy_pause_fn easy_pause;
     nomo_curl_easy_cleanup_fn easy_cleanup;
     nomo_curl_easy_strerror_fn easy_strerror;
     nomo_curl_slist_append_fn slist_append;
     nomo_curl_slist_free_all_fn slist_free_all;
+    nomo_curl_multi_init_fn multi_init;
+    nomo_curl_multi_add_handle_fn multi_add_handle;
+    nomo_curl_multi_remove_handle_fn multi_remove_handle;
+    nomo_curl_multi_perform_fn multi_perform;
+    nomo_curl_multi_poll_fn multi_poll;
+    nomo_curl_multi_wait_fn multi_wait;
+    nomo_curl_multi_info_read_fn multi_info_read;
+    nomo_curl_multi_cleanup_fn multi_cleanup;
 } nomo_http_curl_api;
 
 typedef struct nomo_http_body_buffer {
@@ -74,6 +113,7 @@ enum {
     NOMO_CURLOPT_CAINFO = 10065,
     NOMO_CURLOPT_HEADERFUNCTION = 20079,
     NOMO_CURLOPT_TIMEOUT_MS = 155,
+    NOMO_CURLOPT_CONNECTTIMEOUT_MS = 156,
     NOMO_CURLINFO_RESPONSE_CODE = 0x200002
 };
 
@@ -120,6 +160,45 @@ static int nomo_http_load_curl(void) {
     NOMO_HTTP_CURL_SYMBOL(slist_append, nomo_curl_slist_append_fn, "curl_slist_append")
     NOMO_HTTP_CURL_SYMBOL(slist_free_all, nomo_curl_slist_free_all_fn, "curl_slist_free_all")
 #undef NOMO_HTTP_CURL_SYMBOL
+    nomo_http_curl.easy_pause = (nomo_curl_easy_pause_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_easy_pause"
+    );
+    nomo_http_curl.multi_init = (nomo_curl_multi_init_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_multi_init"
+    );
+    nomo_http_curl.multi_add_handle =
+        (nomo_curl_multi_add_handle_fn)NOMO_HTTP_LOAD_SYMBOL(
+            nomo_http_curl.library,
+            "curl_multi_add_handle"
+        );
+    nomo_http_curl.multi_remove_handle =
+        (nomo_curl_multi_remove_handle_fn)NOMO_HTTP_LOAD_SYMBOL(
+            nomo_http_curl.library,
+            "curl_multi_remove_handle"
+        );
+    nomo_http_curl.multi_perform = (nomo_curl_multi_perform_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_multi_perform"
+    );
+    nomo_http_curl.multi_poll = (nomo_curl_multi_poll_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_multi_poll"
+    );
+    nomo_http_curl.multi_wait = (nomo_curl_multi_wait_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_multi_wait"
+    );
+    nomo_http_curl.multi_info_read =
+        (nomo_curl_multi_info_read_fn)NOMO_HTTP_LOAD_SYMBOL(
+            nomo_http_curl.library,
+            "curl_multi_info_read"
+        );
+    nomo_http_curl.multi_cleanup = (nomo_curl_multi_cleanup_fn)NOMO_HTTP_LOAD_SYMBOL(
+        nomo_http_curl.library,
+        "curl_multi_cleanup"
+    );
     if (nomo_http_curl.global_init(3L) != 0) { return 0; }
     nomo_http_curl.available = 1;
     return 1;

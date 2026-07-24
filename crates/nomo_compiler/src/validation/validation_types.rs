@@ -281,6 +281,9 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "HttpRequest")?;
         reject_user_std_struct(path, structs, "HttpResponse")?;
         reject_user_std_struct(path, structs, "HttpServer")?;
+        reject_user_std_struct(path, structs, "HttpStream")?;
+        reject_user_std_struct(path, structs, "HttpStreamChunk")?;
+        reject_user_std_struct(path, structs, "SseEvent")?;
     }
     if needs.num {
         reject_user_std_struct(path, structs, "NumError")?;

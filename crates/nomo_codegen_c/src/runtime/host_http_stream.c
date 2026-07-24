@@ -816,12 +816,20 @@ static int nomo_http_stream_winhttp_read_more(nomo_http_stream_state *state) {
     }
     unsigned char chunk[16384];
     unsigned long received = 0;
-    if (!nomo_winhttp.read_data(
+    uint64_t deadline =
+        nomo_http_stream_now_millis() + state->idle_timeout_millis;
+    int read_ok = nomo_winhttp.read_data(
             state->request,
             chunk,
             (unsigned long)sizeof(chunk),
-            &received)) {
-        state->failure_code = nomo_winhttp_error_code(GetLastError());
+            &received);
+    unsigned long read_error = read_ok ? 0 : GetLastError();
+    if (nomo_http_stream_now_millis() >= deadline) {
+        state->failure_code = "timeout";
+        return 0;
+    }
+    if (!read_ok) {
+        state->failure_code = nomo_winhttp_error_code(read_error);
         return 0;
     }
     if (received == 0) {

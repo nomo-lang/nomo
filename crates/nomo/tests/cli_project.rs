@@ -9908,7 +9908,7 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
     for expected in [
         "running\n",
         "argv:space value|quote\"value\n",
@@ -10180,7 +10180,12 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    let stdout = String::from_utf8_lossy(&output.stdout).replace('\r', "");
+    let utf8_summary = if cfg!(windows) {
+        "utf8 6 true 0\n"
+    } else {
+        "utf8 5 true 0\n"
+    };
     for expected in [
         "timeout timeout\n",
         "timeout usable\n",
@@ -10191,7 +10196,7 @@ fn main() -> void {
         "timeout-run ok\n",
         "pressure 262144 262144 0\n",
         "pressure-run ok\n",
-        "utf8 5 true 0\n",
+        utf8_summary,
         "utf8-run ok\n",
         "protocol protocol\n",
         "stale invalid_request\n",

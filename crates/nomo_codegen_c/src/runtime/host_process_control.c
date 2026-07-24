@@ -1865,7 +1865,7 @@ static @START_RESULT@ @START_NAME@(@PROCESS_COMMAND@ command) {
         free(cwd);
         return nomo_process_control_start_error(
             "spawn",
-            "failed to prepare process command"
+            "failed to start process"
         );
     }
 

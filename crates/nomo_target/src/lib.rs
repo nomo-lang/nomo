@@ -258,7 +258,11 @@ impl TargetTriple {
     pub fn c_toolchain_from(&self, host: &Self) -> Result<CToolchain, String> {
         if self == host {
             return Ok(CToolchain {
-                program: "cc".to_string(),
+                program: if self.os == OperatingSystem::Windows {
+                    "clang".to_string()
+                } else {
+                    "cc".to_string()
+                },
                 args: Vec::new(),
             });
         }
@@ -400,9 +404,27 @@ mod tests {
     fn host_target_is_supported_and_canonical() {
         let host = TargetTriple::host().unwrap();
         assert_eq!(host.to_string().split('-').count(), 4);
+        let toolchain = host.c_toolchain_from(&host).unwrap();
+        assert_eq!(toolchain.args, Vec::<String>::new());
         assert_eq!(
-            host.c_toolchain_from(&host).unwrap().args,
-            Vec::<String>::new()
+            toolchain.program,
+            if cfg!(target_os = "windows") {
+                "clang"
+            } else {
+                "cc"
+            }
+        );
+    }
+
+    #[test]
+    fn native_windows_uses_clang_gnu_style_driver() {
+        let windows = "x86_64-pc-windows-msvc".parse::<TargetTriple>().unwrap();
+        assert_eq!(
+            windows.c_toolchain_from(&windows).unwrap(),
+            CToolchain {
+                program: "clang".to_string(),
+                args: Vec::new(),
+            }
         );
     }
 

@@ -9,6 +9,7 @@ pub(super) fn is_http_builtin_call(callee: &[String]) -> bool {
                     name.as_str(),
                     "get"
                         | "post"
+                        | "send"
                         | "listen"
                         | "accept"
                         | "respond_string"
@@ -115,6 +116,46 @@ pub(super) fn lower_http_builtin(
                 ValueExpr::Call {
                     name: BUILTIN_HTTP_POST_EXPR.to_string(),
                     args: vec![url, body],
+                },
+            ))
+        }
+        "send" => {
+            let [request_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`http.send` expects exactly one HttpRequest",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (request_type, request) = lower_value_expr(
+                path,
+                request_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            let expected = ValueType::Struct("HttpRequest".to_string(), Vec::new());
+            if request_type != expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`http.send` expects an HttpRequest value",
+                    &expected,
+                    &request_type,
+                ));
+            }
+            Ok((
+                response_result_type,
+                ValueExpr::Call {
+                    name: BUILTIN_HTTP_SEND_EXPR.to_string(),
+                    args: vec![request],
                 },
             ))
         }

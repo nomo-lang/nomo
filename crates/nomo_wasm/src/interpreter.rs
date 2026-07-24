@@ -375,6 +375,9 @@ impl<'a> Interpreter<'a> {
 
     fn call_function(&mut self, name: &str, args: &[ValueExpr]) -> RuntimeResult<Value> {
         self.tick()?;
+        if name.starts_with("__nomo_http_") {
+            return Err(RuntimeError::capability("network"));
+        }
         if self.frames.len() >= self.limits.max_call_depth {
             return Err(RuntimeError::runtime("maximum call depth exceeded"));
         }

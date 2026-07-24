@@ -13,9 +13,45 @@ jobs:
           components: clippy, rustfmt
       - name: Format
         run: cargo fmt --check
-      - name: Lint affected compiler crates
-        run: cargo clippy -p nomo -p nomo-compiler -p nomo-manifest --locked -- -D warnings
-      - name: Test affected compiler crates
-        run: cargo test -p nomo -p nomo-compiler -p nomo-manifest --locked
+      - name: Lint affected compiler and runtime crates
+        run: >-
+          cargo clippy
+          -p nomo
+          -p nomo-compiler
+          -p nomo-codegen-c
+          -p nomo-std
+          -p nomo-wasm
+          -p nomo-manifest
+          --locked -- -D warnings
+      - name: Test affected compiler and runtime crates
+        run: >-
+          cargo test
+          -p nomo
+          -p nomo-compiler
+          -p nomo-codegen-c
+          -p nomo-std
+          -p nomo-wasm
+          -p nomo-manifest
+          --locked
       - name: Check project fixture
         run: cargo run --locked --bin nomo -- check --workspace examples/workspace_basic
+
+  windows-http-runtime:
+    name: Run structured HTTP runtime on Windows
+    runs-on: windows-2022
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: ilammy/msvc-dev-cmd@v1
+      - name: Verify the native C driver
+        run: clang --version
+      - name: Run successful GET and POST paths through WinHTTP
+        run: >-
+          cargo test -p nomo --test cli_project
+          nomo_run_executes_std_http_client_helpers_without_std_dependency
+          --locked -- --exact
+      - name: Run bounded and secret-safe failure paths through WinHTTP
+        run: >-
+          cargo test -p nomo --test cli_project
+          structured_http_requests_enforce_limits_and_redact_secrets
+          --locked -- --exact

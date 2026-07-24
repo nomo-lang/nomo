@@ -408,6 +408,8 @@ dependencies = [
  "nomo-syntax",
  "nomo-target",
  "nomo-test",
+ "rcgen",
+ "rustls",
  "serde",
  "serde_json",
  "sha2",

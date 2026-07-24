@@ -277,6 +277,8 @@ pub(super) fn validate_standard_type_conflicts(
     if needs.http {
         reject_user_std_struct(path, structs, "HttpExchange")?;
         reject_user_std_struct(path, structs, "HttpError")?;
+        reject_user_std_struct(path, structs, "HttpHeader")?;
+        reject_user_std_struct(path, structs, "HttpRequest")?;
         reject_user_std_struct(path, structs, "HttpResponse")?;
         reject_user_std_struct(path, structs, "HttpServer")?;
     }
@@ -300,7 +302,7 @@ pub(super) fn validate_standard_type_conflicts(
     {
         reject_user_std_enum(path, enums, "Result")?;
     }
-    if needs.env || needs.num || needs.option || needs.array {
+    if needs.env || needs.http || needs.num || needs.option || needs.array {
         reject_user_std_enum(path, enums, "Option")?;
     }
     Ok(())

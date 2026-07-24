@@ -421,7 +421,9 @@ pub(super) fn expr_is_http_client_call(expr: &ValueExpr) -> bool {
     matches!(
         expr,
         ValueExpr::Call { name, .. }
-            if name == BUILTIN_HTTP_GET_EXPR || name == BUILTIN_HTTP_POST_EXPR
+            if name == BUILTIN_HTTP_GET_EXPR
+                || name == BUILTIN_HTTP_POST_EXPR
+                || name == BUILTIN_HTTP_SEND_EXPR
     )
 }
 

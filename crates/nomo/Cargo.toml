@@ -35,3 +35,7 @@ name = "nomo"
 
 [[bin]]
 name = "nomoc"
+
+[dev-dependencies]
+rcgen = "0.14.8"
+rustls = { version = "0.23.41", default-features = false, features = ["ring", "std", "tls12"] }

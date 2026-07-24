@@ -98,6 +98,8 @@ pub(super) fn standard_struct_names(
     if needs.http {
         names.push(("HttpExchange".to_string(), 0));
         names.push(("HttpError".to_string(), 0));
+        names.push(("HttpHeader".to_string(), 0));
+        names.push(("HttpRequest".to_string(), 0));
         names.push(("HttpResponse".to_string(), 0));
         names.push(("HttpServer".to_string(), 0));
     }
@@ -138,7 +140,14 @@ pub(super) fn standard_enum_names(
     {
         names.push(("Result".to_string(), 2));
     }
-    if needs.env || needs.num || needs.option || needs.array || needs.collections || needs.regex {
+    if needs.env
+        || needs.http
+        || needs.num
+        || needs.option
+        || needs.array
+        || needs.collections
+        || needs.regex
+    {
         names.push(("Option".to_string(), 1));
     }
     names.into_iter()
@@ -261,10 +270,69 @@ pub(super) fn inject_standard_types(
             package: "std.http".to_string(),
             name: "HttpError".to_string(),
             type_params: Vec::new(),
-            fields: vec![StructField {
-                name: "message".to_string(),
-                value_type: ValueType::String,
-            }],
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpHeader") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpHeader".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "name".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "HttpRequest") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "HttpRequest".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "method".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "url".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "headers".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "HttpHeader".to_string(),
+                        Vec::new(),
+                    ))),
+                },
+                StructField {
+                    name: "body".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "timeout_millis".to_string(),
+                    value_type: ValueType::U64,
+                },
+                StructField {
+                    name: "max_response_bytes".to_string(),
+                    value_type: ValueType::U64,
+                },
+            ],
         });
     }
     if needs.http && !structs.iter().any(|item| item.name == "HttpServer") {
@@ -305,6 +373,13 @@ pub(super) fn inject_standard_types(
                 StructField {
                     name: "status".to_string(),
                     value_type: ValueType::Int,
+                },
+                StructField {
+                    name: "headers".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "HttpHeader".to_string(),
+                        Vec::new(),
+                    ))),
                 },
                 StructField {
                     name: "body".to_string(),
@@ -469,7 +544,13 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
-    if (needs.env || needs.num || needs.option || needs.array || needs.collections || needs.regex)
+    if (needs.env
+        || needs.http
+        || needs.num
+        || needs.option
+        || needs.array
+        || needs.collections
+        || needs.regex)
         && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {

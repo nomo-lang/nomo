@@ -111,6 +111,55 @@ fn main() -> Result<void, HttpError> {
 }
 
 #[test]
+fn accepts_structured_http_request_builtin() {
+    let source = r#"package app.main
+
+import std.array.Array
+import std.http
+
+fn main() -> Result<void, HttpError> {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader { name: "Authorization", value: "Bearer test-token" })
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://localhost/v1/chat/completions",
+        headers: headers,
+        body: "{\"stream\":false}",
+        timeout_millis: 1000,
+        max_response_bytes: 4096
+    }
+    let response: HttpResponse = http.send(request)?
+    return Ok(void)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    for name in ["HttpError", "HttpHeader", "HttpRequest", "HttpResponse"] {
+        assert!(program.structs.iter().any(|item| item.name == name));
+    }
+    let error = program
+        .structs
+        .iter()
+        .find(|item| item.name == "HttpError")
+        .unwrap();
+    assert!(error.fields.iter().any(|field| field.name == "code"));
+    let response = program
+        .structs
+        .iter()
+        .find(|item| item.name == "HttpResponse")
+        .unwrap();
+    assert!(response.fields.iter().any(|field| field.name == "headers"));
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(main.body.iter().any(|statement| matches!(
+        statement,
+        Statement::QuestionLet {
+            result_expr: ValueExpr::Call { name, .. },
+            ..
+        } if name == BUILTIN_HTTP_SEND_EXPR
+    )));
+}
+
+#[test]
 fn accepts_specific_http_builtin_imports() {
     let source = r#"package app.main
 
@@ -173,6 +222,10 @@ fn main() -> void {
             .structs
             .iter()
             .any(|item| item.name == "HttpExchange")
+    );
+    assert!(
+        program.enums.iter().any(|item| item.name == "Option"),
+        "server-only HTTP programs still need Option<HttpHeader> for injected array helpers"
     );
     let serve = program
         .functions

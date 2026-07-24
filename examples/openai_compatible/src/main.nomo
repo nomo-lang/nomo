@@ -1,0 +1,60 @@
+package openai_compatible.main
+
+import std.array.Array
+import std.env
+import std.http
+import std.io
+import std.string.concat
+
+fn print_fixture_header(headers: Array<HttpHeader>) -> void {
+    for header in headers {
+        if header.name == "X-Nomo-Fixture" {
+            io.println(header.value)
+        } else {
+            io.print("")
+        }
+    }
+}
+
+fn request_completion(endpoint: string, token: string) -> Result<void, HttpError> {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader { name: "Authorization", value: concat("Bearer ", token) })
+    headers.push(HttpHeader { name: "Content-Type", value: "application/json" })
+    let request: HttpRequest = HttpRequest { method: "POST", url: concat(endpoint, "/v1/chat/completions"), headers: headers, body: "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Nomo\"}],\"stream\":false}", timeout_millis: 5000, max_response_bytes: 1048576 }
+    let response: HttpResponse = http.send(request)?
+    io.println(response.status)
+    print_fixture_header(response.headers)
+    io.println(response.body)
+    return Ok(void)
+}
+
+fn run_with_endpoint(endpoint: string) -> void {
+    let token: Option<string> = env.get("NOMO_OPENAI_API_KEY")
+    match token {
+        Some(value) => {
+            let result: Result<void, HttpError> = request_completion(endpoint, value)
+            match result {
+                Ok(done) => {
+                }
+                Err(err) => {
+                    io.println(err.code, err.message)
+                }
+            }
+        }
+        None => {
+            io.println("missing NOMO_OPENAI_API_KEY")
+        }
+    }
+}
+
+fn main() -> void {
+    let endpoint: Option<string> = env.get("NOMO_OPENAI_BASE_URL")
+    match endpoint {
+        Some(value) => {
+            run_with_endpoint(value)
+        }
+        None => {
+            io.println("missing NOMO_OPENAI_BASE_URL")
+        }
+    }
+}

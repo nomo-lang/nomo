@@ -7,6 +7,7 @@ use crate::compiler::compile_source_text_to_c_with_project_modules;
 use crate::diagnostic::Diagnostic;
 use crate::{lexer, parser};
 use nomo_manifest::{FfiLinkMetadata, parse_manifest_at_root};
+use nomo_target::TargetTriple;
 use nomo_test::{TestCaseResult, TestReport, TestStatus};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -181,14 +182,20 @@ fn run_single_project_test(
     let c_path = c_dir.join(format!("{file_stem}.c"));
     let bin_path = bin_dir.join(file_stem);
     fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
-    let mut command = Command::new("cc");
-    configure_c_compile_command(&mut command, &c_path, &bin_path, ffi_link_metadata);
-    let output = command
-        .output()
-        .map_err(|err| format!("failed to run cc: {err}"))?;
+    let target = TargetTriple::host()?;
+    let toolchain = target.c_toolchain_from(&target)?;
+    let mut command = Command::new(&toolchain.program);
+    command.args(&toolchain.args);
+    configure_c_compile_command(&mut command, &c_path, &bin_path, ffi_link_metadata, &target);
+    let output = command.output().map_err(|err| {
+        format!(
+            "failed to run C compiler `{}` for target `{target}`: {err}",
+            toolchain.program
+        )
+    })?;
     if !output.status.success() {
         return Err(format!(
-            "cc failed:\n{}{}",
+            "C compiler failed for target `{target}`:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         ));

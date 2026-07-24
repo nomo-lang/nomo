@@ -78,6 +78,14 @@ pub(super) fn missing_standard_type_import(
         "NumError" => Some("std.num"),
         "HashState" => Some("std.hash"),
         "JsonValue" | "JsonError" | "JsonMember" | "JsonKind" => Some("std.json"),
+        "SqliteDatabase"
+        | "SqliteQuery"
+        | "SqliteError"
+        | "SqliteOpenMode"
+        | "SqliteValue"
+        | "SqliteColumn"
+        | "SqliteRow"
+        | "SqliteExecuteResult" => Some("std.sqlite"),
         "Regex" | "RegexError" => Some("std.regex"),
         "StringMap" | "StringSet" => Some("std.collections"),
         "Duration" => Some("std.time"),

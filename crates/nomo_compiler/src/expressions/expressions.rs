@@ -168,6 +168,17 @@ pub(super) fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             }
+            if is_sqlite_runtime_opaque_struct(struct_type) {
+                return Err(Diagnostic::new(
+                    "E0830",
+                    format!("runtime-owned SQLite type `{type_name}` does not expose its fields"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
             let Some(field_type) = struct_type
                 .fields
                 .iter()

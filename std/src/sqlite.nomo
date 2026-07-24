@@ -1,0 +1,97 @@
+//! Bounded SQLite persistence with parameter binding and pull-based rows.
+package std.sqlite
+
+import std.sqlite
+
+/// Opaque handle for one SQLite database connection.
+pub struct SqliteDatabase {
+    handle: u64
+}
+
+/// Opaque handle for one prepared pull-based query.
+pub struct SqliteQuery {
+    handle: u64
+}
+
+/// Stable, secret-safe SQLite operation error.
+pub struct SqliteError {
+    /// Stable Nomo error category.
+    pub code: string
+    /// Bounded human-readable message that does not reproduce application data.
+    pub message: string
+    /// SQLite extended result code, or zero for Nomo-side validation failures.
+    pub native_code: i64
+}
+
+/// Persistent database open mode.
+pub enum SqliteOpenMode {
+    ReadOnly
+    ReadWrite
+    ReadWriteCreate
+}
+
+/// One copied SQLite value.
+pub enum SqliteValue {
+    Null
+    Integer(i64)
+    Real(f64)
+    Text(string)
+    Blob(Array<u32>)
+}
+
+/// One result column. Order and duplicate names are preserved.
+pub struct SqliteColumn {
+    pub name: string
+    pub value: SqliteValue
+}
+
+/// One bounded query row.
+pub struct SqliteRow {
+    pub columns: Array<SqliteColumn>
+}
+
+/// Metadata returned by a non-row statement.
+pub struct SqliteExecuteResult {
+    pub changes: u64
+    pub last_insert_rowid: i64
+}
+
+/// Opens one persistent database.
+pub fn open(path: string, mode: SqliteOpenMode, busy_timeout_millis: u64) -> Result<SqliteDatabase, SqliteError> {
+    return sqlite.open(path, mode, busy_timeout_millis)
+}
+
+/// Opens one private in-memory database.
+pub fn open_memory(busy_timeout_millis: u64) -> Result<SqliteDatabase, SqliteError> {
+    return sqlite.open_memory(busy_timeout_millis)
+}
+
+/// Executes exactly one parameterized statement that does not return rows.
+pub fn execute(database: SqliteDatabase, sql: string, params: Array<SqliteValue>) -> Result<SqliteExecuteResult, SqliteError> {
+    return sqlite.execute(database, sql, params)
+}
+
+/// Prepares exactly one parameterized pull-based query.
+pub fn query(database: SqliteDatabase, sql: string, params: Array<SqliteValue>) -> Result<SqliteQuery, SqliteError> {
+    return sqlite.query(database, sql, params)
+}
+
+/// Pulls at most one bounded row.
+pub fn next(query_value: SqliteQuery, max_row_bytes: u64) -> Result<Option<SqliteRow>, SqliteError> {
+    return sqlite.next(query_value, max_row_bytes)
+}
+
+/// Resets one query and replaces all bindings.
+pub fn reset(query_value: SqliteQuery, params: Array<SqliteValue>) -> Result<void, SqliteError> {
+    return sqlite.reset(query_value, params)
+}
+
+/// Finalizes and releases one query.
+pub fn close_query(query_value: SqliteQuery) -> Result<void, SqliteError> {
+    return sqlite.close_query(query_value)
+}
+
+/// Closes one database that has no live queries.
+pub fn close(database: SqliteDatabase) -> Result<void, SqliteError> {
+    return sqlite.close(database)
+}

@@ -84,11 +84,7 @@ pub fn collect_source_docs(
         let tokens = lex(&path, &source).map_err(DocError::Diagnostic)?;
         let ast = parse(&path, &tokens).map_err(DocError::Diagnostic)?;
         let comments = extract_doc_comments(&source);
-        let source_label = path
-            .strip_prefix(project_root)
-            .unwrap_or(&path)
-            .display()
-            .to_string();
+        let source_label = portable_source_label(path.strip_prefix(project_root).unwrap_or(&path));
         modules.push(module_docs(&ast, &comments, source_label));
     }
 
@@ -135,10 +131,10 @@ pub fn std_doc_package() -> DocPackage {
                             signature: item.signature.to_string(),
                             visibility: "public".to_string(),
                             docs: item.docs.to_string(),
-                            source: Path::new("std/src")
-                                .join(nomo_std::module_source_relative_path(module))
-                                .display()
-                                .to_string(),
+                            source: portable_source_label(
+                                &Path::new("std/src")
+                                    .join(nomo_std::module_source_relative_path(module)),
+                            ),
                             line: 0,
                             children: Vec::new(),
                         })
@@ -174,6 +170,10 @@ pub fn render_packages_json(packages: &[DocPackage]) -> String {
     }
     out.push_str("]}");
     out
+}
+
+fn portable_source_label(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
 }
 
 fn collect_nomo_files(dir: &Path, files: &mut Vec<PathBuf>) -> Result<(), DocError> {
@@ -651,7 +651,16 @@ fn update_block_comment_depth(line: &str, mut depth: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::std_doc_package;
+    use super::{portable_source_label, std_doc_package};
+    use std::path::Path;
+
+    #[test]
+    fn source_labels_use_portable_separators() {
+        assert_eq!(
+            portable_source_label(Path::new(r"std\src\sqlite.nomo")),
+            "std/src/sqlite.nomo"
+        );
+    }
 
     #[test]
     fn standard_docs_use_source_items_when_available() {
@@ -726,6 +735,23 @@ mod tests {
         assert_eq!(
             parse.signature,
             "pub fn parse(value: string) -> Result<JsonValue, JsonError>"
+        );
+
+        let sqlite = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.sqlite")
+            .unwrap();
+        let open = sqlite
+            .items
+            .iter()
+            .find(|item| item.name == "open")
+            .unwrap();
+        assert_eq!(open.source, "std/src/sqlite.nomo");
+        assert!(open.docs.contains("persistent database"));
+        assert!(
+            open.signature
+                .contains("Result<SqliteDatabase, SqliteError>")
         );
 
         let debug = package

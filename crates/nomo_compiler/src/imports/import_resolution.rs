@@ -351,6 +351,30 @@ pub(super) fn resolve_specific_value_builtin(
         "close" if imports.iter().any(|item| item == "std.task.close") => {
             vec!["task".to_string(), "close".to_string()]
         }
+        "open" if imports.iter().any(|item| item == "std.sqlite.open") => {
+            vec!["sqlite".to_string(), "open".to_string()]
+        }
+        "open_memory" if imports.iter().any(|item| item == "std.sqlite.open_memory") => {
+            vec!["sqlite".to_string(), "open_memory".to_string()]
+        }
+        "execute" if imports.iter().any(|item| item == "std.sqlite.execute") => {
+            vec!["sqlite".to_string(), "execute".to_string()]
+        }
+        "query" if imports.iter().any(|item| item == "std.sqlite.query") => {
+            vec!["sqlite".to_string(), "query".to_string()]
+        }
+        "next" if imports.iter().any(|item| item == "std.sqlite.next") => {
+            vec!["sqlite".to_string(), "next".to_string()]
+        }
+        "reset" if imports.iter().any(|item| item == "std.sqlite.reset") => {
+            vec!["sqlite".to_string(), "reset".to_string()]
+        }
+        "close_query" if imports.iter().any(|item| item == "std.sqlite.close_query") => {
+            vec!["sqlite".to_string(), "close_query".to_string()]
+        }
+        "close" if imports.iter().any(|item| item == "std.sqlite.close") => {
+            vec!["sqlite".to_string(), "close".to_string()]
+        }
         "assert" if imports.iter().any(|item| item == "std.testing.assert") => {
             vec!["testing".to_string(), "assert".to_string()]
         }

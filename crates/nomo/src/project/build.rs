@@ -7,6 +7,7 @@ use crate::compiler::compile_source_to_c_with_project_modules_for_target;
 use crate::incremental::{PersistentQueryCache, project_query_key};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::TargetTriple;
+use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -63,7 +64,16 @@ fn build_project_impl(
         &[],
         target,
         "codegen-c",
-        format!("{}:{}", project.name, project.main.display()),
+        format!(
+            "{}:{}:sqlite-{}:{}:{}:{:x}:{:x}",
+            project.name,
+            project.main.display(),
+            nomo_codegen_c::BUNDLED_SQLITE_VERSION,
+            nomo_codegen_c::BUNDLED_SQLITE3_C_SHA256,
+            nomo_codegen_c::BUNDLED_SQLITE3_H_SHA256,
+            Sha256::digest(nomo_codegen_c::BUNDLED_SQLITE_COMPILE_OPTIONS.join("\n")),
+            Sha256::digest(nomo_codegen_c::BUNDLED_SQLITE_RUNTIME_SOURCE.as_bytes())
+        ),
     );
     let c = match cache.get::<String>(&cache_key) {
         Some(cached) => cached,
@@ -92,7 +102,10 @@ fn build_project_impl(
 
     let c_path = c_dir.join("main.c");
     let uses_native_tasks = generated_c_uses_native_tasks(&c);
+    let uses_bundled_sqlite = generated_c_uses_bundled_sqlite(&c);
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
+    materialize_bundled_sqlite(&c_dir, uses_bundled_sqlite)
+        .map_err(|err| BuildError::Message(err.to_string()))?;
     if emit_c_only {
         return Ok(c_path);
     }
@@ -111,6 +124,7 @@ fn build_project_impl(
         &ffi_link_metadata,
         target,
         uses_native_tasks,
+        uses_bundled_sqlite,
     );
     let output = command.output().map_err(|err| {
         BuildError::Message(format!(
@@ -143,8 +157,18 @@ pub(super) fn configure_c_compile_command(
     ffi_link_metadata: &FfiLinkMetadata,
     target: &TargetTriple,
     uses_native_tasks: bool,
+    uses_bundled_sqlite: bool,
 ) {
-    command.arg("-std=c99").arg(c_path);
+    command.arg("-std=c99");
+    if uses_bundled_sqlite {
+        for option in nomo_codegen_c::BUNDLED_SQLITE_COMPILE_OPTIONS {
+            command.arg(format!("-D{option}"));
+        }
+    }
+    command.arg(c_path);
+    if uses_bundled_sqlite {
+        command.arg(c_path.with_file_name("sqlite3.c"));
+    }
     for source in &ffi_link_metadata.sources {
         command.arg(source);
     }
@@ -163,7 +187,8 @@ pub(super) fn configure_c_compile_command(
     if target.operating_system().as_str() == "linux" {
         command.arg("-ldl");
     }
-    if uses_native_tasks && target.operating_system().as_str() != "windows" {
+    if (uses_native_tasks || uses_bundled_sqlite) && target.operating_system().as_str() != "windows"
+    {
         command.arg("-pthread");
     }
     if target.operating_system().as_str() != "windows" {
@@ -174,4 +199,61 @@ pub(super) fn configure_c_compile_command(
 
 pub(super) fn generated_c_uses_native_tasks(source: &str) -> bool {
     source.contains("#define NOMO_TASK_MAX_LIVE")
+}
+
+pub(super) fn generated_c_uses_bundled_sqlite(source: &str) -> bool {
+    source.contains("#define NOMO_SQLITE_MAX_DATABASES")
+}
+
+pub(super) fn materialize_bundled_sqlite(
+    c_dir: &Path,
+    enabled: bool,
+) -> Result<(), std::io::Error> {
+    if !enabled {
+        return Ok(());
+    }
+    verify_bundled_sqlite_source(
+        nomo_codegen_c::BUNDLED_SQLITE3_C,
+        nomo_codegen_c::BUNDLED_SQLITE3_C_SHA256,
+        "sqlite3.c",
+    )?;
+    verify_bundled_sqlite_source(
+        nomo_codegen_c::BUNDLED_SQLITE3_H,
+        nomo_codegen_c::BUNDLED_SQLITE3_H_SHA256,
+        "sqlite3.h",
+    )?;
+    let sqlite_c_path = c_dir.join("sqlite3.c");
+    let sqlite_h_path = c_dir.join("sqlite3.h");
+    fs::write(&sqlite_c_path, nomo_codegen_c::BUNDLED_SQLITE3_C)?;
+    fs::write(&sqlite_h_path, nomo_codegen_c::BUNDLED_SQLITE3_H)?;
+    fs::write(
+        c_dir.join("sqlite3-SOURCE.md"),
+        nomo_codegen_c::BUNDLED_SQLITE_SOURCE,
+    )?;
+    verify_bundled_sqlite_source(
+        &fs::read(sqlite_c_path)?,
+        nomo_codegen_c::BUNDLED_SQLITE3_C_SHA256,
+        "materialized sqlite3.c",
+    )?;
+    verify_bundled_sqlite_source(
+        &fs::read(sqlite_h_path)?,
+        nomo_codegen_c::BUNDLED_SQLITE3_H_SHA256,
+        "materialized sqlite3.h",
+    )?;
+    Ok(())
+}
+
+fn verify_bundled_sqlite_source(
+    source: &[u8],
+    expected: &str,
+    name: &str,
+) -> Result<(), std::io::Error> {
+    let actual = format!("{:x}", Sha256::digest(source));
+    if actual == expected {
+        return Ok(());
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::InvalidData,
+        format!("bundled {name} digest mismatch"),
+    ))
 }

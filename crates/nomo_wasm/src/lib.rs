@@ -693,6 +693,37 @@ fn main() -> void {
     }
 
     #[test]
+    fn returns_sqlite_runtime_unavailable_without_leaking_paths() {
+        let source = r#"package app.main
+
+import std.io
+import std.sqlite
+
+fn main() -> void {
+    let opened: Result<SqliteDatabase, SqliteError> = sqlite.open(
+        "browser-secret-agent.db",
+        SqliteOpenMode.ReadWriteCreate,
+        0
+    )
+    match opened {
+        Ok(database) => {
+            io.println("unexpected")
+        }
+        Err(error) => {
+            io.println(error.code, error.native_code)
+        }
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "runtime_unavailable 0\n");
+        assert!(!response.stderr.contains("browser-secret-agent.db"));
+        assert!(!response.stderr.contains("__nomo_sqlite_open"));
+    }
+
+    #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
         let source = r#"package app.main
 

@@ -60,6 +60,8 @@ mod host_num_checked_helpers;
 mod host_num_parse_helpers;
 #[path = "runtime/host_regex_helpers.rs"]
 mod host_regex_helpers;
+#[path = "runtime/host_sqlite_helpers.rs"]
+mod host_sqlite_helpers;
 #[path = "runtime/host_task_helpers.rs"]
 mod host_task_helpers;
 #[path = "runtime/host_udp_helpers.rs"]
@@ -128,6 +130,7 @@ use host_net_helpers::*;
 use host_num_checked_helpers::*;
 use host_num_parse_helpers::*;
 use host_regex_helpers::*;
+use host_sqlite_helpers::*;
 use host_task_helpers::*;
 use host_udp_helpers::*;
 use instances::*;
@@ -186,6 +189,14 @@ const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";
 const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
 const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
+const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
+const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
+const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";
+const BUILTIN_SQLITE_QUERY_EXPR: &str = "__nomo_sqlite_query";
+const BUILTIN_SQLITE_NEXT_EXPR: &str = "__nomo_sqlite_next";
+const BUILTIN_SQLITE_RESET_EXPR: &str = "__nomo_sqlite_reset";
+const BUILTIN_SQLITE_CLOSE_QUERY_EXPR: &str = "__nomo_sqlite_close_query";
+const BUILTIN_SQLITE_CLOSE_EXPR: &str = "__nomo_sqlite_close";
 const BUILTIN_PROCESS_START_EXPR: &str = "__nomo_process_start";
 const BUILTIN_PROCESS_WRITE_STDIN_EXPR: &str = "__nomo_process_write_stdin";
 const BUILTIN_PROCESS_CLOSE_STDIN_EXPR: &str = "__nomo_process_close_stdin";
@@ -193,6 +204,33 @@ const BUILTIN_PROCESS_NEXT_EVENT_EXPR: &str = "__nomo_process_next_event";
 const BUILTIN_PROCESS_TRY_WAIT_EXPR: &str = "__nomo_process_try_wait";
 const BUILTIN_PROCESS_TERMINATE_EXPR: &str = "__nomo_process_terminate";
 const BUILTIN_PROCESS_CLOSE_CHILD_EXPR: &str = "__nomo_process_close_child";
+
+pub const BUNDLED_SQLITE3_C: &[u8] = include_bytes!("../vendor/sqlite/sqlite3.c");
+pub const BUNDLED_SQLITE3_H: &[u8] = include_bytes!("../vendor/sqlite/sqlite3.h");
+pub const BUNDLED_SQLITE_SOURCE: &str = include_str!("../vendor/sqlite/SOURCE.md");
+pub const BUNDLED_SQLITE_RUNTIME_SOURCE: &str = include_str!("runtime/host_sqlite.c");
+pub const BUNDLED_SQLITE_VERSION: &str = "3.53.3";
+pub const BUNDLED_SQLITE3_C_SHA256: &str =
+    "87497ab605bedd0dbee27a209c1eeff8c89b229b13f921a7efdbb81a13f779fd";
+pub const BUNDLED_SQLITE3_H_SHA256: &str =
+    "4ff81af4849acabc76fc8349abb926814395072617ca18e08800abf734ab7612";
+pub const BUNDLED_SQLITE_COMPILE_OPTIONS: &[&str] = &[
+    "SQLITE_THREADSAFE=1",
+    "SQLITE_DQS=0",
+    "SQLITE_DEFAULT_FOREIGN_KEYS=1",
+    "SQLITE_DEFAULT_MEMSTATUS=0",
+    "SQLITE_TRUSTED_SCHEMA=0",
+    "SQLITE_ENABLE_API_ARMOR",
+    "SQLITE_OMIT_LOAD_EXTENSION",
+    "SQLITE_MAX_LENGTH=16777216",
+    "SQLITE_MAX_SQL_LENGTH=1048576",
+    "SQLITE_MAX_COLUMN=256",
+    "SQLITE_MAX_VARIABLE_NUMBER=1024",
+    "SQLITE_MAX_EXPR_DEPTH=100",
+    "SQLITE_MAX_FUNCTION_ARG=100",
+    "SQLITE_MAX_COMPOUND_SELECT=64",
+    "SQLITE_MAX_LIKE_PATTERN_LENGTH=1024",
+];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct NumCheckedBinaryInstance {

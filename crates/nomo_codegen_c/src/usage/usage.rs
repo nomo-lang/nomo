@@ -439,6 +439,15 @@ pub(super) fn uses_task_runtime(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_sqlite_runtime(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_sqlite_call))
+    })
+}
+
 pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
     match statement {
         Statement::Let { initializer, .. } => expr_uses_fs_read_to_string(initializer),

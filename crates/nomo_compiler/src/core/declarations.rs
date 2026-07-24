@@ -223,6 +223,7 @@ pub(super) struct StandardTypeNeeds {
     pub(super) http: bool,
     pub(super) hash: bool,
     pub(super) json: bool,
+    pub(super) sqlite: bool,
     pub(super) regex: bool,
     pub(super) collections: bool,
     pub(super) time: bool,

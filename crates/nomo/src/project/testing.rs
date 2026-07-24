@@ -182,7 +182,10 @@ fn run_single_project_test(
     let c_path = c_dir.join(format!("{file_stem}.c"));
     let bin_path = bin_dir.join(file_stem);
     let uses_native_tasks = super::build::generated_c_uses_native_tasks(&c);
+    let uses_bundled_sqlite = super::build::generated_c_uses_bundled_sqlite(&c);
     fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
+    super::build::materialize_bundled_sqlite(c_dir, uses_bundled_sqlite)
+        .map_err(|err| format!("failed to materialize bundled SQLite: {err}"))?;
     let target = TargetTriple::host()?;
     let toolchain = target.c_toolchain_from(&target)?;
     let mut command = Command::new(&toolchain.program);
@@ -194,6 +197,7 @@ fn run_single_project_test(
         ffi_link_metadata,
         &target,
         uses_native_tasks,
+        uses_bundled_sqlite,
     );
     let output = command.output().map_err(|err| {
         format!(

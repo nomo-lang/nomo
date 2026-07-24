@@ -268,6 +268,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_regex_helpers(&mut out);
         out.push('\n');
     }
+    if uses_sqlite_runtime(program) {
+        emit_sqlite_helpers(&mut out);
+        out.push('\n');
+    }
     if uses_num_parse_i64(program) {
         emit_num_parse_i64_helper(&mut out);
         out.push('\n');
@@ -292,7 +296,8 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         .find(|function| function.name == "main")
         .expect("checked programs always contain main");
     let main_returns_result = result_void_error(&main.return_type).is_some();
-    let emit_main_function = main_returns_result || uses_task_runtime(program);
+    let emit_main_function =
+        main_returns_result || uses_task_runtime(program) || uses_sqlite_runtime(program);
 
     for function in program
         .functions
@@ -373,6 +378,9 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         if uses_task_runtime(program) {
             out.push_str("    nomo_task_shutdown();\n");
         }
+        if uses_sqlite_runtime(program) {
+            out.push_str("    nomo_sqlite_shutdown();\n");
+        }
         out.push_str("    return nomo__result.tag == ");
         out.push_str(&c_enum_variant_ident("Result", &result_args, "Ok"));
         out.push_str(" ? 0 : 1;\n");
@@ -381,7 +389,12 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
             out.push_str("    ");
             out.push_str(&c_fn_ident("main"));
             out.push_str("();\n");
-            out.push_str("    nomo_task_shutdown();\n");
+            if uses_task_runtime(program) {
+                out.push_str("    nomo_task_shutdown();\n");
+            }
+            if uses_sqlite_runtime(program) {
+                out.push_str("    nomo_sqlite_shutdown();\n");
+            }
         } else {
             emit_body(&mut out, main);
         }

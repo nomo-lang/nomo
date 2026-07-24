@@ -288,6 +288,19 @@ pub(super) fn lower_call_value_expr(
                     path, callee, args, scope, imports, signatures, structs, enums, span,
                 );
             }
+            if is_sqlite_builtin_call(callee) {
+                require_import(path, imports, span, "std.sqlite", &callee.join("."))?;
+                if !type_args.is_empty() {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "sqlite builtins do not accept explicit type arguments",
+                    ));
+                }
+                return lower_sqlite_builtin(
+                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                );
+            }
             if is_path_builtin_call(callee) {
                 require_import(path, imports, span, "std.path", &callee.join("."))?;
                 if !type_args.is_empty() {

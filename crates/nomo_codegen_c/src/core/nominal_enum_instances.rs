@@ -386,6 +386,40 @@ fn collect_process_call_enums(
     push_enum_instance(seen, out, "Result", &[exit_option, control_error]);
 }
 
+fn collect_sqlite_call_enums(
+    name: &str,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    if !matches!(
+        name,
+        BUILTIN_SQLITE_OPEN_EXPR
+            | BUILTIN_SQLITE_OPEN_MEMORY_EXPR
+            | BUILTIN_SQLITE_EXECUTE_EXPR
+            | BUILTIN_SQLITE_QUERY_EXPR
+            | BUILTIN_SQLITE_NEXT_EXPR
+            | BUILTIN_SQLITE_RESET_EXPR
+            | BUILTIN_SQLITE_CLOSE_QUERY_EXPR
+            | BUILTIN_SQLITE_CLOSE_EXPR
+    ) {
+        return;
+    }
+    let error = ValueType::Struct("SqliteError".to_string(), Vec::new());
+    let database = ValueType::Struct("SqliteDatabase".to_string(), Vec::new());
+    let query = ValueType::Struct("SqliteQuery".to_string(), Vec::new());
+    let execute = ValueType::Struct("SqliteExecuteResult".to_string(), Vec::new());
+    let row = ValueType::Struct("SqliteRow".to_string(), Vec::new());
+    let row_option = ValueType::Enum("Option".to_string(), vec![row.clone()]);
+    push_enum_instance(seen, out, "SqliteOpenMode", &[]);
+    push_enum_instance(seen, out, "SqliteValue", &[]);
+    push_enum_instance(seen, out, "Option", &[row]);
+    push_enum_instance(seen, out, "Result", &[database, error.clone()]);
+    push_enum_instance(seen, out, "Result", &[query, error.clone()]);
+    push_enum_instance(seen, out, "Result", &[execute, error.clone()]);
+    push_enum_instance(seen, out, "Result", &[row_option, error.clone()]);
+    push_enum_instance(seen, out, "Result", &[ValueType::Void, error]);
+}
+
 fn collect_expr_enum(
     expr: &ValueExpr,
     seen: &mut BTreeSet<String>,
@@ -463,6 +497,7 @@ fn collect_expr_enum(
         ValueExpr::Call { name, args } => {
             collect_http_call_enums(name, seen, out);
             collect_process_call_enums(name, seen, out);
+            collect_sqlite_call_enums(name, seen, out);
             for arg in args {
                 collect_expr_enum(arg, seen, out);
             }

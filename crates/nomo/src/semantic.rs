@@ -424,6 +424,26 @@ mod tests {
     }
 
     #[test]
+    fn sqlite_symbols_use_canonical_source_for_editor_navigation() {
+        let source = "package app.main\n\nimport std.sqlite\n\nfn main() -> void {\n}\n";
+        let symbols = standard_library_symbols_for_imports(Path::new("main.nomo"), source).unwrap();
+        let database = symbols
+            .iter()
+            .find(|symbol| symbol.name == "SqliteDatabase")
+            .unwrap();
+        assert!(database.source_path.ends_with("std/src/sqlite.nomo"));
+        assert_eq!(database.signature, "pub struct SqliteDatabase");
+        assert!(database.docs.contains("Opaque handle"));
+        let open = symbols.iter().find(|symbol| symbol.name == "open").unwrap();
+        assert!(open.source_path.ends_with("std/src/sqlite.nomo"));
+        assert!(
+            open.signature
+                .contains("Result<SqliteDatabase, SqliteError>")
+        );
+        assert!(open.docs.contains("persistent database"));
+    }
+
+    #[test]
     fn symbols_include_signatures_docs_and_ranges() {
         let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 

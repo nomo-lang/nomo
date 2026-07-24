@@ -9660,6 +9660,228 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_controlled_process_stdio_without_a_shell() {
+    let root = temp_test_root("controlled-process-stdio");
+    reset_dir(&root);
+    let fixture_source = root.join("process_fixture.c");
+    let fixture_binary = if cfg!(windows) {
+        root.join("process_fixture.exe")
+    } else {
+        root.join("process_fixture")
+    };
+    fs::write(
+        &fixture_source,
+        r#"#include <stdio.h>
+#include <stdlib.h>
+#ifdef _WIN32
+#include <direct.h>
+#define NOMO_FIXTURE_GETCWD _getcwd
+#else
+#include <unistd.h>
+#define NOMO_FIXTURE_GETCWD getcwd
+#endif
+
+int main(int argc, char **argv) {
+    char cwd[4096];
+    const char *visible = getenv("VISIBLE");
+    printf("argv:%s|%s\n", argc > 1 ? argv[1] : "", argc > 2 ? argv[2] : "");
+    if (NOMO_FIXTURE_GETCWD(cwd, sizeof(cwd)) != NULL) {
+        printf("cwd:%s\n", cwd);
+    }
+    printf("env:%s\n", visible == NULL ? "missing" : visible);
+    fprintf(stderr, "fixture-stderr-ready\n");
+    fflush(stdout);
+    fflush(stderr);
+    char line[4096];
+    while (fgets(line, sizeof(line), stdin) != NULL) {
+        printf("out:%s", line);
+        fprintf(stderr, "err:%s", line);
+        fflush(stdout);
+        fflush(stderr);
+    }
+    return 7;
+}
+"#,
+    )
+    .unwrap();
+    let compiler = if cfg!(windows) { "clang" } else { "cc" };
+    let compiled = Command::new(compiler)
+        .arg("-std=c99")
+        .arg(&fixture_source)
+        .arg("-o")
+        .arg(&fixture_binary)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "fixture stdout:\n{}\nfixture stderr:\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+
+    let child_cwd = root.join("child cwd");
+    fs::create_dir_all(&child_cwd).unwrap();
+    let child_cwd = fs::canonicalize(child_cwd).unwrap();
+    let project = root.join("controlled_process");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"controlled_process\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package controlled_process.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+fn print_event(event: ProcessEvent) -> bool {
+    let mut done: bool = false
+    match event {
+        ProcessEvent.StdinFlushed => {
+        }
+        ProcessEvent.Stdout(text) => {
+            io.print(text)
+        }
+        ProcessEvent.Stderr(text) => {
+            io.print(text)
+        }
+        ProcessEvent.Exited(status) => {
+            io.println("exit", status.code, status.signal)
+            done = true
+        }
+    }
+    return done
+}
+
+fn write_message(child: ProcessChild, message: string) -> Result<void, ProcessControlError> {
+    process.write_stdin(child, message)?
+    let mut flushed: bool = false
+    for !flushed {
+        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        match event {
+            ProcessEvent.StdinFlushed => {
+                flushed = true
+            }
+            ProcessEvent.Stdout(text) => {
+                io.print(text)
+            }
+            ProcessEvent.Stderr(text) => {
+                io.print(text)
+            }
+            ProcessEvent.Exited(status) => {
+                io.println("early-exit", status.code, status.signal)
+                return Ok(void)
+            }
+        }
+    }
+    return Ok(void)
+}
+
+fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("space value")
+    args.push("quote\"value")
+    let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    environment.push(ProcessEnv { name: "VISIBLE", value: "child-value" })
+    let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: Some(cwd), env: environment, inherit_env: false }
+    let child: ProcessChild = process.start(command)?
+    defer process.close_child(child)
+    let initial: Option<ProcessExit> = process.try_wait(child)?
+    match initial {
+        Some(status) => {
+            io.println("unexpected-exit", status.code)
+        }
+        None => {
+            io.println("running")
+        }
+    }
+    write_message(child, "first message\n")?
+    write_message(child, "second message\n")?
+    process.close_stdin(child)?
+    let mut done: bool = false
+    for !done {
+        done = print_event(process.next_event(child, 4096, 5000)?)
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let program: Option<string> = env.get("NOMO_PROCESS_FIXTURE")
+    let cwd: Option<string> = env.get("NOMO_PROCESS_CWD")
+    match program {
+        Some(program_value) => {
+            match cwd {
+                Some(cwd_value) => {
+                    let result: Result<void, ProcessControlError> = run(program_value, cwd_value)
+                    match result {
+                        Ok(done) => {
+                        }
+                        Err(error) => {
+                            io.println("error", error.code, error.message)
+                        }
+                    }
+                }
+                None => {
+                    io.println("missing cwd")
+                }
+            }
+        }
+        None => {
+            io.println("missing fixture")
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_PROCESS_FIXTURE", &fixture_binary)
+        .env("NOMO_PROCESS_CWD", &child_cwd)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for expected in [
+        "running\n",
+        "argv:space value|quote\"value\n",
+        &format!("cwd:{}\n", child_cwd.display()),
+        "env:child-value\n",
+        "fixture-stderr-ready\n",
+        "out:first message\n",
+        "err:first message\n",
+        "out:second message\n",
+        "err:second message\n",
+        "exit 7 0\n",
+    ] {
+        assert!(
+            stdout.contains(expected),
+            "missing {expected:?} in:\n{stdout}"
+        );
+    }
+    assert!(!stdout.contains("error "), "{stdout}");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_net_tcp_stream_helpers() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = listener.local_addr().unwrap().port();

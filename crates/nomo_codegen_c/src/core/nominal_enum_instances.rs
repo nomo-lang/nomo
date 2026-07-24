@@ -255,7 +255,7 @@ fn collect_http_call_enums(
 ) {
     let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
     match name {
-        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR => {
+        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR | BUILTIN_HTTP_SEND_EXPR => {
             push_enum_instance(
                 seen,
                 out,

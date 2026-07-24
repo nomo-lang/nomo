@@ -171,6 +171,207 @@ fn emits_time_helpers() {
 }
 
 #[test]
+fn emits_bounded_structured_http_runtime_for_windows_target() {
+    let http_header = ValueType::Struct("HttpHeader".to_string(), Vec::new());
+    let http_request = ValueType::Struct("HttpRequest".to_string(), Vec::new());
+    let http_response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
+    let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
+    let header_array = ValueType::Array(Box::new(http_header.clone()));
+    let response_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![http_response.clone(), http_error.clone()],
+    );
+    let program = Program {
+        consts: Vec::new(),
+        package: "app.main".to_string(),
+        imports: vec!["std.http".to_string()],
+        extern_functions: Vec::new(),
+        structs: vec![
+            StructType {
+                package: "std.http".to_string(),
+                name: "HttpHeader".to_string(),
+                type_params: Vec::new(),
+                fields: vec![
+                    StructField {
+                        name: "name".to_string(),
+                        value_type: ValueType::String,
+                    },
+                    StructField {
+                        name: "value".to_string(),
+                        value_type: ValueType::String,
+                    },
+                ],
+            },
+            StructType {
+                package: "std.http".to_string(),
+                name: "HttpRequest".to_string(),
+                type_params: Vec::new(),
+                fields: vec![
+                    StructField {
+                        name: "method".to_string(),
+                        value_type: ValueType::String,
+                    },
+                    StructField {
+                        name: "url".to_string(),
+                        value_type: ValueType::String,
+                    },
+                    StructField {
+                        name: "headers".to_string(),
+                        value_type: header_array.clone(),
+                    },
+                    StructField {
+                        name: "body".to_string(),
+                        value_type: ValueType::String,
+                    },
+                    StructField {
+                        name: "timeout_millis".to_string(),
+                        value_type: ValueType::U64,
+                    },
+                    StructField {
+                        name: "max_response_bytes".to_string(),
+                        value_type: ValueType::U64,
+                    },
+                ],
+            },
+            StructType {
+                package: "std.http".to_string(),
+                name: "HttpResponse".to_string(),
+                type_params: Vec::new(),
+                fields: vec![
+                    StructField {
+                        name: "status".to_string(),
+                        value_type: ValueType::Int,
+                    },
+                    StructField {
+                        name: "headers".to_string(),
+                        value_type: header_array.clone(),
+                    },
+                    StructField {
+                        name: "body".to_string(),
+                        value_type: ValueType::String,
+                    },
+                ],
+            },
+            StructType {
+                package: "std.http".to_string(),
+                name: "HttpError".to_string(),
+                type_params: Vec::new(),
+                fields: vec![
+                    StructField {
+                        name: "code".to_string(),
+                        value_type: ValueType::String,
+                    },
+                    StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    },
+                ],
+            },
+        ],
+        enums: vec![
+            EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            },
+            EnumType {
+                package: "std.option".to_string(),
+                name: "Option".to_string(),
+                type_params: vec!["T".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Some".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "None".to_string(),
+                        payload: None,
+                    },
+                ],
+            },
+        ],
+        functions: vec![Function {
+            package: "app.main".to_string(),
+            name: "main".to_string(),
+            params: Vec::new(),
+            return_type: ValueType::Void,
+            body: vec![
+                Statement::Let {
+                    name: "headers".to_string(),
+                    value_type: header_array,
+                    initializer: ValueExpr::ArrayNew {
+                        element_type: http_header,
+                    },
+                },
+                Statement::Let {
+                    name: "request".to_string(),
+                    value_type: http_request,
+                    initializer: ValueExpr::StructLiteral {
+                        type_name: "HttpRequest".to_string(),
+                        struct_args: Vec::new(),
+                        fields: vec![
+                            (
+                                "method".to_string(),
+                                ValueExpr::StringLiteral("GET".to_string()),
+                            ),
+                            (
+                                "url".to_string(),
+                                ValueExpr::StringLiteral("https://localhost/".to_string()),
+                            ),
+                            (
+                                "headers".to_string(),
+                                ValueExpr::Variable("headers".to_string()),
+                            ),
+                            ("body".to_string(), ValueExpr::StringLiteral(String::new())),
+                            ("timeout_millis".to_string(), ValueExpr::IntLiteral(1000)),
+                            (
+                                "max_response_bytes".to_string(),
+                                ValueExpr::IntLiteral(4096),
+                            ),
+                        ],
+                    },
+                },
+                Statement::Let {
+                    name: "response".to_string(),
+                    value_type: response_result,
+                    initializer: ValueExpr::Call {
+                        name: BUILTIN_HTTP_SEND_EXPR.to_string(),
+                        args: vec![ValueExpr::Variable("request".to_string())],
+                    },
+                },
+            ],
+        }],
+    };
+    let target = "x86_64-pc-windows-msvc"
+        .parse::<nomo_target::TargetTriple>()
+        .unwrap();
+
+    let c = emit_c_for_target(&program, &target);
+
+    assert!(c.starts_with("/* nomo target: x86_64-pc-windows-msvc */\n"));
+    assert!(c.contains("#include <windows.h>"));
+    assert!(c.contains("LoadLibraryA(\"winhttp.dll\")"));
+    assert!(c.contains("\"WinHttpSendRequest\""));
+    assert!(c.contains("NOMO_HTTP_HARD_MAX_RESPONSE_BYTES"));
+    assert!(c.contains("NOMO_HTTP_MAX_RESPONSE_HEADER_BYTES"));
+    assert!(c.contains("\"response_too_large\""));
+    assert!(c.contains("\"runtime_unavailable\""));
+    assert!(c.contains("__nomo_http_send"));
+    assert!(!c.contains("@HTTP_"));
+    assert!(!c.contains("@RESULT@"));
+}
+
+#[test]
 fn emits_process_helpers() {
     let process_error = ValueType::Struct("ProcessError".to_string(), Vec::new());
     let program = Program {

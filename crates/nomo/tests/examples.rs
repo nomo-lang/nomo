@@ -1,9 +1,13 @@
 use nomo::project::{build_project, check_project, discover_project};
+use rcgen::{CertifiedKey, generate_simple_self_signed};
+use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
+use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
+use std::sync::Arc;
 use std::time::{Duration, Instant};
 
 const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
@@ -17,6 +21,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_time",
     "std_json",
     "std_http",
+    "openai_compatible",
     "nomo_test_basic",
     "nomo_doc_basic",
     "workspace_basic",
@@ -195,8 +200,8 @@ fn assert_cli_build_emit_c(example: &Path) {
 }
 
 fn assert_cli_run(example: &Path) {
-    let output = if example_name(example) == "std_http" {
-        run_with_http_example_server(|port| {
+    let output = match example_name(example) {
+        "std_http" => run_with_http_example_server(|port| {
             Command::new(env!("CARGO_BIN_EXE_nomo"))
                 .arg("run")
                 .arg(example)
@@ -204,14 +209,23 @@ fn assert_cli_run(example: &Path) {
                 .env("NOMO_HTTP_PORT", port.to_string())
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
-        })
-    } else {
-        Command::new(env!("CARGO_BIN_EXE_nomo"))
+        }),
+        "openai_compatible" => run_with_openai_tls_server(|endpoint, ca_bundle| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_OPENAI_BASE_URL", endpoint)
+                .env("NOMO_OPENAI_API_KEY", "local-test-token")
+                .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        }),
+        _ => Command::new(env!("CARGO_BIN_EXE_nomo"))
             .arg("run")
             .arg(example)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
             .output()
-            .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+            .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display())),
     };
     assert!(
         output.status.success(),
@@ -617,21 +631,29 @@ fn assert_cli_workspace_deps_tree(example: &Path, expected: &[&str]) {
 }
 
 fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output {
-    if example_name(example) == "std_http" {
-        run_with_http_example_server(|port| {
+    match example_name(example) {
+        "std_http" => run_with_http_example_server(|port| {
             Command::new(bin)
                 .current_dir(project_root)
                 .env("NOMO_EXAMPLE_ENV", "env get ok")
                 .env("NOMO_HTTP_PORT", port.to_string())
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
-        })
-    } else {
-        Command::new(bin)
+        }),
+        "openai_compatible" => run_with_openai_tls_server(|endpoint, ca_bundle| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_OPENAI_BASE_URL", endpoint)
+                .env("NOMO_OPENAI_API_KEY", "local-test-token")
+                .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        }),
+        _ => Command::new(bin)
             .current_dir(project_root)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
             .output()
-            .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+            .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display())),
     }
 }
 
@@ -655,9 +677,9 @@ where
                     let body_start = request.find("\r\n\r\n").map(|index| index + 4).unwrap();
                     let body = &request[body_start..];
                     let (expected_line, expected_body, response_body) = if handled == 0 {
-                        ("GET /hello HTTP/1.0", "", "get-ok")
+                        ("GET /hello HTTP/1.1", "", "get-ok")
                     } else {
-                        ("POST /echo HTTP/1.0", "post-body", "post-ok")
+                        ("POST /echo HTTP/1.1", "post-body", "post-ok")
                     };
                     assert!(
                         request.starts_with(expected_line),
@@ -712,6 +734,84 @@ fn read_http_request(stream: &mut impl Read) -> String {
         }
     }
     String::from_utf8(request).unwrap()
+}
+
+fn run_with_openai_tls_server<F>(run: F) -> Output
+where
+    F: FnOnce(&str, &Path) -> Output,
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let server_config = ServerConfig::builder()
+        .with_no_client_auth()
+        .with_single_cert(
+            vec![cert.der().clone()],
+            PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+        )
+        .unwrap();
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(25));
+                }
+                Err(err) => panic!("failed to accept HTTPS client connection: {err}"),
+            }
+        };
+        stream.set_nonblocking(false).unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let connection = ServerConnection::new(Arc::new(server_config)).unwrap();
+        let mut stream = StreamOwned::new(connection, stream);
+        let request = read_http_request(&mut stream);
+        assert!(
+            request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"),
+            "request was:\n{request}"
+        );
+        let lower = request.to_ascii_lowercase();
+        assert!(
+            lower.contains("authorization: bearer local-test-token\r\n"),
+            "request was:\n{request}"
+        );
+        assert!(
+            lower.contains("content-type: application/json\r\n"),
+            "request was:\n{request}"
+        );
+        let body_start = request.find("\r\n\r\n").map(|index| index + 4).unwrap();
+        assert_eq!(
+            &request[body_start..],
+            "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Nomo\"}],\"stream\":false}"
+        );
+        let response_body = "{\"id\":\"chatcmpl-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"}}]}";
+        let response = format!(
+            "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nX-Nomo-Fixture: tls\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+            response_body.len(),
+            response_body
+        );
+        stream.write_all(response.as_bytes()).unwrap();
+        stream.flush().unwrap();
+    });
+    let ca_bundle =
+        std::env::temp_dir().join(format!("nomo-openai-ca-{}-{port}.pem", std::process::id()));
+    fs::write(&ca_bundle, cert.pem()).unwrap();
+    let endpoint = format!("https://localhost:{port}");
+    let output = run(&endpoint, &ca_bundle);
+    server.join().unwrap();
+    fs::remove_file(ca_bundle).unwrap();
+    output
 }
 
 fn example_name(example: &Path) -> &str {
@@ -919,6 +1019,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "specific_value_import" => "specific value import ok\n",
         "std_json" => "{\"lang\":\"nomo\",\"versions\":[1,true,null]}\ninvalid json\n",
         "std_http" => "get-ok\npost-ok\n",
+        "openai_compatible" => {
+            "200\ntls\n{\"id\":\"chatcmpl-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"}}]}\n"
+        }
         "std_fmt" => "display=Nomo debug=Nomo braces={}\nNomo\n",
         "std_path" => "/tmp/nomo.txt\nnomo.txt\n/tmp\ngz\n/tmp/b\n../b\nabsolute\n",
         "std_process" => "spawn-ok\nstatus-ok\nprocess-ok\nstatus-7\ncaptured-out\ncaptured-err\n",

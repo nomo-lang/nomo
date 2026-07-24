@@ -353,9 +353,11 @@ net.udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError>
 appropriate. v0.1 uses blocking handles; listener address inspection, backlog
 configuration, and nonblocking handles are out of scope.
 
-`std.http` provides blocking plain-HTTP client and basic server helpers:
+`std.http` provides a bounded blocking HTTP/HTTPS client and basic plain-HTTP
+server helpers:
 
 ```nomo
+http.send(request: HttpRequest) -> Result<HttpResponse, HttpError>
 http.get(url: string) -> Result<HttpResponse, HttpError>
 http.post(url: string, body: string) -> Result<HttpResponse, HttpError>
 http.listen(host: string, port: i64) -> Result<HttpServer, HttpError>
@@ -365,11 +367,34 @@ http.close_server(server: HttpServer) -> void
 http.close_exchange(exchange: HttpExchange) -> void
 ```
 
+`HttpRequest` contains `method`, `url`, `headers`, `body`, `timeout_millis`,
+and `max_response_bytes`. v0.1 accepts `GET` and `POST`. `HttpResponse`
+contains `status`, ordered `headers`, and `body`; HTTP 4xx/5xx statuses remain
+successful transport responses. `HttpError.code` is one of
+`invalid_request`, `runtime_unavailable`, `dns`, `connect`, `tls`, `timeout`,
+`response_too_large`, `protocol`, or `transport`.
+
+HTTPS verifies certificates and host names through platform trust. There is no
+insecure mode, redirects are disabled, response headers are limited to 64 KiB,
+and response bodies have a hard 128 MiB ceiling. `get` and `post` use a
+30-second timeout and an 8 MiB response limit. Header names and values are
+validated before I/O; callers may set `Authorization` and `Content-Type` but
+may not override framing headers such as `Host` or `Content-Length`.
+On Unix-like targets, `NOMO_HTTP_CA_BUNDLE` adds a PEM trust root for
+deterministic local testing without disabling host-name verification. Windows
+uses its current-user and machine certificate stores instead.
+
+The native adapter is owned by the toolchain runtime, so Nomo applications do
+not declare C FFI or linker flags to use HTTPS. Native Unix-like targets use a
+compatible libcurl runtime and Windows uses WinHTTP. The browser WASM sandbox
+does not grant network access in v0.1; calling these helpers returns the stable
+`NOMO-WASM-003` capability error without evaluating or logging request secrets.
+A browser host-capability design remains a later RFC.
+
 Use `defer http.close_exchange(exchange)` and
 `defer http.close_server(server)` so cleanup runs on both normal returns and
-`?` early returns. TLS, custom headers, redirects, chunked transfer decoding,
-streaming bodies, routing, and concurrent server helpers are out of scope for
-v0.1.
+`?` early returns. Streaming bodies/SSE, cancellation, connection pooling,
+routing, and concurrent server helpers remain later slices.
 
 ## Native FFI Values
 

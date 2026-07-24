@@ -3,6 +3,18 @@ use super::*;
 pub(super) fn collect_array_element_types(program: &Program) -> Vec<ValueType> {
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
+    for struct_type in &program.structs {
+        for field in &struct_type.fields {
+            collect_type_array_elements(&field.value_type, &mut seen, &mut out);
+        }
+    }
+    for enum_type in &program.enums {
+        for variant in &enum_type.variants {
+            if let Some(payload) = &variant.payload {
+                collect_type_array_elements(payload, &mut seen, &mut out);
+            }
+        }
+    }
     for function in &program.functions {
         collect_type_array_elements(&function.return_type, &mut seen, &mut out);
         for param in &function.params {

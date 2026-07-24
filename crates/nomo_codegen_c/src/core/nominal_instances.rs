@@ -243,8 +243,10 @@ fn collect_http_call_structs(
     out: &mut Vec<(String, Vec<ValueType>)>,
 ) {
     match name {
-        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR => {
+        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR | BUILTIN_HTTP_SEND_EXPR => {
             push_struct_instance(seen, out, "HttpError", &[]);
+            push_struct_instance(seen, out, "HttpHeader", &[]);
+            push_struct_instance(seen, out, "HttpRequest", &[]);
             push_struct_instance(seen, out, "HttpResponse", &[]);
         }
         BUILTIN_HTTP_LISTEN_EXPR => {

@@ -1,6 +1,7 @@
 use super::{BuildError, Project, build_project_with_diagnostics, configure_c_compile_command};
 use crate::compiler::compile_script_source_to_c;
 use nomo_manifest::FfiLinkMetadata;
+use nomo_target::TargetTriple;
 use std::collections::hash_map::DefaultHasher;
 use std::fs;
 use std::hash::{Hash, Hasher};
@@ -56,19 +57,28 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     let c_path = c_dir.join("main.c");
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
     let bin_path = bin_dir.join(stem);
-    let mut command = Command::new("cc");
+    let target = TargetTriple::host().map_err(BuildError::Message)?;
+    let toolchain = target
+        .c_toolchain_from(&target)
+        .map_err(BuildError::Message)?;
+    let mut command = Command::new(&toolchain.program);
+    command.args(&toolchain.args);
     configure_c_compile_command(
         &mut command,
         &c_path,
         &bin_path,
         &FfiLinkMetadata::default(),
+        &target,
     );
-    let output = command
-        .output()
-        .map_err(|err| BuildError::Message(format!("failed to run cc: {err}")))?;
+    let output = command.output().map_err(|err| {
+        BuildError::Message(format!(
+            "failed to run C compiler `{}` for target `{target}`: {err}",
+            toolchain.program
+        ))
+    })?;
     if !output.status.success() {
         return Err(BuildError::Message(format!(
-            "cc failed:\n{}{}",
+            "C compiler failed for target `{target}`:\n{}{}",
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
         )));

@@ -440,6 +440,47 @@ fn main() -> void {
     }
 
     #[test]
+    fn rejects_structured_http_without_leaking_request_secrets() {
+        let source = r#"package app.main
+
+import std.array.Array
+import std.http
+import std.result
+
+fn main() -> void {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader {
+        name: "Authorization",
+        value: "Bearer browser-secret"
+    })
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://example.invalid/v1/chat/completions?token=query-secret",
+        headers: headers,
+        body: "body-secret",
+        timeout_millis: 1000,
+        max_response_bytes: 1024
+    }
+    let result: Result<HttpResponse, HttpError> = http.send(request)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("structured HTTP should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("network"));
+        assert!(error.message.contains("browser sandbox"));
+        assert!(!error.message.contains("__nomo_http_send"));
+        for secret in ["browser-secret", "query-secret", "body-secret"] {
+            assert!(!error.message.contains(secret), "{error:#?}");
+        }
+    }
+
+    #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
         let source = r#"package app.main
 

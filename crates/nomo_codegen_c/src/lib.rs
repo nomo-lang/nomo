@@ -164,6 +164,7 @@ const BUILTIN_NULLABLE_UNWRAP_EXPR: &str = "__nomo_nullable_unwrap";
 const BUILTIN_OWNED_BORROW_EXPR: &str = "__nomo_owned_borrow";
 const BUILTIN_HTTP_GET_EXPR: &str = "__nomo_http_get";
 const BUILTIN_HTTP_POST_EXPR: &str = "__nomo_http_post";
+const BUILTIN_HTTP_SEND_EXPR: &str = "__nomo_http_send";
 const BUILTIN_HTTP_LISTEN_EXPR: &str = "__nomo_http_listen";
 const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
 const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";

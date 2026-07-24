@@ -754,6 +754,32 @@ mod tests {
         let get = http.items.iter().find(|item| item.name == "get").unwrap();
         assert_eq!(get.source, "std/src/http.nomo");
         assert!(get.docs.contains("blocking HTTP GET"));
+        let send = http.items.iter().find(|item| item.name == "send").unwrap();
+        assert_eq!(
+            send.signature,
+            "pub fn send(request: HttpRequest) -> Result<HttpResponse, HttpError>"
+        );
+        assert!(send.docs.contains("bounded blocking HTTP or HTTPS"));
+        let request = http
+            .items
+            .iter()
+            .find(|item| item.name == "HttpRequest")
+            .unwrap();
+        assert_eq!(
+            request
+                .children
+                .iter()
+                .map(|field| field.name.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "HttpRequest.method",
+                "HttpRequest.url",
+                "HttpRequest.headers",
+                "HttpRequest.body",
+                "HttpRequest.timeout_millis",
+                "HttpRequest.max_response_bytes",
+            ]
+        );
 
         let ffi = package
             .modules

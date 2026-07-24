@@ -1,10 +1,36 @@
-//! Blocking plain-HTTP client and server helpers.
+//! Blocking HTTP and HTTPS client plus basic plain-HTTP server helpers.
 package std.http
 
 import std.http
 
+/// One HTTP request or response header.
+pub struct HttpHeader {
+    /// Header field name.
+    pub name: string
+    /// Header field value.
+    pub value: string
+}
+
+/// A bounded blocking HTTP request.
+pub struct HttpRequest {
+    /// Request method. Nomo v0.1 accepts `GET` and `POST`.
+    pub method: string
+    /// Absolute `http://` or `https://` URL.
+    pub url: string
+    /// Application request headers.
+    pub headers: Array<HttpHeader>
+    /// Request body. `GET` requires an empty body.
+    pub body: string
+    /// Total request deadline in milliseconds.
+    pub timeout_millis: u64
+    /// Maximum response-body size in bytes.
+    pub max_response_bytes: u64
+}
+
 /// Error returned when an HTTP operation fails.
 pub struct HttpError {
+    /// Stable machine-readable error code.
+    pub code: string
     /// Human-readable error description.
     pub message: string
 }
@@ -29,8 +55,15 @@ pub struct HttpExchange {
 pub struct HttpResponse {
     /// Numeric HTTP status code.
     pub status: i64
+    /// Response headers in received order.
+    pub headers: Array<HttpHeader>
     /// Response body.
     pub body: string
+}
+
+/// Performs one bounded blocking HTTP or HTTPS request.
+pub fn send(request: HttpRequest) -> Result<HttpResponse, HttpError> {
+    return http.send(request)
 }
 
 /// Performs a blocking HTTP GET request.

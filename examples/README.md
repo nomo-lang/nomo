@@ -29,6 +29,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `std_time`: `std.time` duration helpers and zero-duration sleep
 - `std_json`: `std.json` parse and stringify helpers
 - `std_http`: `std.http` blocking GET and POST client helpers
+- `openai_compatible`: bounded HTTPS POST with headers against an OpenAI-compatible endpoint
 - `nomo_test_basic`: package-level `#[test]` functions and `std.testing` helpers
 - `nomo_doc_basic`: Rust-style doc comments consumed by `nomo doc`
 - `workspace_basic`: workspace members, inherited package metadata, local path dependencies, workspace tests, and workspace docs

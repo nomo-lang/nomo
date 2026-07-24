@@ -9977,15 +9977,21 @@ fn nomo_run_executes_std_http_client_helpers_without_std_dependency() {
                     let text = String::from_utf8(request).unwrap();
                     let body_start = text.find("\r\n\r\n").map(|index| index + 4).unwrap();
                     let body = &text[body_start..];
-                    let (expected_line, expected_body, response_body) = if handled == 0 {
-                        ("GET /hello HTTP/1.0", "", "get-ok")
-                    } else {
-                        ("POST /echo HTTP/1.0", "post-body", "post-ok")
-                    };
+                    let (expected_line, expected_body, response_status, response_body) =
+                        if handled == 0 {
+                            ("GET /hello HTTP/1.1", "", "200 OK", "get-ok")
+                        } else {
+                            (
+                                "POST /echo HTTP/1.1",
+                                "post-body",
+                                "429 Too Many Requests",
+                                "post-ok",
+                            )
+                        };
                     assert!(text.starts_with(expected_line), "request was:\n{text}");
                     assert_eq!(body, expected_body);
                     let response = format!(
-                        "HTTP/1.0 200 OK\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        "HTTP/1.0 {response_status}\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
                         response_body.len(),
                         response_body
                     );
@@ -10059,6 +10065,213 @@ fn main() -> void {
     );
     server.join().unwrap();
 
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_http_requests_enforce_limits_and_redact_secrets() {
+    let body_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let body_port = body_listener.local_addr().unwrap().port();
+    let body_server = std::thread::spawn(move || {
+        let (mut stream, _) = body_listener.accept().unwrap();
+        let mut request = [0_u8; 1024];
+        let _ = stream.read(&mut request).unwrap();
+        stream
+            .write_all(
+                b"HTTP/1.1 200 OK\r\nContent-Length: 32\r\nConnection: close\r\n\r\n0123456789abcdefghijklmnopqrstuv",
+            )
+            .unwrap();
+    });
+
+    let timeout_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let timeout_port = timeout_listener.local_addr().unwrap().port();
+    let timeout_server = std::thread::spawn(move || {
+        let (_stream, _) = timeout_listener.accept().unwrap();
+        std::thread::sleep(Duration::from_millis(300));
+    });
+
+    let tls_listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let tls_port = tls_listener.local_addr().unwrap().port();
+    let tls_server = std::thread::spawn(move || {
+        let (mut stream, _) = tls_listener.accept().unwrap();
+        let mut handshake = [0_u8; 256];
+        let _ = stream.read(&mut handshake);
+    });
+
+    let root = temp_test_root("structured-http-limits");
+    reset_dir(&root);
+    let project = root.join("structured_http_limits");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_http_limits\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package structured_http_limits.main
+
+import std.array.Array
+import std.http
+import std.io
+
+fn invalid_header() -> void {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader {
+        name: "Authorization",
+        value: "Bearer header-secret\r\nInjected: bad"
+    })
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "http://127.0.0.1:1/invalid",
+        headers: headers,
+        body: "body-secret",
+        timeout_millis: 1000,
+        max_response_bytes: 1024
+    }
+    let result: Result<HttpResponse, HttpError> = http.send(request)
+    match result {
+        Ok(response) => {
+            io.println("invalid unexpected-ok")
+        }
+        Err(err) => {
+            io.println("invalid", err.code, err.message)
+        }
+    }
+}
+
+fn body_limit() -> void {
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "GET",
+        url: "http://127.0.0.1:__BODY_PORT__/large",
+        headers: headers,
+        body: "",
+        timeout_millis: 1000,
+        max_response_bytes: 8
+    }
+    let result: Result<HttpResponse, HttpError> = http.send(request)
+    match result {
+        Ok(response) => {
+            io.println("body unexpected-ok")
+        }
+        Err(err) => {
+            io.println("body", err.code, err.message)
+        }
+    }
+}
+
+fn request_timeout() -> void {
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "GET",
+        url: "http://127.0.0.1:__TIMEOUT_PORT__/slow",
+        headers: headers,
+        body: "",
+        timeout_millis: 100,
+        max_response_bytes: 1024
+    }
+    let result: Result<HttpResponse, HttpError> = http.send(request)
+    match result {
+        Ok(response) => {
+            io.println("timeout unexpected-ok")
+        }
+        Err(err) => {
+            io.println("timeout", err.code, err.message)
+        }
+    }
+}
+
+fn tls_failure() -> void {
+    let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    headers.push(HttpHeader {
+        name: "Authorization",
+        value: "Bearer tls-header-secret"
+    })
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://localhost:__TLS_PORT__/failure?api_key=query-secret",
+        headers: headers,
+        body: "tls-body-secret",
+        timeout_millis: 1000,
+        max_response_bytes: 1024
+    }
+    let result: Result<HttpResponse, HttpError> = http.send(request)
+    match result {
+        Ok(response) => {
+            io.println("tls unexpected-ok")
+        }
+        Err(err) => {
+            io.println("tls", err.code, err.message)
+        }
+    }
+}
+
+fn main() -> void {
+    invalid_header()
+    body_limit()
+    request_timeout()
+    tls_failure()
+}
+"#
+    .replace("__BODY_PORT__", &body_port.to_string())
+    .replace("__TIMEOUT_PORT__", &timeout_port.to_string())
+    .replace("__TLS_PORT__", &tls_port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    assert!(
+        stdout.contains("invalid invalid_request invalid or reserved HTTP header\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("body response_too_large HTTP response exceeded its configured limit\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("timeout timeout HTTP request timed out\n"),
+        "{stdout}"
+    );
+    assert!(
+        stdout.contains("tls tls HTTPS certificate or handshake failed\n"),
+        "{stdout}"
+    );
+    for secret in [
+        "header-secret",
+        "body-secret",
+        "tls-header-secret",
+        "tls-body-secret",
+        "query-secret",
+    ] {
+        assert!(
+            !stdout.contains(secret),
+            "secret leaked in stdout: {stdout}"
+        );
+        assert!(
+            !String::from_utf8_lossy(&output.stderr).contains(secret),
+            "secret leaked in stderr: {}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+    }
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    body_server.join().unwrap();
+    timeout_server.join().unwrap();
+    tls_server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 

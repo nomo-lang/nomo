@@ -142,7 +142,6 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     if uses_net_connect(program)
         || uses_net_listen(program)
         || uses_net_udp_bind(program)
-        || uses_http_client(program)
         || uses_http_server(program)
         || uses_tcp_listener_accept(program)
         || uses_tcp_stream_read_to_string(program)

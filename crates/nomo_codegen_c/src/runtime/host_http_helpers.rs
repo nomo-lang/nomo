@@ -1,8 +1,12 @@
 use super::*;
 
 pub(super) fn emit_http_client_helpers(out: &mut String) {
+    let header_type = ValueType::Struct("HttpHeader".to_string(), Vec::new());
+    let http_header = c_struct_ident("HttpHeader", &[]);
+    let http_request = c_struct_ident("HttpRequest", &[]);
     let http_response = c_struct_ident("HttpResponse", &[]);
     let http_error = c_struct_ident("HttpError", &[]);
+    let header_array = c_array_ident(&header_type);
     let result = c_enum_ident(
         "Result",
         &[
@@ -10,188 +14,60 @@ pub(super) fn emit_http_client_helpers(out: &mut String) {
             ValueType::Struct("HttpError".to_string(), Vec::new()),
         ],
     );
-    let ok = c_enum_variant_ident(
-        "Result",
-        &[
-            ValueType::Struct("HttpResponse".to_string(), Vec::new()),
-            ValueType::Struct("HttpError".to_string(), Vec::new()),
-        ],
-        "Ok",
-    );
-    let err = c_enum_variant_ident(
-        "Result",
-        &[
-            ValueType::Struct("HttpResponse".to_string(), Vec::new()),
-            ValueType::Struct("HttpError".to_string(), Vec::new()),
-        ],
-        "Err",
-    );
-    let err_payload = c_payload_ident("Err");
-    let ok_payload = c_payload_ident("Ok");
-    let status_member = c_member_ident("status");
-    let body_member = c_member_ident("body");
-    let message_member = c_member_ident("message");
-    let get_name = c_fn_ident(BUILTIN_HTTP_GET_EXPR);
-    let post_name = c_fn_ident(BUILTIN_HTTP_POST_EXPR);
-    out.push_str("typedef struct nomo_http_url {\n");
-    out.push_str("    char *host;\n");
-    out.push_str("    char *port;\n");
-    out.push_str("    char *path;\n");
-    out.push_str("} nomo_http_url;\n\n");
-    out.push_str("static char *nomo_http_copy_slice(const char *data, size_t len) {\n");
-    out.push_str("    char *out = (char *)malloc(len + 1);\n");
-    out.push_str("    if (out == NULL) { nomo_panic(\"out of memory\"); }\n");
-    out.push_str("    memcpy(out, data, len);\n");
-    out.push_str("    out[len] = '\\0';\n");
-    out.push_str("    return out;\n");
-    out.push_str("}\n\n");
-    out.push_str("static void nomo_http_url_free(nomo_http_url url) {\n");
-    out.push_str("    free(url.host);\n");
-    out.push_str("    free(url.port);\n");
-    out.push_str("    free(url.path);\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push_str(" nomo_http_error_from_string(nomo_string message) {\n");
-    out.push_str("    return (");
-    out.push_str(&result);
-    out.push_str("){.tag = ");
-    out.push_str(&err);
-    out.push_str(", .payload.");
-    out.push_str(&err_payload);
-    out.push_str(" = (");
-    out.push_str(&http_error);
-    out.push_str("){.");
-    out.push_str(&message_member);
-    out.push_str(" = message}};\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push_str(" nomo_http_error_from_cstr(const char *message) {\n");
-    out.push_str("    return nomo_http_error_from_string(nomo_string_from_cstr(message));\n");
-    out.push_str("}\n\n");
-    out.push_str("static int nomo_http_parse_url(nomo_string value, nomo_http_url *out) {\n");
-    out.push_str("    const char *text = value.data;\n");
-    out.push_str("    const char *prefix = \"http://\";\n");
-    out.push_str("    size_t prefix_len = strlen(prefix);\n");
-    out.push_str("    if (strncmp(text, prefix, prefix_len) != 0) { return 0; }\n");
-    out.push_str("    const char *host_start = text + prefix_len;\n");
-    out.push_str("    const char *cursor = host_start;\n");
-    out.push_str(
-        "    while (*cursor != '\\0' && *cursor != ':' && *cursor != '/') { cursor += 1; }\n",
-    );
-    out.push_str("    if (cursor == host_start) { return 0; }\n");
-    out.push_str(
-        "    out->host = nomo_http_copy_slice(host_start, (size_t)(cursor - host_start));\n",
-    );
-    out.push_str("    if (*cursor == ':') {\n");
-    out.push_str("        const char *port_start = cursor + 1;\n");
-    out.push_str("        cursor = port_start;\n");
-    out.push_str("        while (*cursor >= '0' && *cursor <= '9') { cursor += 1; }\n");
-    out.push_str("        if (cursor == port_start || (*cursor != '\\0' && *cursor != '/')) { free(out->host); out->host = NULL; return 0; }\n");
-    out.push_str(
-        "        out->port = nomo_http_copy_slice(port_start, (size_t)(cursor - port_start));\n",
-    );
-    out.push_str("    } else {\n");
-    out.push_str("        out->port = nomo_http_copy_slice(\"80\", 2);\n");
-    out.push_str("    }\n");
-    out.push_str("    if (*cursor == '/') {\n");
-    out.push_str("        out->path = nomo_http_copy_slice(cursor, strlen(cursor));\n");
-    out.push_str("    } else {\n");
-    out.push_str("        out->path = nomo_http_copy_slice(\"/\", 1);\n");
-    out.push_str("    }\n");
-    out.push_str("    return 1;\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push_str(" nomo_http_request(const char *method, nomo_string url_value, nomo_string body, int has_body) {\n");
-    out.push_str("    if (!nomo_net_init()) { return nomo_http_error_from_cstr(\"network initialization failed\"); }\n");
-    out.push_str("    nomo_http_url url = {0};\n");
-    out.push_str("    if (!nomo_http_parse_url(url_value, &url)) { return nomo_http_error_from_cstr(\"unsupported or invalid HTTP URL\"); }\n");
-    out.push_str("    struct addrinfo hints;\n");
-    out.push_str("    memset(&hints, 0, sizeof(hints));\n");
-    out.push_str("    hints.ai_family = AF_UNSPEC;\n");
-    out.push_str("    hints.ai_socktype = SOCK_STREAM;\n");
-    out.push_str("    struct addrinfo *addresses = NULL;\n");
-    out.push_str("    int rc = getaddrinfo(url.host, url.port, &hints, &addresses);\n");
-    out.push_str("    if (rc != 0) { nomo_http_url_free(url); return nomo_http_error_from_cstr(gai_strerror(rc)); }\n");
-    out.push_str("    nomo_socket handle = NOMO_INVALID_SOCKET;\n");
-    out.push_str("    for (struct addrinfo *address = addresses; address != NULL; address = address->ai_next) {\n");
-    out.push_str("        handle = socket(address->ai_family, address->ai_socktype, address->ai_protocol);\n");
-    out.push_str("        if (handle == NOMO_INVALID_SOCKET) { continue; }\n");
-    out.push_str(
-        "        if (connect(handle, address->ai_addr, address->ai_addrlen) == 0) { break; }\n",
-    );
-    out.push_str("        NOMO_SOCKET_CLOSE(handle);\n");
-    out.push_str("        handle = NOMO_INVALID_SOCKET;\n");
-    out.push_str("    }\n");
-    out.push_str("    freeaddrinfo(addresses);\n");
-    out.push_str("    if (handle == NOMO_INVALID_SOCKET) { nomo_http_url_free(url); return nomo_http_error_from_string(nomo_net_error_message()); }\n");
-    out.push_str("    size_t body_len = has_body ? strlen(body.data) : 0;\n");
-    out.push_str("    int header_len = snprintf(NULL, 0, \"%s %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\nContent-Length: %zu\\r\\n\\r\\n\", method, url.path, url.host, body_len);\n");
-    out.push_str("    if (header_len < 0) { NOMO_SOCKET_CLOSE(handle); nomo_http_url_free(url); return nomo_http_error_from_cstr(\"failed to build HTTP request\"); }\n");
-    out.push_str("    char *request = (char *)malloc((size_t)header_len + body_len + 1);\n");
-    out.push_str("    if (request == NULL) { nomo_panic(\"out of memory\"); }\n");
-    out.push_str("    snprintf(request, (size_t)header_len + 1, \"%s %s HTTP/1.0\\r\\nHost: %s\\r\\nConnection: close\\r\\nContent-Length: %zu\\r\\n\\r\\n\", method, url.path, url.host, body_len);\n");
-    out.push_str("    if (body_len > 0) { memcpy(request + header_len, body.data, body_len); }\n");
-    out.push_str("    size_t request_len = (size_t)header_len + body_len;\n");
-    out.push_str("    request[request_len] = '\\0';\n");
-    out.push_str("    size_t sent_total = 0;\n");
-    out.push_str("    while (sent_total < request_len) {\n");
-    out.push_str("        int sent = send(handle, request + sent_total, (int)(request_len - sent_total), 0);\n");
-    out.push_str("        if (sent <= 0) { nomo_string message = nomo_net_error_message(); free(request); NOMO_SOCKET_CLOSE(handle); nomo_http_url_free(url); return nomo_http_error_from_string(message); }\n");
-    out.push_str("        sent_total += (size_t)sent;\n");
-    out.push_str("    }\n");
-    out.push_str("    free(request);\n");
-    out.push_str("    size_t cap = 4096;\n");
-    out.push_str("    size_t len = 0;\n");
-    out.push_str("    char *response = (char *)malloc(cap + 1);\n");
-    out.push_str("    if (response == NULL) { nomo_panic(\"out of memory\"); }\n");
-    out.push_str("    for (;;) {\n");
-    out.push_str("        if (len + 4096 + 1 > cap) { while (len + 4096 + 1 > cap) { cap *= 2; } response = (char *)realloc(response, cap + 1); if (response == NULL) { nomo_panic(\"out of memory\"); } }\n");
-    out.push_str("        int received = recv(handle, response + len, 4096, 0);\n");
-    out.push_str("        if (received < 0) { nomo_string message = nomo_net_error_message(); free(response); NOMO_SOCKET_CLOSE(handle); nomo_http_url_free(url); return nomo_http_error_from_string(message); }\n");
-    out.push_str("        if (received == 0) { break; }\n");
-    out.push_str("        len += (size_t)received;\n");
-    out.push_str("    }\n");
-    out.push_str("    NOMO_SOCKET_CLOSE(handle);\n");
-    out.push_str("    nomo_http_url_free(url);\n");
-    out.push_str("    response[len] = '\\0';\n");
-    out.push_str("    char *status_space = strchr(response, ' ');\n");
-    out.push_str("    if (status_space == NULL) { free(response); return nomo_http_error_from_cstr(\"invalid HTTP response status line\"); }\n");
-    out.push_str("    long status = strtol(status_space + 1, NULL, 10);\n");
-    out.push_str("    char *body_start = strstr(response, \"\\r\\n\\r\\n\");\n");
-    out.push_str("    if (body_start == NULL) { free(response); return nomo_http_error_from_cstr(\"invalid HTTP response headers\"); }\n");
-    out.push_str("    body_start += 4;\n");
-    out.push_str("    size_t body_size = len - (size_t)(body_start - response);\n");
-    out.push_str("    char *body_copy = nomo_http_copy_slice(body_start, body_size);\n");
-    out.push_str("    free(response);\n");
-    out.push_str("    return (");
-    out.push_str(&result);
-    out.push_str("){.tag = ");
-    out.push_str(&ok);
-    out.push_str(", .payload.");
-    out.push_str(&ok_payload);
-    out.push_str(" = (");
-    out.push_str(&http_response);
-    out.push_str("){.");
-    out.push_str(&status_member);
-    out.push_str(" = (int64_t)status, .");
-    out.push_str(&body_member);
-    out.push_str(" = nomo_string_owned(body_copy)}};\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push(' ');
-    out.push_str(&get_name);
-    out.push_str("(nomo_string url) {\n");
-    out.push_str("    return nomo_http_request(\"GET\", url, nomo_string_literal(\"\"), 0);\n");
-    out.push_str("}\n\n");
-    out.push_str("static ");
-    out.push_str(&result);
-    out.push(' ');
-    out.push_str(&post_name);
-    out.push_str("(nomo_string url, nomo_string body) {\n");
-    out.push_str("    return nomo_http_request(\"POST\", url, body, 1);\n");
-    out.push_str("}\n");
+    let rendered = include_str!("host_http_client.c")
+        .replace("@HTTP_HEADER@", &http_header)
+        .replace("@HTTP_REQUEST@", &http_request)
+        .replace("@HTTP_RESPONSE@", &http_response)
+        .replace("@HTTP_ERROR@", &http_error)
+        .replace("@HTTP_HEADER_ARRAY@", &header_array)
+        .replace("@HTTP_HEADER_ARRAY_NEW@", &format!("{header_array}_new"))
+        .replace("@HTTP_HEADER_ARRAY_PUSH@", &format!("{header_array}_push"))
+        .replace(
+            "@HTTP_HEADER_ARRAY_RELEASE@",
+            &format!("{header_array}_release"),
+        )
+        .replace("@HTTP_HEADER_RELEASE@", &c_release_ident(&header_type))
+        .replace("@RESULT@", &result)
+        .replace(
+            "@OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Struct("HttpResponse".to_string(), Vec::new()),
+                    ValueType::Struct("HttpError".to_string(), Vec::new()),
+                ],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Struct("HttpResponse".to_string(), Vec::new()),
+                    ValueType::Struct("HttpError".to_string(), Vec::new()),
+                ],
+                "Err",
+            ),
+        )
+        .replace("@OK_PAYLOAD@", &c_payload_ident("Ok"))
+        .replace("@ERR_PAYLOAD@", &c_payload_ident("Err"))
+        .replace("@STATUS_MEMBER@", &c_member_ident("status"))
+        .replace("@HEADERS_MEMBER@", &c_member_ident("headers"))
+        .replace("@BODY_MEMBER@", &c_member_ident("body"))
+        .replace("@CODE_MEMBER@", &c_member_ident("code"))
+        .replace("@MESSAGE_MEMBER@", &c_member_ident("message"))
+        .replace("@NAME_MEMBER@", &c_member_ident("name"))
+        .replace("@VALUE_MEMBER@", &c_member_ident("value"))
+        .replace("@METHOD_MEMBER@", &c_member_ident("method"))
+        .replace("@URL_MEMBER@", &c_member_ident("url"))
+        .replace("@TIMEOUT_MEMBER@", &c_member_ident("timeout_millis"))
+        .replace(
+            "@MAX_RESPONSE_MEMBER@",
+            &c_member_ident("max_response_bytes"),
+        )
+        .replace("@SEND_NAME@", &c_fn_ident(BUILTIN_HTTP_SEND_EXPR))
+        .replace("@GET_NAME@", &c_fn_ident(BUILTIN_HTTP_GET_EXPR))
+        .replace("@POST_NAME@", &c_fn_ident(BUILTIN_HTTP_POST_EXPR));
+    out.push_str(&rendered);
 }

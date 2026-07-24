@@ -103,7 +103,7 @@ fn build_project_impl(
     let bin_path = bin_dir.join(&project.name);
     let mut command = Command::new(&toolchain.program);
     command.args(&toolchain.args);
-    configure_c_compile_command(&mut command, &c_path, &bin_path, &ffi_link_metadata);
+    configure_c_compile_command(&mut command, &c_path, &bin_path, &ffi_link_metadata, target);
     let output = command.output().map_err(|err| {
         BuildError::Message(format!(
             "failed to run C compiler `{}` for target `{target}`: {err}",
@@ -133,6 +133,7 @@ pub(super) fn configure_c_compile_command(
     c_path: &Path,
     bin_path: &Path,
     ffi_link_metadata: &FfiLinkMetadata,
+    target: &TargetTriple,
 ) {
     command.arg("-std=c99").arg(c_path);
     for source in &ffi_link_metadata.sources {
@@ -150,5 +151,11 @@ pub(super) fn configure_c_compile_command(
     for arg in &ffi_link_metadata.link_args {
         command.arg(arg);
     }
-    command.arg("-lm").arg("-o").arg(bin_path);
+    if target.operating_system().as_str() == "linux" {
+        command.arg("-ldl");
+    }
+    if target.operating_system().as_str() != "windows" {
+        command.arg("-lm");
+    }
+    command.arg("-o").arg(bin_path);
 }

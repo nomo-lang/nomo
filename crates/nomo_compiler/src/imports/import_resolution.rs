@@ -141,6 +141,9 @@ pub(super) fn resolve_specific_value_builtin(
         "post" if imports.iter().any(|item| item == "std.http.post") => {
             vec!["http".to_string(), "post".to_string()]
         }
+        "send" if imports.iter().any(|item| item == "std.http.send") => {
+            vec!["http".to_string(), "send".to_string()]
+        }
         "listen" if imports.iter().any(|item| item == "std.http.listen") => {
             vec!["http".to_string(), "listen".to_string()]
         }

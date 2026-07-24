@@ -81,6 +81,7 @@ pub(super) fn emit_http_server_helpers(out: &mut String) {
     let method_member = c_member_ident("method");
     let path_member = c_member_ident("path");
     let body_member = c_member_ident("body");
+    let code_member = c_member_ident("code");
     let message_member = c_member_ident("message");
     let ok_payload = c_payload_ident("Ok");
     let err_payload = c_payload_ident("Err");
@@ -104,6 +105,8 @@ pub(super) fn emit_http_server_helpers(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&http_error);
     out.push_str("){.");
+    out.push_str(&code_member);
+    out.push_str(" = nomo_string_literal(\"transport\"), .");
     out.push_str(&message_member);
     out.push_str(" = message}};\n");
     out.push_str("}\n\n");
@@ -119,6 +122,8 @@ pub(super) fn emit_http_server_helpers(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&http_error);
     out.push_str("){.");
+    out.push_str(&code_member);
+    out.push_str(" = nomo_string_literal(\"transport\"), .");
     out.push_str(&message_member);
     out.push_str(" = message}};\n");
     out.push_str("}\n\n");
@@ -134,6 +139,8 @@ pub(super) fn emit_http_server_helpers(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&http_error);
     out.push_str("){.");
+    out.push_str(&code_member);
+    out.push_str(" = nomo_string_literal(\"transport\"), .");
     out.push_str(&message_member);
     out.push_str(" = message}};\n");
     out.push_str("}\n\n");

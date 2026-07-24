@@ -1,0 +1,3 @@
+[package]
+name = "concurrent_openai_compatible"
+version = "0.1.0"

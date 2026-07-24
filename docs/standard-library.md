@@ -39,7 +39,7 @@ migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
 `fmt`, `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
 `collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
-`net`, `http`, and `ffi`.
+`net`, `http`, `task`, and `ffi`.
 
 ## Propagation Carriers
 
@@ -255,6 +255,53 @@ num.wrapping_mul(left: integer, right: same integer type) -> same integer type
 `std.time` provides wall-clock, monotonic-clock, duration, formatting, and sleep
 helpers. Durations store signed milliseconds, `format_duration` returns strings
 such as `1500ms`, and sleep helpers panic for negative durations.
+
+### `std.task`
+
+`std.task` provides bounded, isolated native workers without introducing
+general closures or shared managed values:
+
+```nomo
+task.spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>
+task.is_cancelled(context: TaskContext) -> bool
+task.join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError>
+task.cancel(task_value: Task) -> Result<void, TaskError>
+task.close(task_value: Task) -> Result<void, TaskError>
+```
+
+A worker is a non-generic, non-capturing, top-level function in the caller's
+package with the exact `fn(TaskContext, string) -> string` signature. Spawn
+deep-copies one at-most-8-MiB input before creating the thread; completion
+deep-copies one at-most-8-MiB output. A process may keep at most 64 live task
+handles, and a join timeout may not exceed 900,000 milliseconds.
+`Task` and `TaskContext` are runtime-owned opaque values; direct construction
+or field access is rejected with `E0820`.
+
+`cancel` is cooperative. `TaskJoin.Cancelled` is observable only after the
+worker sees or races with the request and returns; a request alone does not
+terminate a thread. `join(..., 0)` is a nonblocking poll and returns
+`TaskJoin.Timeout` while work remains. `close` returns `busy` until the worker
+finishes, then joins the native thread and releases the handle. Closed handles
+return the stable `closed` error.
+
+#### Task safety
+
+The compiler checks the worker's transitive call graph. Local computation,
+managed values created inside the worker, arrays, strings, JSON, regex,
+collections, hashing, crypto, numeric/path/OS helpers, monotonic time/sleep,
+`task.is_cancelled`, and nonstreaming `http.get`/`post`/`send` are accepted.
+Unsafe/extern/FFI calls, nested tasks, filesystem/environment/process/TCP/UDP,
+console/log/debug/testing, formatting through user implementations, wall-clock
+time, HTTP streaming/server handles, value methods with unknown effects, and
+unknown calls are rejected with `E0821` and a stable call path. Panics still
+terminate the process in v0.1.
+
+Unix-like targets use POSIX threads and Windows uses native threads through the
+toolchain-owned runtime, so application code writes no C FFI. Browser WASM
+returns `TaskError { code: "runtime_unavailable", ... }` from `spawn` without
+invoking or evaluating the worker. See `examples/isolated_tasks` for
+join/cancel/deep-copy behavior and `examples/concurrent_openai_compatible` for
+two real HTTPS requests against a local TLS fixture.
 
 `std.os` reports target information from the C compiler target:
 

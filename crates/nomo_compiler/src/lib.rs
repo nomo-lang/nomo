@@ -83,6 +83,8 @@ mod builtins_process;
 mod builtins_result;
 #[path = "builtins/builtins_string.rs"]
 mod builtins_string;
+#[path = "builtins/builtins_task.rs"]
+mod builtins_task;
 #[path = "builtins/builtins_time.rs"]
 mod builtins_time;
 // Compiler driver and shared type/declaration machinery.
@@ -161,6 +163,8 @@ mod typing;
 mod validation;
 #[path = "validation/validation_imports.rs"]
 mod validation_imports;
+#[path = "validation/validation_tasks.rs"]
+mod validation_tasks;
 #[path = "validation/validation_type_diagnostics.rs"]
 mod validation_type_diagnostics;
 #[path = "validation/validation_types.rs"]
@@ -190,6 +194,7 @@ use builtins_path::*;
 use builtins_process::*;
 use builtins_result::*;
 use builtins_string::*;
+use builtins_task::*;
 use builtins_time::*;
 use declarations::*;
 pub use driver::{
@@ -269,6 +274,11 @@ const BUILTIN_PROCESS_NEXT_EVENT_EXPR: &str = "__nomo_process_next_event";
 const BUILTIN_PROCESS_TRY_WAIT_EXPR: &str = "__nomo_process_try_wait";
 const BUILTIN_PROCESS_TERMINATE_EXPR: &str = "__nomo_process_terminate";
 const BUILTIN_PROCESS_CLOSE_CHILD_EXPR: &str = "__nomo_process_close_child";
+const BUILTIN_TASK_SPAWN_EXPR: &str = "__nomo_task_spawn";
+const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
+const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";
+const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
+const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
 
 pub use nomo_ir::{
     BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function,

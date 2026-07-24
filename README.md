@@ -625,6 +625,15 @@ monotonic milliseconds. `Duration` stores millisecond precision, `format_duratio
 prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
 negative durations.
 
+`std.task` provides isolated native workers with one bounded, deep-copied
+string input and result. `task.spawn` accepts only a non-capturing top-level
+`task fn(TaskContext, string) -> string`; `task.join`, cooperative
+`task.cancel`, `task.is_cancelled`, and explicit `task.close` control the
+lifecycle. The compiler rejects task-unsafe transitive effects with `E0821`.
+Native applications do not write C FFI; browser WASM returns
+`runtime_unavailable` without invoking the worker. See
+`examples/isolated_tasks` and `examples/concurrent_openai_compatible`.
+
 `std.process` keeps the blocking shell helpers `process.spawn`,
 `process.status`, `process.exec`, and `process.output` for source
 compatibility. New long-lived integrations should use `ProcessCommand` with

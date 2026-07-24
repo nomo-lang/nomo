@@ -208,6 +208,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_http_server_helpers(&mut out);
         out.push('\n');
     }
+    if uses_task_runtime(program) {
+        emit_task_helpers(&mut out, uses_http_client(program));
+        out.push('\n');
+    }
     if uses_env_get(program) {
         emit_env_get_helper(&mut out);
         out.push('\n');
@@ -288,18 +292,19 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         .find(|function| function.name == "main")
         .expect("checked programs always contain main");
     let main_returns_result = result_void_error(&main.return_type).is_some();
+    let emit_main_function = main_returns_result || uses_task_runtime(program);
 
     for function in program
         .functions
         .iter()
-        .filter(|function| function.name != "main" || main_returns_result)
+        .filter(|function| function.name != "main" || emit_main_function)
     {
         emit_prototype(&mut out, function);
     }
     if program
         .functions
         .iter()
-        .any(|function| function.name != "main" || main_returns_result)
+        .any(|function| function.name != "main" || emit_main_function)
     {
         out.push('\n');
     }
@@ -343,7 +348,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     for function in program
         .functions
         .iter()
-        .filter(|function| function.name != "main" || main_returns_result)
+        .filter(|function| function.name != "main" || emit_main_function)
     {
         emit_function(&mut out, function);
         out.push('\n');
@@ -365,11 +370,21 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push_str(" nomo__result = ");
         out.push_str(&c_fn_ident("main"));
         out.push_str("();\n");
+        if uses_task_runtime(program) {
+            out.push_str("    nomo_task_shutdown();\n");
+        }
         out.push_str("    return nomo__result.tag == ");
         out.push_str(&c_enum_variant_ident("Result", &result_args, "Ok"));
         out.push_str(" ? 0 : 1;\n");
     } else {
-        emit_body(&mut out, main);
+        if emit_main_function {
+            out.push_str("    ");
+            out.push_str(&c_fn_ident("main"));
+            out.push_str("();\n");
+            out.push_str("    nomo_task_shutdown();\n");
+        } else {
+            emit_body(&mut out, main);
+        }
         out.push_str("    return 0;\n");
     }
     out.push_str("}\n");

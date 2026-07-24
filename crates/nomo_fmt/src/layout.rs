@@ -67,8 +67,10 @@ pub(super) fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
         }
 
         match token.kind {
-            TokenKind::LBrace => depth += 1,
-            TokenKind::RBrace => depth = depth.saturating_sub(1),
+            TokenKind::LBrace | TokenKind::LParen | TokenKind::LBracket => depth += 1,
+            TokenKind::RBrace | TokenKind::RParen | TokenKind::RBracket => {
+                depth = depth.saturating_sub(1)
+            }
             _ => {}
         }
         index += 1;

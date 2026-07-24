@@ -46,6 +46,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.regex" => Some(include_str!("regex.nomo")),
         "std.result" => Some(RESULT_SOURCE),
         "std.string" => Some(STRING_SOURCE),
+        "std.task" => Some(include_str!("task.nomo")),
         "std.testing" => Some(include_str!("testing.nomo")),
         "std.time" => Some(include_str!("time.nomo")),
         _ => None,
@@ -273,6 +274,17 @@ const STRING_ITEMS: &[&str] = &[
     "trim",
 ];
 const TESTING_ITEMS: &[&str] = &["assert", "assert_equal", "assert_error"];
+const TASK_ITEMS: &[&str] = &[
+    "Task",
+    "TaskContext",
+    "TaskError",
+    "TaskJoin",
+    "cancel",
+    "close",
+    "is_cancelled",
+    "join",
+    "spawn",
+];
 const TIME_ITEMS: &[&str] = &[
     "Duration",
     "duration_as_millis",
@@ -665,6 +677,12 @@ pub const MODULES: &[StandardModule] = &[
         doc_items: STRING_DOC_ITEMS,
     },
     StandardModule {
+        path: "std.task",
+        docs: "isolated native tasks with cooperative cancellation",
+        items: TASK_ITEMS,
+        doc_items: &[],
+    },
+    StandardModule {
         path: "std.testing",
         docs: "test assertion helpers",
         items: TESTING_ITEMS,
@@ -703,6 +721,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.regex",
     "std.result",
     "std.string",
+    "std.task",
     "std.testing",
     "std.time",
 ];
@@ -1263,7 +1282,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 247);
+        assert_eq!(imports.len(), 257);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

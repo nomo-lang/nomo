@@ -1,6 +1,16 @@
 use nomo_syntax::ast::{AssignOp, BinaryOp, Expr, MatchArm, PostfixOp, TypeRef, UnaryOp};
 
 pub(super) fn type_ref(ty: &TypeRef) -> String {
+    if ty.path.as_slice() == [nomo_syntax::ast::TASK_CALLBACK_TYPE_PATH] {
+        let Some((return_type, params)) = ty.args.split_last() else {
+            return "task fn() -> void".to_string();
+        };
+        return format!(
+            "task fn({}) -> {}",
+            params.iter().map(type_ref).collect::<Vec<_>>().join(", "),
+            type_ref(return_type)
+        );
+    }
     if ty.args.is_empty() {
         path(&ty.path)
     } else {

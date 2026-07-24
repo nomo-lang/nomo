@@ -516,6 +516,16 @@ fn type_params_with_bounds(params: &[String], bounds: &[TypeParamBound]) -> Stri
 }
 
 fn type_ref(type_ref_value: &TypeRef) -> String {
+    if type_ref_value.path.as_slice() == [nomo_syntax::ast::TASK_CALLBACK_TYPE_PATH] {
+        let Some((return_type, params)) = type_ref_value.args.split_last() else {
+            return "task fn() -> void".to_string();
+        };
+        return format!(
+            "task fn({}) -> {}",
+            params.iter().map(type_ref).collect::<Vec<_>>().join(", "),
+            type_ref(return_type)
+        );
+    }
     let base = type_ref_value.path.join(".");
     if type_ref_value.args.is_empty() {
         base
@@ -780,6 +790,18 @@ mod tests {
                 "HttpRequest.max_response_bytes",
             ]
         );
+
+        let task = package
+            .modules
+            .iter()
+            .find(|module| module.name == "std.task")
+            .unwrap();
+        let spawn = task.items.iter().find(|item| item.name == "spawn").unwrap();
+        assert_eq!(
+            spawn.signature,
+            "pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>"
+        );
+        assert!(!spawn.signature.contains("__nomo_task_callback"));
 
         let ffi = package
             .modules

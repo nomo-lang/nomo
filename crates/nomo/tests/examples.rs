@@ -7,7 +7,7 @@ use std::io::{ErrorKind, Read, Write};
 use std::net::TcpListener;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
-use std::sync::Arc;
+use std::sync::{Arc, Condvar, Mutex};
 use std::time::{Duration, Instant};
 
 const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
@@ -22,7 +22,9 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "std_json",
     "std_http",
     "openai_compatible",
+    "concurrent_openai_compatible",
     "openai_streaming",
+    "isolated_tasks",
     "nomo_test_basic",
     "nomo_doc_basic",
     "workspace_basic",
@@ -78,6 +80,32 @@ fn examples_check_and_run() {
         assert_example_output(&example, &output.stdout, &output.stderr);
         clean_example_artifacts(&example);
     }
+}
+
+#[test]
+fn concurrent_openai_task_example_uses_two_local_tls_requests() {
+    let example = workspace_root()
+        .join("examples")
+        .join("concurrent_openai_compatible");
+    clean_example_artifacts(&example);
+    let project = discover_project(&example).unwrap();
+    check_project(&project).unwrap_or_else(|diagnostic| panic!("{}", diagnostic.human()));
+    let bin = build_project(&project, false).unwrap();
+    let output = run_built_example(&project.root, &bin, &example);
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_example_output(&example, &output.stdout, &output.stderr);
+    let transcript = format!(
+        "{}{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(!transcript.contains("local-task-token"), "{transcript}");
+    clean_example_artifacts(&example);
 }
 
 #[test]
@@ -221,6 +249,19 @@ fn assert_cli_run(example: &Path) {
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
         }),
+        "concurrent_openai_compatible" => {
+            run_with_concurrent_openai_tls_server(|endpoint, ca_bundle| {
+                Command::new(env!("CARGO_BIN_EXE_nomo"))
+                    .arg("run")
+                    .arg(example)
+                    .env("NOMO_OPENAI_BASE_URL", endpoint)
+                    .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                    .output()
+                    .unwrap_or_else(|err| {
+                        panic!("failed to run nomo run {}: {err}", example.display())
+                    })
+            })
+        }
         "openai_streaming" => run_with_openai_streaming_tls_server(|endpoint, ca_bundle| {
             Command::new(env!("CARGO_BIN_EXE_nomo"))
                 .arg("run")
@@ -660,6 +701,16 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
         }),
+        "concurrent_openai_compatible" => {
+            run_with_concurrent_openai_tls_server(|endpoint, ca_bundle| {
+                Command::new(bin)
+                    .current_dir(project_root)
+                    .env("NOMO_OPENAI_BASE_URL", endpoint)
+                    .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                    .output()
+                    .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+            })
+        }
         "openai_streaming" => run_with_openai_streaming_tls_server(|endpoint, ca_bundle| {
             Command::new(bin)
                 .current_dir(project_root)
@@ -826,6 +877,112 @@ where
     });
     let ca_bundle =
         std::env::temp_dir().join(format!("nomo-openai-ca-{}-{port}.pem", std::process::id()));
+    fs::write(&ca_bundle, cert.pem()).unwrap();
+    let endpoint = format!("https://localhost:{port}");
+    let output = run(&endpoint, &ca_bundle);
+    server.join().unwrap();
+    fs::remove_file(ca_bundle).unwrap();
+    output
+}
+
+fn run_with_concurrent_openai_tls_server<F>(run: F) -> Output
+where
+    F: FnOnce(&str, &Path) -> Output,
+{
+    let _ = rustls::crypto::ring::default_provider().install_default();
+    let CertifiedKey { cert, signing_key } =
+        generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+    let server_config = Arc::new(
+        ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(
+                vec![cert.der().clone()],
+                PrivateKeyDer::Pkcs8(PrivatePkcs8KeyDer::from(signing_key.serialize_der())),
+            )
+            .unwrap(),
+    );
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let rendezvous = Arc::new((Mutex::new(0_usize), Condvar::new()));
+        let mut handlers = Vec::new();
+        while handlers.len() < 2 {
+            let (stream, _) = match listener.accept() {
+                Ok(connection) => connection,
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                    continue;
+                }
+                Err(err) => panic!("failed to accept concurrent HTTPS connection: {err}"),
+            };
+            let server_config = server_config.clone();
+            let rendezvous = rendezvous.clone();
+            handlers.push(std::thread::spawn(move || {
+                stream.set_nonblocking(false).unwrap();
+                stream
+                    .set_read_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                stream
+                    .set_write_timeout(Some(Duration::from_secs(5)))
+                    .unwrap();
+                let connection = ServerConnection::new(server_config).unwrap();
+                let mut stream = StreamOwned::new(connection, stream);
+                let request = read_http_request(&mut stream);
+                assert!(
+                    request.starts_with("POST /v1/chat/completions HTTP/1.1\r\n"),
+                    "request was:\n{request}"
+                );
+                let lower = request.to_ascii_lowercase();
+                assert!(
+                    lower.contains("authorization: bearer local-task-token\r\n"),
+                    "request was:\n{request}"
+                );
+                assert!(
+                    lower.contains("content-type: application/json\r\n"),
+                    "request was:\n{request}"
+                );
+                let body_start = request.find("\r\n\r\n").map(|index| index + 4).unwrap();
+                assert_eq!(
+                    &request[body_start..],
+                    "{\"model\":\"nomo-task-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello concurrently\"}],\"stream\":false}"
+                );
+
+                let (lock, condition) = &*rendezvous;
+                let mut ready = lock.lock().unwrap();
+                *ready += 1;
+                condition.notify_all();
+                let (ready, timeout) = condition
+                    .wait_timeout_while(ready, Duration::from_secs(5), |count| *count < 2)
+                    .unwrap();
+                assert!(
+                    !timeout.timed_out() && *ready == 2,
+                    "two task HTTP requests did not overlap"
+                );
+                drop(ready);
+
+                let response_body = "{\"id\":\"chatcmpl-task-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"concurrent-ok\"}}]}";
+                let response = format!(
+                    "HTTP/1.1 200 OK\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    response_body.len(),
+                    response_body
+                );
+                stream.write_all(response.as_bytes()).unwrap();
+                stream.flush().unwrap();
+            }));
+        }
+        for handler in handlers {
+            handler.join().unwrap();
+        }
+    });
+    let ca_bundle = std::env::temp_dir().join(format!(
+        "nomo-concurrent-openai-ca-{}-{port}.pem",
+        std::process::id()
+    ));
     fs::write(&ca_bundle, cert.pem()).unwrap();
     let endpoint = format!("https://localhost:{port}");
     let output = run(&endpoint, &ca_bundle);
@@ -1102,6 +1259,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "io_print" => "stdout ok\n",
         "io_stderr" => "stdout ok\n",
         "interface_display" => "interface display ok\n",
+        "isolated_tasks" => {
+            "completed:alpha\ncompleted:beta\nrejoin completed:alpha\njoin-limit invalid_argument\nbusy-close busy\ntimeout:pending\ncancelled:cooperative\nclosed-handle closed\nbefore-copy\nlive-limit limit\ninput-limit limit\noutput-limit limit\n"
+        }
         "let_else" => "let else ok\n",
         "loops" => "counted\ncounted\ncounted\na\nb\nonce\n",
         "mut_field_borrow" => "mut field borrow ok\n",
@@ -1138,6 +1298,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "std_http" => "get-ok\npost-ok\n",
         "openai_compatible" => {
             "200\ntls\n{\"id\":\"chatcmpl-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"fixture-ok\"}}]}\n"
+        }
+        "concurrent_openai_compatible" => {
+            "{\"id\":\"chatcmpl-task-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"concurrent-ok\"}}]}\n{\"id\":\"chatcmpl-task-local\",\"choices\":[{\"message\":{\"role\":\"assistant\",\"content\":\"concurrent-ok\"}}]}\n"
         }
         "openai_streaming" => {
             "200\ntoken\n{\"choices\":[{\"delta\":{\"content\":\"Hel\"}}]}\ntoken\n{\"choices\":[{\"delta\":{\"content\":\"lo\"}}]}\nmessage\n[DONE]\n"

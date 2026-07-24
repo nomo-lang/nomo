@@ -181,12 +181,20 @@ fn run_single_project_test(
     let file_stem = safe_test_artifact_name(&test.name);
     let c_path = c_dir.join(format!("{file_stem}.c"));
     let bin_path = bin_dir.join(file_stem);
+    let uses_native_tasks = super::build::generated_c_uses_native_tasks(&c);
     fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
     let target = TargetTriple::host()?;
     let toolchain = target.c_toolchain_from(&target)?;
     let mut command = Command::new(&toolchain.program);
     command.args(&toolchain.args);
-    configure_c_compile_command(&mut command, &c_path, &bin_path, ffi_link_metadata, &target);
+    configure_c_compile_command(
+        &mut command,
+        &c_path,
+        &bin_path,
+        ffi_link_metadata,
+        &target,
+        uses_native_tasks,
+    );
     let output = command.output().map_err(|err| {
         format!(
             "failed to run C compiler `{}` for target `{target}`: {err}",

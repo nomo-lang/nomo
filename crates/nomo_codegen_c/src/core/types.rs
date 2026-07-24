@@ -275,6 +275,7 @@ fn collect_complete_type_dependencies(value_type: &ValueType, out: &mut BTreeSet
         | ValueType::BorrowedHandle(_)
         | ValueType::Nullable(_)
         | ValueType::ExternCallback { .. }
+        | ValueType::TaskCallback { .. }
         | ValueType::Int
         | ValueType::I32
         | ValueType::U32

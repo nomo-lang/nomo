@@ -16,6 +16,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
             .iter()
             .any(|item| item == "std.process" || item.starts_with("std.process."))
             || source_uses_process_builtin(ast),
+        task: imports
+            .iter()
+            .any(|item| item == "std.task" || item.starts_with("std.task.")),
         net: imports
             .iter()
             .any(|item| item == "std.net" || item.starts_with("std.net.")),
@@ -93,6 +96,11 @@ pub(super) fn standard_struct_names(
         names.push(("ProcessExit".to_string(), 0));
         names.push(("ProcessOutput".to_string(), 0));
     }
+    if needs.task {
+        names.push(("Task".to_string(), 0));
+        names.push(("TaskContext".to_string(), 0));
+        names.push(("TaskError".to_string(), 0));
+    }
     if needs.net {
         names.push(("NetError".to_string(), 0));
         names.push(("TcpListener".to_string(), 0));
@@ -140,6 +148,9 @@ pub(super) fn standard_enum_names(
     if needs.process {
         names.push(("ProcessEvent".to_string(), 0));
     }
+    if needs.task {
+        names.push(("TaskJoin".to_string(), 0));
+    }
     if needs.json {
         names.push(("JsonKind".to_string(), 0));
     }
@@ -149,6 +160,7 @@ pub(super) fn standard_enum_names(
         || needs.http
         || needs.num
         || needs.process
+        || needs.task
         || needs.json
         || needs.regex
         || needs.result
@@ -608,6 +620,45 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.task && !structs.iter().any(|item| item.name == "Task") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "Task".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.task && !structs.iter().any(|item| item.name == "TaskContext") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "TaskContext".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.task && !structs.iter().any(|item| item.name == "TaskError") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "TaskError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
     if needs.hash && !structs.iter().any(|item| item.name == "HashState") {
         structs.push(StructType {
             package: "std.hash".to_string(),
@@ -754,6 +805,27 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.task && !enums.iter().any(|item| item.name == "TaskJoin") {
+        enums.push(EnumType {
+            package: "std.task".to_string(),
+            name: "TaskJoin".to_string(),
+            type_params: Vec::new(),
+            variants: vec![
+                EnumVariantType {
+                    name: "Completed".to_string(),
+                    payload: Some(ValueType::String),
+                },
+                EnumVariantType {
+                    name: "Cancelled".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Timeout".to_string(),
+                    payload: None,
+                },
+            ],
+        });
+    }
     if needs.json && !enums.iter().any(|item| item.name == "JsonKind") {
         enums.push(EnumType {
             package: "std.json".to_string(),
@@ -791,6 +863,7 @@ pub(super) fn inject_standard_types(
         || needs.fs
         || needs.num
         || needs.process
+        || needs.task
         || needs.json
         || needs.regex
         || needs.result)

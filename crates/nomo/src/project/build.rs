@@ -91,6 +91,7 @@ fn build_project_impl(
     fs::create_dir_all(&bin_dir).map_err(|err| BuildError::Message(err.to_string()))?;
 
     let c_path = c_dir.join("main.c");
+    let uses_native_tasks = generated_c_uses_native_tasks(&c);
     fs::write(&c_path, c).map_err(|err| BuildError::Message(err.to_string()))?;
     if emit_c_only {
         return Ok(c_path);
@@ -103,7 +104,14 @@ fn build_project_impl(
     let bin_path = bin_dir.join(&project.name);
     let mut command = Command::new(&toolchain.program);
     command.args(&toolchain.args);
-    configure_c_compile_command(&mut command, &c_path, &bin_path, &ffi_link_metadata, target);
+    configure_c_compile_command(
+        &mut command,
+        &c_path,
+        &bin_path,
+        &ffi_link_metadata,
+        target,
+        uses_native_tasks,
+    );
     let output = command.output().map_err(|err| {
         BuildError::Message(format!(
             "failed to run C compiler `{}` for target `{target}`: {err}",
@@ -134,6 +142,7 @@ pub(super) fn configure_c_compile_command(
     bin_path: &Path,
     ffi_link_metadata: &FfiLinkMetadata,
     target: &TargetTriple,
+    uses_native_tasks: bool,
 ) {
     command.arg("-std=c99").arg(c_path);
     for source in &ffi_link_metadata.sources {
@@ -154,8 +163,15 @@ pub(super) fn configure_c_compile_command(
     if target.operating_system().as_str() == "linux" {
         command.arg("-ldl");
     }
+    if uses_native_tasks && target.operating_system().as_str() != "windows" {
+        command.arg("-pthread");
+    }
     if target.operating_system().as_str() != "windows" {
         command.arg("-lm");
     }
     command.arg("-o").arg(bin_path);
+}
+
+pub(super) fn generated_c_uses_native_tasks(source: &str) -> bool {
+    source.contains("#define NOMO_TASK_MAX_LIVE")
 }

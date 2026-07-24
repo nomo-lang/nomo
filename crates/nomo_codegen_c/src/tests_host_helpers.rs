@@ -499,6 +499,29 @@ fn emits_process_helpers() {
 }
 
 #[test]
+fn emits_cross_platform_controlled_process_runtime() {
+    let mut c = String::new();
+    emit_process_control_helpers(&mut c);
+
+    assert!(c.contains("fork()"));
+    assert!(c.contains("execve(program, argv, envp)"));
+    assert!(c.contains("poll(fds, count, wait_millis)"));
+    assert!(c.contains("waitpid(state->pid, &status, WNOHANG)"));
+    assert!(c.contains("CreateProcessW("));
+    assert!(c.contains("CreateThread("));
+    assert!(c.contains("\"CancelSynchronousIo\""));
+    assert!(c.contains("NOMO_PROCESS_MAX_PAYLOAD_BYTES"));
+    assert!(c.contains("\"invalid_request\""));
+    assert!(c.contains("\"timeout\""));
+    assert!(c.contains("\"protocol\""));
+    assert!(c.contains("nomo_fn___nomo_process_start"));
+    assert!(c.contains("nomo_fn___nomo_process_next_event"));
+    assert!(!c.contains("@PROCESS_"));
+    assert!(!c.contains("@START_"));
+    assert!(!c.contains("@EVENT_"));
+}
+
+#[test]
 fn emits_fixed_width_integer_types() {
     let program = Program {
         consts: Vec::new(),

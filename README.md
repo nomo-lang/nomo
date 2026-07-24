@@ -625,17 +625,25 @@ monotonic milliseconds. `Duration` stores millisecond precision, `format_duratio
 prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
 negative durations.
 
-`std.process` provides synchronous process helpers: `process.exit`,
-`process.spawn`, `process.status`, `process.exec`, and `process.output`.
-`spawn` starts a shell command, waits for it to finish, and returns its exit
-code as `Result<i32, ProcessError>` without capturing stdout or stderr.
-`status` has the same exit-code behavior and is kept as the descriptive helper
-name for callers that only need the final status. `exec` captures stdout as
-`Result<string, ProcessError>` and treats a non-zero exit status as an error.
-`output` returns `Result<ProcessOutput, ProcessError>` with `status`, `stdout`,
-and `stderr`; non-zero exits stay in `Ok(ProcessOutput)` so callers can inspect
-the captured streams.
-`exec` does not capture stderr in v0.1.
+`std.process` keeps the blocking shell helpers `process.spawn`,
+`process.status`, `process.exec`, and `process.output` for source
+compatibility. New long-lived integrations should use `ProcessCommand` with
+`process.start`: it launches one executable without a shell, accepts explicit
+argv, cwd, and environment policy, and returns an opaque `ProcessChild`.
+`process.write_stdin` queues one bounded UTF-8 payload, while
+`process.next_event` multiplexes `StdinFlushed`, incremental `Stdout` and
+`Stderr`, and final `Exited` events with a caller-selected timeout.
+`process.try_wait`, `process.terminate`, `process.close_stdin`, and the
+idempotent `process.close_child` provide explicit lifecycle control.
+
+Controlled process payloads and output chunks are limited to 1 MiB,
+`next_event` timeouts are limited to 15 minutes, and output must be valid UTF-8
+without NUL. `ProcessControlError` exposes stable, secret-safe error codes;
+errors and default diagnostics do not copy command arguments, environment,
+cwd, stdin, or child output. Unix-like and Windows native programs use
+toolchain-owned adapters, so application code needs no C FFI. Browser WASM
+rejects controlled process calls before evaluating their arguments. See
+`examples/process_controlled`.
 
 `std.net` provides blocking TCP and UDP helpers in v0.1. `net.connect` opens a
 TCP connection and returns `Result<TcpStream, NetError>`. `net.listen` binds a

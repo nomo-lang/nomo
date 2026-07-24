@@ -262,6 +262,13 @@ const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
 const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";
 const BUILTIN_HTTP_CLOSE_SERVER_EXPR: &str = "__nomo_http_close_server";
 const BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR: &str = "__nomo_http_close_exchange";
+const BUILTIN_PROCESS_START_EXPR: &str = "__nomo_process_start";
+const BUILTIN_PROCESS_WRITE_STDIN_EXPR: &str = "__nomo_process_write_stdin";
+const BUILTIN_PROCESS_CLOSE_STDIN_EXPR: &str = "__nomo_process_close_stdin";
+const BUILTIN_PROCESS_NEXT_EVENT_EXPR: &str = "__nomo_process_next_event";
+const BUILTIN_PROCESS_TRY_WAIT_EXPR: &str = "__nomo_process_try_wait";
+const BUILTIN_PROCESS_TERMINATE_EXPR: &str = "__nomo_process_terminate";
+const BUILTIN_PROCESS_CLOSE_CHILD_EXPR: &str = "__nomo_process_close_child";
 
 pub use nomo_ir::{
     BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function, LoopKind,

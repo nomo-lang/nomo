@@ -19,27 +19,102 @@ pub struct ProcessOutput {
     pub stderr: string
 }
 
+/// One explicit child-process environment entry.
+pub struct ProcessEnv {
+    pub name: string
+    pub value: string
+}
+
+/// Shell-free child-process launch configuration.
+pub struct ProcessCommand {
+    pub program: string
+    pub args: Array<string>
+    pub cwd: Option<string>
+    pub env: Array<ProcessEnv>
+    pub inherit_env: bool
+}
+
+/// Opaque controlled child-process handle.
+pub struct ProcessChild {
+    handle: u64
+}
+
+/// Portable child-process exit information.
+pub struct ProcessExit {
+    pub code: i32
+    pub signal: i32
+}
+
+/// Incremental event returned by a controlled child.
+pub enum ProcessEvent {
+    StdinFlushed
+    Stdout(string)
+    Stderr(string)
+    Exited(ProcessExit)
+}
+
+/// Stable, secret-safe error returned by controlled process operations.
+pub struct ProcessControlError {
+    pub code: string
+    pub message: string
+}
+
 /// Exits the current process with a status code.
 pub fn exit(code: i64) -> void {
     process.exit(code)
 }
 
-/// Starts a command and returns its status code.
+/// Legacy blocking shell helper that runs a command and returns its status.
 pub fn spawn(command: string) -> Result<i32, ProcessError> {
     return process.spawn(command)
 }
 
-/// Runs a command and returns its exit status.
+/// Legacy blocking shell helper that runs a command and returns its status.
 pub fn status(command: string) -> Result<i32, ProcessError> {
     return process.status(command)
 }
 
-/// Runs a command and returns its standard output.
+/// Legacy blocking shell helper that returns standard output.
 pub fn exec(command: string) -> Result<string, ProcessError> {
     return process.exec(command)
 }
 
-/// Runs a command and captures its output streams.
+/// Legacy blocking shell helper that captures both output streams.
 pub fn output(command: string) -> Result<ProcessOutput, ProcessError> {
     return process.output(command)
+}
+
+/// Starts a shell-free, long-lived child process.
+pub fn start(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError> {
+    return process.start(command)
+}
+
+/// Queues one bounded UTF-8 payload for the child's standard input.
+pub fn write_stdin(child: ProcessChild, data: string) -> Result<void, ProcessControlError> {
+    return process.write_stdin(child, data)
+}
+
+/// Closes the child's standard input after pending data has flushed.
+pub fn close_stdin(child: ProcessChild) -> Result<void, ProcessControlError> {
+    return process.close_stdin(child)
+}
+
+/// Pulls the next standard-I/O, flush, or exit event.
+pub fn next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError> {
+    return process.next_event(child, max_chunk_bytes, timeout_millis)
+}
+
+/// Observes child exit without consuming the final event.
+pub fn try_wait(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessControlError> {
+    return process.try_wait(child)
+}
+
+/// Forces the direct child to terminate.
+pub fn terminate(child: ProcessChild) -> Result<void, ProcessControlError> {
+    return process.terminate(child)
+}
+
+/// Idempotently closes and reaps a controlled child.
+pub fn close_child(child: ProcessChild) -> void {
+    process.close_child(child)
 }

@@ -324,6 +324,42 @@ fn collect_http_call_enums(
     }
 }
 
+fn collect_process_call_enums(
+    name: &str,
+    seen: &mut BTreeSet<String>,
+    out: &mut Vec<(String, Vec<ValueType>)>,
+) {
+    if !matches!(
+        name,
+        BUILTIN_PROCESS_START_EXPR
+            | BUILTIN_PROCESS_WRITE_STDIN_EXPR
+            | BUILTIN_PROCESS_CLOSE_STDIN_EXPR
+            | BUILTIN_PROCESS_NEXT_EVENT_EXPR
+            | BUILTIN_PROCESS_TRY_WAIT_EXPR
+            | BUILTIN_PROCESS_TERMINATE_EXPR
+            | BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+    ) {
+        return;
+    }
+    let control_error = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
+    let child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
+    let exit = ValueType::Struct("ProcessExit".to_string(), Vec::new());
+    let event = ValueType::Enum("ProcessEvent".to_string(), Vec::new());
+    let exit_option = ValueType::Enum("Option".to_string(), vec![exit.clone()]);
+    push_enum_instance(seen, out, "Option", &[ValueType::String]);
+    push_enum_instance(seen, out, "ProcessEvent", &[]);
+    push_enum_instance(seen, out, "Option", &[exit]);
+    push_enum_instance(seen, out, "Result", &[child, control_error.clone()]);
+    push_enum_instance(
+        seen,
+        out,
+        "Result",
+        &[ValueType::Void, control_error.clone()],
+    );
+    push_enum_instance(seen, out, "Result", &[event, control_error.clone()]);
+    push_enum_instance(seen, out, "Result", &[exit_option, control_error]);
+}
+
 fn collect_expr_enum(
     expr: &ValueExpr,
     seen: &mut BTreeSet<String>,
@@ -400,6 +436,7 @@ fn collect_expr_enum(
         }
         ValueExpr::Call { name, args } => {
             collect_http_call_enums(name, seen, out);
+            collect_process_call_enums(name, seen, out);
             for arg in args {
                 collect_expr_enum(arg, seen, out);
             }

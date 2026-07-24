@@ -206,13 +206,26 @@ const PATH_ITEMS: &[&str] = &[
     "normalize",
 ];
 const PROCESS_ITEMS: &[&str] = &[
+    "ProcessChild",
+    "ProcessCommand",
+    "ProcessControlError",
+    "ProcessEnv",
     "ProcessError",
+    "ProcessEvent",
+    "ProcessExit",
     "ProcessOutput",
+    "close_child",
+    "close_stdin",
     "exec",
     "exit",
+    "next_event",
     "output",
     "spawn",
+    "start",
     "status",
+    "terminate",
+    "try_wait",
+    "write_stdin",
 ];
 const REGEX_ITEMS: &[&str] = &["Regex", "RegexError", "captures", "compile", "is_match"];
 const RESULT_ITEMS: &[&str] = &[
@@ -1227,7 +1240,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 216);
+        assert_eq!(imports.len(), 229);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));

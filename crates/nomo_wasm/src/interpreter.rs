@@ -378,6 +378,9 @@ impl<'a> Interpreter<'a> {
         if name.starts_with("__nomo_http_") {
             return Err(RuntimeError::capability("network"));
         }
+        if name.starts_with("__nomo_process_") {
+            return Err(RuntimeError::capability("process"));
+        }
         if self.frames.len() >= self.limits.max_call_depth {
             return Err(RuntimeError::runtime("maximum call depth exceeded"));
         }

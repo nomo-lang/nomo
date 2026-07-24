@@ -36,8 +36,8 @@ jobs:
       - name: Check project fixture
         run: cargo run --locked --bin nomo -- check --workspace examples/workspace_basic
 
-  windows-http-runtime:
-    name: Run structured HTTP runtime on Windows
+  windows-host-runtime:
+    name: Run native host runtimes on Windows
     runs-on: windows-2022
     steps:
       - uses: actions/checkout@v5
@@ -59,4 +59,9 @@ jobs:
         run: >-
           cargo test -p nomo --test cli_project
           structured_http_stream_
+          --locked
+      - name: Run shell-free controlled process stdio and safety gates
+        run: >-
+          cargo test -p nomo --test cli_project
+          controlled_process
           --locked

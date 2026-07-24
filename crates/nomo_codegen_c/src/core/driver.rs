@@ -252,6 +252,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_process_output_helper(&mut out);
         out.push('\n');
     }
+    if uses_process_control(program) {
+        emit_process_control_helpers(&mut out);
+        out.push('\n');
+    }
     if uses_json_builtin(program) {
         emit_json_helpers(&mut out);
         out.push('\n');

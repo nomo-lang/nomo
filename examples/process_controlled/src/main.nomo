@@ -1,0 +1,79 @@
+package process_controlled.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+fn consume_until_flush(child: ProcessChild, payload: string) -> Result<void, ProcessControlError> {
+    process.write_stdin(child, payload)?
+    let mut flushed: bool = false
+    for !flushed {
+        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        match event {
+            ProcessEvent.StdinFlushed => {
+                flushed = true
+            }
+            ProcessEvent.Stdout(text) => {
+                io.println("stdout", text)
+            }
+            ProcessEvent.Stderr(text) => {
+                io.println("stderr", text)
+            }
+            ProcessEvent.Exited(status) => {
+                io.println("exited", status.code, status.signal)
+                return Ok(void)
+            }
+        }
+    }
+    return Ok(void)
+}
+
+fn run_fixture(program: string) -> Result<void, ProcessControlError> {
+    let args: Array<string> = Array.new<string>()
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+    let child: ProcessChild = process.start(command)?
+    defer process.close_child(child)
+    consume_until_flush(child, "first message\n")?
+    consume_until_flush(child, "second message\n")?
+    process.close_stdin(child)?
+    let mut done: bool = false
+    for !done {
+        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        match event {
+            ProcessEvent.StdinFlushed => {
+            }
+            ProcessEvent.Stdout(text) => {
+                io.println("stdout", text)
+            }
+            ProcessEvent.Stderr(text) => {
+                io.println("stderr", text)
+            }
+            ProcessEvent.Exited(status) => {
+                io.println("exited", status.code, status.signal)
+                done = true
+            }
+        }
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let fixture: Option<string> = env.get("NOMO_PROCESS_FIXTURE")
+    match fixture {
+        Some(program) => {
+            let result: Result<void, ProcessControlError> = run_fixture(program)
+            match result {
+                Ok(done) => {
+                }
+                Err(error) => {
+                    io.println(error.code, error.message)
+                }
+            }
+        }
+        None => {
+            io.println("set NOMO_PROCESS_FIXTURE to a line-oriented executable")
+        }
+    }
+}

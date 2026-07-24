@@ -10057,7 +10057,8 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "get-ok\npost-ok\n");
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "get-ok\npost-ok\n");
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -10229,7 +10230,7 @@ fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    let stdout = String::from_utf8_lossy(&output.stdout);
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert!(
         stdout.contains("invalid invalid_request invalid or reserved HTTP header\n"),
         "{stdout}"

@@ -185,32 +185,10 @@ pub(super) fn emit_stmt(
             array_types,
             value,
         } => emit_array_index_assign(out, root, indices, array_types, value, indent),
-        Statement::Println(arg) => {
-            write_indent(out, indent);
-            out.push_str("puts(");
-            emit_string_data_expr(out, arg);
-            out.push_str(");\n");
-        }
-        Statement::Print(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stdout);\n");
-        }
-        Statement::Eprintln(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stderr);\n");
-            write_indent(out, indent);
-            out.push_str("fputc('\\n', stderr);\n");
-        }
-        Statement::Eprint(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stderr);\n");
-        }
+        Statement::Println(arg) => emit_io_output(out, arg, false, true, indent),
+        Statement::Print(arg) => emit_io_output(out, arg, false, false, indent),
+        Statement::Eprintln(arg) => emit_io_output(out, arg, true, true, indent),
+        Statement::Eprint(arg) => emit_io_output(out, arg, true, false, indent),
         Statement::Panic(message) => {
             emit_deferred(out, indent, deferred);
             emit_array_releases(out, indent, active_arrays);

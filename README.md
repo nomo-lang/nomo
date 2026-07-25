@@ -519,7 +519,10 @@ compiler.
 values and reuse the `std.fmt` conversion rules. Multiple values are rendered
 left-to-right with one space between them, so `io.println(message, i)` prints
 both values and then one newline. C-style `printf` is intentionally omitted in
-favor of type-checked `fmt.format`.
+favor of type-checked `fmt.format`. The C99 backend streams these formatted
+fragments without an intermediate concatenation allocation, releases owned
+formatting temporaries after output, and leaves borrowed string ownership with
+the caller.
 
 The postfix `?` operator works on both standard carriers in v0.1:
 `Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error

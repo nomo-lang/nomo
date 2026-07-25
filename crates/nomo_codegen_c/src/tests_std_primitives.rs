@@ -226,6 +226,19 @@ fn emits_num_helpers() {
                         value_type: ValueType::Int,
                     },
                 },
+                Statement::Let {
+                    name: "count".to_string(),
+                    value_type: ValueType::U64,
+                    initializer: ValueExpr::IntLiteral(7),
+                },
+                Statement::Let {
+                    name: "count_text".to_string(),
+                    value_type: ValueType::String,
+                    initializer: ValueExpr::NumToString {
+                        value: Box::new(ValueExpr::Variable("count".to_string())),
+                        value_type: ValueType::U64,
+                    },
+                },
             ],
         }],
     };
@@ -237,6 +250,8 @@ fn emits_num_helpers() {
     assert!(c.contains("static nomo_enum_Result_f64_struct_NumError nomo_num_parse_f64"));
     assert!(c.contains("nomo_num_parse_i64(nomo_string_literal(\"42\"))"));
     assert!(c.contains("nomo_num_i64_to_string(42)"));
+    assert!(c.contains("nomo_string nomo_count_text = nomo_num_u64_to_string(nomo_count);"));
+    assert!(!c.contains("nomo_count_text = nomo_string_retain(nomo_count_text);"));
 }
 
 #[test]

@@ -96,6 +96,8 @@ mod statement_control;
 mod statement_function;
 #[path = "statements/statement_lifecycle.rs"]
 mod statement_lifecycle;
+#[path = "statements/statement_output.rs"]
+mod statement_output;
 #[path = "statements/statement_question.rs"]
 mod statement_question;
 #[path = "statements/statements.rs"]
@@ -158,6 +160,7 @@ use statement_bindings::*;
 use statement_control::*;
 use statement_function::*;
 use statement_lifecycle::*;
+use statement_output::*;
 use statement_question::*;
 use statements::*;
 use types::*;

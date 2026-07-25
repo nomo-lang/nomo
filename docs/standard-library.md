@@ -130,7 +130,10 @@ io.read_line() -> Result<string, IoError>
 
 Print helpers format values through `std.fmt`; multiple values are separated by
 one space. `print` and `println` target standard output, while `eprint` and
-`eprintln` target standard error.
+`eprintln` target standard error. Formatting results are consumed after their
+bytes are written, while borrowed strings remain owned by the caller. The C99
+backend writes multi-value output left-to-right without allocating an
+intermediate concatenated string.
 
 `std.array` provides value-semantics `Array<T>` helpers:
 

@@ -220,7 +220,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, and a final task.scope return after every child is joined in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and unjoined scope exits require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, and a final task.scope return after every child is joined in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and unjoined early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,

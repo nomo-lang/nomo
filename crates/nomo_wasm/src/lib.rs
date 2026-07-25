@@ -431,6 +431,32 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn structured_scope_auto_cancel_does_not_invoke_browser_children() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn child(secret: string) -> void {
+    io.println(secret)
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child_task = task.spawn child("browser-auto-cancel-secret")
+    }
+    io.println("scope closed")
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "scope closed\n");
+        assert!(!response.stderr.contains("browser-auto-cancel-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

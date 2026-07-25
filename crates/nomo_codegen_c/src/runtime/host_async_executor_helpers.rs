@@ -3,7 +3,10 @@ use super::*;
 pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
     function.body.iter().any(|statement| {
         statement_contains_expr(statement, |expr| {
-            expr_is_async_yield(expr) || expr_is_async_sleep(expr) || expr_is_structured_join(expr)
+            expr_is_async_yield(expr)
+                || expr_is_async_sleep(expr)
+                || expr_is_structured_join(expr)
+                || expr_is_structured_cancel(expr)
         })
     })
 }
@@ -134,6 +137,14 @@ fn expr_is_structured_join(expr: &ValueExpr) -> bool {
     )
 }
 
+fn expr_is_structured_cancel(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_STRUCTURED_CANCEL_EXPR && args.len() == 1
+    )
+}
+
 fn statement_is_async_yield(statement: &Statement) -> bool {
     matches!(
         statement,
@@ -179,6 +190,11 @@ struct StructuredJoin<'a> {
     value_type: &'a ValueType,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StructuredCancel<'a> {
+    handle: &'a str,
+}
+
 fn statement_structured_spawn(statement: &Statement) -> Option<StructuredSpawn<'_>> {
     let Statement::Let {
         name: handle,
@@ -216,6 +232,19 @@ fn statement_structured_join(statement: &Statement) -> Option<StructuredJoin<'_>
         binding,
         value_type,
     })
+}
+
+fn statement_structured_cancel(statement: &Statement) -> Option<StructuredCancel<'_>> {
+    let Statement::Expr(ValueExpr::Call { name, args }) = statement else {
+        return None;
+    };
+    if name != BUILTIN_TASK_STRUCTURED_CANCEL_EXPR {
+        return None;
+    }
+    let [ValueExpr::Variable(handle)] = args.as_slice() else {
+        return None;
+    };
+    Some(StructuredCancel { handle })
 }
 
 fn structured_spawn_index(function: &Function, handle: &str) -> Option<usize> {
@@ -360,6 +389,10 @@ fn async_poll_ident(function: &str) -> String {
     format!("nomo_async_poll_{function}")
 }
 
+fn async_cancel_ident(function: &str) -> String {
+    format!("nomo_async_cancel_{function}")
+}
+
 fn async_drop_ident(function: &str) -> String {
     format!("nomo_async_drop_{function}")
 }
@@ -418,8 +451,10 @@ fn emit_async_frame_type(
              nomo_async_context *context;\n\
              void *structured_waiter_frame;\n\
              nomo_async_poll_fn structured_waiter_poll;\n\
+             uint8_t initialized;\n\
              uint8_t started;\n\
              uint8_t dropped;\n\
+             uint8_t cancelled;\n\
              uint8_t structured_completed;\n",
     );
     for parameter in &function.params {
@@ -616,6 +651,10 @@ fn emit_async_child_init(
             out.push_str(" = 1u;\n");
         }
     }
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&child);
+    out.push_str(".initialized = 1u;\n");
 }
 
 fn emit_async_return_value(
@@ -682,6 +721,61 @@ fn emit_structured_completion(out: &mut String, indent: usize) {
     out.push_str("frame->structured_waiter_poll = NULL;\n");
     write_indent(out, indent);
     out.push_str("}\n");
+}
+
+fn emit_async_cancel_function(
+    out: &mut String,
+    function: &Function,
+    async_names: &BTreeSet<String>,
+) {
+    out.push_str("static void ");
+    out.push_str(&async_cancel_ident(&function.name));
+    out.push('(');
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(
+        " *frame, nomo_async_context *context) {\n\
+             if (frame->initialized == 0u || frame->cancelled != 0u || frame->structured_completed != 0u) {\n\
+                 return;\n\
+             }\n\
+             frame->cancelled = 1u;\n\
+             context->task_cancellations += 1u;\n\
+             nomo_async_ready_cancel_frame(context, frame);\n",
+    );
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(spawn) = statement_structured_spawn(statement) else {
+            continue;
+        };
+        out.push_str("    ");
+        out.push_str(&async_cancel_ident(spawn.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(call) = statement_async_call(statement, async_names) else {
+            continue;
+        };
+        out.push_str("    ");
+        out.push_str(&async_cancel_ident(call.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_sleep(statement).is_none() {
+            continue;
+        }
+        out.push_str("    nomo_async_timer_disarm(&frame->");
+        out.push_str(&async_timer_field(index));
+        out.push_str(", context);\n");
+    }
+    out.push_str(
+        "    frame->structured_waiter_frame = NULL;\n\
+             frame->structured_waiter_poll = NULL;\n\
+             frame->structured_completed = 1u;\n\
+             frame->state = UINT32_MAX;\n\
+         }\n\n",
+    );
 }
 
 fn emit_async_local_releases(
@@ -908,9 +1002,11 @@ struct nomo_async_context {
     uint64_t ready_queue_enqueues;
     uint64_t ready_queue_dequeues;
     uint64_t ready_queue_saturations;
+    uint64_t ready_queue_cancellations;
     uint64_t task_spawns;
     uint64_t task_joins;
     uint64_t join_suspensions;
+    uint64_t task_cancellations;
     uint64_t timer_registrations;
     uint64_t timer_expirations;
     uint64_t timer_cancellations;
@@ -963,6 +1059,36 @@ static int nomo_async_ready_dequeue(
     context->ready_count -= 1u;
     context->ready_queue_dequeues += 1u;
     return 0;
+}
+
+static void nomo_async_ready_cancel_frame(
+    nomo_async_context *context,
+    void *frame
+) {
+    uint32_t original_count = context->ready_count;
+    uint32_t kept_count = 0u;
+    for (uint32_t offset = 0u; offset < original_count; offset += 1u) {
+        uint32_t source_index =
+            (context->ready_head + offset) % NOMO_ASYNC_READY_CAPACITY;
+        nomo_async_ready_slot *source = &context->ready[source_index];
+        if (source->frame == frame) {
+            source->frame = NULL;
+            source->poll = NULL;
+            context->ready_queue_cancellations += 1u;
+            continue;
+        }
+        uint32_t destination_index =
+            (context->ready_head + kept_count) % NOMO_ASYNC_READY_CAPACITY;
+        if (destination_index != source_index) {
+            context->ready[destination_index] = *source;
+            source->frame = NULL;
+            source->poll = NULL;
+        }
+        kept_count += 1u;
+    }
+    context->ready_count = kept_count;
+    context->ready_tail =
+        (context->ready_head + kept_count) % NOMO_ASYNC_READY_CAPACITY;
 }
 
 static nomo_async_poll nomo_async_timer_start(
@@ -1199,9 +1325,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"ready_queue_enqueues\": %" PRIu64 ",\n"
         "    \"ready_queue_dequeues\": %" PRIu64 ",\n"
         "    \"ready_queue_saturations\": %" PRIu64 ",\n"
+        "    \"ready_queue_cancellations\": %" PRIu64 ",\n"
         "    \"task_spawns\": %" PRIu64 ",\n"
         "    \"task_joins\": %" PRIu64 ",\n"
         "    \"join_suspensions\": %" PRIu64 ",\n"
+        "    \"task_cancellations\": %" PRIu64 ",\n"
         "    \"timer_registrations\": %" PRIu64 ",\n"
         "    \"timer_expirations\": %" PRIu64 ",\n"
         "    \"timer_cancellations\": %" PRIu64 ",\n"
@@ -1220,9 +1348,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->ready_queue_enqueues,
         context->ready_queue_dequeues,
         context->ready_queue_saturations,
+        context->ready_queue_cancellations,
         context->task_spawns,
         context->task_joins,
         context->join_suspensions,
+        context->task_cancellations,
         context->timer_registrations,
         context->timer_expirations,
         context->timer_cancellations,
@@ -1262,6 +1392,7 @@ pub(super) fn emit_async_function(
     out.push_str(
         " *)raw_frame;\n\
              if (frame->started == 0u) {\n\
+                 frame->initialized = 1u;\n\
                  frame->started = 1u;\n\
                  frame->context = context;\n\
                  context->live_frames += 1u;\n\
@@ -1306,6 +1437,22 @@ pub(super) fn emit_async_function(
             out.push_str(" = 1u;\n            frame->");
             out.push_str(&async_child_field(index));
             out.push_str(".structured_completed = 1u;\n        }\n");
+            continue;
+        }
+        if let Some(cancel) = statement_structured_cancel(statement) {
+            let spawn_index = structured_spawn_index(function, cancel.handle)
+                .expect("validated structured cancellation handle has a spawn");
+            let spawn = statement_structured_spawn(&function.body[spawn_index])
+                .expect("structured cancellation spawn exists");
+            out.push_str("            ");
+            out.push_str(&async_cancel_ident(spawn.callee));
+            out.push_str("(&frame->");
+            out.push_str(&async_child_field(spawn_index));
+            out.push_str(", context);\n            ");
+            out.push_str(&async_drop_ident(spawn.callee));
+            out.push_str("(&frame->");
+            out.push_str(&async_child_field(spawn_index));
+            out.push_str(");\n");
             continue;
         }
         if statement_is_async_suspend(statement, async_names) {
@@ -1679,10 +1826,10 @@ pub(super) fn emit_async_function(
                  default:\n\
                      return NOMO_ASYNC_POLL_READY;\n\
              }\n\
-         }\n\
-         \n\
-         static void ",
+         }\n\n",
     );
+    emit_async_cancel_function(out, function, async_names);
+    out.push_str("static void ");
     out.push_str(&async_drop_ident(&function.name));
     out.push('(');
     out.push_str(&async_frame_ident(&function.name));

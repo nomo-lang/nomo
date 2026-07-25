@@ -340,11 +340,13 @@ embedded child frame, and schedules it on the bounded 64-entry FIFO. The child
 return type becomes `Task<T>`. Join suspends only until that child completes,
 moves the result exactly once, and returns `Result<T, TaskError>`; queue
 saturation is reported with the stable `queue_full` code. Each inferred
-immutable handle must stay in its scope and be joined exactly once. Nested
-helpers may use a final scope `return` after every child is joined. Nested
-scopes, nested control flow, unjoined early exit, cancellation, deadlines,
-channels, and select are not in this slice. Browser WASM does not execute the
-child yet and returns `runtime_unavailable` from join.
+immutable handle must stay in its scope and may be joined at most once. Normal
+scope fallthrough automatically cancels and drops unjoined children, including
+ready-queue and timer cleanup. Nested helpers may use a final scope `return`
+after every child is joined. Nested scopes, nested control flow, unjoined early
+control transfer, explicit cancellation, deadlines, channels, and select are
+not in this slice. Browser WASM does not execute structured children; join
+returns `runtime_unavailable` and normal-scope cleanup is inert.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is

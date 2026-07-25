@@ -175,6 +175,14 @@ jobs:
           grep 'nomo_payload_Ok = frame->nomo_async_child_' "$structured_dir/c/main.c"
           grep 'structured_waiter_frame = context->current_frame' "$structured_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$structured_dir/c/main.c"
+          target/release/nomo build examples/async_structured_cancel --target x86_64-apple-darwin
+          cancel_dir="examples/async_structured_cancel/build/x86_64-apple-darwin-none"
+          cancel_artifact="$cancel_dir/bin/async_structured_cancel"
+          test "$(lipo -archs "$cancel_artifact")" = "x86_64"
+          grep 'nomo_async_ready_cancel_frame' "$cancel_dir/c/main.c"
+          grep 'nomo_async_cancel_slow_child' "$cancel_dir/c/main.c"
+          grep 'nomo_async_timer_disarm' "$cancel_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$cancel_dir/c/main.c"
           target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
           sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -196,6 +204,7 @@ jobs:
             examples/isolated_tasks/build/x86_64-apple-darwin-none
             examples/async_yield/build/x86_64-apple-darwin-none
             examples/async_structured_return/build/x86_64-apple-darwin-none
+            examples/async_structured_cancel/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
@@ -267,6 +276,16 @@ jobs:
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$structured_dir/c/main.c"
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$structured_artifact" \
             | grep '^gathered$'
+          target/release/nomo build examples/async_structured_cancel --target aarch64-unknown-linux-gnu
+          cancel_dir="examples/async_structured_cancel/build/aarch64-unknown-linux-gnu"
+          cancel_artifact="$cancel_dir/bin/async_structured_cancel"
+          readelf -h "$cancel_artifact" | grep 'Machine:.*AArch64'
+          grep 'nomo_async_ready_cancel_frame' "$cancel_dir/c/main.c"
+          grep 'nomo_async_cancel_slow_child' "$cancel_dir/c/main.c"
+          grep 'nomo_async_timer_disarm' "$cancel_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$cancel_dir/c/main.c"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$cancel_artifact" \
+            | grep '^scope closed$'
           target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
           sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -293,5 +312,6 @@ jobs:
             examples/isolated_tasks/build/aarch64-unknown-linux-gnu
             examples/async_yield/build/aarch64-unknown-linux-gnu
             examples/async_structured_return/build/aarch64-unknown-linux-gnu
+            examples/async_structured_cancel/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

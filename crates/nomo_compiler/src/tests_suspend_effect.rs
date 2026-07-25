@@ -1184,9 +1184,36 @@ suspend fn main() -> void {
     }
 }
 "#;
-    let error = parse_inline(unjoined_handles).unwrap_err();
-    assert_eq!(error.code, "E0872");
-    assert!(error.message.contains("alpha, zebra"));
+    let program = parse_inline(unjoined_handles).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[2],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_structured_task_cancel"
+                && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "alpha")
+    ));
+    assert!(matches!(
+        &main.body[3],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_structured_task_cancel"
+                && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "zebra")
+    ));
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        unjoined_handles,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_async_executor_run_root"));
+    assert!(c.contains("nomo_async_ready_cancel_frame(context, frame);"));
+    assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_0, context);"));
+    assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_1, context);"));
 
     let non_terminal_return = r#"package app.main
 

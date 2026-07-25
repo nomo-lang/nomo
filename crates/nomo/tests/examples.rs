@@ -32,6 +32,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_structured_void",
     "async_structured_results",
     "async_structured_return",
+    "async_structured_cancel",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1284,6 +1285,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
             "left before\nright before\nleft after\nright after\nleft right\n"
         }
         "async_structured_return" => "gathered before\ngathered after\ngathered\n",
+        "async_structured_cancel" => "slow before\ngate\nscope closed\n",
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"

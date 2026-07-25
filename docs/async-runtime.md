@@ -101,6 +101,9 @@ On the native C99 backend, a suspend call chain that reaches
   structured spawn cannot enter the 64-entry ready queue;
 - exactly-once transfer of a typed child result into the successful join
   payload before the child frame is dropped;
+- compiler-inserted normal-scope cleanup that cancels unjoined children,
+  removes their ready-queue entries, disarms owned timers, and drops their
+  frames before the next statement after the scope;
 - exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
@@ -109,7 +112,8 @@ This slice creates no OS thread, heap task, reactor, or atomic metadata. A
 ready zero-duration timer neither registers nor enters the queue. A positive
 timer is not polled again until its deadline moves the owner frame to the ready
 queue. The generated context records poll, yield, frame-drop/live-frame,
-enqueue/dequeue/saturation, structured spawn/join/join-suspension, and timer
+enqueue/dequeue/saturation/cancellation, structured
+spawn/join/join-suspension/cancellation, and timer
 registration/expiry/cancellation/live/peak counters.
 Native programs export the versioned
 `nomo-c99-current-thread` JSON payload only when
@@ -154,20 +158,23 @@ cross-suspension locals must be immutable frame-safe scalar, string, struct,
 enum, Result, or supported array values. Async `main` still returns `void`.
 Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
-expressions or argument expressions, `?`, explicit panic, cancellation, and
-reactor-backed I/O are later slices.
+expressions or argument expressions, `?`, explicit panic, explicit
+cancellation propagation, and reactor-backed I/O are later slices.
 
 Structured spawn/join is available only in a top-level `task.scope` body. Each
 spawn handle must use an inferred immutable binding, remain in that scope, and
-be joined exactly once. The target must be a direct unqualified, non-generic
-top-level `suspend fn` with immutable frame-safe parameters and result. Its
-return type becomes `Task<T>` and `task.join(handle) -> Result<T, TaskError>`.
+may be joined at most once. The target must be a direct unqualified,
+non-generic top-level `suspend fn` with immutable frame-safe parameters and
+result. Its return type becomes `Task<T>` and
+`task.join(handle) -> Result<T, TaskError>`.
 A final `return` may leave the scope only after every child has been explicitly
 joined; this supports typed result aggregation from a nested suspend helper.
-Nested scopes, nested scope control flow, unjoined early exit,
-defer/unsafe blocks, cancellation, deadlines, channels, and select remain
-later slices. E0871, E0872, E0875, and E0876 reject unsupported cases before
-code generation.
+On normal fallthrough, an unjoined child is cancelled and cleaned up
+automatically; its body does not resume after cancellation. Nested scopes,
+nested scope control flow, unjoined early control transfer, defer/unsafe
+blocks, explicit cancellation, deadlines, channels, and select remain later
+slices. E0871, E0872, E0875, and E0876 reject unsupported cases before code
+generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -183,7 +190,9 @@ tasks additionally test FIFO interleaving, one-shot join ownership, waiter
 wakeup, typed queue saturation, browser non-execution, and idempotent child
 cleanup. Managed typed results additionally test child-to-join ownership
 transfer, root-frame wakeup from a nested helper, post-join scope return, and
-repeated parent drop under AddressSanitizer.
+repeated parent drop under AddressSanitizer. Normal-scope cancellation tests
+cover both an armed timer and a never-polled ready child, including managed
+parameter release under AddressSanitizer.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
@@ -203,4 +212,5 @@ The P0/P1 controls and raw evidence format live in
 [`examples/async_structured_void`](../examples/async_structured_void) and
 [`examples/async_structured_results`](../examples/async_structured_results),
 plus
-[`examples/async_structured_return`](../examples/async_structured_return).
+[`examples/async_structured_return`](../examples/async_structured_return) and
+[`examples/async_structured_cancel`](../examples/async_structured_cancel).

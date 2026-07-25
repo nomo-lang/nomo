@@ -169,6 +169,8 @@ mod typing;
 mod validation;
 #[path = "validation/validation_imports.rs"]
 mod validation_imports;
+#[path = "validation/validation_suspend.rs"]
+mod validation_suspend;
 #[path = "validation/validation_tasks.rs"]
 mod validation_tasks;
 #[path = "validation/validation_type_diagnostics.rs"]
@@ -288,6 +290,7 @@ const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";
 const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
 const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
+const BUILTIN_TASK_YIELD_EXPR: &str = "__nomo_task_yield";
 const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
 const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
 const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";

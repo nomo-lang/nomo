@@ -26,6 +26,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "openai_streaming",
     "isolated_tasks",
     "suspend_ready",
+    "async_yield",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1268,6 +1269,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
             "completed:alpha\ncompleted:beta\nrejoin completed:alpha\njoin-limit invalid_argument\nbusy-close busy\ntimeout:pending\ncancelled:cooperative\nclosed-handle closed\nbefore-copy\nlive-limit limit\ninput-limit limit\noutput-limit limit\n"
         }
         "suspend_ready" => "suspend ready\n",
+        "async_yield" => "before yield\nafter first yield\nafter second yield\n",
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"

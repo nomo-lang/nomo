@@ -388,6 +388,9 @@ pub(super) fn resolve_specific_value_builtin(
         "is_cancelled" if imports.iter().any(|item| item == "std.task.is_cancelled") => {
             vec!["task".to_string(), "is_cancelled".to_string()]
         }
+        "yield_now" if imports.iter().any(|item| item == "std.task.yield_now") => {
+            vec!["task".to_string(), "yield_now".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.task.join") => {
             vec!["task".to_string(), "join".to_string()]
         }

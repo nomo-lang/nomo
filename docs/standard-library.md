@@ -291,6 +291,7 @@ operations work in browser WASM and inside isolated tasks. See
 general closures or shared managed values:
 
 ```nomo
+task.yield_now() -> void // suspend-only
 task.spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>
 task.is_cancelled(context: TaskContext) -> bool
 task.join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError>
@@ -298,11 +299,19 @@ task.cancel(task_value: Task) -> Result<void, TaskError>
 task.close(task_value: Task) -> Result<void, TaskError>
 ```
 
-This API is the legacy blocking/native isolation surface, not the new
-`suspend fn` task model. A suspend function is rejected as a `task.spawn`
-worker. RFC 0032 will migrate this compatibility API behind a bounded, lazy
-blocking pool as the nonblocking executor lands; P0 does not change its
-one-native-thread-per-worker implementation.
+`task.yield_now` is the first new `suspend fn` runtime primitive. In P1 it is
+accepted only as a standalone statement in parameterless
+`suspend fn main() -> void`. Native C99 execution uses a stack-allocated root
+frame and current-thread executor; the initial poll runs inline, and only a
+real yield enters the one-slot ready queue. Browser WASM treats the same call
+as a bounded cooperative boundary in the sandbox interpreter; the host-driven
+event backend is not implemented yet.
+
+The remaining functions above are the legacy blocking/native isolation
+surface, not aliases for the new suspend task model. A suspend function is
+rejected as a `task.spawn` worker. RFC 0032 will migrate this compatibility API
+behind a bounded, lazy blocking pool; it still uses one native thread per
+worker in this P1 slice.
 
 A worker is a non-generic, non-capturing, top-level function in the caller's
 package with the exact `fn(TaskContext, string) -> string` signature. Spawn
@@ -318,6 +327,9 @@ terminate a thread. `join(..., 0)` is a nonblocking poll and returns
 `TaskJoin.Timeout` while work remains. `close` returns `busy` until the worker
 finishes, then joins the native thread and releases the handle. Closed handles
 return the stable `closed` error.
+
+See the [async runtime implementation guide](async-runtime.md) and
+`examples/async_yield` for the current suspend-task boundary.
 
 #### Task safety
 

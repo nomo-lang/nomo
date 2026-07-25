@@ -303,9 +303,15 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         .iter()
         .find(|function| function.name == "main")
         .expect("checked programs always contain main");
+    let main_uses_async_yield = function_uses_async_yield(main);
     let main_returns_result = result_void_error(&main.return_type).is_some();
-    let emit_main_function =
-        main_returns_result || uses_task_runtime(program) || uses_sqlite_runtime(program);
+    let emit_main_function = !main_uses_async_yield
+        && (main_returns_result || uses_task_runtime(program) || uses_sqlite_runtime(program));
+
+    if main_uses_async_yield {
+        emit_current_thread_executor(&mut out);
+        out.push('\n');
+    }
 
     for function in program
         .functions
@@ -366,6 +372,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_function(&mut out, function);
         out.push('\n');
     }
+    if main_uses_async_yield {
+        emit_async_main(&mut out, main);
+        out.push('\n');
+    }
 
     if uses_env_args(program) {
         out.push_str("int main(int argc, char **argv) {\n");
@@ -376,7 +386,25 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push_str("    nomo_argc = argc;\n");
         out.push_str("    nomo_argv = argv;\n");
     }
-    if let Some(result_args) = result_void_error(&main.return_type) {
+    if main_uses_async_yield {
+        out.push_str("    nomo_async_frame_main nomo__frame = {0};\n");
+        out.push_str("    nomo_async_context nomo__context = {0};\n");
+        out.push_str(
+            "    int nomo__status = nomo_async_executor_run_root(\n\
+                     &nomo__frame,\n\
+                     nomo_async_poll_main,\n\
+                     &nomo__context\n\
+                 );\n",
+        );
+        out.push_str("    nomo_async_drop_main(&nomo__frame);\n");
+        if uses_task_runtime(program) {
+            out.push_str("    nomo_task_shutdown();\n");
+        }
+        if uses_sqlite_runtime(program) {
+            out.push_str("    nomo_sqlite_shutdown();\n");
+        }
+        out.push_str("    return nomo__status;\n");
+    } else if let Some(result_args) = result_void_error(&main.return_type) {
         let result_type = c_enum_ident("Result", &result_args);
         out.push_str("    ");
         out.push_str(&result_type);

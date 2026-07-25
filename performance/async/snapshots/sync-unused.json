@@ -18,6 +18,6 @@
   "runtime_counters": {
     "available": false,
     "available_phase": "P1",
-    "reason": "P0 has no async runtime to instrument"
+    "reason": "this P0 synchronous control must not initialize the P1 runtime; versioned P1 workloads will export runtime counters"
   }
 }

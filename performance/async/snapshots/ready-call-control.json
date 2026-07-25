@@ -18,6 +18,6 @@
   "runtime_counters": {
     "available": false,
     "available_phase": "P1",
-    "reason": "P0 has no suspension primitive or async runtime to instrument"
+    "reason": "this P0 always-ready control does not enter the P1 yield executor; versioned P1 workloads will export runtime counters"
   }
 }

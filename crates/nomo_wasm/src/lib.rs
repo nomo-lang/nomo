@@ -336,6 +336,27 @@ fn main() -> void {
     }
 
     #[test]
+    fn runs_the_p1_cooperative_yield_surface_in_the_browser_sandbox() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn main() -> void {
+    io.println("before")
+    task.yield_now()
+    io.println("after")
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "before\nafter\n");
+        assert!(response.diagnostic.is_none());
+        assert!(response.stats.steps >= 2);
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

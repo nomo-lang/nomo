@@ -398,6 +398,9 @@ impl<'a> Interpreter<'a> {
         if name == "__nomo_task_is_cancelled" {
             return Err(RuntimeError::capability("native tasks"));
         }
+        if name == "__nomo_task_yield" {
+            return Ok(Value::Void);
+        }
         if name.starts_with("__nomo_sqlite_") {
             let unavailable = matches!(name, "__nomo_sqlite_open" | "__nomo_sqlite_open_memory");
             return Ok(sqlite_runtime_error_result(if unavailable {

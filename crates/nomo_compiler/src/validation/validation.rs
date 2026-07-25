@@ -1,4 +1,5 @@
 pub(super) use crate::validation_imports::{validate_imports, validate_standard_type_imports};
+pub(super) use crate::validation_suspend::validate_p1_yield_function;
 pub(super) use crate::validation_tasks::validate_task_workers;
 pub(super) use crate::validation_type_diagnostics::{
     unsupported_type_diagnostic, unsupported_type_diagnostic_from_maps,

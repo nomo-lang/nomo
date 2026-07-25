@@ -26,6 +26,11 @@ pub enum TaskJoin {
     Timeout
 }
 
+/// Cooperatively yields the current suspend task to its owner executor.
+pub suspend fn yield_now() -> void {
+    task.yield_now()
+}
+
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
     return task.spawn(worker, input)

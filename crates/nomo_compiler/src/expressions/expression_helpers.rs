@@ -61,6 +61,13 @@ pub(super) fn lower_struct_value_method(
             &span.text,
         ));
     };
+    ensure_suspend_call_allowed(
+        path,
+        span,
+        &format!("{owner_name}.{method_name}"),
+        signature,
+        scope,
+    )?;
     if signature.return_type == ValueType::Void && !allow_void {
         return Err(type_mismatch(
             path,
@@ -196,6 +203,7 @@ pub(super) fn lower_call_arg_for_param(
                 ));
             };
             let callback_matches = signature.extern_symbol.is_none()
+                && !signature.is_suspend
                 && signature.type_params.is_empty()
                 && signature.params.iter().all(|param| !param.mutable)
                 && signature

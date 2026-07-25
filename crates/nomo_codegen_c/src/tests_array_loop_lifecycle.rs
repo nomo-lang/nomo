@@ -24,6 +24,7 @@ fn break_releases_only_loop_body_array_locals() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -98,6 +99,7 @@ fn for_in_releases_owned_iterable_temp_but_not_shared_iterable() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -166,6 +168,7 @@ fn for_in_releases_managed_binding_after_each_iteration() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -232,6 +235,7 @@ fn for_in_return_releases_owned_iterable_temp_and_managed_binding() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "take".to_string(),
                 params: Vec::new(),
@@ -250,6 +254,7 @@ fn for_in_return_releases_owned_iterable_temp_and_managed_binding() {
                 }],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

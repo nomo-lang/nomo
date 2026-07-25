@@ -290,6 +290,12 @@ impl Parser<'_> {
         is_test: bool,
     ) -> Result<Function, Diagnostic> {
         let function_token = self.peek().clone();
+        let is_suspend = if matches!(self.peek().kind, TokenKind::Suspend) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         self.expect_kind(TokenKind::Fn, "E0202", "expected `fn`")?;
         let name = self.expect_function_name()?;
         let type_params = self.parse_type_params(true)?;
@@ -337,6 +343,7 @@ impl Parser<'_> {
         Ok(Function {
             public,
             is_test,
+            is_suspend,
             package: Vec::new(),
             name,
             type_params: type_params.names,
@@ -372,7 +379,9 @@ impl Parser<'_> {
                         span: token_span(&interface_token),
                     });
                 }
-                TokenKind::Fn => methods.push(self.parse_interface_method_signature()?),
+                TokenKind::Fn | TokenKind::Suspend => {
+                    methods.push(self.parse_interface_method_signature()?)
+                }
                 TokenKind::Eof => {
                     return Err(self.error(
                         "E1502",
@@ -509,7 +518,9 @@ impl Parser<'_> {
             self.skip_newlines();
             let public = self.consume_pub();
             match self.peek().kind {
-                TokenKind::Fn => methods.push(self.parse_function(public, false)?),
+                TokenKind::Fn | TokenKind::Suspend => {
+                    methods.push(self.parse_function(public, false)?)
+                }
                 TokenKind::RBrace if !public => {
                     self.advance();
                     self.consume_newline();
@@ -547,6 +558,12 @@ impl Parser<'_> {
         allow_bare_self: bool,
     ) -> Result<FunctionSignature, Diagnostic> {
         let function_token = self.peek().clone();
+        let is_suspend = if matches!(self.peek().kind, TokenKind::Suspend) {
+            self.advance();
+            true
+        } else {
+            false
+        };
         self.expect_kind(TokenKind::Fn, fn_code, fn_message)?;
         let name = self.expect_ident(name_message)?;
         let type_params = self.parse_type_params(false)?;
@@ -559,6 +576,7 @@ impl Parser<'_> {
             void_type_ref()
         };
         Ok(FunctionSignature {
+            is_suspend,
             name,
             type_params: type_params.names,
             type_param_bounds: type_params.bounds,

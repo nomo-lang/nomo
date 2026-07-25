@@ -55,6 +55,7 @@ fn emits_cstring_and_opaque_extern_abi() {
         consts: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "double".to_string(),
                 params: vec![Parameter {
@@ -71,6 +72,7 @@ fn emits_cstring_and_opaque_extern_abi() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

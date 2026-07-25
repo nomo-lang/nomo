@@ -143,6 +143,11 @@ fn validate_test_function(
     if function.name == "main" {
         return Err(error("`#[test]` function cannot be named `main`"));
     }
+    if function.is_suspend {
+        return Err(error(
+            "`#[test]` functions must be synchronous until the async test runner is available",
+        ));
+    }
     if !function.type_params.is_empty() {
         return Err(error(
             "`#[test]` functions must not declare type parameters",

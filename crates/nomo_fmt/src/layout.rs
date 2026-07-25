@@ -30,6 +30,32 @@ pub(super) fn top_level_items(tokens: &[Token]) -> Vec<TopLevelItem> {
             break;
         }
         if depth == 0 {
+            if matches!(token.kind, TokenKind::Pub)
+                && matches!(
+                    tokens.get(index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Suspend)
+                )
+                && matches!(
+                    tokens.get(index + 2).map(|token| &token.kind),
+                    Some(TokenKind::Fn)
+                )
+            {
+                items.push(TopLevelItem::Function(functions));
+                functions += 1;
+                index += 3;
+                continue;
+            }
+            if matches!(token.kind, TokenKind::Suspend)
+                && matches!(
+                    tokens.get(index + 1).map(|token| &token.kind),
+                    Some(TokenKind::Fn)
+                )
+            {
+                items.push(TopLevelItem::Function(functions));
+                functions += 1;
+                index += 2;
+                continue;
+            }
             if is_extern_opaque_start(tokens, index) {
                 let item = TopLevelItem::ExternOpaque(extern_opaque_types);
                 extern_opaque_types += 1;

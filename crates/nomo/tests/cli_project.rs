@@ -1019,6 +1019,57 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_check_preserves_suspend_effects_across_local_modules() {
+    let root = temp_test_root("check-suspend-local-modules");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/worker.nomo"),
+        "package app.worker\n\npub suspend fn fetch() -> string {\n    return \"ready\"\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.worker\n\nfn main() -> void {\n    let value: string = fetch()\n}\n",
+    )
+    .unwrap();
+
+    let rejected = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert!(stderr.contains("E0870"), "{stderr}");
+    assert!(stderr.contains("suspend function `fetch`"), "{stderr}");
+
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.worker\n\nsuspend fn main() -> void {\n    let value: string = fetch()\n}\n",
+    )
+    .unwrap();
+    let accepted = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        accepted.status.success(),
+        "{}",
+        String::from_utf8_lossy(&accepted.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_test_json_reports_failures() {
     let root = temp_test_root("test-json-failure");
     reset_dir(&root);
@@ -1239,6 +1290,42 @@ fn nomo_test_rejects_parameters() {
     assert!(stderr.contains("E1101"), "{stderr}");
     assert!(
         stderr.contains("`#[test]` functions must not take parameters"),
+        "{stderr}"
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_test_rejects_suspend_functions_until_async_runner_is_available() {
+    let root = temp_test_root("test-rejects-suspend");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\n#[test]\nsuspend fn async_test() -> void {\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E1101"), "{stderr}");
+    assert!(
+        stderr.contains(
+            "`#[test]` functions must be synchronous until the async test runner is available"
+        ),
         "{stderr}"
     );
 

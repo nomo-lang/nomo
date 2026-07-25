@@ -365,6 +365,7 @@ fn interface_method_signature(
     })?;
     ensure_supported_value_type(path, &return_type, &signature.span)?;
     Ok(FunctionSignature {
+        is_suspend: signature.is_suspend,
         type_params: signature.type_params.clone(),
         params,
         return_type,
@@ -404,6 +405,15 @@ fn validate_interface_method_signature(
     actual: &FunctionSignature,
 ) -> Result<(), Diagnostic> {
     let method_label = format!("{owner_name}.{}", method.name);
+    if expected.is_suspend != actual.is_suspend {
+        return Err(interface_impl_error(
+            path,
+            Some(&method.span),
+            format!(
+                "method `{method_label}` suspend effect does not match interface `{interface_name}`"
+            ),
+        ));
+    }
     if expected.type_params != actual.type_params {
         return Err(interface_impl_error(
             path,

@@ -78,6 +78,7 @@ pub struct ExternBlock {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FunctionSignature {
+    pub is_suspend: bool,
     pub name: String,
     pub type_params: Vec<String>,
     pub type_param_bounds: Vec<TypeParamBound>,
@@ -106,6 +107,7 @@ pub struct ConstDef {
 pub struct Function {
     pub public: bool,
     pub is_test: bool,
+    pub is_suspend: bool,
     pub package: Vec<String>,
     pub name: String,
     pub type_params: Vec<String>,

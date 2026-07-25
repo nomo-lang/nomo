@@ -40,6 +40,8 @@ mod tests_std_process_debug_crypto;
 mod tests_std_sqlite;
 #[path = "tests_std_task.rs"]
 mod tests_std_task;
+#[path = "tests_suspend_effect.rs"]
+mod tests_suspend_effect;
 
 fn parse_inline(source: &str) -> Result<Program, Diagnostic> {
     let path = Path::new("main.nomo");

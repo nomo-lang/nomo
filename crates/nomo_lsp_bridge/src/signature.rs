@@ -42,8 +42,9 @@ pub(super) fn function_signature(function: &Function) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "{}fn {}{}({}) -> {}",
+        "{}{}fn {}{}({}) -> {}",
         visibility_prefix(function.public),
+        suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
@@ -59,8 +60,9 @@ pub(super) fn method_signature(receiver: &str, function: &Function) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "{}fn {receiver}.{}{}({}) -> {}",
+        "{}{}fn {receiver}.{}{}({}) -> {}",
         visibility_prefix(function.public),
+        suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
@@ -93,12 +95,17 @@ pub(super) fn interface_method_signature(owner: &str, method: &FunctionSignature
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "fn {owner}.{}{}({}) -> {}",
+        "{}fn {owner}.{}{}({}) -> {}",
+        suspend_prefix(method.is_suspend),
         method.name,
         type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
         type_ref(&method.return_type)
     )
+}
+
+fn suspend_prefix(is_suspend: bool) -> &'static str {
+    if is_suspend { "suspend " } else { "" }
 }
 
 pub(super) fn field_signature(owner: &str, field: &Field) -> String {
@@ -181,6 +188,7 @@ fn visibility_prefix(public: bool) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::Path;
 
     #[test]
     fn renders_task_worker_type_syntax() {
@@ -203,5 +211,20 @@ mod tests {
         };
 
         assert_eq!(type_ref(&worker), "task fn(TaskContext, string) -> string");
+    }
+
+    #[test]
+    fn renders_suspend_effect_in_semantic_signatures() {
+        let source = "package app.main\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+        let symbols = crate::symbols_for_text(Path::new("main.nomo"), source).unwrap();
+
+        let method = symbols.iter().find(|symbol| symbol.name == "load").unwrap();
+        assert_eq!(
+            method.signature,
+            "suspend fn Loader.load(self: Self) -> string"
+        );
+
+        let function = symbols.iter().find(|symbol| symbol.name == "run").unwrap();
+        assert_eq!(function.signature, "pub suspend fn run() -> string");
     }
 }

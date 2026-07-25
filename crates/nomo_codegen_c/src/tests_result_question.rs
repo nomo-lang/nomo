@@ -29,6 +29,7 @@ fn emits_result_question_let_early_return() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "parse".to_string(),
                 params: Vec::new(),
@@ -41,6 +42,7 @@ fn emits_result_question_let_early_return() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -71,6 +73,7 @@ fn emits_result_question_let_early_return() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -121,6 +124,7 @@ fn emits_result_void_question_let_without_void_temp() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "write".to_string(),
                 params: Vec::new(),
@@ -133,6 +137,7 @@ fn emits_result_void_question_let_without_void_temp() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -158,6 +163,7 @@ fn emits_result_void_question_let_without_void_temp() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -201,6 +207,7 @@ fn emits_result_void_question_return_without_void_temp() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "write".to_string(),
                 params: Vec::new(),
@@ -213,6 +220,7 @@ fn emits_result_void_question_return_without_void_temp() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -229,6 +237,7 @@ fn emits_result_void_question_return_without_void_temp() {
                 }],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

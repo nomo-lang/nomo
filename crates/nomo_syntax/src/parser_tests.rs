@@ -28,6 +28,30 @@ fn accepts_panic_as_a_contextual_function_name() {
 }
 
 #[test]
+fn parses_suspend_functions_methods_and_interface_signatures() {
+    let source = "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    assert!(ast.interfaces[0].methods[0].is_suspend);
+    assert!(ast.impls[0].methods[0].is_suspend);
+    assert!(ast.functions[0].public);
+    assert!(ast.functions[0].is_suspend);
+    assert_eq!(ast.functions[0].span.line, 16);
+    assert_eq!(ast.functions[0].span.column, 5);
+}
+
+#[test]
+fn rejects_suspend_extern_functions() {
+    let source = "package app.main\n\nextern \"C\" {\n    suspend fn wait() -> void\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let error = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+    assert_eq!(error.code, "E1514");
+    assert!(error.message.contains("extern function declaration"));
+}
+
+#[test]
 fn rejects_wildcard_imports_in_v0_1() {
     let source = "package app.main\n\nimport std.io.*\n\nfn main() -> void {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
@@ -1008,6 +1032,7 @@ fn parser_ast_golden_snapshot() {
         Function {
             public: false,
             is_test: false,
+            is_suspend: false,
             package: [
                 "app",
                 "main",

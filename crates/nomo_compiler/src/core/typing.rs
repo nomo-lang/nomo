@@ -326,6 +326,7 @@ pub(super) fn instantiate_function_signature(
     args: &[ValueType],
 ) -> FunctionSignature {
     FunctionSignature {
+        is_suspend: signature.is_suspend,
         type_params: Vec::new(),
         params: signature
             .params

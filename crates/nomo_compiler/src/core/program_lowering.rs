@@ -199,6 +199,7 @@ pub(super) fn lower_program(
                 signatures.insert(
                     fmt_interface_impl_marker(&interface_name, &owner_name),
                     FunctionSignature {
+                        is_suspend: false,
                         type_params: Vec::new(),
                         params: Vec::new(),
                         return_type: ValueType::Void,
@@ -550,6 +551,7 @@ fn prepare_entry_point(
             ast.functions.push(AstFunction {
                 public: false,
                 is_test: false,
+                is_suspend: false,
                 package: ast.package.clone(),
                 name: "main".to_string(),
                 type_params: Vec::new(),

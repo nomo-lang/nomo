@@ -68,7 +68,7 @@ impl Parser<'_> {
             let attributes = self.parse_declaration_attributes()?;
             let is_test = attributes.is_test;
             let public = self.consume_pub();
-            if is_test && !matches!(self.peek().kind, TokenKind::Fn) {
+            if is_test && !matches!(self.peek().kind, TokenKind::Fn | TokenKind::Suspend) {
                 return Err(self.error(
                     "E1100",
                     "`#[test]` can only be applied to a function",
@@ -108,7 +108,7 @@ impl Parser<'_> {
                     impls.push(self.parse_impl()?)
                 }
                 TokenKind::Const if !parsing_script_body => consts.push(self.parse_const(public)?),
-                TokenKind::Fn if !parsing_script_body => {
+                TokenKind::Fn | TokenKind::Suspend if !parsing_script_body => {
                     functions.push(self.parse_function(public, is_test)?)
                 }
                 TokenKind::Eof if !public && !is_test && !attributes.repr_c => break,
@@ -553,6 +553,7 @@ fn is_declaration_start(kind: &TokenKind, public: bool) -> bool {
             | TokenKind::Enum
             | TokenKind::Interface
             | TokenKind::Const
+            | TokenKind::Suspend
             | TokenKind::Fn
     ) || (!public && matches!(kind, TokenKind::Impl | TokenKind::Extern))
 }

@@ -55,6 +55,7 @@ pub struct EnumVariantType {
 pub struct Function {
     pub package: String,
     pub name: String,
+    pub is_suspend: bool,
     pub params: Vec<Parameter>,
     pub return_type: ValueType,
     pub body: Vec<Statement>,

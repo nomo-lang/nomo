@@ -47,6 +47,7 @@ fn emits_array_releases_before_return_and_question_error_exit() {
         ],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "parse".to_string(),
                 params: Vec::new(),
@@ -59,6 +60,7 @@ fn emits_array_releases_before_return_and_question_error_exit() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -97,6 +99,7 @@ fn emits_array_releases_before_return_and_question_error_exit() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -173,6 +176,7 @@ fn emits_question_return_with_cleanup_on_error_and_success() {
         ],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "parse".to_string(),
                 params: Vec::new(),
@@ -185,6 +189,7 @@ fn emits_question_return_with_cleanup_on_error_and_success() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -210,6 +215,7 @@ fn emits_question_return_with_cleanup_on_error_and_success() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -289,6 +295,7 @@ fn question_let_retains_managed_payloads_when_result_expr_is_shared() {
         ],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -328,6 +335,7 @@ fn question_let_retains_managed_payloads_when_result_expr_is_shared() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

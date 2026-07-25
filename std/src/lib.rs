@@ -25,6 +25,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.array" => Some(ARRAY_SOURCE),
         "std.char" => Some(include_str!("char.nomo")),
         "std.collections" => Some(include_str!("collections.nomo")),
+        "std.cron" => Some(include_str!("cron.nomo")),
         "std.crypto" => Some(include_str!("crypto.nomo")),
         "std.debug" => Some(include_str!("debug.nomo")),
         "std.env" => Some(include_str!("env.nomo")),
@@ -108,6 +109,13 @@ const COLLECTIONS_ITEMS: &[&str] = &[
     "set_len",
     "set_new",
     "set_remove",
+];
+const CRON_ITEMS: &[&str] = &[
+    "CronError",
+    "CronSchedule",
+    "matches",
+    "next_after",
+    "parse",
 ];
 const CRYPTO_ITEMS: &[&str] = &["random_bytes", "sha256", "sha512"];
 const DEBUG_ITEMS: &[&str] = &["backtrace", "panic", "print", "println"];
@@ -589,6 +597,12 @@ pub const MODULES: &[StandardModule] = &[
         doc_items: &[],
     },
     StandardModule {
+        path: "std.cron",
+        docs: "bounded UTC cron schedule calculation",
+        items: CRON_ITEMS,
+        doc_items: &[],
+    },
+    StandardModule {
         path: "std.crypto",
         docs: "cryptographic digest helpers",
         items: CRYPTO_ITEMS,
@@ -750,6 +764,7 @@ const SOURCE_DEFINED_MODULES: &[&str] = &[
     "std.array",
     "std.char",
     "std.collections",
+    "std.cron",
     "std.crypto",
     "std.debug",
     "std.env",
@@ -1334,12 +1349,13 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 291);
+        assert_eq!(imports.len(), 297);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
         assert!(is_supported_import("std.num.to_string"));
         assert!(is_supported_import("std.jsonrpc.feed"));
+        assert!(is_supported_import("std.cron.next_after"));
         assert!(!is_supported_import("std.io.flush"));
     }
 

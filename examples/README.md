@@ -32,6 +32,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep
+- `cron_schedule`: bounded five-field UTC cron calculation plus an application-owned sliced wait loop
 - `std_json`: `std.json` parse and stringify helpers
 - `structured_json`: bounded structured JSON construction and nested OpenAI-compatible response traversal
 - `std_http`: `std.http` blocking GET and POST client helpers

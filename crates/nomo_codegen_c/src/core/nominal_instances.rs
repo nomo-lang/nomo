@@ -397,7 +397,9 @@ fn collect_expr_struct(
                 collect_expr_struct(arg, seen, out);
             }
         }
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => {
             for arg in args {
                 collect_expr_struct(arg, seen, out);
             }

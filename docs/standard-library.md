@@ -38,8 +38,8 @@ host-sensitive calls through its builtin/runtime backing while this source
 migration is in progress; the source files are the documentation and semantic
 surface for signatures and visibility. The source registry currently covers
 `fmt`, `io`, `fs`, `path`, `env`, `process`, `time`, `num`, `math`, `char`, `os`,
-`collections`, `hash`, `crypto`, `json`, `regex`, `debug`, `log`, `testing`,
-`net`, `http`, `sqlite`, `task`, and `ffi`.
+`collections`, `hash`, `crypto`, `json`, `jsonrpc`, `cron`, `regex`, `debug`,
+`log`, `testing`, `net`, `http`, `sqlite`, `task`, and `ffi`.
 
 ## Propagation Carriers
 
@@ -256,6 +256,35 @@ num.wrapping_mul(left: integer, right: same integer type) -> same integer type
 helpers. Durations store signed milliseconds, `format_duration` returns strings
 such as `1500ms`, and sleep helpers panic for negative durations.
 
+### `std.cron`
+
+`std.cron` provides bounded five-field UTC schedule calculation:
+
+```nomo
+cron.parse(expression: string) -> Result<CronSchedule, CronError>
+cron.matches(schedule: CronSchedule, unix_millis: i64) -> Result<bool, CronError>
+cron.next_after(schedule: CronSchedule, unix_millis: i64) -> Result<i64, CronError>
+```
+
+Fields are minute (`0..59`), hour (`0..23`), day of month (`1..31`), month
+(`1..12`), and day of week (`0..6`, Sunday zero). A field accepts wildcard,
+unsigned values, inclusive ranges, lists, and wildcard/range steps. Expressions
+are limited to 256 bytes. Calculation uses the UTC proleptic Gregorian calendar
+from 1970 through 9999 and does not depend on the host locale or timezone
+database.
+
+`matches` ignores seconds and milliseconds within the supplied UTC minute.
+`next_after` returns a minute boundary strictly later than the supplied instant
+and searches at most 4,208,400 minutes. `CronSchedule` is opaque; parse and
+calculation errors return stable `syntax`, `range`, `limit`, `timestamp_range`,
+or `no_match` codes without reproducing the rejected expression.
+
+The module calculates schedules but does not own callbacks, threads, job
+persistence, overlap, or missed-run policy. Native Agents compose it with
+`std.time`, `std.task`, and optionally `std.sqlite`. The pure calculation
+operations work in browser WASM and inside isolated tasks. See
+`examples/cron_schedule`.
+
 ### `std.task`
 
 `std.task` provides bounded, isolated native workers without introducing
@@ -287,7 +316,8 @@ return the stable `closed` error.
 #### Task safety
 
 The compiler checks the worker's transitive call graph. Local computation,
-managed values created inside the worker, arrays, strings, JSON, regex,
+managed values created inside the worker, arrays, strings, JSON, JSON-RPC,
+cron calculation, regex,
 collections, hashing, crypto, numeric/path/OS helpers, monotonic time/sleep,
 `task.is_cancelled`, and nonstreaming `http.get`/`post`/`send` are accepted.
 Unsafe/extern/FFI calls, nested tasks, filesystem/environment/process/TCP/UDP,

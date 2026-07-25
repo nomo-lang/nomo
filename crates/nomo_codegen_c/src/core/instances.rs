@@ -518,7 +518,9 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
                 collect_expr_result_map_err(arg, out);
             }
         }
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => {
             for arg in args {
                 collect_expr_result_map_err(arg, out);
             }
@@ -944,7 +946,9 @@ where
                 walk_expr(arg, visit);
             }
         }
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => {
             for arg in args {
                 walk_expr(arg, visit);
             }

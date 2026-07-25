@@ -1238,6 +1238,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "c_keywords" => "c keywords ok\n",
         "comments" => "comments ok\nhttp://example.test/*literal*/\n",
         "const" => "hello\nhello\nhello\nconst primitives ok\n",
+        "cron_schedule" => "next=900000\n",
         "defer" => {
             "working\ncontinue cleanup\nbreak cleanup\nblock\ninner\nafter block\ninner early\nouter early\nclose\nflush\nlog\n"
         }

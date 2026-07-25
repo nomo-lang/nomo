@@ -11,10 +11,10 @@
 )]
 
 use nomo_ir::{
-    BinaryOp, DeferredCall, EnumType, ExternFunction, Function, JsonOperation, JsonRpcOperation,
-    LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction, MathUnaryFunction,
-    NumBinaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp, ValueExpr,
-    ValueType,
+    BinaryOp, CronOperation, DeferredCall, EnumType, ExternFunction, Function, JsonOperation,
+    JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction,
+    MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp,
+    ValueExpr, ValueType,
 };
 use std::collections::BTreeSet;
 
@@ -37,6 +37,8 @@ mod expression_string_char;
 #[path = "expressions/expressions.rs"]
 mod expressions;
 // Runtime and host helper emission.
+#[path = "runtime/host_cron_helpers.rs"]
+mod host_cron_helpers;
 #[path = "runtime/host_env_process_helpers.rs"]
 mod host_env_process_helpers;
 #[path = "runtime/host_file_helpers.rs"]
@@ -121,6 +123,7 @@ use expression_result_option::*;
 use expression_std_misc::*;
 use expression_string_char::*;
 use expressions::*;
+use host_cron_helpers::*;
 use host_env_process_helpers::*;
 use host_file_helpers::*;
 use host_fs_helpers::*;

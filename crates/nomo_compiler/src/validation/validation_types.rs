@@ -320,6 +320,10 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "JsonRpcProtocolError")?;
         reject_user_std_enum(path, enums, "JsonRpcMessageKind")?;
     }
+    if needs.cron {
+        reject_user_std_struct(path, structs, "CronError")?;
+        reject_user_std_struct(path, structs, "CronSchedule")?;
+    }
     if needs.sqlite {
         reject_user_std_struct(path, structs, "SqliteColumn")?;
         reject_user_std_struct(path, structs, "SqliteDatabase")?;

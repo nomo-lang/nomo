@@ -110,6 +110,11 @@ jobs:
           test "$(lipo -archs "$json_artifact")" = "x86_64"
           grep 'nomo_json_from_object' \
             examples/structured_json/build/x86_64-apple-darwin-none/c/main.c
+          target/release/nomo build examples/cron_schedule --target x86_64-apple-darwin
+          cron_dir="examples/cron_schedule/build/x86_64-apple-darwin-none"
+          cron_artifact="$cron_dir/bin/cron_schedule"
+          test "$(lipo -archs "$cron_artifact")" = "x86_64"
+          grep 'nomo_cron_next_after' "$cron_dir/c/main.c"
           target/release/nomo build examples/isolated_tasks --target x86_64-apple-darwin
           task_artifact="examples/isolated_tasks/build/x86_64-apple-darwin-none/bin/isolated_tasks"
           test "$(lipo -archs "$task_artifact")" = "x86_64"
@@ -132,6 +137,7 @@ jobs:
           path: |
             examples/result_helpers/build/x86_64-apple-darwin-none
             examples/structured_json/build/x86_64-apple-darwin-none
+            examples/cron_schedule/build/x86_64-apple-darwin-none
             examples/isolated_tasks/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
@@ -171,6 +177,13 @@ jobs:
           readelf -h "$json_artifact" | grep 'Machine:.*AArch64'
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$json_artifact" \
             | grep 'Hello from structured JSON'
+          target/release/nomo build examples/cron_schedule --target aarch64-unknown-linux-gnu
+          cron_dir="examples/cron_schedule/build/aarch64-unknown-linux-gnu"
+          cron_artifact="$cron_dir/bin/cron_schedule"
+          readelf -h "$cron_artifact" | grep 'Machine:.*AArch64'
+          grep 'nomo_cron_next_after' "$cron_dir/c/main.c"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$cron_artifact" \
+            | grep 'next=900000'
           target/release/nomo build examples/isolated_tasks --target aarch64-unknown-linux-gnu
           task_artifact="examples/isolated_tasks/build/aarch64-unknown-linux-gnu/bin/isolated_tasks"
           readelf -h "$task_artifact" | grep 'Machine:.*AArch64'
@@ -198,6 +211,7 @@ jobs:
           path: |
             examples/result_helpers/build/aarch64-unknown-linux-gnu
             examples/structured_json/build/aarch64-unknown-linux-gnu
+            examples/cron_schedule/build/aarch64-unknown-linux-gnu
             examples/isolated_tasks/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

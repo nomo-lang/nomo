@@ -129,6 +129,15 @@ pub(super) fn resolve_specific_value_builtin(
         "random_bytes" if imports.iter().any(|item| item == "std.crypto.random_bytes") => {
             vec!["crypto".to_string(), "random_bytes".to_string()]
         }
+        "parse" if imports.iter().any(|item| item == "std.cron.parse") => {
+            vec!["cron".to_string(), "parse".to_string()]
+        }
+        "matches" if imports.iter().any(|item| item == "std.cron.matches") => {
+            vec!["cron".to_string(), "matches".to_string()]
+        }
+        "next_after" if imports.iter().any(|item| item == "std.cron.next_after") => {
+            vec!["cron".to_string(), "next_after".to_string()]
+        }
         "parse" if imports.iter().any(|item| item == "std.json.parse") => {
             vec!["json".to_string(), "parse".to_string()]
         }

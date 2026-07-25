@@ -7930,6 +7930,116 @@ fn nomo_run_executes_bounded_jsonrpc_framing_conformance() {
 }
 
 #[test]
+fn cron_conformance_fixture_matches_native_runtime() {
+    let root = temp_test_root("std-cron-conformance");
+    reset_dir(&root);
+    let project = root.join("cron_conformance");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"cron_conformance\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::copy(
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tests/fixtures/cron_conformance.nomo"),
+        project.join("src/main.nomo"),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(
+        stdout,
+        "true\n60000\n900000\n3600000\n68169600000\n4233686400000\ntrue\nfalse\ntrue\nfalse\nrange 0\nrange 0\nsyntax 0\nrange 0\nlimit 5\nsyntax 5 invalid cron expression syntax\ntimestamp_range 5\nno_match 5\n"
+    );
+    assert!(!stdout.contains("NOMO_CRON_SECRET_SENTINEL"));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn cron_native_expression_limit_accepts_the_exact_boundary() {
+    let root = temp_test_root("std-cron-expression-boundary");
+    reset_dir(&root);
+    let project = root.join("cron_expression_boundary");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"cron_expression_boundary\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let exact = format!("{} 00 * * *", vec!["0"; 124].join(","));
+    assert_eq!(exact.len(), 256);
+    let overflow = format!("{exact} ");
+    assert_eq!(overflow.len(), 257);
+    fs::write(
+        project.join("src/main.nomo"),
+        format!(
+            r#"package app.main
+
+import std.cron
+import std.io
+
+fn main() -> void {{
+    let exact: Result<CronSchedule, CronError> = cron.parse("{exact}")
+    match exact {{
+        Ok(value) => {{
+            io.println("exact-ok")
+        }}
+        Err(error) => {{
+            panic(error.message)
+        }}
+    }}
+    let overflow: Result<CronSchedule, CronError> = cron.parse("{overflow}")
+    match overflow {{
+        Ok(value) => {{
+            panic("overflow expression was accepted")
+        }}
+        Err(error) => {{
+            io.println(error.code)
+        }}
+    }}
+}}
+"#
+        ),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "exact-ok\nlimit\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn jsonrpc_native_errors_are_bounded_and_secret_safe() {
     let root = temp_test_root("std-jsonrpc-errors");
     reset_dir(&root);

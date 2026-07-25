@@ -380,9 +380,9 @@ pub(super) fn expr_uses_env_get(expr: &ValueExpr) -> bool {
             expr_uses_env_get(index) || expr_uses_env_get(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_get),
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
-            args.iter().any(expr_uses_env_get)
-        }
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => args.iter().any(expr_uses_env_get),
         ValueExpr::StringLen { value }
         | ValueExpr::StringIsEmpty { value }
         | ValueExpr::StringTrim { value }
@@ -623,9 +623,9 @@ pub(super) fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             expr_uses_env_args(index) || expr_uses_env_args(value)
         }
         ValueExpr::Call { args, .. } => args.iter().any(expr_uses_env_args),
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
-            args.iter().any(expr_uses_env_args)
-        }
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => args.iter().any(expr_uses_env_args),
         ValueExpr::StringLen { value }
         | ValueExpr::StringIsEmpty { value }
         | ValueExpr::StringTrim { value }

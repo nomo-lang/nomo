@@ -268,6 +268,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_jsonrpc_helpers(&mut out);
         out.push('\n');
     }
+    if uses_cron_builtin(program) {
+        emit_cron_helpers(&mut out);
+        out.push('\n');
+    }
     if uses_regex_builtin(program) {
         emit_regex_helpers(&mut out);
         out.push('\n');

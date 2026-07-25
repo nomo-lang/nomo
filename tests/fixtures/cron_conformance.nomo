@@ -1,0 +1,121 @@
+package app.main
+
+import std.cron
+import std.fmt
+import std.io
+
+fn run() -> Result<void, CronError> {
+    let every: CronSchedule = cron.parse("* * * * *")?
+    io.println(fmt.to_string(cron.matches(every, 0)?))
+    io.println(fmt.to_string(cron.next_after(every, 0)?))
+
+    let quarter_hour: CronSchedule = cron.parse("*/15 * * * *")?
+    io.println(fmt.to_string(cron.next_after(quarter_hour, 0)?))
+
+    let combined: CronSchedule = cron.parse("0,15-30/5,59 1-20/3 1,3,5 1-12 0-6")?
+    io.println(fmt.to_string(cron.next_after(combined, 0)?))
+
+    let leap_day: CronSchedule = cron.parse("0 0 29 2 *")?
+    io.println(fmt.to_string(cron.next_after(leap_day, 0)?))
+    io.println(fmt.to_string(cron.next_after(leap_day, 3981312000000)?))
+
+    let day_or: CronSchedule = cron.parse("0 0 2 * 4")?
+    io.println(fmt.to_string(cron.matches(day_or, 86400000)?))
+    io.println(fmt.to_string(cron.matches(day_or, 172800000)?))
+
+    let unrestricted_day: CronSchedule = cron.parse("0 0 */1 * 4")?
+    io.println(fmt.to_string(cron.matches(unrestricted_day, 0)?))
+    io.println(fmt.to_string(cron.matches(unrestricted_day, 86400000)?))
+
+    let bad_range: Result<CronSchedule, CronError> = cron.parse("60 * * * *")
+    match bad_range {
+        Ok(value) => {
+            panic("out-of-range minute was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let descending: Result<CronSchedule, CronError> = cron.parse("5-1 * * * *")
+    match descending {
+        Ok(value) => {
+            panic("descending cron range was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let value_step: Result<CronSchedule, CronError> = cron.parse("1/2 * * * *")
+    match value_step {
+        Ok(value) => {
+            panic("single-value cron step was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let zero_step: Result<CronSchedule, CronError> = cron.parse("*/0 * * * *")
+    match zero_step {
+        Ok(value) => {
+            panic("zero cron step was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let too_long: Result<CronSchedule, CronError> = cron.parse("*****************************************************************************************************************************************************************************************************************************************************************")
+    match too_long {
+        Ok(value) => {
+            panic("oversized cron expression was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let secret: Result<CronSchedule, CronError> = cron.parse("NOMO_CRON_SECRET_SENTINEL")
+    match secret {
+        Ok(value) => {
+            panic("invalid cron expression was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {} {}", error.code, error.field, error.message))
+        }
+    }
+
+    let invalid_time: Result<bool, CronError> = cron.matches(every, -1)
+    match invalid_time {
+        Ok(value) => {
+            panic("negative timestamp was accepted")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+
+    let no_later: Result<i64, CronError> = cron.next_after(every, 253402300799999)
+    match no_later {
+        Ok(value) => {
+            panic("timestamp after the supported range was produced")
+        }
+        Err(error) => {
+            io.println(fmt.format("{} {}", error.code, error.field))
+        }
+    }
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, CronError> = run()
+    match result {
+        Ok(value) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}

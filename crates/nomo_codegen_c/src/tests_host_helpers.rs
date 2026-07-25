@@ -21,6 +21,8 @@ fn omits_jsonrpc_runtime_when_unused() {
     let c = emit_c(&program);
     assert!(!c.contains("nomo_jsonrpc_decoder"));
     assert!(!c.contains("NOMO_JSONRPC_MAX_MESSAGE_BYTES"));
+    assert!(!c.contains("nomo_cron_parse"));
+    assert!(!c.contains("NOMO_CRON_SEARCH_MINUTES"));
 }
 
 #[test]

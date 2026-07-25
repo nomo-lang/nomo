@@ -4,6 +4,7 @@
 //! semantic lowering pipeline, then evaluates the resulting typed IR without
 //! granting host filesystem, process, environment, or network capabilities.
 
+mod cron;
 mod interpreter;
 mod json;
 mod jsonrpc;
@@ -463,6 +464,20 @@ fn main() -> void {
             );
         }
         assert!(!response.stdout.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn cron_conformance_fixture_matches_browser_runtime_without_secret_echo() {
+        let source = include_str!("../../../tests/fixtures/cron_conformance.nomo");
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "true\n60000\n900000\n3600000\n68169600000\n4233686400000\ntrue\nfalse\ntrue\nfalse\nrange 0\nrange 0\nsyntax 0\nrange 0\nlimit 5\nsyntax 5 invalid cron expression syntax\ntimestamp_range 5\nno_match 5\n"
+        );
+        assert!(!response.stdout.contains("NOMO_CRON_SECRET_SENTINEL"));
         assert!(response.diagnostic.is_none());
     }
 

@@ -260,6 +260,7 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
         | ValueExpr::JsonStringify { .. }
         | ValueExpr::JsonStructured { .. }
         | ValueExpr::JsonRpc { .. }
+        | ValueExpr::Cron { .. }
         | ValueExpr::RegexCompile { .. }
         | ValueExpr::RegexIsMatch { .. }
         | ValueExpr::RegexCaptures { .. } => {

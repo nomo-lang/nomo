@@ -85,6 +85,17 @@
       "note": "Validates the versioned current-thread runtime counter contract in a separate unmeasured probe run; it is not a performance comparison."
     },
     {
+      "id": "timer_counter_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/timer_counter_probe",
+      "expected_stdout": "before\ntrue\ntrue\ntrue\nafter\n",
+      "snapshot": "snapshots/timer-counter-probe.json",
+      "note": "Validates the zero-duration ready fast path, one positive monotonic timer, no busy polling, and exact owner-local timer counters in a separate unmeasured probe run."
+    },
+    {
       "id": "task_spawn_complete",
       "kind": "required_async_workload",
       "available_phase": "P1",

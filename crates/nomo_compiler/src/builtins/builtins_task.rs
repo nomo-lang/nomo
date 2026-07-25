@@ -7,7 +7,13 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
             if module == "task"
                 && matches!(
                     name.as_str(),
-                    "spawn" | "is_cancelled" | "join" | "cancel" | "close" | "yield_now"
+                    "spawn"
+                        | "is_cancelled"
+                        | "join"
+                        | "cancel"
+                        | "close"
+                        | "yield_now"
+                        | "sleep"
                 )
     )
 }
@@ -60,6 +66,51 @@ pub(super) fn lower_task_builtin(
                 ValueExpr::Call {
                     name: BUILTIN_TASK_YIELD_EXPR.to_string(),
                     args: Vec::new(),
+                },
+            ))
+        }
+        "sleep" => {
+            let [duration_arg] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.sleep",
+                    1,
+                    args.len(),
+                ));
+            };
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call suspend function `task.sleep`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let duration_type = ValueType::Struct("Duration".to_string(), Vec::new());
+            let (actual, duration) = lower_value_expr_with_expected(
+                path,
+                duration_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&duration_type),
+                span,
+            )?;
+            require_task_type(path, span, "task.sleep duration", &duration_type, &actual)?;
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![ValueType::Void, error_type.clone()],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_TASK_SLEEP_EXPR.to_string(),
+                    args: vec![duration],
                 },
             ))
         }

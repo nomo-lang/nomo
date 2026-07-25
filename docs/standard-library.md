@@ -260,8 +260,9 @@ helpers. Durations store signed milliseconds, `format_duration` returns strings
 such as `1500ms`, and sleep helpers panic for negative durations. `sleep` and
 `sleep_millis` block the current OS thread. They remain compatible in
 synchronous code and legacy isolated workers, but E0891 rejects any transitive
-path from a `suspend fn` to either operation. The RFC 0035 nonblocking
-`task.sleep` API is not exposed until the owner-local timer runtime lands.
+path from a `suspend fn` to either operation. Suspend code uses the RFC 0035
+nonblocking `task.sleep(Duration) -> Result<void, TaskError>` owner-local timer
+described below.
 
 ### `std.cron`
 
@@ -299,6 +300,7 @@ general closures or shared managed values:
 
 ```nomo
 task.yield_now() -> void // suspend-only
+task.sleep(duration: Duration) -> Result<void, TaskError> // suspend-only
 task.spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>
 task.is_cancelled(context: TaskContext) -> bool
 task.join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError>
@@ -306,19 +308,23 @@ task.cancel(task_value: Task) -> Result<void, TaskError>
 task.close(task_value: Task) -> Result<void, TaskError>
 ```
 
-`task.yield_now` is the first new `suspend fn` runtime primitive. In P1 it and
-calls to actually suspending functions are accepted as standalone statements
-in non-generic, parameterless `suspend fn` functions returning `void`. Native
-C99 execution uses a stack-allocated root frame with embedded child frames and
-a current-thread executor; child polls run inline, and only a real yield enters
-the one-slot ready queue. Immutable top-level locals with frame-safe transitive
-value fields can live across suspension: only live values enter frames, and
-managed ARC/COW fields use ownership bits so child-first normal completion and
-explicit early root drop are idempotent. Mutable locals, resource handles or
-wrappers containing them, recursive suspension, arguments/results, `?`, and
-explicit panic remain E0876 until their cleanup paths land. Browser WASM treats
-the same call as a bounded cooperative boundary in the sandbox interpreter;
-the host-driven event backend is not implemented yet.
+`task.yield_now` and `task.sleep` are the first new `suspend fn` runtime
+primitives. In P1, yield and parameterless suspend-function calls are standalone
+statements; sleep is an immutable `let` initializer returning
+`Result<void, TaskError>`. Native C99 execution uses a stack-allocated root
+frame with embedded child frames and a current-thread executor. Child polls run
+inline; yield enters the ready queue immediately, while a positive sleep
+registers a bounded owner-local monotonic timer and enters the queue only after
+expiry. A non-positive sleep completes inline without registration or queue
+traffic. Immutable top-level locals with frame-safe transitive value fields can
+live across suspension: only live values enter frames, and managed ARC/COW
+fields use ownership bits so child-first normal completion and explicit early
+root drop are idempotent. Mutable locals, resource handles or wrappers
+containing them, recursive suspension, general suspend arguments/results, `?`,
+and explicit panic remain E0876 until their cleanup paths land. Browser WASM
+treats yield as a bounded cooperative boundary; sleep returns
+`runtime_unavailable` without evaluating its duration. The host-driven event
+backend is not implemented yet.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is
@@ -341,8 +347,9 @@ terminate a thread. `join(..., 0)` is a nonblocking poll and returns
 finishes, then joins the native thread and releases the handle. Closed handles
 return the stable `closed` error.
 
-See the [async runtime implementation guide](async-runtime.md) and
-`examples/async_yield` for the current suspend-task boundary.
+See the [async runtime implementation guide](async-runtime.md),
+`examples/async_yield`, and `examples/async_timer` for the current suspend-task
+boundary.
 
 #### Task safety
 

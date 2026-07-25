@@ -53,7 +53,7 @@ fn validate_suspend_blocking_function<'a>(
                 return Err(Diagnostic::new(
                     "E0891",
                     format!(
-                        "suspend function reaches a blocking operation via {call_path}; use `task.sleep` after its timer-runtime slice lands, or move the whole operation to the bounded blocking pool"
+                        "suspend function reaches a blocking operation via {call_path}; use nonblocking `task.sleep` and handle its result, or move the whole operation to the bounded blocking pool"
                     ),
                     path,
                     span.line,
@@ -117,15 +117,17 @@ pub(super) fn validate_p1_yield_function(
     function: &AstFunction,
     imports: &[String],
 ) -> Result<(), Diagnostic> {
-    let has_yield = function
+    let has_runtime_suspend = function
         .body
         .iter()
-        .any(|statement| ast_statement_contains_yield(statement, imports));
-    if !has_yield || !function.is_suspend {
+        .any(|statement| ast_statement_contains_runtime_suspend(statement, imports));
+    if !has_runtime_suspend || !function.is_suspend {
         return Ok(());
     }
 
-    if function.package.as_slice() == ["std", "task"] && function.name == "yield_now" {
+    if function.package.as_slice() == ["std", "task"]
+        && matches!(function.name.as_str(), "yield_now" | "sleep")
+    {
         return Ok(());
     }
 
@@ -145,13 +147,15 @@ fn validate_p1_suspend_function_shape(
         && function.return_type.args.is_empty();
     let supported_body = function.body.iter().all(|statement| match statement {
         Stmt::Expr { expr, .. } => {
-            (ast_expr_is_direct_suspension(expr, imports, suspending_functions)
+            ((ast_expr_is_direct_suspension(expr, imports, suspending_functions)
+                && !ast_expr_is_direct_sleep(expr, imports, suspending_functions))
                 || !ast_expr_contains_suspension(expr, imports, suspending_functions))
                 && !ast_expr_contains_frame_exit(expr)
         }
         Stmt::Let { mutable, value, .. } => {
             !mutable
-                && !ast_expr_contains_suspension(value, imports, suspending_functions)
+                && (ast_expr_is_direct_sleep(value, imports, suspending_functions)
+                    || !ast_expr_contains_suspension(value, imports, suspending_functions))
                 && !ast_expr_contains_frame_exit(value)
         }
         _ => false,
@@ -163,7 +167,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals and standalone suspend calls in non-generic parameterless `suspend fn` functions returning `void`; mutable locals, generics, arguments/results, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, standalone parameterless suspend calls, and `let`-bound `task.sleep(Duration)` results in non-generic parameterless `suspend fn` functions returning `void`; mutable locals, generics, general suspend arguments/results, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -184,7 +188,7 @@ pub(super) fn validate_p1_suspending_functions(
                 && function
                     .body
                     .iter()
-                    .any(|statement| ast_statement_contains_yield(statement, imports))
+                    .any(|statement| ast_statement_contains_runtime_suspend(statement, imports))
         })
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
@@ -294,14 +298,8 @@ pub(super) fn validate_p1_yield_ir_function(
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
 ) -> Result<(), Diagnostic> {
-    let has_yield = body.iter().any(|statement| {
-        matches!(
-            statement,
-            Statement::Expr(ValueExpr::Call { name, args })
-                if name == BUILTIN_TASK_YIELD_EXPR && args.is_empty()
-        )
-    });
-    if !has_yield {
+    let has_runtime_suspend = body.iter().any(ir_statement_contains_runtime_suspend);
+    if !has_runtime_suspend {
         return Ok(());
     }
 
@@ -340,13 +338,10 @@ pub(super) fn validate_p1_suspend_ir_program(
         .iter()
         .filter(|function| {
             function.is_suspend
-                && function.body.iter().any(|statement| {
-                    matches!(
-                        statement,
-                        Statement::Expr(ValueExpr::Call { name, args })
-                            if name == BUILTIN_TASK_YIELD_EXPR && args.is_empty()
-                    )
-                })
+                && function
+                    .body
+                    .iter()
+                    .any(ir_statement_contains_runtime_suspend)
         })
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
@@ -454,9 +449,10 @@ fn p1_frame_value_type_supported(
                 return false;
             };
             if enum_type.type_params.len() != args.len()
-                || !args
-                    .iter()
-                    .all(|arg| p1_frame_value_type_supported(arg, structs, enums, visiting))
+                || !args.iter().all(|arg| {
+                    *arg == ValueType::Void
+                        || p1_frame_value_type_supported(arg, structs, enums, visiting)
+                })
             {
                 return false;
             }
@@ -465,7 +461,8 @@ fn p1_frame_value_type_supported(
                 variant.payload.as_ref().is_none_or(|payload| {
                     let payload_type =
                         substitute_type_params(payload, &enum_type.type_params, args);
-                    p1_frame_value_type_supported(&payload_type, structs, enums, visiting)
+                    payload_type == ValueType::Void
+                        || p1_frame_value_type_supported(&payload_type, structs, enums, visiting)
                 })
             });
             visiting.pop();
@@ -497,9 +494,10 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
         )
 }
 
-fn ast_statement_contains_yield(statement: &Stmt, imports: &[String]) -> bool {
+fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) -> bool {
     ast_statement_any_expr(statement, |candidate| {
         ast_expr_is_direct_yield(candidate, imports)
+            || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
     })
 }
 
@@ -629,6 +627,9 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_yield(expr, imports) {
         return true;
     }
+    if ast_expr_is_direct_sleep(expr, imports, suspending_functions) {
+        return true;
+    }
     let AstExpr::Call { callee, args, .. } = expr else {
         return false;
     };
@@ -636,6 +637,28 @@ fn ast_expr_is_direct_suspension(
         && callee
             .last()
             .is_some_and(|name| suspending_functions.contains(name))
+}
+
+fn ast_expr_is_direct_sleep(
+    expr: &AstExpr,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    let direct = callee.as_slice() == ["task", "sleep"]
+        || (callee.as_slice() == ["sleep"] && imports.iter().any(|item| item == "std.task.sleep"));
+    direct
+        && type_args.is_empty()
+        && matches!(args.as_slice(), [duration]
+            if !ast_expr_contains_suspension(duration, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(duration))
 }
 
 fn ast_expr_contains_frame_exit(expr: &AstExpr) -> bool {
@@ -709,4 +732,17 @@ fn ast_expr_is_direct_yield(expr: &AstExpr, imports: &[String]) -> bool {
         && (callee.as_slice() == ["task", "yield_now"]
             || (callee.as_slice() == ["yield_now"]
                 && imports.iter().any(|item| item == "std.task.yield_now")))
+}
+
+fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::Expr(ValueExpr::Call { name, args })
+            | Statement::Let {
+                initializer: ValueExpr::Call { name, args },
+                ..
+            }
+            if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
+                || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
+    )
 }

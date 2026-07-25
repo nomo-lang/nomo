@@ -172,8 +172,11 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push(')');
         }
         ValueExpr::Call { name, args } => {
-            if name == BUILTIN_TASK_YIELD_EXPR {
-                unreachable!("async yield is emitted by the stackless coroutine lowering")
+            if matches!(
+                name.as_str(),
+                BUILTIN_TASK_YIELD_EXPR | BUILTIN_TASK_SLEEP_EXPR
+            ) {
+                unreachable!("async intrinsics are emitted by the stackless coroutine lowering")
             } else if name == BUILTIN_PRINTLN_EXPR {
                 out.push_str("(puts(");
                 emit_string_data_expr(out, &args[0]);

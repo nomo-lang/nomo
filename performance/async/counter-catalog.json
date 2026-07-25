@@ -44,6 +44,30 @@
       "semantics": "Ready-queue entries removed for polling."
     },
     {
+      "name": "timer_registrations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Positive-duration owner-local timers successfully registered with the current-thread executor."
+    },
+    {
+      "name": "timer_expirations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Registered owner-local timers that reached their monotonic deadline and were moved to the ready queue."
+    },
+    {
+      "name": "timer_cancellations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Armed owner-local timers disarmed by idempotent coroutine-frame destruction before expiry."
+    },
+    {
+      "name": "peak_live_timers",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Maximum simultaneously armed owner-local timer registrations."
+    },
+    {
       "name": "reactor_registrations",
       "unit": "count",
       "available_phase": "P2"
@@ -104,7 +128,7 @@
       "name": "live_timers",
       "unit": "count",
       "available_phase": "P1",
-      "semantics": "Current owner-local timer registrations at the observation point."
+      "semantics": "Current armed owner-local timer registrations at the observation point."
     },
     {
       "name": "blocking_jobs_queued",

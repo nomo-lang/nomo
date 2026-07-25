@@ -343,6 +343,7 @@ const TASK_ITEMS: &[&str] = &[
     "close",
     "is_cancelled",
     "join",
+    "sleep",
     "spawn",
     "yield_now",
 ];
@@ -1370,7 +1371,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 310);
+        assert_eq!(imports.len(), 311);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
@@ -1379,6 +1380,7 @@ mod tests {
         assert!(is_supported_import("std.cron.next_after"));
         assert!(is_supported_import("std.map.Map"));
         assert!(is_supported_import("std.task.yield_now"));
+        assert!(is_supported_import("std.task.sleep"));
         assert!(!is_supported_import("std.io.flush"));
     }
 

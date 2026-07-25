@@ -401,6 +401,9 @@ impl<'a> Interpreter<'a> {
         if name == "__nomo_task_yield" {
             return Ok(Value::Void);
         }
+        if name == "__nomo_task_sleep" {
+            return Ok(task_timer_runtime_unavailable_result());
+        }
         if name.starts_with("__nomo_sqlite_") {
             let unavailable = matches!(name, "__nomo_sqlite_open" | "__nomo_sqlite_open_memory");
             return Ok(sqlite_runtime_error_result(if unavailable {
@@ -1593,6 +1596,28 @@ fn task_runtime_unavailable_result() -> Value {
                     "message".to_string(),
                     Value::String(
                         "native tasks are unavailable in the browser sandbox".to_string(),
+                    ),
+                ),
+            ]),
+        })),
+    }
+}
+
+fn task_timer_runtime_unavailable_result() -> Value {
+    Value::Enum {
+        name: "Result".to_string(),
+        variant: "Err".to_string(),
+        payload: Some(Box::new(Value::Struct {
+            name: "TaskError".to_string(),
+            fields: HashMap::from([
+                (
+                    "code".to_string(),
+                    Value::String("runtime_unavailable".to_string()),
+                ),
+                (
+                    "message".to_string(),
+                    Value::String(
+                        "host-driven timers are unavailable in the browser sandbox".to_string(),
                     ),
                 ),
             ]),

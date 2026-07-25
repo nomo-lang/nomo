@@ -12,16 +12,19 @@ async runtime。P0 manifest 保留两个 control：
   sampling 与 result schema 管线，但明确不能用于性能宣传。
 
 独立的 `manifest-p1.json` 会再次运行两个 zero-cost control，并启用
-`yield_counter_probe`。探针不混入 measured sample；它单独设置
-`NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验版本化的
-current-thread JSON 契约。两层 frame、两次 yield 必须得到：heap/slab frame
-allocation 为 0、幂等 frame drop 为 2、peak live frame 为 2、ready queue
-往返为 2、poll 为 5、cooperative yield 为 2。
+`yield_counter_probe` 与 `timer_counter_probe`。探针不混入 measured sample；
+它们单独设置 `NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
+版本化的 current-thread JSON 契约。两层 frame、两次 yield 必须得到：
+heap/slab frame allocation 为 0、幂等 frame drop 为 2、peak live frame 为 2、
+ready queue 往返为 2、poll 为 5、cooperative yield 为 2。timer 探针还要求
+零时长路径 inline ready，正时长恰好注册、到期和入队各一次，总计两次 poll，
+无取消，并在退出时保持 live timer 为 0。
 
 RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled
-并记录阶段，避免“未覆盖”看起来像“已通过”。ARC primitive counter 和 timer
-在 P1 payload 中明确标记 unavailable，而不是伪装成 0。参数/返回值 frame、
-完整 unwind path、structured spawn/join 与 timer 仍未完成。
+并记录阶段，避免“未覆盖”看起来像“已通过”。owner-local timer 的注册、到期、
+取消、live 与 peak-live counter 已可用；ARC primitive counter 仍明确标记
+unavailable，而不是伪装成 0。通用 suspend 函数参数/返回值、完整 unwind path、
+structured spawn/join 与多任务 timer-wheel workload 仍未完成。
 
 ## 运行方式
 

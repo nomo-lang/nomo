@@ -40,6 +40,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
             .iter()
             .any(|item| item == "std.jsonrpc" || item.starts_with("std.jsonrpc."))
             || source_uses_jsonrpc_builtin(ast),
+        cron: imports
+            .iter()
+            .any(|item| item == "std.cron" || item.starts_with("std.cron.")),
         sqlite: imports
             .iter()
             .any(|item| item == "std.sqlite" || item.starts_with("std.sqlite.")),
@@ -147,6 +150,10 @@ pub(super) fn standard_struct_names(
         names.push(("JsonRpcMessage".to_string(), 0));
         names.push(("JsonRpcProtocolError".to_string(), 0));
     }
+    if needs.cron {
+        names.push(("CronError".to_string(), 0));
+        names.push(("CronSchedule".to_string(), 0));
+    }
     if needs.sqlite {
         names.push(("SqliteColumn".to_string(), 0));
         names.push(("SqliteDatabase".to_string(), 0));
@@ -198,6 +205,7 @@ pub(super) fn standard_enum_names(
         || needs.task
         || needs.json
         || needs.jsonrpc
+        || needs.cron
         || needs.sqlite
         || needs.regex
         || needs.result
@@ -827,6 +835,38 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.cron && !structs.iter().any(|item| item.name == "CronSchedule") {
+        structs.push(StructType {
+            package: "std.cron".to_string(),
+            name: "CronSchedule".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "expression".to_string(),
+                value_type: ValueType::String,
+            }],
+        });
+    }
+    if needs.cron && !structs.iter().any(|item| item.name == "CronError") {
+        structs.push(StructType {
+            package: "std.cron".to_string(),
+            name: "CronError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "field".to_string(),
+                    value_type: ValueType::U64,
+                },
+            ],
+        });
+    }
     if needs.sqlite && !structs.iter().any(|item| item.name == "SqliteDatabase") {
         structs.push(StructType {
             package: "std.sqlite".to_string(),
@@ -1144,6 +1184,7 @@ pub(super) fn inject_standard_types(
         || needs.task
         || needs.json
         || needs.jsonrpc
+        || needs.cron
         || needs.sqlite
         || needs.regex
         || needs.result)

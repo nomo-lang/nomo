@@ -43,6 +43,10 @@ pub(super) fn is_jsonrpc_opaque_struct(item: &StructType) -> bool {
         && matches!(item.name.as_str(), "JsonRpcMessage" | "JsonRpcDecoder")
 }
 
+pub(super) fn is_cron_opaque_struct(item: &StructType) -> bool {
+    item.package == "std.cron" && item.name == "CronSchedule"
+}
+
 pub(super) fn parse_non_void_type(
     type_ref: &crate::ast::TypeRef,
     structs: &HashMap<String, StructType>,

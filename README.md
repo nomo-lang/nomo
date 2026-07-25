@@ -625,6 +625,15 @@ monotonic milliseconds. `Duration` stores millisecond precision, `format_duratio
 prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
 negative durations.
 
+`std.cron` parses bounded five-field UTC expressions and provides
+`cron.matches` plus strict `cron.next_after` schedule calculation. It supports
+wildcards, values, ranges, lists, and wildcard/range steps without depending
+on the host timezone database. The module owns no background scheduler:
+native Agents combine it with sliced `std.time` waits, isolated tasks, and
+optional SQLite checkpoints. The pure calculation path is available in
+browser WASM and does not require application C FFI. See
+`examples/cron_schedule`.
+
 `std.task` provides isolated native workers with one bounded, deep-copied
 string input and result. `task.spawn` accepts only a non-capturing top-level
 `task fn(TaskContext, string) -> string`; `task.join`, cooperative
@@ -739,6 +748,11 @@ cannot bypass validation. See `examples/mcp_stdio` for a native MCP
 initialize and `tools/list` exchange composed with `std.process`, with no
 application-side C FFI.
 
+`std.cron` provides deterministic UTC calendar scheduling without a global
+runtime scheduler. Expressions and search work are bounded, errors use stable
+secret-safe codes, and `CronSchedule` remains opaque so validation cannot be
+bypassed. Native and browser-WASM calculation results are identical.
+
 `std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
 `Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
 `Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,
@@ -750,9 +764,10 @@ ABI. The intrinsic manifest pins that ABI as `array-header`.
 
 The core and extension `std/src/*.nomo` files likewise declare public
 signatures and doc comments for IO, filesystem, paths, environment, processes,
-time, numeric helpers, collections, hashing, crypto, JSON, regex, debug, log,
-testing, networking, HTTP, and FFI boundary types. Host-sensitive behavior continues to use the compiler/runtime
-builtin backing during the source API migration.
+time, cron, numeric helpers, collections, hashing, crypto, JSON, JSON-RPC,
+regex, debug, log, testing, networking, HTTP, and FFI boundary types.
+Host-sensitive behavior continues to use the compiler/runtime builtin backing
+during the source API migration.
 
 `std.string` provides value helpers: `string.len`, `string.concat`,
 `string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,

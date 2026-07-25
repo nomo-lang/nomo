@@ -1,0 +1,47 @@
+package app.main
+
+import std.cron
+import std.fmt
+import std.io
+import std.math
+import std.time
+
+fn wait_until(deadline_millis: i64, max_slice_millis: i64) -> void {
+    if max_slice_millis <= 0 {
+        panic("timer slice must be positive")
+    } else {
+        void
+    }
+    for time.now_millis() < deadline_millis {
+        let now: i64 = time.now_millis()
+        let remaining: i64 = deadline_millis - now
+        time.sleep_millis(math.min(remaining, max_slice_millis))
+    }
+}
+
+fn run() -> Result<void, CronError> {
+    let schedule: CronSchedule = cron.parse("*/15 * * * *")?
+    let last_completed_millis: i64 = 0
+    let next_millis: i64 = cron.next_after(schedule, last_completed_millis)?
+    if next_millis != 900000 {
+        panic("unexpected deterministic cron result")
+    } else {
+        void
+    }
+    // A real Agent can persist `last_completed_millis`, then call this helper
+    // with `next_millis`. This zero-wait call keeps the example fast.
+    wait_until(time.now_millis(), 1000)
+    io.println(fmt.format("next={}", next_millis))
+    return Ok(void)
+}
+
+fn main() -> void {
+    let result: Result<void, CronError> = run()
+    match result {
+        Ok(value) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}

@@ -45,6 +45,8 @@ mod builtins_array_methods;
 mod builtins_char;
 #[path = "builtins/builtins_collections.rs"]
 mod builtins_collections;
+#[path = "builtins/builtins_cron.rs"]
+mod builtins_cron;
 #[path = "builtins/builtins_diagnostics.rs"]
 mod builtins_diagnostics;
 #[path = "builtins/builtins_env.rs"]
@@ -179,6 +181,7 @@ use analysis_usage::*;
 use builtins_array_methods::*;
 use builtins_char::*;
 use builtins_collections::*;
+use builtins_cron::*;
 use builtins_diagnostics::*;
 use builtins_env::*;
 use builtins_extensions::*;
@@ -295,8 +298,8 @@ const BUILTIN_SQLITE_CLOSE_QUERY_EXPR: &str = "__nomo_sqlite_close_query";
 const BUILTIN_SQLITE_CLOSE_EXPR: &str = "__nomo_sqlite_close";
 
 pub use nomo_ir::{
-    BinaryOp, Const, DeferredCall, EnumType, EnumVariantType, ExternFunction, Function,
-    JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm,
+    BinaryOp, Const, CronOperation, DeferredCall, EnumType, EnumVariantType, ExternFunction,
+    Function, JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm,
     MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier,
     Statement, StructField, StructType, UnaryOp, ValueExpr, ValueType,
 };

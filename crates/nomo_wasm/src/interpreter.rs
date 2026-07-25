@@ -1,9 +1,11 @@
 use nomo_ir::{
-    BinaryOp, DeferredCall, JsonOperation, JsonRpcOperation, LoopKind, MathBinaryFunction,
-    MathUnaryFunction, NumBinaryFunction, Program, Statement, UnaryOp, ValueExpr, ValueType,
+    BinaryOp, CronOperation, DeferredCall, JsonOperation, JsonRpcOperation, LoopKind,
+    MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Program, Statement, UnaryOp,
+    ValueExpr, ValueType,
 };
 use std::collections::HashMap;
 
+use crate::cron;
 use crate::json::{self, JsonKind, JsonNodeValue};
 use crate::jsonrpc::{self, MessageKind};
 
@@ -919,6 +921,7 @@ impl<'a> Interpreter<'a> {
                 self.eval_json_structured(*operation, args)
             }
             ValueExpr::JsonRpc { operation, args } => self.eval_jsonrpc(*operation, args),
+            ValueExpr::Cron { operation, args } => self.eval_cron(*operation, args),
             ValueExpr::ArrayNew { .. } => Ok(Value::Array(Vec::new())),
             ValueExpr::ArrayLen { array } => match self.eval_expr(array)? {
                 Value::Array(values) => Ok(Value::U64(values.len() as u64)),
@@ -1470,6 +1473,38 @@ impl<'a> Interpreter<'a> {
         Ok(result_value("Result", result))
     }
 
+    fn eval_cron(&mut self, operation: CronOperation, args: &[ValueExpr]) -> RuntimeResult<Value> {
+        let result = match operation {
+            CronOperation::Parse => {
+                let expression = self.eval_expr(&args[0])?.as_string()?.to_string();
+                cron::parse(&expression)
+                    .map(|()| cron_schedule_value(expression))
+                    .map_err(cron_error_value)
+            }
+            CronOperation::Matches => {
+                let schedule = self.eval_expr(&args[0])?;
+                let expression = cron_expression(&schedule)?.to_string();
+                let Value::I64(unix_millis) = self.eval_expr(&args[1])? else {
+                    return Err(RuntimeError::runtime("expected an i64 cron timestamp"));
+                };
+                cron::matches(&expression, unix_millis)
+                    .map(Value::Bool)
+                    .map_err(cron_error_value)
+            }
+            CronOperation::NextAfter => {
+                let schedule = self.eval_expr(&args[0])?;
+                let expression = cron_expression(&schedule)?.to_string();
+                let Value::I64(unix_millis) = self.eval_expr(&args[1])? else {
+                    return Err(RuntimeError::runtime("expected an i64 cron timestamp"));
+                };
+                cron::next_after(&expression, unix_millis)
+                    .map(Value::I64)
+                    .map_err(cron_error_value)
+            }
+        };
+        Ok(result_value("Result", result))
+    }
+
     fn eval_binary(
         &mut self,
         left: &ValueExpr,
@@ -1858,6 +1893,40 @@ fn json_error_value(error: json::JsonError) -> Value {
             ("offset".to_string(), Value::U64(error.offset as u64)),
         ]),
     }
+}
+
+fn cron_error_value(error: cron::CronError) -> Value {
+    Value::Struct {
+        name: "CronError".to_string(),
+        fields: HashMap::from([
+            ("code".to_string(), Value::String(error.code.to_string())),
+            (
+                "message".to_string(),
+                Value::String(error.message.to_string()),
+            ),
+            ("field".to_string(), Value::U64(error.field)),
+        ]),
+    }
+}
+
+fn cron_schedule_value(expression: String) -> Value {
+    Value::Struct {
+        name: "CronSchedule".to_string(),
+        fields: HashMap::from([("expression".to_string(), Value::String(expression))]),
+    }
+}
+
+fn cron_expression(value: &Value) -> RuntimeResult<&str> {
+    let Value::Struct { name, fields } = value else {
+        return Err(RuntimeError::runtime("expected a CronSchedule"));
+    };
+    if name != "CronSchedule" {
+        return Err(RuntimeError::runtime("expected a CronSchedule"));
+    }
+    fields
+        .get("expression")
+        .ok_or_else(|| RuntimeError::runtime("CronSchedule has no expression field"))?
+        .as_string()
 }
 
 fn jsonrpc_error_value(error: jsonrpc::ProtocolError) -> Value {

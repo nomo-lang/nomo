@@ -165,6 +165,22 @@ pub(super) fn emit_std_misc_expr(out: &mut String, expr: &ValueExpr) -> bool {
             }
             out.push(')');
         }
+        ValueExpr::Cron { operation, args } => {
+            let function = match operation {
+                CronOperation::Parse => "nomo_cron_parse",
+                CronOperation::Matches => "nomo_cron_matches",
+                CronOperation::NextAfter => "nomo_cron_next_after",
+            };
+            out.push_str(function);
+            out.push('(');
+            for (index, arg) in args.iter().enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                emit_expr(out, arg);
+            }
+            out.push(')');
+        }
         ValueExpr::RegexCompile { pattern } => {
             out.push_str("nomo_regex_compile(");
             emit_expr(out, pattern);

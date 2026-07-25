@@ -224,6 +224,7 @@ pub(super) struct StandardTypeNeeds {
     pub(super) hash: bool,
     pub(super) json: bool,
     pub(super) jsonrpc: bool,
+    pub(super) cron: bool,
     pub(super) sqlite: bool,
     pub(super) regex: bool,
     pub(super) collections: bool,

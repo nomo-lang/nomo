@@ -74,6 +74,13 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
             push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
         }
     }
+    if uses_cron_builtin(program) {
+        let schedule = ValueType::Struct("CronSchedule".to_string(), Vec::new());
+        let error = ValueType::Struct("CronError".to_string(), Vec::new());
+        for ok in [schedule, ValueType::Bool, ValueType::Int] {
+            push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
+        }
+    }
     out
 }
 
@@ -518,7 +525,9 @@ fn collect_expr_enum(
                 collect_expr_enum(arg, seen, out);
             }
         }
-        ValueExpr::JsonStructured { args, .. } | ValueExpr::JsonRpc { args, .. } => {
+        ValueExpr::JsonStructured { args, .. }
+        | ValueExpr::JsonRpc { args, .. }
+        | ValueExpr::Cron { args, .. } => {
             for arg in args {
                 collect_expr_enum(arg, seen, out);
             }

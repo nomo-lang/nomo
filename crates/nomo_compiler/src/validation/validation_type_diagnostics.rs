@@ -83,6 +83,7 @@ pub(super) fn missing_standard_type_import(
         | "JsonRpcMessage"
         | "JsonRpcMessageKind"
         | "JsonRpcProtocolError" => Some("std.jsonrpc"),
+        "CronError" | "CronSchedule" => Some("std.cron"),
         "SqliteDatabase"
         | "SqliteQuery"
         | "SqliteError"

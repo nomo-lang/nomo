@@ -190,6 +190,17 @@ pub(super) fn lower_value_expr_with_expected(
                     &span.text,
                 ));
             }
+            if is_cron_opaque_struct(struct_type) {
+                return Err(Diagnostic::new(
+                    "E0850",
+                    format!("opaque cron type `{type_name}` does not expose its fields"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
             let Some(field_type) = struct_type
                 .fields
                 .iter()

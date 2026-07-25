@@ -1,0 +1,34 @@
+//! Bounded UTC cron schedule calculation.
+package std.cron
+
+import std.cron
+
+/// A validated five-field UTC cron schedule.
+pub struct CronSchedule {
+    expression: string
+}
+
+/// Stable error returned by cron parsing and calculation.
+pub struct CronError {
+    /// Stable machine-readable error code.
+    pub code: string
+    /// Human-readable error description.
+    pub message: string
+    /// Zero-based field index, or five for whole-expression/time errors.
+    pub field: u64
+}
+
+/// Parses one bounded five-field UTC cron expression.
+pub fn parse(expression: string) -> Result<CronSchedule, CronError> {
+    return cron.parse(expression)
+}
+
+/// Reports whether the UTC minute containing a timestamp matches a schedule.
+pub fn matches(schedule: CronSchedule, unix_millis: i64) -> Result<bool, CronError> {
+    return cron.matches(schedule, unix_millis)
+}
+
+/// Returns the next matching UTC minute strictly after a timestamp.
+pub fn next_after(schedule: CronSchedule, unix_millis: i64) -> Result<i64, CronError> {
+    return cron.next_after(schedule, unix_millis)
+}

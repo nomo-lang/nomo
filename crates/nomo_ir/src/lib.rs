@@ -261,6 +261,13 @@ pub enum JsonRpcOperation {
     Failure,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum CronOperation {
+    Parse,
+    Matches,
+    NextAfter,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -486,6 +493,10 @@ pub enum ValueExpr {
     },
     JsonRpc {
         operation: JsonRpcOperation,
+        args: Vec<ValueExpr>,
+    },
+    Cron {
+        operation: CronOperation,
         args: Vec<ValueExpr>,
     },
     RegexCompile {

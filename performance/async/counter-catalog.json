@@ -1,0 +1,95 @@
+{
+  "schema": 1,
+  "counters": [
+    {
+      "name": "frame_allocations",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "frame_drops",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "peak_live_frames",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "ready_queue_enqueues",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "ready_queue_dequeues",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "reactor_registrations",
+      "unit": "count",
+      "available_phase": "P2"
+    },
+    {
+      "name": "reactor_deregistrations",
+      "unit": "count",
+      "available_phase": "P2"
+    },
+    {
+      "name": "local_retain",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "local_release",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "atomic_retain",
+      "unit": "count",
+      "available_phase": "P3"
+    },
+    {
+      "name": "atomic_release",
+      "unit": "count",
+      "available_phase": "P3"
+    },
+    {
+      "name": "cow_detach_count",
+      "unit": "count",
+      "available_phase": "P3"
+    },
+    {
+      "name": "cow_detach_bytes",
+      "unit": "bytes",
+      "available_phase": "P3"
+    },
+    {
+      "name": "publish_copy_count",
+      "unit": "count",
+      "available_phase": "P3"
+    },
+    {
+      "name": "publish_copy_bytes",
+      "unit": "bytes",
+      "available_phase": "P3"
+    },
+    {
+      "name": "live_io_handles",
+      "unit": "count",
+      "available_phase": "P2"
+    },
+    {
+      "name": "live_timers",
+      "unit": "count",
+      "available_phase": "P1"
+    },
+    {
+      "name": "blocking_jobs_queued",
+      "unit": "count",
+      "available_phase": "P2"
+    }
+  ]
+}

@@ -1,0 +1,23 @@
+{
+  "schema": 1,
+  "gate": "always-ready-suspend-control",
+  "required_absent_generated_c_patterns": [
+    "nomo_async_",
+    "nomo_coroutine",
+    "nomo_executor",
+    "nomo_frame",
+    "nomo_poll",
+    "nomo_reactor",
+    "nomo_ready_queue",
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "runtime_counters": {
+    "available": false,
+    "available_phase": "P1",
+    "reason": "P0 has no suspension primitive or async runtime to instrument"
+  }
+}

@@ -298,6 +298,12 @@ task.cancel(task_value: Task) -> Result<void, TaskError>
 task.close(task_value: Task) -> Result<void, TaskError>
 ```
 
+This API is the legacy blocking/native isolation surface, not the new
+`suspend fn` task model. A suspend function is rejected as a `task.spawn`
+worker. RFC 0032 will migrate this compatibility API behind a bounded, lazy
+blocking pool as the nonblocking executor lands; P0 does not change its
+one-native-thread-per-worker implementation.
+
 A worker is a non-generic, non-capturing, top-level function in the caller's
 package with the exact `fn(TaskContext, string) -> string` signature. Spawn
 deep-copies one at-most-8-MiB input before creating the thread; completion

@@ -19,6 +19,12 @@ jobs:
           components: clippy, rustfmt
           targets: wasm32-unknown-unknown
 
+      - name: Install pinned Go benchmark toolchain
+        uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.12
+          cache: false
+
       - name: Format
         run: cargo fmt --check
 
@@ -30,6 +36,23 @@ jobs:
 
       - name: Release Build
         run: cargo build --workspace --release --locked
+
+      - name: Test async benchmark harness
+        run: python3 -m unittest discover -s scripts/tests
+
+      - name: Run P0 async zero-cost and reference controls
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --require-clean
+          --output performance/results/async-p0.json
+
+      - name: Upload P0 async benchmark evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p0
+          path: performance/results/async-p0.json
+          if-no-files-found: error
 
       - name: Build browser WebAssembly runtime
         run: >-

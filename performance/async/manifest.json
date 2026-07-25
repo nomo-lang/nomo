@@ -1,0 +1,147 @@
+{
+  "schema": 1,
+  "suite": "nomo-async-runtime",
+  "phase": "P0",
+  "comparison_policy": {
+    "minimum_measured_runs": 5,
+    "same_host_required": true,
+    "same_output_bytes_required": true,
+    "design_targets": {
+      "throughput_ratio_nomo_over_go": 1.1,
+      "rss_ratio_nomo_over_go": 0.8,
+      "p99_nomo_no_worse_than_go": true
+    },
+    "targets_are_merge_blockers": false,
+    "marketing_claims_allowed": false
+  },
+  "toolchains": {
+    "go": {
+      "version": "go1.25.12",
+      "build_flags": [
+        "-trimpath",
+        "-buildvcs=false",
+        "-ldflags=-buildid="
+      ],
+      "environment": {
+        "CGO_ENABLED": "0",
+        "GOMAXPROCS": "1"
+      },
+      "integrity": "record the resolved Go binary SHA-256 in every result"
+    },
+    "nomo": {
+      "build_flags": [
+        "build"
+      ],
+      "integrity": "record the resolved Nomo binary SHA-256 and Git revision in every result"
+    }
+  },
+  "defaults": {
+    "warmup_runs": 2,
+    "measured_runs": 5,
+    "timeout_seconds": 30,
+    "random_seed": 170034,
+    "requested_cores": 1,
+    "affinity": "not-enforced-p0-control",
+    "logging": "disabled",
+    "tls_mode": "not-applicable",
+    "keep_alive": "not-applicable",
+    "payload_bytes": 0,
+    "connections": 1
+  },
+  "counter_catalog": "counter-catalog.json",
+  "result_schema": "schema/result.schema.json",
+  "workloads": [
+    {
+      "id": "sync_unused",
+      "kind": "zero_cost_gate",
+      "available_phase": "P0",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/sync_unused",
+      "expected_stdout": "sync-unused answer 3\n",
+      "snapshot": "snapshots/sync-unused.json"
+    },
+    {
+      "id": "ready_call_control",
+      "kind": "harness_control",
+      "available_phase": "P0",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/ready_call_control",
+      "go_project": "reference/go/ready_call_control",
+      "expected_stdout": "p0-ready-control 100000\n",
+      "snapshot": "snapshots/ready-call-control.json",
+      "note": "Exercises an always-ready suspend call chain and the result pipeline. It is not an I/O benchmark or evidence that Nomo exceeds Go."
+    },
+    {
+      "id": "task_spawn_complete",
+      "kind": "required_async_workload",
+      "available_phase": "P1",
+      "enabled": false,
+      "claim_eligible": false
+    },
+    {
+      "id": "idle_suspended_tasks",
+      "kind": "required_async_workload",
+      "available_phase": "P1",
+      "enabled": false,
+      "claim_eligible": false
+    },
+    {
+      "id": "timer_wheel",
+      "kind": "required_async_workload",
+      "available_phase": "P1",
+      "enabled": false,
+      "claim_eligible": false
+    },
+    {
+      "id": "bounded_channel",
+      "kind": "required_async_workload",
+      "available_phase": "P3",
+      "enabled": false,
+      "claim_eligible": false
+    },
+    {
+      "id": "tcp_echo",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": true
+    },
+    {
+      "id": "http_keep_alive",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": true
+    },
+    {
+      "id": "sse_mcp_stream",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": true
+    },
+    {
+      "id": "process_pipe",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": false
+    },
+    {
+      "id": "connection_churn",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": true
+    },
+    {
+      "id": "cancellation_storm",
+      "kind": "required_async_workload",
+      "available_phase": "P3",
+      "enabled": false,
+      "claim_eligible": false
+    }
+  ]
+}

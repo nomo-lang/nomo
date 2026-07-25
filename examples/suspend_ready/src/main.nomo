@@ -1,0 +1,11 @@
+package app.main
+
+import std.io
+
+suspend fn greeting() -> string {
+    return "ready"
+}
+
+suspend fn main() -> void {
+    io.println("suspend", greeting())
+}

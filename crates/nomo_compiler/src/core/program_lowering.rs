@@ -25,12 +25,29 @@ pub(super) fn lower_program(
             "",
         )
     })?;
-    let imports = ast
+    let mut imports = ast
         .imports
         .iter()
         .map(|path| path.join("."))
         .collect::<Vec<_>>();
     validate_imports(path, &imports, external_import_roots, local_import_root)?;
+    inject_map_implementation(path, &mut ast, &imports)?;
+    if imports
+        .iter()
+        .any(|item| item == "std.map" || item.starts_with("std.map."))
+    {
+        for implicit in ["std.array", "std.option"] {
+            if !imports.iter().any(|item| item == implicit) {
+                imports.push(implicit.to_string());
+                ast.imports.push(
+                    implicit
+                        .split('.')
+                        .map(ToString::to_string)
+                        .collect::<Vec<_>>(),
+                );
+            }
+        }
+    }
     inject_standard_interfaces(&mut ast, &imports)?;
     prepare_entry_point(path, &mut ast, entry_mode)?;
     validate_standard_type_imports(path, &imports, &ast)?;
@@ -434,6 +451,40 @@ pub(super) fn lower_program(
     })
 }
 
+fn inject_map_implementation(
+    path: &Path,
+    ast: &mut SourceFile,
+    imports: &[String],
+) -> Result<(), Diagnostic> {
+    if !imports
+        .iter()
+        .any(|item| item == "std.map" || item.starts_with("std.map."))
+    {
+        return Ok(());
+    }
+    let source = nomo_std::embedded_module_source("std.map")
+        .expect("registered std.map source must be embedded");
+    let source_path = Path::new("std/src/map.nomo");
+    let tokens = lexer::lex(source_path, source)?;
+    let mut module = parser::parse(source_path, &tokens)?;
+    for mut function in module.functions.drain(..) {
+        function.name = format!("__nomo_map_{}", function.name);
+        if ast.functions.iter().any(|item| item.name == function.name) {
+            return Err(Diagnostic::new(
+                "E0865",
+                "reserved std.map implementation name is already defined",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
+        ast.functions.push(function);
+    }
+    Ok(())
+}
+
 fn inject_standard_interfaces(ast: &mut SourceFile, imports: &[String]) -> Result<(), Diagnostic> {
     if ast.package == ["std", "fmt"] {
         return Ok(());
@@ -548,6 +599,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::LetElse { span, .. }
         | Stmt::IfLet { span, .. }
         | Stmt::Assign { span, .. }
+        | Stmt::IndexAssign { span, .. }
         | Stmt::Postfix { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Match { span, .. }

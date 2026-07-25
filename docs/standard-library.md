@@ -560,6 +560,67 @@ collections.set_insert(set: StringSet, value: string) -> StringSet
 collections.set_remove(set: StringSet, value: string) -> StringSet
 ```
 
+`std.map` provides the v0.1 general-purpose key-value container:
+
+```nomo
+import std.array
+import std.map
+
+Map.new<K, V>() -> Map<K, V>
+map.len<K, V>(map: Map<K, V>) -> u64
+map.is_empty<K, V>(map: Map<K, V>) -> bool
+map.contains_key<K, V>(map: Map<K, V>, key: K) -> bool
+map.get<K, V>(map: Map<K, V>, key: K) -> Option<V>
+map.set<K, V>(mut map: Map<K, V>, key: K, value: V) -> Option<V>
+map.remove<K, V>(mut map: Map<K, V>, key: K) -> Option<V>
+map.clear<K, V>(mut map: Map<K, V>) -> void
+map.keys<K, V>(map: Map<K, V>) -> Array<K>
+map.values<K, V>(map: Map<K, V>) -> Array<V>
+```
+
+`Map<K, V>` stores arbitrary generic values, including `JsonValue` and
+application structs. Keys use Nomo equality (`==`), so `K` must be a type for
+which equality is valid. The implementation preserves first-insertion order:
+replacing a value does not move its key, removal closes the gap, and a later
+reinsertion appends the key. `keys` and `values` return independent
+copy-on-write snapshots in matching order, which provides deterministic entry
+iteration by index.
+
+`Map` intentionally has one deterministic implementation rather than a second
+public `HashMap` alias. Its array-backed lookup is linear and its capacity is
+bounded at 65,536 entries. This avoids exposing an incomplete hash/equality
+contract or backend-dependent iteration order in v0.1; applications needing
+untrusted, high-cardinality hash tables should use a bounded host service.
+
+`StringMap` and `StringSet` in `std.collections` remain source- and
+binary-compatible for v0.1. They are legacy string-specialized APIs; new code
+should prefer `Map<string, V>`. No silent rewrite or removal occurs in this
+release.
+
+Array values may also be created and accessed directly:
+
+```nomo
+import std.array
+
+let values = [1, 2, 3]                 // Array<i32>
+let matrix = [[1, 2], [3, 4]]         // Array<Array<i32>>
+let empty: Array<i32> = []
+let first: i32 = values[0]
+let mut editable = matrix
+editable[0][1] = 7
+```
+
+An unconstrained integer literal defaults to `i32`. Literal elements must have
+exactly the same type; array construction performs no implicit numeric
+conversion. `[]` needs an expected `Array<T>` type. Indices have type `u64` and
+an out-of-range `[]` read or write panics with `array index out of bounds` on
+both native C and browser WASM. `Array.get` remains the non-panicking
+`Option<T>` API.
+
+Indexed assignment evaluates each index once, left to right, then the value
+once. Nested writes perform copy-on-write at every array level and write the
+updated child back to the root, so snapshots never observe later mutations.
+
 ## Processes And Networking
 
 `std.process` retains these legacy blocking shell helpers:

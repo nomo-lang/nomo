@@ -846,4 +846,108 @@ fn main() -> void {
         assert_eq!(response.status, "success", "{response:#?}");
         assert_eq!(response.stdout, "array ok\n");
     }
+
+    #[test]
+    fn executes_nested_array_literals_and_copy_on_write_index_assignment() {
+        let source = r#"package app.main
+
+import std.io
+import std.num
+
+fn main() -> void {
+    let mut matrix = [[1, 2], [3, 4]]
+    let jagged = [[8], [9, 10]]
+    let snapshot = matrix
+    matrix[0][1] = 7
+    io.println(num.to_string(matrix[0][1]))
+    io.println(num.to_string(snapshot[0][1]))
+    io.println(num.to_string(jagged[1][1]))
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "7\n2\n10\n");
+    }
+
+    #[test]
+    fn reports_stable_array_index_bounds_failure() {
+        let source = r#"package app.main
+
+fn main() -> void {
+    let values = [1]
+    let missing: i32 = values[1]
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        assert_eq!(
+            response
+                .runtime_error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            Some("array index out of bounds")
+        );
+    }
+
+    #[test]
+    fn executes_insertion_ordered_generic_map() {
+        let source = r#"package app.main
+
+import std.io
+import std.map
+import std.array
+
+fn main() -> void {
+    let mut values: Map<string, string> = Map.new<string, string>()
+    let first: Option<string> = map.set<string, string>(mut values, "b", "two")
+    let second: Option<string> = map.set<string, string>(mut values, "a", "one")
+    let replaced: Option<string> = map.set<string, string>(mut values, "b", "updated")
+    let keys: Array<string> = map.keys<string, string>(values)
+    io.println(keys[0])
+    io.println(keys[1])
+    io.println(if map.contains_key<string, string>(values, "a") {
+        "present"
+    } else {
+        "missing"
+    })
+    match map.get<string, string>(values, "b") {
+        Some(value) => {
+            io.println(value)
+        }
+        None => {
+            io.println("missing")
+        }
+    }
+    match replaced {
+        Some(value) => {
+            io.println(value)
+        }
+        None => {
+            io.println("missing")
+        }
+    }
+    let removed: Option<string> = map.remove<string, string>(mut values, "a")
+    io.println(if map.len<string, string>(values) == 1 {
+        "removed"
+    } else {
+        "wrong"
+    })
+    map.clear<string, string>(mut values)
+    io.println(if map.is_empty<string, string>(values) {
+        "empty"
+    } else {
+        "wrong"
+    })
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(
+            response.stdout,
+            "b\na\npresent\nupdated\ntwo\nremoved\nempty\n"
+        );
+    }
 }

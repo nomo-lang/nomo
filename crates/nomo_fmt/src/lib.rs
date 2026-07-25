@@ -334,6 +334,24 @@ impl<'a> Formatter<'a> {
                     stmt_line(stmt),
                 );
             }
+            Stmt::IndexAssign {
+                root,
+                indices,
+                value,
+                ..
+            } => {
+                let target = indices.iter().fold(root.clone(), |mut target, index| {
+                    target.push('[');
+                    target.push_str(&expr(index, indent, 0));
+                    target.push(']');
+                    target
+                });
+                self.line_at(
+                    indent,
+                    &format!("{target} = {}", expr(value, indent, 0)),
+                    stmt_line(stmt),
+                );
+            }
             Stmt::LetElse {
                 pattern,
                 binding,
@@ -791,6 +809,21 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\nfn main() -> void {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
+
+    #[test]
+    fn formats_array_literals_and_nested_index_assignment_idempotently() {
+        let source = "package app.main\n\nfn main(){\nlet mut matrix=[[1,2],[3,4],]\nmatrix[0][1]=7\nlet value=matrix[0][1]\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nfn main() -> void {\n    let mut matrix = [[1, 2], [3, 4]]\n    matrix[0][1] = 7\n    let value = matrix[0][1]\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

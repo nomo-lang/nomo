@@ -1,5 +1,114 @@
 use super::*;
 
+#[allow(clippy::too_many_arguments)]
+pub(super) fn lower_index_assign_stmt(
+    path: &Path,
+    root: &str,
+    indices: &[AstExpr],
+    value: &AstExpr,
+    scope: &HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    span: &Span,
+) -> Result<Statement, Diagnostic> {
+    let Some(binding) = scope.get(root) else {
+        return Err(Diagnostic::new(
+            "E0303",
+            format!("unknown variable `{root}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    if !binding.mutable {
+        return Err(Diagnostic::new(
+            "E0864",
+            format!("cannot write through immutable variable `{root}`"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    let mut current = binding.value_type.clone();
+    let mut array_types = Vec::with_capacity(indices.len());
+    let mut lowered_indices = Vec::with_capacity(indices.len());
+    for index in indices {
+        let ValueType::Array(element) = current else {
+            return Err(Diagnostic::new(
+                "E0862",
+                format!(
+                    "cannot continue indexed assignment through `{}`; expected `Array<T>`",
+                    current.name()
+                ),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        };
+        current = element.as_ref().clone();
+        array_types.push(current.clone());
+        let (index_type, lowered) = lower_value_expr_with_expected(
+            path,
+            index,
+            scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            Some(&ValueType::U64),
+            span,
+        )?;
+        if index_type != ValueType::U64 {
+            return Err(type_mismatch_expected_found(
+                path,
+                span,
+                "array index must have type `u64`",
+                &ValueType::U64,
+                &index_type,
+            ));
+        }
+        lowered_indices.push(lowered);
+    }
+    let (actual, value) = lower_value_expr_with_expected(
+        path,
+        value,
+        scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        Some(&current),
+        span,
+    )?;
+    if actual != current {
+        return Err(type_mismatch_expected_found(
+            path,
+            span,
+            format!(
+                "cannot assign `{}` through indexed path with element type `{}`",
+                actual.name(),
+                current.name()
+            ),
+            &current,
+            &actual,
+        ));
+    }
+    Ok(Statement::ArrayIndexAssign {
+        root: root.to_string(),
+        indices: lowered_indices,
+        array_types,
+        value,
+    })
+}
+
 pub(super) fn lower_assign_stmt(
     path: &Path,
     target: &[String],

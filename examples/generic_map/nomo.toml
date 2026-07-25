@@ -1,0 +1,4 @@
+[package]
+name = "generic_map"
+version = "0.1.0"
+entry = "src/main.nomo"

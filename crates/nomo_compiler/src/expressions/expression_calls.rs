@@ -19,6 +19,42 @@ pub(super) fn lower_call_value_expr(
             span,
         ),
         2 => {
+            if (callee[0] == "map"
+                && matches!(
+                    callee[1].as_str(),
+                    "new"
+                        | "len"
+                        | "is_empty"
+                        | "contains_key"
+                        | "get"
+                        | "set"
+                        | "remove"
+                        | "clear"
+                        | "keys"
+                        | "values"
+                ))
+                || callee == ["Map", "new"]
+            {
+                require_import(path, imports, span, "std.map", &callee.join("."))?;
+                let operation = if callee == ["Map", "new"] {
+                    "new"
+                } else {
+                    callee[1].as_str()
+                };
+                return lower_single_segment_call_value_expr(
+                    path,
+                    &[format!("__nomo_map_{operation}")],
+                    args,
+                    type_args,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    expected,
+                    span,
+                );
+            }
             if is_fmt_builtin_call(callee) {
                 require_import(path, imports, span, "std.fmt", &callee.join("."))?;
                 if !type_args.is_empty() {

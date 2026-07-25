@@ -138,6 +138,12 @@ pub enum Statement {
         value_type: ValueType,
         value: ValueExpr,
     },
+    ArrayIndexAssign {
+        root: String,
+        indices: Vec<ValueExpr>,
+        array_types: Vec<ValueType>,
+        value: ValueExpr,
+    },
     Eprintln(ValueExpr),
     Eprint(ValueExpr),
     Println(ValueExpr),
@@ -770,6 +776,15 @@ pub enum ValueExpr {
     EnvTempDir,
     EnvArgs,
     ArrayNew {
+        element_type: ValueType,
+    },
+    ArrayLiteral {
+        elements: Vec<ValueExpr>,
+        element_type: ValueType,
+    },
+    ArrayIndex {
+        array: Box<ValueExpr>,
+        index: Box<ValueExpr>,
         element_type: ValueType,
     },
     ArrayLen {

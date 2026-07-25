@@ -1,6 +1,104 @@
 use super::*;
 
 #[test]
+fn infers_nested_array_literals_and_lowers_index_paths() {
+    let source = r#"package app.main
+
+fn main() -> void {
+    let values = [1, 2, 3]
+    let mut matrix = [[1, 2], [3, 4]]
+    let first: i32 = values[0]
+    matrix[0][1] = 7
+    let changed: i32 = matrix[0][1]
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(matches!(
+        main.body[0],
+        Statement::Let {
+            value_type: ValueType::Array(ref element),
+            initializer: ValueExpr::ArrayLiteral { .. },
+            ..
+        } if element.as_ref() == &ValueType::I32
+    ));
+    assert!(matches!(
+        main.body[1],
+        Statement::Let {
+            value_type: ValueType::Array(ref outer),
+            initializer: ValueExpr::ArrayLiteral { .. },
+            ..
+        } if outer.as_ref() == &ValueType::Array(Box::new(ValueType::I32))
+    ));
+    assert!(matches!(
+        main.body[3],
+        Statement::ArrayIndexAssign {
+            ref root,
+            ref indices,
+            ref array_types,
+            ..
+        } if root == "matrix"
+            && indices.len() == 2
+            && array_types
+                == &vec![ValueType::Array(Box::new(ValueType::I32)), ValueType::I32]
+    ));
+}
+
+#[test]
+fn accepts_contextual_empty_array_literal() {
+    let source = "package app.main\nimport std.array\nfn main() -> void {\n    let values: Array<i32> = []\n}\n";
+    let program = parse_inline(source).unwrap();
+    let main = program.functions.iter().find(|f| f.name == "main").unwrap();
+    assert!(matches!(
+        main.body[0],
+        Statement::Let {
+            value_type: ValueType::Array(ref element),
+            initializer: ValueExpr::ArrayLiteral {
+                ref elements,
+                element_type: ValueType::I32,
+            },
+            ..
+        } if element.as_ref() == &ValueType::I32 && elements.is_empty()
+    ));
+}
+
+#[test]
+fn rejects_untyped_empty_array_literal() {
+    let source = "package app.main\nfn main() -> void {\n    let values = []\n}\n";
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0860");
+    assert!(error.message.contains("Array<T>"));
+}
+
+#[test]
+fn rejects_mixed_array_literal_elements_without_coercion() {
+    let source = "package app.main\nfn main() -> void {\n    let values = [1, 2 as i64]\n}\n";
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0861");
+    assert!(error.message.contains("array element 1"));
+    assert!(error.message.contains("i32"));
+    assert!(error.message.contains("i64"));
+}
+
+#[test]
+fn rejects_non_u64_array_index() {
+    let source = "package app.main\nfn main() -> void {\n    let values = [1]\n    let value = values[-1]\n}\n";
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0404");
+    assert!(error.message.contains("u64"));
+}
+
+#[test]
+fn rejects_index_assignment_through_immutable_root() {
+    let source =
+        "package app.main\nfn main() -> void {\n    let values = [1]\n    values[0] = 2\n}\n";
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0864");
+    assert!(error.message.contains("values"));
+}
+
+#[test]
 fn accepts_string_array_builtins() {
     let source = r#"package app.main
 

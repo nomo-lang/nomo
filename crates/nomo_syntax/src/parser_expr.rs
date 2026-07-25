@@ -169,11 +169,31 @@ impl Parser<'_> {
 
     fn parse_postfix_expr(&mut self) -> Result<Expr, Diagnostic> {
         let mut expr = self.parse_primary_expr()?;
-        while matches!(self.peek().kind, TokenKind::Question) {
-            self.advance();
-            expr = Expr::Question {
-                expr: Box::new(expr),
-            };
+        loop {
+            match self.peek().kind {
+                TokenKind::Question => {
+                    self.advance();
+                    expr = Expr::Question {
+                        expr: Box::new(expr),
+                    };
+                }
+                TokenKind::LBracket => {
+                    self.advance();
+                    self.skip_newlines();
+                    let index = self.parse_expr()?;
+                    self.skip_newlines();
+                    self.expect_kind(
+                        TokenKind::RBracket,
+                        "E0863",
+                        "expected `]` after array index",
+                    )?;
+                    expr = Expr::Index {
+                        base: Box::new(expr),
+                        index: Box::new(index),
+                    };
+                }
+                _ => break,
+            }
         }
         Ok(expr)
     }
@@ -220,12 +240,39 @@ impl Parser<'_> {
                 )?;
                 Ok(expr)
             }
+            TokenKind::LBracket => self.parse_array_literal(),
             TokenKind::If => self.parse_if_expr(),
             TokenKind::Match => self.parse_match_expr(),
             TokenKind::Panic => self.parse_panic_expr(),
             TokenKind::Ident(_) => self.parse_name_or_call(),
             _ => Err(self.error("E0208", "expected expression", self.peek().length())),
         }
+    }
+
+    fn parse_array_literal(&mut self) -> Result<Expr, Diagnostic> {
+        self.expect_kind(TokenKind::LBracket, "E0860", "expected `[`")?;
+        self.skip_newlines();
+        let mut elements = Vec::new();
+        if !matches!(self.peek().kind, TokenKind::RBracket) {
+            loop {
+                elements.push(self.parse_expr()?);
+                self.skip_newlines();
+                if !matches!(self.peek().kind, TokenKind::Comma) {
+                    break;
+                }
+                self.advance();
+                self.skip_newlines();
+                if matches!(self.peek().kind, TokenKind::RBracket) {
+                    break;
+                }
+            }
+        }
+        self.expect_kind(
+            TokenKind::RBracket,
+            "E0860",
+            "expected `]` after array literal",
+        )?;
+        Ok(Expr::ArrayLiteral { elements })
     }
 
     fn parse_panic_expr(&mut self) -> Result<Expr, Diagnostic> {

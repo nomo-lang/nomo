@@ -169,6 +169,14 @@ pub(super) fn lower_stmt(
                 initializer,
             })
         }
+        Stmt::IndexAssign {
+            root,
+            indices,
+            value,
+            span,
+        } => lower_index_assign_stmt(
+            path, root, indices, value, scope, imports, signatures, structs, enums, span,
+        ),
         Stmt::LetElse {
             pattern,
             binding,

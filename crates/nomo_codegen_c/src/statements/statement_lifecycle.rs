@@ -437,6 +437,8 @@ pub(super) fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::EnvArgs
         | ValueExpr::IoReadLine
         | ValueExpr::ArrayNew { .. }
+        | ValueExpr::ArrayLiteral { .. }
+        | ValueExpr::ArrayIndex { .. }
         | ValueExpr::ArrayIter { .. }
         | ValueExpr::ArrayGet { .. }
         | ValueExpr::JsonStructured { .. }

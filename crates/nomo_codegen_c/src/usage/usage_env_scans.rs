@@ -54,6 +54,9 @@ pub(super) fn statement_uses_env_get(statement: &Statement) -> bool {
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_env_get(value),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses_env_get) || expr_uses_env_get(value)
+        }
         Statement::Loop { kind, body } => match kind {
             LoopKind::Infinite => body.iter().any(statement_uses_env_get),
             LoopKind::While(condition) => {
@@ -140,6 +143,9 @@ pub(super) fn statement_uses_env_args(statement: &Statement) -> bool {
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_uses_env_args(value),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses_env_args) || expr_uses_env_args(value)
+        }
         Statement::Loop { kind, body } => match kind {
             LoopKind::Infinite => body.iter().any(statement_uses_env_args),
             LoopKind::While(condition) => {
@@ -367,9 +373,10 @@ pub(super) fn expr_uses_env_get(expr: &ValueExpr) -> bool {
         | ValueExpr::CollectionsStringSetNew => false,
         ValueExpr::ArrayLen { array } => expr_uses_env_get(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_get(array),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_uses_env_get(array) || expr_uses_env_get(index)
         }
+        ValueExpr::ArrayLiteral { elements, .. } => elements.iter().any(expr_uses_env_get),
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_uses_env_get(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_env_get(value),
@@ -610,9 +617,10 @@ pub(super) fn expr_uses_env_args(expr: &ValueExpr) -> bool {
             expr_uses_env_args(map) || expr_uses_env_args(key) || expr_uses_env_args(value)
         }
         ValueExpr::ArrayIter { array, .. } => expr_uses_env_args(array),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_uses_env_args(array) || expr_uses_env_args(index)
         }
+        ValueExpr::ArrayLiteral { elements, .. } => elements.iter().any(expr_uses_env_args),
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_uses_env_args(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_env_args(value),

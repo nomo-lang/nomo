@@ -179,6 +179,12 @@ pub(super) fn emit_stmt(
             value_type,
             value,
         } => emit_assign_field(out, base, field, value_type, value, indent),
+        Statement::ArrayIndexAssign {
+            root,
+            indices,
+            array_types,
+            value,
+        } => emit_array_index_assign(out, root, indices, array_types, value, indent),
         Statement::Println(arg) => {
             write_indent(out, indent);
             out.push_str("puts(");
@@ -281,6 +287,106 @@ pub(super) fn emit_stmt(
             // Deferred calls are collected by emit_body and emitted at exit points.
         }
     }
+}
+
+fn emit_array_index_assign(
+    out: &mut String,
+    root: &str,
+    indices: &[ValueExpr],
+    element_types: &[ValueType],
+    value: &ValueExpr,
+    indent: usize,
+) {
+    let padding = "    ".repeat(indent);
+    out.push_str(&padding);
+    out.push_str("{\n");
+    for (position, index) in indices.iter().enumerate() {
+        out.push_str(&padding);
+        out.push_str("    uint64_t nomo__index_");
+        out.push_str(&position.to_string());
+        out.push_str(" = ");
+        emit_expr(out, index);
+        out.push_str(";\n");
+    }
+    for (depth, element_type) in element_types
+        .iter()
+        .enumerate()
+        .take(indices.len().saturating_sub(1))
+    {
+        out.push_str(&padding);
+        out.push_str("    ");
+        out.push_str(&c_type(element_type));
+        out.push_str(" nomo__child_");
+        out.push_str(&depth.to_string());
+        out.push_str(" = ");
+        out.push_str(&c_array_ident(element_type));
+        out.push_str("_index(");
+        if depth == 0 {
+            out.push_str(&c_var_ident(root));
+        } else {
+            out.push_str("nomo__child_");
+            out.push_str(&(depth - 1).to_string());
+        }
+        out.push_str(", nomo__index_");
+        out.push_str(&depth.to_string());
+        out.push_str(");\n");
+    }
+    let leaf_depth = indices.len() - 1;
+    out.push_str(&padding);
+    out.push_str("    ");
+    if leaf_depth == 0 {
+        out.push_str(&c_var_ident(root));
+    } else {
+        out.push_str("nomo__child_");
+        out.push_str(&(leaf_depth - 1).to_string());
+    }
+    out.push_str(" = ");
+    out.push_str(&c_array_ident(&element_types[leaf_depth]));
+    out.push_str("_set(");
+    if leaf_depth == 0 {
+        out.push_str(&c_var_ident(root));
+    } else {
+        out.push_str("nomo__child_");
+        out.push_str(&(leaf_depth - 1).to_string());
+    }
+    out.push_str(", nomo__index_");
+    out.push_str(&leaf_depth.to_string());
+    out.push_str(", ");
+    emit_expr(out, value);
+    out.push_str(");\n");
+
+    for depth in (0..leaf_depth).rev() {
+        out.push_str(&padding);
+        out.push_str("    ");
+        if depth == 0 {
+            out.push_str(&c_var_ident(root));
+        } else {
+            out.push_str("nomo__child_");
+            out.push_str(&(depth - 1).to_string());
+        }
+        out.push_str(" = ");
+        out.push_str(&c_array_ident(&element_types[depth]));
+        out.push_str("_set(");
+        if depth == 0 {
+            out.push_str(&c_var_ident(root));
+        } else {
+            out.push_str("nomo__child_");
+            out.push_str(&(depth - 1).to_string());
+        }
+        out.push_str(", nomo__index_");
+        out.push_str(&depth.to_string());
+        out.push_str(", nomo__child_");
+        out.push_str(&depth.to_string());
+        out.push_str(");\n");
+        out.push_str(&padding);
+        out.push_str("    ");
+        out.push_str(&c_array_ident(&element_types[depth + 1]));
+        out.push_str("_release(nomo__child_");
+        out.push_str(&depth.to_string());
+        out.push_str(");\n");
+    }
+    out.push_str(&padding);
+    out.push_str("}\n");
 }
 
 pub(super) fn emit_block(

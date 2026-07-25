@@ -1,6 +1,67 @@
 use super::*;
 
 #[test]
+fn accepts_generic_ordered_map_with_managed_values() {
+    let source = r#"package app.main
+
+import std.json
+import std.map
+import std.array
+
+fn main() -> void {
+    let mut values: Map<string, JsonValue> = Map.new<string, JsonValue>()
+    let old: Option<JsonValue> = map.set<string, JsonValue>(
+        mut values,
+        "answer",
+        json.from_i64(42 as i64)
+    )
+    let present: bool = map.contains_key<string, JsonValue>(values, "answer")
+    let found: Option<JsonValue> = map.get<string, JsonValue>(values, "answer")
+    let keys: Array<string> = map.keys<string, JsonValue>(values)
+    let snapshots: Array<JsonValue> = map.values<string, JsonValue>(values)
+    let removed: Option<JsonValue> = map.remove<string, JsonValue>(mut values, "answer")
+    map.clear<string, JsonValue>(mut values)
+    let empty: bool = map.is_empty<string, JsonValue>(values)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    assert!(program.structs.iter().any(|item| item.name == "Map"));
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|item| item.name.starts_with("__nomo_map_set"))
+    );
+    assert!(
+        program
+            .functions
+            .iter()
+            .any(|item| item.name.starts_with("__nomo_map_keys"))
+    );
+}
+
+#[test]
+fn generic_map_does_not_remove_legacy_string_collections() {
+    let source = r#"package app.main
+
+import std.collections
+import std.map
+import std.array
+
+fn main() -> void {
+    let legacy: StringMap = collections.map_new()
+    let mut generic: Map<string, string> = Map.new<string, string>()
+    let old: Option<string> = map.set<string, string>(mut generic, "language", "nomo")
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    assert!(program.structs.iter().any(|item| item.name == "StringMap"));
+    assert!(program.structs.iter().any(|item| item.name == "Map"));
+}
+
+#[test]
 fn accepts_collections_builtins() {
     let source = r#"package app.main
 

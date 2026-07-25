@@ -228,6 +228,7 @@ pub(super) struct StandardTypeNeeds {
     pub(super) sqlite: bool,
     pub(super) regex: bool,
     pub(super) collections: bool,
+    pub(super) map: bool,
     pub(super) time: bool,
     pub(super) num: bool,
     pub(super) result: bool,

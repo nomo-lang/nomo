@@ -53,6 +53,9 @@ fn source_uses_builtin(ast: &SourceFile, expr_uses: impl Fn(&AstExpr) -> bool) -
 fn stmt_uses_expr(stmt: &Stmt, expr_uses: &impl Fn(&AstExpr) -> bool) -> bool {
     match stmt {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => expr_uses(value),
+        Stmt::IndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses) || expr_uses(value)
+        }
         Stmt::LetElse {
             value, else_body, ..
         } => expr_uses(value) || else_body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses)),
@@ -107,6 +110,12 @@ fn stmt_uses_expr(stmt: &Stmt, expr_uses: &impl Fn(&AstExpr) -> bool) -> bool {
 
 fn expr_uses_builtin(expr: &AstExpr, is_builtin_call: impl Fn(&[String]) -> bool + Copy) -> bool {
     match expr {
+        AstExpr::ArrayLiteral { elements } => elements
+            .iter()
+            .any(|element| expr_uses_builtin(element, is_builtin_call)),
+        AstExpr::Index { base, index } => {
+            expr_uses_builtin(base, is_builtin_call) || expr_uses_builtin(index, is_builtin_call)
+        }
         AstExpr::Call { callee, args, .. } => {
             is_builtin_call(callee)
                 || args

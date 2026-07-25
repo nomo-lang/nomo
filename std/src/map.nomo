@@ -1,0 +1,160 @@
+//! Deterministic insertion-ordered generic maps.
+package std.map
+
+import std.array
+import std.option
+
+/// A deterministic insertion-ordered map with value semantics.
+pub struct Map<K, V> {
+    keys: Array<K>
+    values: Array<V>
+}
+
+/// Creates an empty map.
+pub fn new<K, V>() -> Map<K, V> {
+    return Map {
+        keys: [],
+        values: []
+    }
+}
+
+/// Returns the number of entries.
+pub fn len<K, V>(self: Map<K, V>) -> u64 {
+    let keys = self.keys
+    return keys.len()
+}
+
+/// Reports whether the map is empty.
+pub fn is_empty<K, V>(self: Map<K, V>) -> bool {
+    let keys = self.keys
+    return keys.len() == 0
+}
+
+/// Reports whether a key is present.
+pub fn contains_key<K, V>(self: Map<K, V>, key: K) -> bool {
+    let keys = self.keys
+    let mut index: u64 = 0
+    for index < keys.len() {
+        let present: Option<bool> = if keys[index] == key {
+            Some(true)
+        } else {
+            None
+        }
+        match present {
+            Option.Some(value) => {
+                return value
+            }
+            Option.None => {
+                index += 1
+            }
+        }
+    }
+    return false
+}
+
+/// Returns a value when the key is present.
+pub fn get<K, V>(self: Map<K, V>, key: K) -> Option<V> {
+    let keys = self.keys
+    let values = self.values
+    let mut index: u64 = 0
+    for index < keys.len() {
+        let found: Option<u64> = if keys[index] == key {
+            Some(index)
+        } else {
+            None
+        }
+        match found {
+            Option.Some(found_index) => {
+                return Some(values[found_index])
+            }
+            Option.None => {
+                index += 1
+            }
+        }
+    }
+    return None
+}
+
+/// Inserts or replaces a value and returns the previous value.
+pub fn set<K, V>(mut self: Map<K, V>, key: K, value: V) -> Option<V> {
+    let mut keys = self.keys
+    let mut values = self.values
+    let mut index: u64 = 0
+    for index < keys.len() {
+        let found: Option<u64> = if keys[index] == key {
+            Some(index)
+        } else {
+            None
+        }
+        match found {
+            Option.Some(found_index) => {
+                let old = values[found_index]
+                values[found_index] = value
+                self.values = values
+                return Some(old)
+            }
+            Option.None => {
+                index += 1
+            }
+        }
+    }
+    if keys.len() >= 65536 {
+        panic("map capacity exceeded")
+    } else {
+        void
+    }
+    keys.push(key)
+    values.push(value)
+    self.keys = keys
+    self.values = values
+    return None
+}
+
+/// Removes a key and returns its previous value.
+pub fn remove<K, V>(mut self: Map<K, V>, key: K) -> Option<V> {
+    let mut keys = self.keys
+    let mut values = self.values
+    let mut index: u64 = 0
+    for index < keys.len() {
+        let found: Option<u64> = if keys[index] == key {
+            Some(index)
+        } else {
+            None
+        }
+        match found {
+            Option.Some(found_index) => {
+                let removed_key = keys.remove(found_index)
+                let removed_value = values.remove(found_index)
+                self.keys = keys
+                self.values = values
+                return removed_value
+            }
+            Option.None => {
+                index += 1
+            }
+        }
+    }
+    return None
+}
+
+/// Removes all entries.
+pub fn clear<K, V>(mut self: Map<K, V>) -> void {
+    let mut keys = self.keys
+    let mut values = self.values
+    keys.clear()
+    values.clear()
+    self.keys = keys
+    self.values = values
+}
+
+/// Returns an insertion-ordered key snapshot.
+pub fn keys<K, V>(self: Map<K, V>) -> Array<K> {
+    let keys = self.keys
+    return keys.iter()
+}
+
+/// Returns an insertion-ordered value snapshot.
+pub fn values<K, V>(self: Map<K, V>) -> Array<V> {
+    let values = self.values
+    return values.iter()
+}

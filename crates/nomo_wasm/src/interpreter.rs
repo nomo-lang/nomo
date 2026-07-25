@@ -536,6 +536,22 @@ impl<'a> Interpreter<'a> {
                 self.set_path(&[base.clone(), field.clone()], value)?;
                 Ok(Signal::Next)
             }
+            Statement::ArrayIndexAssign {
+                root,
+                indices,
+                value,
+                ..
+            } => {
+                let mut resolved = Vec::with_capacity(indices.len());
+                for index in indices {
+                    resolved.push(self.eval_expr(index)?.as_index()?);
+                }
+                let value = self.eval_expr(value)?;
+                let mut root_value = self.get_variable(root)?;
+                set_array_path(&mut root_value, &resolved, value)?;
+                self.current_frame_mut()?.insert(root.clone(), root_value);
+                Ok(Signal::Next)
+            }
             Statement::Println(expr) => {
                 let value = self.eval_expr(expr)?;
                 self.write_stdout(&value, true)?;
@@ -923,6 +939,23 @@ impl<'a> Interpreter<'a> {
             ValueExpr::JsonRpc { operation, args } => self.eval_jsonrpc(*operation, args),
             ValueExpr::Cron { operation, args } => self.eval_cron(*operation, args),
             ValueExpr::ArrayNew { .. } => Ok(Value::Array(Vec::new())),
+            ValueExpr::ArrayLiteral { elements, .. } => {
+                let mut values = Vec::with_capacity(elements.len());
+                for element in elements {
+                    values.push(self.eval_expr(element)?);
+                }
+                Ok(Value::Array(values))
+            }
+            ValueExpr::ArrayIndex { array, index, .. } => {
+                let Value::Array(values) = self.eval_expr(array)? else {
+                    return Err(RuntimeError::runtime("expected array"));
+                };
+                let index = self.eval_expr(index)?.as_index()?;
+                values
+                    .get(index)
+                    .cloned()
+                    .ok_or_else(|| RuntimeError::runtime("array index out of bounds"))
+            }
             ValueExpr::ArrayLen { array } => match self.eval_expr(array)? {
                 Value::Array(values) => Ok(Value::U64(values.len() as u64)),
                 _ => Err(RuntimeError::runtime("expected array")),
@@ -1635,6 +1668,24 @@ fn coerce_like(value: Value, target: &Value) -> RuntimeResult<Value> {
         Value::Void => ValueType::Void,
     };
     value.coerce(&value_type)
+}
+
+fn set_array_path(target: &mut Value, indices: &[usize], value: Value) -> RuntimeResult<()> {
+    let Some((index, rest)) = indices.split_first() else {
+        return Err(RuntimeError::runtime("empty indexed assignment path"));
+    };
+    let Value::Array(values) = target else {
+        return Err(RuntimeError::runtime("expected array"));
+    };
+    let slot = values
+        .get_mut(*index)
+        .ok_or_else(|| RuntimeError::runtime("array index out of bounds"))?;
+    if rest.is_empty() {
+        *slot = coerce_like(value, slot)?;
+        Ok(())
+    } else {
+        set_array_path(slot, rest, value)
+    }
 }
 
 fn values_equal(left: &Value, right: &Value) -> RuntimeResult<bool> {

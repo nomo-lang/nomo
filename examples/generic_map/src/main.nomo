@@ -1,0 +1,32 @@
+package app.main
+
+import std.io
+import std.map
+import std.array
+
+struct ToolDefinition {
+    name: string
+    description: string
+}
+
+fn main() -> void {
+    let mut tools: Map<string, ToolDefinition> = Map.new<string, ToolDefinition>()
+    let ignored: Option<ToolDefinition> = map.set<string, ToolDefinition>(mut tools, "search", ToolDefinition { name: "search", description: "Search indexed documents" })
+    let keys: Array<string> = map.keys<string, ToolDefinition>(tools)
+    let values: Array<ToolDefinition> = map.values<string, ToolDefinition>(tools)
+    let first: ToolDefinition = values[0]
+    io.println(keys[0], first.name)
+    io.println(if map.contains_key<string, ToolDefinition>(tools, "search") {
+        "present"
+    } else {
+        "missing"
+    })
+    let found: Option<ToolDefinition> = map.get<string, ToolDefinition>(tools, "search")
+    let removed: Option<ToolDefinition> = map.remove<string, ToolDefinition>(mut tools, "search")
+    map.clear<string, ToolDefinition>(mut tools)
+    io.println(if map.is_empty<string, ToolDefinition>(tools) {
+        "empty"
+    } else {
+        "wrong"
+    })
+}

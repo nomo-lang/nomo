@@ -578,6 +578,8 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::EnvTempDir => out.push_str("nomo_env_temp_dir()"),
         ValueExpr::EnvArgs => out.push_str("nomo_env_args(nomo_argc, nomo_argv)"),
         ValueExpr::ArrayNew { .. }
+        | ValueExpr::ArrayLiteral { .. }
+        | ValueExpr::ArrayIndex { .. }
         | ValueExpr::ArrayLen { .. }
         | ValueExpr::ArrayIter { .. }
         | ValueExpr::ArrayGet { .. }

@@ -226,6 +226,20 @@ fn collect_stmt_enum(
         | Statement::Return(Some(value)) => {
             collect_expr_enum(value, seen, out);
         }
+        Statement::ArrayIndexAssign {
+            indices,
+            array_types,
+            value,
+            ..
+        } => {
+            for ty in array_types {
+                collect_type_enum(ty, seen, out);
+            }
+            for index in indices {
+                collect_expr_enum(index, seen, out);
+            }
+            collect_expr_enum(value, seen, out);
+        }
         Statement::Loop { kind, body } => {
             match kind {
                 LoopKind::Infinite => {}
@@ -1069,6 +1083,15 @@ fn collect_expr_enum(
         }
         ValueExpr::NumToString { value, .. } => collect_expr_enum(value, seen, out),
         ValueExpr::ArrayNew { .. } => {}
+        ValueExpr::ArrayLiteral {
+            elements,
+            element_type,
+        } => {
+            collect_type_enum(element_type, seen, out);
+            for element in elements {
+                collect_expr_enum(element, seen, out);
+            }
+        }
         ValueExpr::ArrayLen { array } => collect_expr_enum(array, seen, out),
         ValueExpr::ArrayIter {
             array,
@@ -1078,6 +1101,11 @@ fn collect_expr_enum(
             collect_expr_enum(array, seen, out);
         }
         ValueExpr::ArrayGet {
+            array,
+            index,
+            element_type,
+        }
+        | ValueExpr::ArrayIndex {
             array,
             index,
             element_type,

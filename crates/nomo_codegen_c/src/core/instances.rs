@@ -188,6 +188,12 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
         | Statement::Panic(initializer)
         | Statement::Return(Some(initializer))
         | Statement::Expr(initializer) => collect_expr_result_map_err(initializer, out),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            for index in indices {
+                collect_expr_result_map_err(index, out);
+            }
+            collect_expr_result_map_err(value, out);
+        }
         Statement::LetElse {
             value, else_body, ..
         } => {
@@ -525,9 +531,14 @@ fn collect_expr_result_map_err(expr: &ValueExpr, out: &mut Vec<ResultMapErrInsta
                 collect_expr_result_map_err(arg, out);
             }
         }
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             collect_expr_result_map_err(array, out);
             collect_expr_result_map_err(index, out);
+        }
+        ValueExpr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                collect_expr_result_map_err(element, out);
+            }
         }
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => {}
         ValueExpr::ArrayRemove { index, .. } => {
@@ -634,6 +645,12 @@ where
         | Statement::Panic(initializer)
         | Statement::Return(Some(initializer))
         | Statement::Expr(initializer) => walk_expr(initializer, visit),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            for index in indices {
+                walk_expr(index, visit);
+            }
+            walk_expr(value, visit);
+        }
         Statement::LetElse {
             value, else_body, ..
         } => {
@@ -953,9 +970,14 @@ where
                 walk_expr(arg, visit);
             }
         }
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             walk_expr(array, visit);
             walk_expr(index, visit);
+        }
+        ValueExpr::ArrayLiteral { elements, .. } => {
+            for element in elements {
+                walk_expr(element, visit);
+            }
         }
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => {}
         ValueExpr::ArrayRemove { index, .. } => walk_expr(index, visit),

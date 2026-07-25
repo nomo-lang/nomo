@@ -3,6 +3,12 @@ use super::*;
 impl Parser<'_> {
     pub(super) fn parse_stmt(&mut self) -> Result<Stmt, Diagnostic> {
         let token = self.peek().clone();
+        if matches!(&token.kind, TokenKind::Ident(name) if name == "task")
+            && matches!(self.peek_n(1).kind, TokenKind::Dot)
+            && matches!(&self.peek_n(2).kind, TokenKind::Ident(name) if name == "scope")
+        {
+            return self.parse_task_scope_stmt(token);
+        }
         if matches!(token.kind, TokenKind::Let) {
             return self.parse_let_stmt(token);
         }
@@ -470,6 +476,24 @@ impl Parser<'_> {
                 column: token.column,
                 length: token.length(),
                 text: token.text,
+            },
+        })
+    }
+
+    fn parse_task_scope_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        let module = self.expect_ident("expected `task`")?;
+        debug_assert_eq!(module, "task");
+        self.expect_kind(TokenKind::Dot, "E0871", "expected `.` after `task`")?;
+        let operation = self.expect_ident("expected `scope` after `task.`")?;
+        debug_assert_eq!(operation, "scope");
+        let body = self.parse_stmt_block("E0871", "expected `{` before task scope body")?;
+        Ok(Stmt::TaskScope {
+            body,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: "task.scope".len(),
+                text: "task.scope".to_string(),
             },
         })
     }

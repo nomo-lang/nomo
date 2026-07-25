@@ -205,6 +205,10 @@ pub enum Stmt {
         stmt: Box<Stmt>,
         span: Span,
     },
+    TaskScope {
+        body: Vec<Stmt>,
+        span: Span,
+    },
     Unsafe {
         body: Vec<Stmt>,
         span: Span,

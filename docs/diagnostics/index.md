@@ -165,6 +165,9 @@ the same code.
 - [E0864](E0864.md) - indexed assignment through an immutable root
 - [E0865](E0865.md) - reserved generic map implementation name collision
 - [E0870](E0870.md) - synchronous function calls a suspend function
+- [E0871](E0871.md) - structured task operation is outside a valid task scope
+- [E0872](E0872.md) - scope-owned task handle is escaped, reused, or left unjoined
+- [E0875](E0875.md) - structured task spawn target is not a supported suspend function
 - [E0876](E0876.md) - suspension shape is not supported by the current runtime slice
 - [E0891](E0891.md) - suspend call graph reaches a blocking sleep operation
 - [E0901](E0901.md) - manifest or project configuration error

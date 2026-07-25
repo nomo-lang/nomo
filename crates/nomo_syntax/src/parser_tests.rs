@@ -42,6 +42,48 @@ fn parses_suspend_functions_methods_and_interface_signatures() {
 }
 
 #[test]
+fn parses_structured_task_scope_and_direct_spawn_target() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined = task.join(child)
+    }
+}
+"#;
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let Stmt::TaskScope { body, .. } = &ast.functions[1].body[0] else {
+        panic!("expected task.scope statement");
+    };
+    assert!(matches!(
+        &body[0],
+        Stmt::Let {
+            value:
+                Expr::Call {
+                    callee,
+                    args,
+                    ..
+                },
+            ..
+        } if callee == &["task", "\0nomo_structured_spawn"]
+            && matches!(
+                args.as_slice(),
+                [Expr::Call { callee, args, .. }]
+                    if callee == &["worker"] && args == &[Expr::String("value".to_string())]
+            )
+    ));
+}
+
+#[test]
 fn rejects_suspend_extern_functions() {
     let source = "package app.main\n\nextern \"C\" {\n    suspend fn wait() -> void\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

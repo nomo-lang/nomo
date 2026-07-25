@@ -292,6 +292,9 @@ const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
 const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
 const BUILTIN_TASK_YIELD_EXPR: &str = "__nomo_task_yield";
 const BUILTIN_TASK_SLEEP_EXPR: &str = "__nomo_task_sleep";
+const BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX: &str = "__nomo_structured_task_spawn::";
+const BUILTIN_TASK_STRUCTURED_JOIN_EXPR: &str = "__nomo_structured_task_join";
+const TASK_STRUCTURED_SPAWN_AST_NAME: &str = "\0nomo_structured_spawn";
 const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
 const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
 const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";
@@ -352,6 +355,7 @@ enum BindingSource {
     Param,
     EnumPayload { value: ValueExpr, variant: String },
     FunctionEffect { is_suspend: bool },
+    TaskScope,
 }
 
 fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
@@ -364,6 +368,9 @@ fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
         BindingSource::FunctionEffect { .. } => {
             unreachable!("the internal function-effect binding is never a source expression")
         }
+        BindingSource::TaskScope => {
+            unreachable!("the internal task-scope binding is never a source expression")
+        }
     }
 }
 
@@ -375,6 +382,7 @@ fn binding_source_noun(binding: &Binding) -> &'static str {
 }
 
 const FUNCTION_EFFECT_BINDING: &str = "\0nomo_function_effect";
+const TASK_SCOPE_BINDING: &str = "\0nomo_task_scope";
 
 fn current_function_is_suspend(scope: &HashMap<String, Binding>) -> bool {
     matches!(
@@ -382,6 +390,13 @@ fn current_function_is_suspend(scope: &HashMap<String, Binding>) -> bool {
             .get(FUNCTION_EFFECT_BINDING)
             .map(|binding| &binding.source),
         Some(BindingSource::FunctionEffect { is_suspend: true })
+    )
+}
+
+fn current_function_has_task_scope(scope: &HashMap<String, Binding>) -> bool {
+    matches!(
+        scope.get(TASK_SCOPE_BINDING).map(|binding| &binding.source),
+        Some(BindingSource::TaskScope)
     )
 }
 

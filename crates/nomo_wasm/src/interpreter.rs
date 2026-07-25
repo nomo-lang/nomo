@@ -389,9 +389,18 @@ impl<'a> Interpreter<'a> {
         if name == "__nomo_task_spawn" {
             return Ok(task_runtime_unavailable_result());
         }
+        if name.starts_with("__nomo_structured_task_spawn::") {
+            return Ok(Value::Struct {
+                name: "Task".to_string(),
+                fields: HashMap::from([("handle".to_string(), Value::U64(0))]),
+            });
+        }
         if matches!(
             name,
-            "__nomo_task_join" | "__nomo_task_cancel" | "__nomo_task_close"
+            "__nomo_task_join"
+                | "__nomo_structured_task_join"
+                | "__nomo_task_cancel"
+                | "__nomo_task_close"
         ) {
             return Ok(task_runtime_unavailable_result());
         }

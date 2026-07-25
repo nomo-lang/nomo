@@ -181,7 +181,7 @@ pub(super) fn validate_stmt_type_imports(
             }
         },
         Stmt::Defer { stmt, .. } => validate_stmt_type_imports(path, imports, stmt),
-        Stmt::Unsafe { body, .. } => {
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => {
             for stmt in body {
                 validate_stmt_type_imports(path, imports, stmt)?;
             }

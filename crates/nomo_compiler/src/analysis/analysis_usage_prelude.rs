@@ -105,7 +105,7 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_core_prelude_variant(stmt, enum_name),
-        Stmt::Unsafe { body, .. } => body
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => body
             .iter()
             .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name)),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,

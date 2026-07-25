@@ -613,6 +613,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::Break { span, .. }
         | Stmt::Continue { span, .. }
         | Stmt::Defer { span, .. }
+        | Stmt::TaskScope { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

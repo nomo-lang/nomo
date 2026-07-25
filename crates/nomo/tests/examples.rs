@@ -29,6 +29,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_yield",
     "async_call_abi",
     "async_timer",
+    "async_structured_void",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1274,6 +1275,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_yield" => "before yield\nframe-owned message\n3\n",
         "async_call_abi" => "argument\n7\nframe result\n",
         "async_timer" => "before timer\ntrue\ntrue\nafter timer\n",
+        "async_structured_void" => {
+            "left before\nright before\nleft after\nright after\ntrue true\n"
+        }
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"

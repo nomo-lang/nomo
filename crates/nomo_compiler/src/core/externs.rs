@@ -451,6 +451,12 @@ fn validate_extern_stmt_is_unsafe(
         Stmt::Defer { stmt, .. } => {
             validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)
         }
+        Stmt::TaskScope { body, .. } => {
+            for stmt in body {
+                validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+            }
+            Ok(())
+        }
         Stmt::Unsafe { body, .. } => {
             for stmt in body {
                 validate_extern_stmt_is_unsafe(path, stmt, true, extern_names)?;

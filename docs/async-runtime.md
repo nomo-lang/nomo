@@ -54,6 +54,30 @@ non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
 
+The first structured-concurrency slice uses an explicit lexical scope and
+explicit concurrency creation while keeping child calls direct-style:
+
+```nomo
+import std.result
+import std.task
+
+suspend fn child(message: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let handle = task.spawn child("ready")
+        let joined: Result<void, TaskError> = task.join(handle)
+        let completed: bool = result.is_ok(joined)
+    }
+}
+```
+
+`task.spawn child(args)` differs deliberately from the legacy
+`task.spawn(worker, input)` call with parentheses. The structured form creates
+a scope-owned `Task<void>`; the one-argument join consumes it exactly once.
+
 ## Implemented P1 Slice
 
 On the native C99 backend, a suspend call chain that reaches
@@ -68,6 +92,11 @@ On the native C99 backend, a suspend call chain that reaches
 - a bounded owner-local timer table with generation-checked registrations,
   monotonic deadlines, deterministic deadline/generation ordering, and
   idempotent disarm;
+- embedded structured child frames enqueued onto the same bounded FIFO, plus a
+  single owner-local waiter edge that re-enqueues the parent when its child
+  completes;
+- a typed `TaskError { code: "queue_full", ... }` materialized by join when a
+  structured spawn cannot enter the 64-entry ready queue;
 - exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
@@ -76,7 +105,7 @@ This slice creates no OS thread, heap task, reactor, or atomic metadata. A
 ready zero-duration timer neither registers nor enters the queue. A positive
 timer is not polled again until its deadline moves the owner frame to the ready
 queue. The generated context records poll, yield, frame-drop/live-frame,
-enqueue/dequeue/saturation, and timer
+enqueue/dequeue/saturation, structured spawn/join/join-suspension, and timer
 registration/expiry/cancellation/live/peak counters.
 Native programs export the versioned
 `nomo-c99-current-thread` JSON payload only when
@@ -95,11 +124,20 @@ managed values are retained into the child frame, owned temporaries transfer
 directly, and an owned result moves into its immutable caller binding before
 the child frame is dropped.
 
+That inline fast path describes ordinary direct suspend calls. A structured
+spawn is intentionally concurrent: it evaluates immutable frame-safe arguments
+once, initializes an embedded child frame, and schedules that frame on the
+bounded FIFO. Join suspends only while the selected child is incomplete. Child
+completion wakes one owner-local waiter, and both explicit join cleanup and
+parent cleanup use idempotent child drop. This slice creates no heap task, OS
+thread, atomic reference count, or global work-stealing queue.
+
 Browser WASM accepts the same source in its bounded sandbox interpreter.
 `task.yield_now()` is currently a cooperative boundary there; it does not yet
 return control to a host Promise or browser event loop. `task.sleep` does not
 block or evaluate its duration in the browser sandbox; it returns
-`TaskError { code: "runtime_unavailable", ... }`.
+`TaskError { code: "runtime_unavailable", ... }`. Structured child bodies are
+also not evaluated there yet; their join returns the same stable error.
 
 ## Deliberate Restrictions
 
@@ -112,8 +150,17 @@ cross-suspension locals must be immutable frame-safe scalar, string, struct,
 enum, Result, or supported array values. Async `main` still returns `void`.
 Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
-expressions or argument expressions, `?`, explicit panic, spawn/join,
-cancellation, and reactor-backed I/O are later slices.
+expressions or argument expressions, `?`, explicit panic, cancellation, and
+reactor-backed I/O are later slices.
+
+Structured spawn/join is available only in a top-level `task.scope` body. Each
+spawn handle must use an inferred immutable binding, remain in that scope, and
+be joined exactly once. The target must be a direct unqualified, non-generic
+top-level `suspend fn` with immutable frame-safe parameters and a `void`
+result. Nested scopes, scope control flow, early exit, defer/unsafe blocks,
+typed child results, cancellation, deadlines, channels, and select remain
+later slices. E0871, E0872, E0875, and E0876 reject unsupported cases before
+code generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -124,7 +171,10 @@ thread. RFC 0032 requires its migration to a bounded, lazy blocking pool.
 This slice checks exact spills, pre-suspension cleanup for dead locals,
 child-before-parent ownership-bit clearing, repeated explicit drop, monotonic
 no-early-wake behavior, zero-duration timer fast paths, and cancellation of an
-armed child timer under generated-C tests and AddressSanitizer.
+armed child timer under generated-C tests and AddressSanitizer. Structured
+tasks additionally test FIFO interleaving, one-shot join ownership, waiter
+wakeup, typed queue saturation, browser non-execution, and idempotent child
+cleanup.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
@@ -140,4 +190,5 @@ Later slices must still prove, rather than assume:
 The P0/P1 controls and raw evidence format live in
 [`performance/async`](../performance/async/README.md). Runnable examples are
 [`examples/async_yield`](../examples/async_yield) and
-[`examples/async_timer`](../examples/async_timer).
+[`examples/async_timer`](../examples/async_timer), plus
+[`examples/async_structured_void`](../examples/async_structured_void).

@@ -397,6 +397,34 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn returns_structured_task_runtime_unavailable_without_invoking_the_child() {
+        let source = r#"package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn child(secret: string) -> void {
+    panic(secret)
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child_task = task.spawn child("browser-structured-task-secret")
+        let joined: Result<void, TaskError> = task.join(child_task)
+        io.println(result.is_err(joined))
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "true\n");
+        assert!(!response.stderr.contains("browser-structured-task-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

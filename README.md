@@ -509,13 +509,20 @@ export exact current-thread poll, yield, frame, ready-queue, and timer counters
 without changing normal stdout. Managed call arguments are evaluated once and
 retained or transferred into the child frame; owned results move out before
 child drop.
-E0876 still rejects mutable parameters/locals, resource-handle wrappers,
-recursive suspend graphs, suspension in nested control flow or expressions,
-suspending argument expressions, `?`, and explicit panic; complete unwind
-paths, structured spawn/join, the multi-task timer wheel, and the async test
-runner land in later reviewable slices. See
+The first structured slice adds `task.scope`, direct
+`task.spawn child(args)`, and one-argument `task.join(handle)` for scope-owned
+`Task<void>` children. Spawned frames enter the same bounded owner FIFO; child
+completion re-enqueues a waiting parent, while saturation becomes a typed
+`queue_full` join error. Each inferred immutable handle must remain in its
+scope and be joined exactly once. E0871, E0872, E0875, and E0876 reject invalid
+boundaries, ownership, targets, and unsupported shapes. Mutable
+parameters/locals, resource-handle wrappers, recursive suspend graphs,
+suspension in nested control flow or expressions, suspending argument
+expressions, `?`, explicit panic, typed structured results, cancellation,
+channels/select, the multi-task timer wheel, and the async test runner land in
+later reviewable slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
-`examples/async_timer`, the
+`examples/async_timer`, `examples/async_structured_void`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).
 

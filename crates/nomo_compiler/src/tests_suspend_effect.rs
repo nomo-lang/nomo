@@ -298,6 +298,145 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn async_frame_spills_only_live_locals_and_clears_ownership_before_drop() {
+    let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn main() -> void {
+    let live: string = "live"
+    let dead: string = "dead"
+    let count: u64 = 7
+    io.println(dead)
+    task.yield_now()
+    io.println(live)
+    io.println(count)
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    let live_field = "nomo_async_local_nomo_live";
+    let live_owned = "nomo_async_owned_nomo_live";
+    let count_field = "nomo_async_local_nomo_count";
+    let dead_field = "nomo_async_local_nomo_dead";
+    assert!(c.contains(&format!("nomo_string {live_field};")));
+    assert!(c.contains(&format!("uint64_t {count_field};")));
+    assert!(!c.contains(dead_field));
+    assert!(c.contains(&format!("frame->{live_owned} = 1u;")));
+    assert!(c.contains(&format!("nomo_string nomo_live = frame->{live_field};")));
+    assert!(c.contains("nomo_string_release(nomo_dead);"));
+
+    let clear = c
+        .find(&format!("frame->{live_owned} = 0u;"))
+        .expect("frame ownership bit must be cleared");
+    let release = c
+        .find(&format!("nomo_string_release(frame->{live_field});"))
+        .expect("frame-owned string must be released");
+    assert!(clear < release);
+    assert_eq!(
+        c.matches(&format!("nomo_string_release(frame->{live_field});"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn async_frame_spills_and_drops_cow_arrays() {
+    let source = r#"package app.main
+
+import std.array
+import std.io
+import std.task
+
+suspend fn main() -> void {
+    let values: Array<i32> = [2, 3, 5]
+    task.yield_now()
+    io.println(values.len())
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    let field = "nomo_async_local_nomo_values";
+    let owned = "nomo_async_owned_nomo_values";
+    assert!(c.contains(&format!("{field};")));
+    assert!(c.contains(&format!("frame->{owned} = 1u;")));
+    assert!(c.contains(&format!("frame->{owned} = 0u;")));
+    assert!(c.contains(&format!("_release(frame->{field});")));
+}
+
+#[test]
+fn async_frame_slice_rejects_mutable_locals_and_explicit_panic_cleanup() {
+    let mutable_source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn main() -> void {
+    let mut message: string = "mutable"
+    task.yield_now()
+    io.println(message)
+}
+"#;
+    let mutable_error = parse_inline(mutable_source).unwrap_err();
+    assert_eq!(mutable_error.code, "E0876");
+    assert!(mutable_error.message.contains("mutable locals"));
+
+    let panic_source = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    task.yield_now()
+    panic("cleanup is not implemented yet")
+}
+"#;
+    let panic_error = parse_inline(panic_source).unwrap_err();
+    assert_eq!(panic_error.code, "E0876");
+    assert!(panic_error.message.contains("explicit panic"));
+
+    let handle_source = r#"package app.main
+
+import std.io
+import std.task
+
+fn worker(context: TaskContext, input: string) -> string {
+    return input
+}
+
+suspend fn main() -> void {
+    let started: Result<Task, TaskError> = task.spawn(worker, "input")
+    task.yield_now()
+    io.println("after")
+}
+"#;
+    let handle_error = parse_inline(handle_source).unwrap_err();
+    assert_eq!(handle_error.code, "E0876");
+    assert!(handle_error.message.contains("started"));
+    assert!(
+        handle_error
+            .message
+            .contains("without a P1 frame move/drop implementation")
+    );
+}
+
+#[test]
 fn p1_yield_slice_rejects_non_root_and_nested_suspension() {
     let helper_source = r#"package app.main
 
@@ -313,7 +452,7 @@ suspend fn main() -> void {
 "#;
     let helper_error = parse_inline(helper_source).unwrap_err();
     assert_eq!(helper_error.code, "E0876");
-    assert!(helper_error.message.contains("standalone statement"));
+    assert!(helper_error.message.contains("non-root suspension"));
 
     let nested_source = r#"package app.main
 
@@ -327,9 +466,5 @@ suspend fn main() -> void {
 "#;
     let nested_error = parse_inline(nested_source).unwrap_err();
     assert_eq!(nested_error.code, "E0876");
-    assert!(
-        nested_error
-            .message
-            .contains("current-thread runtime slice")
-    );
+    assert!(nested_error.message.contains("nested control flow"));
 }

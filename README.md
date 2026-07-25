@@ -494,10 +494,14 @@ interfaces, local modules, formatter output, documentation, and LSP
 signatures. P1 adds `task.yield_now()` for a parameterless
 `suspend fn main() -> void`: the C99 backend emits a stackless root frame and
 current-thread executor only when that primitive is reachable. Always-ready
-suspend chains still use the direct C99 path. The initial runtime slice
-intentionally rejects locals, nested control flow, and non-root suspension with
-E0876; nested call frames, liveness spills, timers, structured spawn/join, and
-the async test runner land in later reviewable slices. See
+suspend chains still use the direct C99 path. Immutable top-level locals whose
+transitive value fields are frame-safe may live across a yield: exact liveness
+decides which values enter the frame, and managed fields carry ownership bits
+for idempotent completion or explicit early drop. E0876 still rejects mutable
+locals, resource-handle wrappers, nested control flow, `?`, explicit panic, and
+non-root suspension; nested call frames, complete unwind paths, timers,
+structured spawn/join, and the async test runner land in later reviewable
+slices. See
 `examples/suspend_ready`, `examples/async_yield`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0 async benchmark gate](performance/async/README.md).

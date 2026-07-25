@@ -42,11 +42,16 @@ Native C99 后端遇到根函数中的 `task.yield_now()` 时会生成：
 - 返回 `READY` 或 `PENDING` 的 poll 函数；
 - inline initial poll；
 - 仅在返回 `PENDING` 后进入的单槽 current-thread ready queue 路径；
-- 幂等的 root-frame drop 函数。
+- 每个 yield 上精确的顶层局部变量 liveness；
+- managed ARC/COW frame 字段各自的 ownership bit；
+- release 前先清 ownership bit 的幂等 root-frame drop 函数。
 
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。生成的
 context 会在内部记录 poll、yield、入队和出队计数；等 P1 counter contract
 稳定后再用版本化 benchmark 导出。
+在 yield 前已经死亡的局部变量会直接 release，不进入 frame。yield 后仍使用的
+不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用的值生成
+non-owning C alias。正常完成和显式 early frame drop 共用同一条幂等清理路径。
 
 Browser WASM 的有界沙盒解释器可以运行同一份源码。目前
 `task.yield_now()` 只表示 cooperative boundary；它还不会把控制权交还给
@@ -56,8 +61,11 @@ host Promise 或浏览器 event loop。
 
 对暂不支持的挂起形态，编译器报告 E0876，而不是生成错误代码。当前
 `task.yield_now()` 必须是无参数根 `suspend fn main() -> void` 中的独立语句。
-跨 yield 存活的局部变量、嵌套 suspend 调用、控制流或表达式内部挂起、非 void
-结果、timer、spawn/join、取消和 reactor I/O 都属于后续小 PR。
+不可变的顶层 scalar、string、struct、enum 与已支持 array 局部变量可以跨
+yield 存活，前提是所有传递 value field 都满足 frame-safe。mutable local、
+borrow、guard、resource handle 或包含它的 wrapper、嵌套 suspend 调用、控制流
+或表达式内部挂起、`?`、显式 panic、非 void 结果、timer、spawn/join、取消和
+reactor I/O 都属于后续小 PR。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -65,10 +73,12 @@ constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求�
 
 ## 正确性与成本门禁
 
-后续实现必须用测试和证据证明：
+当前切片已经用 generated-C 测试和 AddressSanitizer 检查精确 spill、dead local
+的 yield 前清理、ownership bit 清零和重复显式 drop。后续实现仍必须用测试和
+证据证明：
 
-- completion、error、cancellation、timeout 和 panic 路径仅对 frame 中的
-  ARC/COW 值 release 一次；
+- error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
+  release 一次；
 - 不允许不安全 mutable borrow 或 guard 跨 suspension point；
 - 未使用 suspension 的程序没有 runtime、thread、coroutine metadata 或普通
   collection atomic 成本；

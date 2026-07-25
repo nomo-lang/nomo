@@ -20,9 +20,10 @@ cannot look like a passing benchmark.
 
 The separate P1 `async_yield` implementation now provides a stackless root
 frame and current-thread executor. It is intentionally not added to this P0
-measurement series: liveness spills, nested task frames, timers, spawn/join,
-and runtime counter export are not complete. A versioned P1 series will enable
-the relevant workloads without rewriting the P0 evidence.
+measurement series: top-level immutable locals now use exact liveness spills
+and ownership-aware frame drops, but nested task frames, complete unwind paths,
+timers, spawn/join, and runtime counter export are not complete. A versioned P1
+series will enable the relevant workloads without rewriting the P0 evidence.
 
 ## Run
 

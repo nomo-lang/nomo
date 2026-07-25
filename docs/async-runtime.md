@@ -46,11 +46,18 @@ On the native C99 backend, a root program with `task.yield_now()` emits:
 - a poll function that returns `READY` or `PENDING`;
 - an inline initial poll;
 - a one-entry current-thread ready queue path entered only after `PENDING`;
-- an idempotent root-frame drop function.
+- exact top-level local liveness across each yield;
+- per-field ownership bits for managed ARC/COW frame values;
+- an idempotent root-frame drop function that clears ownership before release.
 
 This slice creates no OS thread, heap task, reactor, or atomic metadata. The
 generated context records poll, yield, enqueue, and dequeue counters internally;
 versioned benchmark export is deferred until the P1 counter contract is ready.
+Locals that die before a yield are released without entering the frame.
+Immutable locals used after a yield are moved into the frame; only those that
+are referenced in a resumed segment are reintroduced as non-owning C aliases.
+Normal completion and an explicit early frame drop share the same idempotent
+cleanup path.
 
 Browser WASM accepts the same source in its bounded sandbox interpreter.
 `task.yield_now()` is currently a cooperative boundary there; it does not yet
@@ -60,9 +67,12 @@ return control to a host Promise or browser event loop.
 
 E0876 rejects unsupported suspension rather than miscompiling it. In this
 slice, `task.yield_now()` must be a standalone statement in a parameterless
-root `suspend fn main() -> void`. Locals live across a yield, nested suspend
-calls, suspension in control flow or expressions, non-void results, timers,
-spawn/join, cancellation, and reactor-backed I/O are later slices.
+root `suspend fn main() -> void`. Immutable top-level scalar, string, struct,
+enum, and supported array locals may live across a yield when every transitive
+value field is frame-safe. Mutable locals, borrows, guards, resource handles
+or wrappers containing them, nested suspend calls, suspension in control flow
+or expressions, `?`, explicit panic, non-void results, timers, spawn/join,
+cancellation, and reactor-backed I/O are later slices.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -70,10 +80,11 @@ thread. RFC 0032 requires its migration to a bounded, lazy blocking pool.
 
 ## Correctness and Cost Gates
 
-Later slices must prove, rather than assume:
+This slice checks exact spills, pre-yield cleanup for dead locals, ownership-bit
+clearing, and repeated explicit drop under generated-C tests and AddressSanitizer.
+Later slices must still prove, rather than assume:
 
-- exact liveness spills and exactly-once ARC/COW release on completion, error,
-  cancellation, timeout, and panic paths;
+- exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
 - no unsafe mutable borrow or guard crossing a suspension point;
 - no runtime, thread, coroutine metadata, or atomic collection cost for
   programs that do not use suspension;

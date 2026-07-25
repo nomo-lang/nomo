@@ -303,9 +303,14 @@ task.close(task_value: Task) -> Result<void, TaskError>
 accepted only as a standalone statement in parameterless
 `suspend fn main() -> void`. Native C99 execution uses a stack-allocated root
 frame and current-thread executor; the initial poll runs inline, and only a
-real yield enters the one-slot ready queue. Browser WASM treats the same call
-as a bounded cooperative boundary in the sandbox interpreter; the host-driven
-event backend is not implemented yet.
+real yield enters the one-slot ready queue. Immutable top-level locals with
+frame-safe transitive value fields can live across yields: only live values
+enter the frame, and managed ARC/COW fields use ownership bits so normal
+completion and explicit early drop are idempotent. Mutable locals, resource
+handles or wrappers containing them, nested suspension, `?`, and explicit
+panic remain E0876 until their cleanup paths land. Browser WASM treats the same
+call as a bounded cooperative boundary in the sandbox interpreter; the
+host-driven event backend is not implemented yet.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is

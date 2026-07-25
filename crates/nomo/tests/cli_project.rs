@@ -7958,11 +7958,12 @@ fn cron_conformance_fixture_matches_native_runtime() {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        stdout,
         "true\n60000\n900000\n3600000\n68169600000\n4233686400000\ntrue\nfalse\ntrue\nfalse\nrange 0\nrange 0\nsyntax 0\nrange 0\nlimit 5\nsyntax 5 invalid cron expression syntax\ntimestamp_range 5\nno_match 5\n"
     );
-    assert!(!String::from_utf8_lossy(&output.stdout).contains("NOMO_CRON_SECRET_SENTINEL"));
+    assert!(!stdout.contains("NOMO_CRON_SECRET_SENTINEL"));
     assert!(
         output.stderr.is_empty(),
         "{}",

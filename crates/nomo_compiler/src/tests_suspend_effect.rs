@@ -232,6 +232,136 @@ fn main() -> void {
 }
 
 #[test]
+fn task_sleep_requires_a_suspend_function() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+fn main() -> void {
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(1))
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0870");
+    assert!(error.message.contains("task.sleep"));
+    assert!(error.message.contains("mark the caller `suspend`"));
+}
+
+#[test]
+fn task_sleep_requires_one_duration_argument() {
+    let missing = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    let waited: Result<void, TaskError> = task.sleep()
+}
+"#;
+    let error = parse_inline(missing).unwrap_err();
+    assert_eq!(error.code, "E0407");
+    assert!(
+        error
+            .message
+            .contains("task.sleep expects 1 argument(s), got 0")
+    );
+
+    let wrong_type = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    let waited: Result<void, TaskError> = task.sleep(1)
+}
+"#;
+    let error = parse_inline(wrong_type).unwrap_err();
+    assert_eq!(error.code, "E0404");
+    assert_eq!(error.expected.as_deref(), Some("Duration"));
+    assert_eq!(error.found.as_deref(), Some("i64"));
+}
+
+#[test]
+fn task_sleep_lowers_a_duration_and_result_binding() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(5))
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        main.body.as_slice(),
+        [Statement::Let {
+            name,
+            value_type: ValueType::Enum(result, args),
+            initializer: ValueExpr::Call { name: call, args: sleep_args },
+        }] if name == "waited"
+            && result == "Result"
+            && args.as_slice() == [
+                ValueType::Void,
+                ValueType::Struct("TaskError".to_string(), Vec::new()),
+            ]
+            && call == BUILTIN_TASK_SLEEP_EXPR
+            && matches!(sleep_args.as_slice(), [ValueExpr::TimeDurationMillis { .. }])
+    ));
+}
+
+#[test]
+fn specifically_imported_task_sleep_lowers_to_the_timer_runtime() {
+    let source = r#"package app.main
+
+import std.task.sleep
+import std.time
+
+suspend fn main() -> void {
+    let waited: Result<void, TaskError> = sleep(time.duration_millis(0))
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_timer_start"));
+    assert!(c.contains("NOMO_ASYNC_PENDING_TIMER"));
+    assert!(c.contains("NOMO_ASYNC_TIMER_OUTCOME_OK"));
+}
+
+#[test]
+fn task_sleep_result_must_be_bound_in_the_current_slice() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.sleep(time.duration_millis(1))
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("`let`-bound `task.sleep(Duration)`"));
+}
+
+#[test]
 fn rejects_blocking_sleep_directly_from_suspend_function() {
     let source = r#"package app.main
 

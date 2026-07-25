@@ -27,6 +27,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "isolated_tasks",
     "suspend_ready",
     "async_yield",
+    "async_timer",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1270,6 +1271,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         }
         "suspend_ready" => "suspend ready\n",
         "async_yield" => "before yield\nframe-owned message\n3\n",
+        "async_timer" => "before timer\ntrue\ntrue\nafter timer\n",
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"

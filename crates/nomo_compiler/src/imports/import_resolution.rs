@@ -391,6 +391,9 @@ pub(super) fn resolve_specific_value_builtin(
         "yield_now" if imports.iter().any(|item| item == "std.task.yield_now") => {
             vec!["task".to_string(), "yield_now".to_string()]
         }
+        "sleep" if imports.iter().any(|item| item == "std.task.sleep") => {
+            vec!["task".to_string(), "sleep".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.task.join") => {
             vec!["task".to_string(), "join".to_string()]
         }

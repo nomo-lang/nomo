@@ -1,7 +1,9 @@
-//! Isolated native tasks with bounded string message passing.
+//! Suspend primitives plus isolated native workers with bounded string messages.
 package std.task
 
+import std.result
 import std.task
+import std.time
 
 /// Opaque handle for one isolated native task.
 pub struct Task {
@@ -29,6 +31,15 @@ pub enum TaskJoin {
 /// Cooperatively yields the current suspend task to its owner executor.
 pub suspend fn yield_now() -> void {
     task.yield_now()
+}
+
+/// Suspends the current task until a monotonic duration has elapsed.
+///
+/// A non-positive duration completes inline without registering or enqueueing.
+/// Native positive durations use the owner executor; browser WASM currently
+/// returns `runtime_unavailable` without evaluating the duration.
+pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
+    return task.sleep(duration)
 }
 
 /// Starts a non-capturing top-level worker with one deeply copied string input.

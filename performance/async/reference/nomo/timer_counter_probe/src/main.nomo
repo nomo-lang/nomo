@@ -1,0 +1,18 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    let started: i64 = time.monotonic_millis()
+    io.println("before")
+    let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
+    io.println(result.is_ok(immediate))
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(5))
+    io.println(result.is_ok(waited))
+    let elapsed: i64 = time.monotonic_millis() - started
+    io.println(elapsed >= 5)
+    io.println("after")
+}

@@ -15,18 +15,23 @@ manifest keeps these controls:
   is explicitly ineligible for a performance claim.
 
 The separate `manifest-p1.json` repeats both zero-cost controls and enables
-`yield_counter_probe`. The probe executes outside measured samples with
-`NOMO_ASYNC_METRICS_PATH` set, then validates the versioned current-thread JSON
-contract against `counter-catalog.json`. For a two-frame, two-yield chain it
-requires zero heap/slab frame allocations, two idempotent frame drops, peak
-two live frames, two queue round trips, five polls, and two cooperative yields.
+`yield_counter_probe` plus `timer_counter_probe`. Each probe executes outside
+measured samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the
+versioned current-thread JSON contract against `counter-catalog.json`. The
+two-frame, two-yield chain requires zero heap/slab frame allocations, two
+idempotent frame drops, peak two live frames, two queue round trips, five
+polls, and two cooperative yields. The timer probe requires an inline
+zero-duration ready path plus exactly one positive registration, expiry and
+queue round trip, two polls, no cancellation, and zero live timers at exit.
 
 All RFC-required async workloads already have manifest entries. Unsupported
 workloads remain disabled with their implementation phase recorded, so missing
-runtime coverage cannot look like a pass. ARC primitive counters and timers
-remain explicitly unavailable in the P1 payload rather than being reported as
-zero. Argument/result frames, complete unwind paths, structured spawn/join, and
-timers are not complete.
+runtime coverage cannot look like a pass. Owner-local timer registration,
+expiry, cancellation, live and peak-live counters are now available. ARC
+primitive counters remain explicitly unavailable rather than being reported
+as zero. General suspend function arguments/results, complete unwind paths,
+structured spawn/join, and the multi-task timer-wheel workload are not
+complete.
 
 ## Run
 

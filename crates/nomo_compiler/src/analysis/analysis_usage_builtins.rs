@@ -40,6 +40,15 @@ pub(super) fn source_uses_time_builtin(ast: &SourceFile) -> bool {
     source_uses_builtin(ast, |expr| expr_uses_builtin(expr, is_time_builtin_call))
 }
 
+pub(super) fn source_uses_task_sleep(ast: &SourceFile) -> bool {
+    source_uses_builtin(ast, |expr| {
+        expr_uses_builtin(
+            expr,
+            |callee| matches!(callee, [module, name] if module == "task" && name == "sleep"),
+        )
+    })
+}
+
 pub(super) fn source_uses_array_builtin(ast: &SourceFile) -> bool {
     source_uses_builtin(ast, |expr| expr_uses_builtin(expr, is_array_builtin_call))
 }

@@ -40,6 +40,10 @@ pub(super) fn source_uses_time_builtin(ast: &SourceFile) -> bool {
     analysis_usage_builtins::source_uses_time_builtin(ast)
 }
 
+pub(super) fn source_uses_task_sleep(ast: &SourceFile) -> bool {
+    analysis_usage_builtins::source_uses_task_sleep(ast)
+}
+
 pub(super) fn source_uses_array_builtin(ast: &SourceFile) -> bool {
     analysis_usage_builtins::source_uses_array_builtin(ast)
 }

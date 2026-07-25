@@ -491,7 +491,8 @@ Async effect syntax uses `suspend fn`. Calls stay direct-style without an
 `await` token, but a normal `fn` cannot call a suspend function; E0870 asks the
 caller to declare the effect. Suspend effects are preserved across generics,
 interfaces, local modules, formatter output, documentation, and LSP
-signatures. P1 adds standalone `task.yield_now()` and nested direct-style calls
+signatures. P1 adds standalone `task.yield_now()`, `let`-bound
+`task.sleep(Duration) -> Result<void, TaskError>`, and nested direct-style calls
 between non-generic, parameterless `suspend fn` functions returning `void`.
 The C99 backend emits a stackless root frame with embedded child frames and a
 current-thread executor only when a suspension primitive is reachable.
@@ -499,14 +500,17 @@ Always-ready suspend chains still use the direct C99 path. Immutable top-level
 locals whose transitive value fields are frame-safe may live across a
 suspension: exact liveness decides which values enter each frame, and managed
 fields carry ownership bits for child-first idempotent completion or explicit
-early root drop. An opt-in, versioned P1 probe exports exact current-thread
-poll, yield, frame, and ready-queue counters without changing normal stdout.
+early root drop. Positive sleeps use bounded, generation-checked owner-local
+monotonic timers and are not polled before expiry; non-positive sleeps complete
+inline without registration or queue traffic. Opt-in, versioned P1 probes
+export exact current-thread poll, yield, frame, ready-queue, and timer counters
+without changing normal stdout.
 E0876 still rejects mutable locals, resource-handle wrappers,
 recursive suspend graphs, suspension in nested control flow or expressions,
-arguments/results, `?`, and explicit panic; complete unwind paths, timers,
-structured spawn/join, and the async test runner land in later reviewable
-slices. See
-`examples/suspend_ready`, `examples/async_yield`, the
+general suspend arguments/results, `?`, and explicit panic; complete unwind
+paths, structured spawn/join, the multi-task timer wheel, and the async test
+runner land in later reviewable slices. See
+`examples/suspend_ready`, `examples/async_yield`, `examples/async_timer`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).
 

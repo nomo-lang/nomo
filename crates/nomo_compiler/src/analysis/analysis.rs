@@ -59,7 +59,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
         time: imports
             .iter()
             .any(|item| item == "std.time" || item.starts_with("std.time."))
-            || source_uses_time_builtin(ast),
+            || imports.iter().any(|item| item == "std.task.sleep")
+            || source_uses_time_builtin(ast)
+            || source_uses_task_sleep(ast),
         num: imports
             .iter()
             .any(|item| item == "std.num" || item.starts_with("std.num."))

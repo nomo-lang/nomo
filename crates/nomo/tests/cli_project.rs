@@ -7707,7 +7707,9 @@ fn async_frame_completion_and_early_drop_are_asan_clean_when_available() {
 
 import std.array
 import std.io
+import std.result
 import std.task
+import std.time
 
 struct Envelope {
     body: string
@@ -7722,7 +7724,9 @@ suspend fn child() -> void {
     let child_message: string = "child"
     let child_values: Array<string> = ["nested", "frame"]
     io.println("child-before")
-    task.yield_now()
+    let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(1))
+    io.println(result.is_ok(immediate))
     let child_count: u64 = child_values.len()
     io.println(child_message)
     io.println(child_count)
@@ -7760,6 +7764,7 @@ suspend fn main() -> void {
     );
 
     let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_async_timer_disarm"));
     let drop_call = "    nomo_async_drop_main(&nomo__frame);\n";
     assert_eq!(generated.matches(drop_call).count(), 1);
     let completed = generated.replacen(
@@ -7800,12 +7805,13 @@ suspend fn main() -> void {
         (
             "completed",
             completed,
-            "before\nchild-before\nchild\n2\nlive payload\nafter 2\n",
+            "before\nchild-before\ntrue\nchild\n2\nlive payload\nafter 2\n",
         ),
         ("early", early, "before\nchild-before\n"),
     ] {
         let c_path = root.join(format!("{name}.c"));
         let bin_path = root.join(format!("asan-async-frame-{name}"));
+        let metrics_path = root.join(format!("asan-async-frame-{name}-metrics.json"));
         fs::write(&c_path, c_source).unwrap();
 
         let cc_output = Command::new("cc")
@@ -7827,6 +7833,7 @@ suspend fn main() -> void {
 
         let run_output = Command::new(&bin_path)
             .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
             .output()
             .unwrap();
         assert!(
@@ -7847,6 +7854,17 @@ suspend fn main() -> void {
             name,
             String::from_utf8_lossy(&run_output.stderr)
         );
+        let metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+        assert_eq!(metrics["counters"]["timer_registrations"], 1, "{name}");
+        assert_eq!(metrics["counters"]["live_timers"], 0, "{name}");
+        if name == "completed" {
+            assert_eq!(metrics["counters"]["timer_expirations"], 1);
+            assert_eq!(metrics["counters"]["timer_cancellations"], 0);
+        } else {
+            assert_eq!(metrics["counters"]["timer_expirations"], 0);
+            assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+        }
     }
 
     fs::remove_dir_all(&root).unwrap();
@@ -8021,9 +8039,14 @@ suspend fn main() -> void {
     assert_eq!(metrics["counters"]["peak_live_frames"], 2);
     assert_eq!(metrics["counters"]["ready_queue_enqueues"], 2);
     assert_eq!(metrics["counters"]["ready_queue_dequeues"], 2);
+    assert_eq!(metrics["counters"]["timer_registrations"], 0);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["peak_live_timers"], 0);
     assert!(metrics["unavailable"]["local_retain"].is_string());
     assert!(metrics["unavailable"]["local_release"].is_string());
-    assert!(metrics["unavailable"]["live_timers"].is_string());
+    assert!(metrics["unavailable"]["live_timers"].is_null());
     assert!(
         !fs::read_to_string(&metrics_path)
             .unwrap()
@@ -8050,6 +8073,132 @@ suspend fn main() -> void {
         "error: async metrics export failed\nprogram exited with status 1\n"
     );
     assert!(!stderr.contains("super-secret"));
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn async_timer_uses_monotonic_owner_local_waiting_and_exact_counters() {
+    let root = temp_test_root("async-timer-runtime");
+    reset_dir(&root);
+    let source = root.join("main.nomo");
+    let generated_c = root.join("generated.c");
+    let binary = root.join(if cfg!(windows) {
+        "async-timer.exe"
+    } else {
+        "async-timer"
+    });
+    let metrics_path = root.join("timer-metrics.json");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    let started: i64 = time.monotonic_millis()
+    io.println("before")
+    let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
+    io.println(result.is_ok(immediate))
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(25))
+    io.println(result.is_ok(waited))
+    let elapsed: i64 = time.monotonic_millis() - started
+    io.println(elapsed >= 25)
+    io.println("after")
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&generated_c)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("NOMO_ASYNC_PENDING_TIMER"));
+    assert!(generated.contains("nomo_async_timer_start"));
+    assert!(generated.contains("nomo_async_timer_wait_next"));
+    assert!(generated.contains("nomo_async_timer_disarm"));
+    assert!(generated.contains("timer_registrations"));
+    assert!(generated.contains("timer_expirations"));
+    assert!(generated.contains("timer_cancellations"));
+    assert!(generated.contains("peak_live_timers"));
+    assert!(generated.contains("context->pending_reason == NOMO_ASYNC_PENDING_YIELD"));
+    assert!(generated.contains("context->pending_reason != NOMO_ASYNC_PENDING_TIMER"));
+    assert!(!generated.contains("pthread_create"));
+    assert!(!generated.contains("CreateThread"));
+    assert!(!generated.contains("__atomic_"));
+    assert!(!generated.contains("Interlocked"));
+
+    let cc_output = Command::new("cc")
+        .arg(&generated_c)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let started = Instant::now();
+    let output = Command::new(&binary)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(
+        started.elapsed() < Duration::from_secs(5),
+        "bounded timer took {:?}",
+        started.elapsed()
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "before\ntrue\ntrue\ntrue\nafter\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["schema"], 1);
+    assert_eq!(metrics["runtime"], "nomo-c99-current-thread");
+    assert_eq!(metrics["runtime_abi"], 1);
+    assert_eq!(metrics["counter_catalog_schema"], 1);
+    assert_eq!(metrics["counters"]["poll_calls"], 2);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 0);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 1);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 1);
+    assert_eq!(metrics["counters"]["ready_queue_enqueues"], 1);
+    assert_eq!(metrics["counters"]["ready_queue_dequeues"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 1);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["peak_live_timers"], 1);
+    assert!(metrics["unavailable"]["local_retain"].is_string());
+    assert!(metrics["unavailable"]["local_release"].is_string());
+    assert!(metrics["unavailable"]["live_timers"].is_null());
 
     fs::remove_dir_all(&root).unwrap();
 }

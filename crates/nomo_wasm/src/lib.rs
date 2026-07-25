@@ -366,6 +366,36 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn returns_timer_runtime_unavailable_without_evaluating_the_duration() {
+        let source = r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+fn duration() -> Duration {
+    panic("browser-timer-duration-must-not-run")
+}
+
+suspend fn main() -> void {
+    let waited: Result<void, TaskError> = task.sleep(duration())
+    io.println(result.is_err(waited))
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "true\n");
+        assert!(
+            !response
+                .stderr
+                .contains("browser-timer-duration-must-not-run")
+        );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

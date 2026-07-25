@@ -54,22 +54,23 @@ owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 import std.result
 import std.task
 
-suspend fn child(message: string) -> void {
+suspend fn child(message: string) -> string {
     task.yield_now()
+    return message
 }
 
 suspend fn main() -> void {
     task.scope {
         let handle = task.spawn child("ready")
-        let joined: Result<void, TaskError> = task.join(handle)
+        let joined: Result<string, TaskError> = task.join(handle)
         let completed: bool = result.is_ok(joined)
     }
 }
 ```
 
 `task.spawn child(args)` 与带括号的旧 `task.spawn(worker, input)` 有意保持
-不同。结构化形式创建 scope-owned `Task<void>`，单参数 join 必须且只能消费一次
-该 handle。
+不同。结构化形式从 child 返回类型推导 scope-owned `Task<T>`，单参数 join
+必须且只能消费一次该 handle，并返回 `Result<T, TaskError>`。
 
 ## 已实现的 P1 小切片
 
@@ -88,6 +89,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   parent 的单一 owner-local waiter edge；
 - structured spawn 无法进入 64 槽 ready queue 时，由 join 构造
   `TaskError { code: "queue_full", ... }`；
+- 在 drop child frame 前，把 typed child result 恰好一次 move 到 join 的成功
+  payload；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
@@ -138,9 +141,10 @@ handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
 handle 必须使用推导得到的不可变 binding，不得离开 scope，并且必须恰好 join
 一次。target 必须是直接、未限定、non-generic 的顶层 `suspend fn`，参数不可变
-且 frame-safe，并返回 `void`。嵌套 scope、scope 内控制流、early exit、
-defer/unsafe、typed child result、取消、deadline、channel 与 select 仍属于后续
-切片。E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
+且 frame-safe。其返回类型会形成 `Task<T>`，而 `task.join(handle)` 返回
+`Result<T, TaskError>`。嵌套 scope、scope 内控制流、early exit、
+defer/unsafe、取消、deadline、channel 与 select 仍属于后续切片。E0871、
+E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -153,6 +157,8 @@ constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求�
 monotonic 不提前唤醒、零时长 timer fast path，以及挂起 child timer 的取消。
 structured task 还覆盖 FIFO 交错、单次 join ownership、waiter wakeup、类型化
 queue saturation、browser 不执行 child，以及幂等 child cleanup。
+managed typed result 还会用 AddressSanitizer 覆盖 child 到 join 的 ownership
+transfer 和 parent 重复 drop。
 后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
@@ -168,4 +174,5 @@ P0/P1 控制组与原始证据格式位于
 [`performance/async`](../performance/async/README.zh-CN.md)，当前小切片的可运行
 示例位于 [`examples/async_yield`](../examples/async_yield) 与
 [`examples/async_timer`](../examples/async_timer)，以及
-[`examples/async_structured_void`](../examples/async_structured_void)。
+[`examples/async_structured_void`](../examples/async_structured_void) 与
+[`examples/async_structured_results`](../examples/async_structured_results)。

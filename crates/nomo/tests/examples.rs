@@ -30,6 +30,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_call_abi",
     "async_timer",
     "async_structured_void",
+    "async_structured_results",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1277,6 +1278,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_timer" => "before timer\ntrue\ntrue\nafter timer\n",
         "async_structured_void" => {
             "left before\nright before\nleft after\nright after\ntrue true\n"
+        }
+        "async_structured_results" => {
+            "left before\nright before\nleft after\nright after\nleft right\n"
         }
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {

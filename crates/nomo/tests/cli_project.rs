@@ -7904,19 +7904,22 @@ fn message(value: string) -> string {
     return string.to_upper(value)
 }
 
-suspend fn child(value: string) -> void {
+suspend fn child(value: string) -> string {
     io.println(value, "before")
     task.yield_now()
     io.println(value, "after")
+    return value
 }
 
 suspend fn main() -> void {
     task.scope {
         let left = task.spawn child(message("left"))
         let right = task.spawn child(message("right"))
-        let joined_left: Result<void, TaskError> = task.join(left)
-        let joined_right: Result<void, TaskError> = task.join(right)
-        io.println(result.is_ok(joined_left), result.is_ok(joined_right))
+        let joined_left: Result<string, TaskError> = task.join(left)
+        let joined_right: Result<string, TaskError> = task.join(right)
+        let left_value: string = result.unwrap_or(joined_left, "left failed")
+        let right_value: string = result.unwrap_or(joined_right, "right failed")
+        io.println(left_value, right_value)
     }
 }
 "#,
@@ -7978,7 +7981,7 @@ suspend fn main() -> void {
         (
             "completed",
             completed,
-            "LEFT before\nRIGHT before\nLEFT after\nRIGHT after\ntrue true\n",
+            "LEFT before\nRIGHT before\nLEFT after\nRIGHT after\nLEFT RIGHT\n",
         ),
         ("early", early, ""),
     ] {
@@ -8391,8 +8394,8 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn structured_void_tasks_use_bounded_fifo_and_surface_queue_saturation() {
-    let root = temp_test_root("structured-void-tasks");
+fn structured_tasks_use_bounded_fifo_and_surface_typed_queue_saturation() {
+    let root = temp_test_root("structured-typed-tasks");
     reset_dir(&root);
     let project = root.join("structured_tasks");
     fs::create_dir_all(project.join("src")).unwrap();
@@ -8404,7 +8407,7 @@ fn structured_void_tasks_use_bounded_fifo_and_surface_queue_saturation() {
 
     let mut source = String::from(
         "package app.main\n\nimport std.io\nimport std.result\nimport std.task\n\n\
-         suspend fn child() -> void {\n}\n\n\
+         suspend fn child() -> string {\n    return \"done\"\n}\n\n\
          suspend fn main() -> void {\n    task.scope {\n",
     );
     for index in 0..65 {
@@ -8412,7 +8415,7 @@ fn structured_void_tasks_use_bounded_fifo_and_surface_queue_saturation() {
     }
     for index in 0..65 {
         source.push_str(&format!(
-            "        let joined_{index}: Result<void, TaskError> = task.join(child_{index})\n"
+            "        let joined_{index}: Result<string, TaskError> = task.join(child_{index})\n"
         ));
     }
     source.push_str("        io.println(result.is_err(joined_64))\n    }\n}\n");

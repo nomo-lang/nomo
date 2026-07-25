@@ -473,8 +473,10 @@ fn emit_async_frame_type(
             out.push_str(";\n");
         }
         if statement_structured_join(statement).is_some() {
+            let join = statement_structured_join(statement)
+                .expect("structured join was checked immediately above");
             out.push_str("    ");
-            out.push_str(&c_type(&async_sleep_result_type()));
+            out.push_str(&c_type(join.value_type));
             out.push(' ');
             out.push_str(&async_join_result_field(index));
             out.push_str(";\n    uint8_t ");
@@ -778,11 +780,12 @@ fn emit_structured_join_result_materialize(
     out: &mut String,
     spawn_index: usize,
     join_index: usize,
+    result_type: &ValueType,
+    child_return_type: &ValueType,
     indent: usize,
 ) {
-    let result_type = async_sleep_result_type();
-    let ValueType::Enum(_, result_args) = &result_type else {
-        unreachable!("structured void join result is always a Result enum");
+    let ValueType::Enum(_, result_args) = result_type else {
+        unreachable!("structured join result is always a Result enum");
     };
     let result = format!("frame->{}", async_join_result_field(join_index));
     write_indent(out, indent);
@@ -800,6 +803,25 @@ fn emit_structured_join_result_materialize(
     out.push_str(".tag = ");
     out.push_str(&c_enum_variant_ident("Result", result_args, "Ok"));
     out.push_str(";\n");
+    if child_return_type != &ValueType::Void {
+        write_indent(out, indent + 1);
+        out.push_str(&result);
+        out.push_str(".payload.");
+        out.push_str(&c_payload_ident("Ok"));
+        out.push_str(" = frame->");
+        out.push_str(&async_child_field(spawn_index));
+        out.push('.');
+        out.push_str(async_result_field());
+        out.push_str(";\n");
+        if value_type_needs_release(child_return_type) {
+            write_indent(out, indent + 1);
+            out.push_str("frame->");
+            out.push_str(&async_child_field(spawn_index));
+            out.push('.');
+            out.push_str(async_result_owned_field());
+            out.push_str(" = 0u;\n");
+        }
+    }
     write_indent(out, indent);
     out.push_str("} else {\n");
     write_indent(out, indent + 1);
@@ -1365,7 +1387,19 @@ pub(super) fn emit_async_function(
                      return NOMO_ASYNC_POLL_PENDING;\n\
                  }\n",
                 );
-                emit_structured_join_result_materialize(out, spawn_index, index, 3);
+                let spawn = statement_structured_spawn(&function.body[spawn_index])
+                    .expect("structured join spawn exists");
+                let callee = functions
+                    .get(spawn.callee)
+                    .expect("validated structured spawn target exists");
+                emit_structured_join_result_materialize(
+                    out,
+                    spawn_index,
+                    index,
+                    join.value_type,
+                    &callee.return_type,
+                    3,
+                );
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(";\n");
@@ -1402,7 +1436,19 @@ pub(super) fn emit_async_function(
                      return NOMO_ASYNC_POLL_PENDING;\n\
                  }\n",
                 );
-                emit_structured_join_result_materialize(out, spawn_index, index, 3);
+                let spawn = statement_structured_spawn(&function.body[spawn_index])
+                    .expect("structured join spawn exists");
+                let callee = functions
+                    .get(spawn.callee)
+                    .expect("validated structured spawn target exists");
+                emit_structured_join_result_materialize(
+                    out,
+                    spawn_index,
+                    index,
+                    join.value_type,
+                    &callee.return_type,
+                    3,
+                );
             }
             if sleep.is_some() || call.is_some() || join.is_some() {
                 out.push_str("nomo_async_resume_");
@@ -1531,7 +1577,11 @@ pub(super) fn emit_async_function(
                 }
             }
             if let Some(join) = join {
-                debug_assert_eq!(join.value_type, &async_sleep_result_type());
+                let ValueType::Enum(result_name, result_args) = join.value_type else {
+                    unreachable!("structured join result is always a Result enum");
+                };
+                debug_assert_eq!(result_name, "Result");
+                debug_assert_eq!(result_args.len(), 2);
                 if let Some(frame_local) = frame_locals
                     .iter()
                     .find(|local| local.declaration_index == index)

@@ -109,17 +109,6 @@ pub(super) fn lower_task_builtin(
                     &span.text,
                 ));
             }
-            if signature.return_type != ValueType::Void {
-                return Err(Diagnostic::new(
-                    "E0876",
-                    "the first structured task slice supports only suspend targets returning void",
-                    path,
-                    span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
-                ));
-            }
             if target_args.len() != signature.params.len() {
                 return Err(task_arity_diagnostic(
                     path,
@@ -150,7 +139,7 @@ pub(super) fn lower_task_builtin(
                 )?);
             }
             Ok((
-                ValueType::Struct("Task".to_string(), vec![ValueType::Void]),
+                ValueType::Struct("Task".to_string(), vec![signature.return_type.clone()]),
                 ValueExpr::Call {
                     name: format!("{BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX}{target_name}"),
                     args: lowered_args,
@@ -321,17 +310,24 @@ pub(super) fn lower_task_builtin(
                         "task.join expects a scope-owned Task<T> handle",
                     ));
                 };
-                if task_name != "Task" || task_args != [ValueType::Void] {
+                let [result_type] = task_args.as_slice() else {
                     return Err(type_mismatch(
                         path,
                         span,
-                        "the first structured task.join slice supports only Task<void>",
+                        "task.join expects a scope-owned Task<T> handle",
+                    ));
+                };
+                if task_name != "Task" {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "task.join expects a scope-owned Task<T> handle",
                     ));
                 }
                 return Ok((
                     ValueType::Enum(
                         "Result".to_string(),
-                        vec![ValueType::Void, error_type.clone()],
+                        vec![result_type.clone(), error_type.clone()],
                     ),
                     ValueExpr::Call {
                         name: BUILTIN_TASK_STRUCTURED_JOIN_EXPR.to_string(),

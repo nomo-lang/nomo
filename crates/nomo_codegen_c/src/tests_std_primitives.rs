@@ -11,6 +11,7 @@ fn emits_float_literal_and_cast() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "ratio".to_string(),
                 params: vec![Parameter {
@@ -25,6 +26,7 @@ fn emits_float_literal_and_cast() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -58,6 +60,7 @@ fn emits_char_literal() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "initial".to_string(),
                 params: Vec::new(),
@@ -65,6 +68,7 @@ fn emits_char_literal() {
                 body: vec![Statement::Return(Some(ValueExpr::CharLiteral('語')))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -100,6 +104,7 @@ fn emits_char_helpers() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -186,6 +191,7 @@ fn emits_num_helpers() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -258,6 +264,7 @@ fn emits_num_checked_and_wrapping_helpers() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -322,6 +329,7 @@ fn emits_env_get_helper() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -353,6 +361,7 @@ fn panics_instead_of_emitting_unsupported_array_placeholders() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -395,6 +404,7 @@ fn emits_env_args_helper_and_main_arguments() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),

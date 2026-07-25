@@ -11,6 +11,7 @@ fn emits_defer_before_panic_statement() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "cleanup".to_string(),
                 params: Vec::new(),
@@ -20,6 +21,7 @@ fn emits_defer_before_panic_statement() {
                 ))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -55,6 +57,7 @@ fn emits_defer_at_fallthrough_function_exit() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "cleanup".to_string(),
                 params: Vec::new(),
@@ -64,6 +67,7 @@ fn emits_defer_at_fallthrough_function_exit() {
                 ))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -98,6 +102,7 @@ fn emits_deferred_println_at_fallthrough_exit() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -141,6 +146,7 @@ fn emits_nested_block_defer_at_block_fallthrough_exit() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -221,6 +227,7 @@ fn emits_nested_block_defer_before_return_and_outer_defer() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -282,6 +289,7 @@ fn emits_loop_defer_before_break_without_function_defer() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -325,6 +333,7 @@ fn emits_loop_defer_before_continue_without_function_defer() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -368,6 +377,7 @@ fn inner_loop_break_only_runs_inner_loop_defer() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),

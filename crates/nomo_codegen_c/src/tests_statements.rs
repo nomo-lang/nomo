@@ -11,6 +11,7 @@ fn emits_function_and_call() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "add".to_string(),
                 params: vec![
@@ -34,6 +35,7 @@ fn emits_function_and_call() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -71,6 +73,7 @@ fn emits_mut_parameter_as_pointer_borrow() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "bump".to_string(),
                 params: vec![Parameter {
@@ -90,6 +93,7 @@ fn emits_mut_parameter_as_pointer_borrow() {
                 }],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -142,6 +146,7 @@ fn emits_mut_field_path_as_pointer_borrow() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "bump".to_string(),
                 params: vec![Parameter {
@@ -153,6 +158,7 @@ fn emits_mut_field_path_as_pointer_borrow() {
                 body: Vec::new(),
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -197,6 +203,7 @@ fn emits_return_value_before_deferred_calls() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "cleanup".to_string(),
                 params: Vec::new(),
@@ -206,6 +213,7 @@ fn emits_return_value_before_deferred_calls() {
                 ))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "value".to_string(),
                 params: Vec::new(),
@@ -213,6 +221,7 @@ fn emits_return_value_before_deferred_calls() {
                 body: vec![Statement::Return(Some(ValueExpr::IntLiteral(7)))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "compute".to_string(),
                 params: Vec::new(),
@@ -231,6 +240,7 @@ fn emits_return_value_before_deferred_calls() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -260,6 +270,7 @@ fn emits_assignment() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -306,6 +317,7 @@ fn emits_field_assignment() {
         }],
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),

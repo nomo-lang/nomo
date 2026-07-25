@@ -24,6 +24,7 @@ fn emits_struct_type_literal_and_field_access() {
         }],
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -79,6 +80,7 @@ fn emits_generic_struct_instance() {
         }],
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -127,6 +129,7 @@ fn emits_enum_variant_and_match_expression() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -203,6 +206,7 @@ fn emits_payload_enum_and_match_binding_access() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -284,6 +288,7 @@ fn emits_void_enum_payload_as_unit_storage() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "write".to_string(),
                 params: Vec::new(),
@@ -296,6 +301,7 @@ fn emits_void_enum_payload_as_unit_storage() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

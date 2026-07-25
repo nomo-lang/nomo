@@ -10,6 +10,7 @@ fn omits_jsonrpc_runtime_when_unused() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -35,6 +36,7 @@ fn emits_canonical_target_contract_for_cross_codegen() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -66,6 +68,7 @@ fn emits_os_helpers() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -120,6 +123,7 @@ fn emits_time_helpers() {
         }],
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -326,6 +330,7 @@ fn emits_bounded_structured_http_runtime_for_windows_target() {
             },
         ],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -450,6 +455,7 @@ fn emits_process_helpers() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -557,6 +563,7 @@ fn emits_fixed_width_integer_types() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "add32".to_string(),
                 params: vec![
@@ -580,6 +587,7 @@ fn emits_fixed_width_integer_types() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -638,6 +646,7 @@ fn emits_crypto_random_bytes_helper_after_array_u32_helper() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -678,6 +687,7 @@ fn emits_string_len_and_concat() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -722,6 +732,7 @@ fn emits_string_retain_and_release_for_shared_bindings() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -775,6 +786,7 @@ fn emits_string_parameter_retain_before_return_release() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "echo".to_string(),
                 params: vec![Parameter {
@@ -788,6 +800,7 @@ fn emits_string_parameter_retain_before_return_release() {
                 )))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -917,6 +930,7 @@ fn emits_fs_read_and_write_helpers() {
             },
         ],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -1086,6 +1100,7 @@ fn emits_file_read_write_close_helpers() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "process_file".to_string(),
                 params: vec![Parameter {
@@ -1116,6 +1131,7 @@ fn emits_file_read_write_close_helpers() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -1170,6 +1186,7 @@ fn emits_io_read_line_helper() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),

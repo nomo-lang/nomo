@@ -229,10 +229,11 @@ impl<'a> Formatter<'a> {
     }
 
     fn signature(&mut self, signature: &FunctionSignature, indent: usize, in_interface: bool) {
+        let suspend = if signature.is_suspend { "suspend " } else { "" };
         self.line_at(
             indent,
             &format!(
-                "fn {}{}({}) -> {}",
+                "{suspend}fn {}{}({}) -> {}",
                 signature.name,
                 type_params_with_bounds(&signature.type_params, &signature.type_param_bounds),
                 params(&signature.params, in_interface),
@@ -290,10 +291,11 @@ impl<'a> Formatter<'a> {
             self.line(indent, "#[test]");
         }
         let prefix = if function.public { "pub " } else { "" };
+        let suspend = if function.is_suspend { "suspend " } else { "" };
         self.line_at(
             indent,
             &format!(
-                "{prefix}fn {}{}({}) -> {} {{",
+                "{prefix}{suspend}fn {}{}({}) -> {} {{",
                 function.name,
                 type_params_with_bounds(&function.type_params, &function.type_param_bounds),
                 params(&function.params, in_impl),
@@ -871,6 +873,21 @@ mod tests {
         assert!(!formatted.contains("__nomo_task_callback"));
         assert_eq!(
             format_source(Path::new("task.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
+
+    #[test]
+    fn formats_suspend_functions_and_interface_methods_idempotently() {
+        let source = "package app.main\n\ninterface Loader{\nsuspend fn load(self)->string\n}\n\nstruct Client{\n}\n\nimpl Loader for Client{\npub suspend fn load(self)->string{\nreturn \"ready\"\n}\n}\n\npub suspend fn main(){\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() -> void {\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
             formatted
         );
     }

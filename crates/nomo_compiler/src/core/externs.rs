@@ -179,6 +179,7 @@ fn extern_function_signature(
         repr_c_structs,
     )?;
     Ok(FunctionSignature {
+        is_suspend: false,
         type_params: Vec::new(),
         params,
         return_type,

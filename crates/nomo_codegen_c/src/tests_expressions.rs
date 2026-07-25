@@ -11,6 +11,7 @@ fn emits_if_expression_and_comparison() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "label".to_string(),
                 params: vec![Parameter {
@@ -31,6 +32,7 @@ fn emits_if_expression_and_comparison() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -58,6 +60,7 @@ fn emits_string_equality_with_runtime_compare() {
         structs: Vec::new(),
         enums: Vec::new(),
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -92,6 +95,7 @@ fn emits_panic_statement_and_expression() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "label".to_string(),
                 params: vec![Parameter {
@@ -110,6 +114,7 @@ fn emits_panic_statement_and_expression() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -140,6 +145,7 @@ fn emits_binary_arithmetic_operators() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "calc".to_string(),
                 params: vec![
@@ -183,6 +189,7 @@ fn emits_binary_arithmetic_operators() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -211,6 +218,7 @@ fn emits_logical_operators() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "check".to_string(),
                 params: vec![
@@ -242,6 +250,7 @@ fn emits_logical_operators() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -269,6 +278,7 @@ fn emits_bitwise_operators() {
         enums: Vec::new(),
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "mask".to_string(),
                 params: vec![
@@ -317,6 +327,7 @@ fn emits_bitwise_operators() {
                 }))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

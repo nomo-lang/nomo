@@ -443,8 +443,9 @@ fn function_signature(function: &Function) -> String {
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "{}fn {}{}({}) -> {}",
+        "{}{}fn {}{}({}) -> {}",
         visibility_prefix(function.public),
+        suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
@@ -477,12 +478,17 @@ fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String
         .collect::<Vec<_>>()
         .join(", ");
     format!(
-        "fn {owner}.{}{}({}) -> {}",
+        "{}fn {owner}.{}{}({}) -> {}",
+        suspend_prefix(method.is_suspend),
         method.name,
         type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
         type_ref(&method.return_type)
     )
+}
+
+fn suspend_prefix(is_suspend: bool) -> &'static str {
+    if is_suspend { "suspend " } else { "" }
 }
 
 fn param(param: &Param) -> String {
@@ -651,7 +657,8 @@ fn update_block_comment_depth(line: &str, mut depth: usize) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::{portable_source_label, std_doc_package};
+    use super::{extract_doc_comments, module_docs, portable_source_label, std_doc_package};
+    use nomo_syntax::{lexer::lex, parser::parse};
     use std::path::Path;
 
     #[test]
@@ -660,6 +667,27 @@ mod tests {
             portable_source_label(Path::new(r"std\src\sqlite.nomo")),
             "std/src/sqlite.nomo"
         );
+    }
+
+    #[test]
+    fn source_docs_preserve_suspend_effects() {
+        let path = Path::new("main.nomo");
+        let source = "package app.main\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+        let ast = parse(path, &lex(path, source).unwrap()).unwrap();
+        let module = module_docs(&ast, &extract_doc_comments(source), "main.nomo".to_string());
+
+        let interface = module
+            .items
+            .iter()
+            .find(|item| item.name == "Loader")
+            .unwrap();
+        assert_eq!(
+            interface.children[0].signature,
+            "suspend fn Loader.load(self: Self) -> string"
+        );
+
+        let function = module.items.iter().find(|item| item.name == "run").unwrap();
+        assert_eq!(function.signature, "pub suspend fn run() -> string");
     }
 
     #[test]

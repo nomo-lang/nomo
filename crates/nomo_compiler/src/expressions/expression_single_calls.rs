@@ -256,6 +256,7 @@ pub(super) fn lower_single_segment_call_value_expr(
             instantiate_function_signature(template_signature, &instance_args),
         )
     };
+    ensure_suspend_call_allowed(path, span, &call_name, &signature, scope)?;
     if signature.return_type == ValueType::Void && !matches!(expected, Some(ValueType::Void)) {
         return Err(type_mismatch(
             path,

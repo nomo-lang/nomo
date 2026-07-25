@@ -63,6 +63,7 @@ fn emits_net_tcp_stream_helpers() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "process_stream".to_string(),
                 params: vec![Parameter {
@@ -93,6 +94,7 @@ fn emits_net_tcp_stream_helpers() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "process_listener".to_string(),
                 params: vec![Parameter {
@@ -115,6 +117,7 @@ fn emits_net_tcp_stream_helpers() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -239,6 +242,7 @@ fn emits_net_udp_socket_helpers() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "process_socket".to_string(),
                 params: vec![Parameter {
@@ -272,6 +276,7 @@ fn emits_net_udp_socket_helpers() {
                 ],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),

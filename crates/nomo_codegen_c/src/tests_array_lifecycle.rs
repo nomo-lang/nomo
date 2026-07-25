@@ -26,6 +26,7 @@ fn emits_string_array_helpers() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -102,6 +103,7 @@ fn emits_i32_array_helpers() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -231,6 +233,7 @@ fn emits_array_retain_for_shared_array_bindings_and_nested_elements() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -314,6 +317,7 @@ fn array_reassignment_releases_old_storage_and_retains_shared_rhs() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -386,6 +390,7 @@ fn option_array_reassignment_retains_and_releases_payload() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -462,6 +467,7 @@ fn array_get_returns_owned_option_payload_without_extra_binding_retain() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -541,6 +547,7 @@ fn if_let_releases_owned_enum_temp_after_retaining_payload_binding() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -621,6 +628,7 @@ fn let_else_releases_owned_enum_temp_after_retaining_payload_binding() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),
@@ -719,6 +727,7 @@ fn struct_and_custom_enum_lifecycle_helpers_manage_array_payloads() {
         ],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "label".to_string(),
                 params: vec![Parameter {
@@ -730,6 +739,7 @@ fn struct_and_custom_enum_lifecycle_helpers_manage_array_payloads() {
                 body: Vec::new(),
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -836,6 +846,7 @@ fn array_parameters_are_retained_and_released_by_value_but_not_mut_borrows() {
         }],
         functions: vec![
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "id".to_string(),
                 params: vec![Parameter {
@@ -849,6 +860,7 @@ fn array_parameters_are_retained_and_released_by_value_but_not_mut_borrows() {
                 )))],
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "borrow".to_string(),
                 params: vec![Parameter {
@@ -860,6 +872,7 @@ fn array_parameters_are_retained_and_released_by_value_but_not_mut_borrows() {
                 body: Vec::new(),
             },
             Function {
+                is_suspend: false,
                 package: "app.main".to_string(),
                 name: "main".to_string(),
                 params: Vec::new(),
@@ -927,6 +940,7 @@ fn emits_array_helpers_for_all_v0_1_primitive_elements() {
             ],
         }],
         functions: vec![Function {
+            is_suspend: false,
             package: "app.main".to_string(),
             name: "main".to_string(),
             params: Vec::new(),

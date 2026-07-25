@@ -326,6 +326,7 @@ pub(super) fn function_signature(
     })?;
     ensure_supported_value_type(path, &return_type, &synthetic_span())?;
     Ok(FunctionSignature {
+        is_suspend: function.is_suspend,
         type_params: function.type_params.clone(),
         params,
         return_type,
@@ -347,6 +348,16 @@ pub(super) fn lower_function_as(
         .get(lowered_name)
         .expect("signature table is built before lowering");
     let mut scope = HashMap::new();
+    scope.insert(
+        FUNCTION_EFFECT_BINDING.to_string(),
+        Binding {
+            value_type: ValueType::Void,
+            mutable: false,
+            source: BindingSource::FunctionEffect {
+                is_suspend: function.is_suspend,
+            },
+        },
+    );
     for (name, value_type) in consts {
         scope.insert(
             name.clone(),
@@ -425,6 +436,7 @@ pub(super) fn lower_function_as(
     Ok(Function {
         package: function.package.join("."),
         name: lowered_name.to_string(),
+        is_suspend: function.is_suspend,
         params,
         return_type: signature.return_type.clone(),
         body,

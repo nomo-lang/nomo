@@ -223,6 +223,7 @@ fn lower_task_worker(
         ValueType::String,
     ];
     let matches = signature.extern_symbol.is_none()
+        && !signature.is_suspend
         && signature.type_params.is_empty()
         && signature.params.iter().all(|param| !param.mutable)
         && signature

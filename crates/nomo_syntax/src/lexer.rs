@@ -18,6 +18,7 @@ pub enum TokenKind {
     Interface,
     Unsafe,
     Extern,
+    Suspend,
     Fn,
     Struct,
     Enum,
@@ -460,6 +461,7 @@ pub fn lex(path: &Path, source: &str) -> Result<Vec<Token>, Diagnostic> {
                         "interface" => TokenKind::Interface,
                         "unsafe" => TokenKind::Unsafe,
                         "extern" => TokenKind::Extern,
+                        "suspend" => TokenKind::Suspend,
                         "fn" => TokenKind::Fn,
                         "struct" => TokenKind::Struct,
                         "enum" => TokenKind::Enum,
@@ -716,6 +718,18 @@ mod tests {
         let tokens = lex(Path::new("main.nomo"), "struct Point {\n}\n").unwrap();
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Struct));
+    }
+
+    #[test]
+    fn lexes_suspend_as_a_keyword() {
+        let tokens = lex(Path::new("main.nomo"), "suspend fn ready() -> void {\n}\n").unwrap();
+
+        assert!(tokens.iter().any(|token| token.kind == TokenKind::Suspend));
+        assert!(
+            tokens
+                .iter()
+                .all(|token| !matches!(&token.kind, TokenKind::Ident(name) if name == "suspend"))
+        );
     }
 
     #[test]

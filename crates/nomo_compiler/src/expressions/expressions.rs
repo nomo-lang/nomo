@@ -352,6 +352,9 @@ pub(super) fn lower_value_expr_with_expected(
                     base: base.clone(),
                     field: field.clone(),
                 },
+                BindingSource::FunctionEffect { .. } => {
+                    unreachable!("the internal function-effect binding has no fields")
+                }
             };
             Ok((field_type, value))
         }

@@ -12,10 +12,7 @@ pub struct Map<K, V> {
 
 /// Creates an empty map.
 pub fn new<K, V>() -> Map<K, V> {
-    return Map {
-        keys: [],
-        values: []
-    }
+    return Map { keys: [], values: [] }
 }
 
 /// Returns the number of entries.

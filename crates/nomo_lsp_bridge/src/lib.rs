@@ -382,6 +382,7 @@ fn public_dependency_symbol(
         SemanticSymbolKind::InterfaceMethod => symbol
             .signature
             .strip_prefix("fn ")
+            .or_else(|| symbol.signature.strip_prefix("suspend fn "))
             .and_then(|rest| rest.split('(').next())
             .and_then(|path| path.rsplit_once('.'))
             .is_some_and(|(owner, _)| public_interfaces.contains(owner)),

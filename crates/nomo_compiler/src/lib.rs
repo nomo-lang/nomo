@@ -315,6 +315,7 @@ pub struct ExternalModule {
 
 #[derive(Debug, Clone)]
 struct FunctionSignature {
+    is_suspend: bool,
     type_params: Vec<String>,
     params: Vec<ParamSignature>,
     return_type: ValueType,
@@ -346,6 +347,7 @@ enum BindingSource {
     Local,
     Param,
     EnumPayload { value: ValueExpr, variant: String },
+    FunctionEffect { is_suspend: bool },
 }
 
 fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
@@ -355,6 +357,9 @@ fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
             value: Box::new(value.clone()),
             variant: variant.clone(),
         },
+        BindingSource::FunctionEffect { .. } => {
+            unreachable!("the internal function-effect binding is never a source expression")
+        }
     }
 }
 
@@ -363,6 +368,40 @@ fn binding_source_noun(binding: &Binding) -> &'static str {
         BindingSource::Param => "parameter",
         _ => "variable",
     }
+}
+
+const FUNCTION_EFFECT_BINDING: &str = "\0nomo_function_effect";
+
+fn current_function_is_suspend(scope: &HashMap<String, Binding>) -> bool {
+    matches!(
+        scope
+            .get(FUNCTION_EFFECT_BINDING)
+            .map(|binding| &binding.source),
+        Some(BindingSource::FunctionEffect { is_suspend: true })
+    )
+}
+
+fn ensure_suspend_call_allowed(
+    path: &Path,
+    span: &Span,
+    callable: &str,
+    signature: &FunctionSignature,
+    scope: &HashMap<String, Binding>,
+) -> Result<(), Diagnostic> {
+    if signature.is_suspend && !current_function_is_suspend(scope) {
+        return Err(Diagnostic::new(
+            "E0870",
+            format!(
+                "synchronous function cannot call suspend function `{callable}`; mark the caller `suspend`"
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

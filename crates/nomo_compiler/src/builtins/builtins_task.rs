@@ -7,7 +7,7 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
             if module == "task"
                 && matches!(
                     name.as_str(),
-                    "spawn" | "is_cancelled" | "join" | "cancel" | "close"
+                    "spawn" | "is_cancelled" | "join" | "cancel" | "close" | "yield_now"
                 )
     )
 }
@@ -34,6 +34,35 @@ pub(super) fn lower_task_builtin(
     let join_type = ValueType::Enum("TaskJoin".to_string(), Vec::new());
 
     match name.as_str() {
+        "yield_now" => {
+            if !args.is_empty() {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.yield_now",
+                    0,
+                    args.len(),
+                ));
+            }
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call suspend function `task.yield_now`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::Call {
+                    name: BUILTIN_TASK_YIELD_EXPR.to_string(),
+                    args: Vec::new(),
+                },
+            ))
+        }
         "spawn" => {
             let [worker_arg, input_arg] = args else {
                 return Err(task_arity_diagnostic(

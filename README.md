@@ -487,14 +487,19 @@ infers `i64` from the integer initializer. Semicolons are reserved for
 separating the three header clauses; ordinary Nomo statements remain
 newline-separated.
 
-P0 async effect syntax uses `suspend fn`. Calls stay direct-style without an
+Async effect syntax uses `suspend fn`. Calls stay direct-style without an
 `await` token, but a normal `fn` cannot call a suspend function; E0870 asks the
 caller to declare the effect. Suspend effects are preserved across generics,
 interfaces, local modules, formatter output, documentation, and LSP
-signatures. This slice has no suspension primitive, coroutine frame, executor,
-or async test runner yet: always-ready suspend chains use the existing direct
-C99 path, and `#[test] suspend fn` is rejected until the runtime can drive it.
-See `examples/suspend_ready`, RFC 0031, and the
+signatures. P1 adds `task.yield_now()` for a parameterless
+`suspend fn main() -> void`: the C99 backend emits a stackless root frame and
+current-thread executor only when that primitive is reachable. Always-ready
+suspend chains still use the direct C99 path. The initial runtime slice
+intentionally rejects locals, nested control flow, and non-root suspension with
+E0876; nested call frames, liveness spills, timers, structured spawn/join, and
+the async test runner land in later reviewable slices. See
+`examples/suspend_ready`, `examples/async_yield`, the
+[bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0 async benchmark gate](performance/async/README.md).
 
 `std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a

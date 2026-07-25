@@ -14,6 +14,11 @@ runtime。目前仅启用两个 workload：
 RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled，
 并记录预计实现阶段，避免“未覆盖”看起来像“已通过”。
 
+独立的 P1 `async_yield` 实现已经提供 stackless root frame 与 current-thread
+executor，但不会混入这组 P0 measurement series：liveness spill、嵌套 task
+frame、timer、spawn/join 与 runtime counter export 尚未完成。后续会用版本化
+P1 series 启用相关 workload，不会改写既有 P0 证据。
+
 ## 运行方式
 
 先构建 Nomo CLI，并使用 `manifest.json` 固定的 Go patch version：

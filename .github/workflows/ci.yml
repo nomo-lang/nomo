@@ -143,6 +143,12 @@ jobs:
           test "$(lipo -archs "$task_artifact")" = "x86_64"
           grep 'pthread_create' \
             examples/isolated_tasks/build/x86_64-apple-darwin-none/c/main.c
+          target/release/nomo build examples/async_yield --target x86_64-apple-darwin
+          async_dir="examples/async_yield/build/x86_64-apple-darwin-none"
+          async_artifact="$async_dir/bin/async_yield"
+          test "$(lipo -archs "$async_artifact")" = "x86_64"
+          grep 'nomo_async_executor_run_root' "$async_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$async_dir/c/main.c"
           target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
           sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -162,6 +168,7 @@ jobs:
             examples/structured_json/build/x86_64-apple-darwin-none
             examples/cron_schedule/build/x86_64-apple-darwin-none
             examples/isolated_tasks/build/x86_64-apple-darwin-none
+            examples/async_yield/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
@@ -212,6 +219,14 @@ jobs:
           readelf -h "$task_artifact" | grep 'Machine:.*AArch64'
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$task_artifact" \
             | grep 'cancelled:cooperative'
+          target/release/nomo build examples/async_yield --target aarch64-unknown-linux-gnu
+          async_dir="examples/async_yield/build/aarch64-unknown-linux-gnu"
+          async_artifact="$async_dir/bin/async_yield"
+          readelf -h "$async_artifact" | grep 'Machine:.*AArch64'
+          grep 'nomo_async_executor_run_root' "$async_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$async_dir/c/main.c"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$async_artifact" \
+            | grep 'after second yield'
           target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
           sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -236,5 +251,6 @@ jobs:
             examples/structured_json/build/aarch64-unknown-linux-gnu
             examples/cron_schedule/build/aarch64-unknown-linux-gnu
             examples/isolated_tasks/build/aarch64-unknown-linux-gnu
+            examples/async_yield/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

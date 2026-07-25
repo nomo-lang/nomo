@@ -13,6 +13,8 @@ toolchain.
   isolated artifacts, ABI facts, and the first supported native cross-link path.
 - [Persistent Incremental Cache](incremental-cache.md) explains cross-process
   semantic/codegen reuse, corruption recovery, capacity controls, and cleanup.
+- [Async Runtime](async-runtime.md) tracks the implemented direct-style
+  suspension surface, C99 lowering, executor behavior, and phased limitations.
 - [Transparency Log Operations](transparency-operations.md) defines log-key
   rotation, signed checkpoint gossip, proof freshness, and incident response.
 - [Typed C FFI](ffi.md) covers nominal handles, nullability, ownership metadata,

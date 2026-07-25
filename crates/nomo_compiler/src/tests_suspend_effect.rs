@@ -185,3 +185,151 @@ fn main() -> void {
     assert!(!c.contains("nomo_executor"));
     assert!(!c.contains("nomo_reactor"));
 }
+
+#[test]
+fn always_ready_suspend_codegen_has_no_async_runtime_or_frame_metadata() {
+    let source = r#"package app.main
+
+suspend fn ready() -> string {
+    return "ready"
+}
+
+suspend fn main() -> void {
+    let value: string = ready()
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(!c.contains("nomo_async_"));
+    assert!(!c.contains("nomo_executor"));
+    assert!(!c.contains("nomo_reactor"));
+}
+
+#[test]
+fn yield_now_requires_a_suspend_function() {
+    let source = r#"package app.main
+
+import std.task
+
+fn main() -> void {
+    task.yield_now()
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0870");
+    assert!(error.message.contains("task.yield_now"));
+    assert!(error.message.contains("mark the caller `suspend`"));
+}
+
+#[test]
+fn specifically_imported_yield_now_lowers_to_the_current_thread_executor() {
+    let source = r#"package app.main
+
+import std.task.yield_now
+
+suspend fn main() -> void {
+    yield_now()
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_frame_main"));
+    assert!(c.contains("nomo_async_executor_run_root"));
+    assert!(c.contains("context->yield_count += 1u;"));
+}
+
+#[test]
+fn root_yield_lowers_to_a_stackless_current_thread_executor() {
+    let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn main() -> void {
+    io.println("before")
+    task.yield_now()
+    io.println("middle")
+    task.yield_now()
+    io.println("after")
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_frame_main"));
+    assert!(c.contains("nomo_async_poll_main"));
+    assert!(c.contains("nomo_async_executor_run_root"));
+    assert!(c.contains("nomo_async_ready_enqueue"));
+    assert!(c.contains("context->ready_occupied = 1u;"));
+    assert!(c.contains("context->ready_occupied = 0u;"));
+    assert!(c.contains("context->yield_count += 1u;"));
+    assert!(c.contains("context->ready_queue_enqueues += 1u;"));
+    assert!(c.contains("case 2u:"));
+    assert!(c.contains("nomo_async_drop_main(&nomo__frame);"));
+    assert!(!c.contains("pthread_create"));
+    assert!(!c.contains("CreateThread"));
+    assert!(!c.contains("__atomic_"));
+    assert!(!c.contains("Interlocked"));
+}
+
+#[test]
+fn p1_yield_slice_rejects_non_root_and_nested_suspension() {
+    let helper_source = r#"package app.main
+
+import std.task
+
+suspend fn helper() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    helper()
+}
+"#;
+    let helper_error = parse_inline(helper_source).unwrap_err();
+    assert_eq!(helper_error.code, "E0876");
+    assert!(helper_error.message.contains("standalone statement"));
+
+    let nested_source = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    for {
+        task.yield_now()
+    }
+}
+"#;
+    let nested_error = parse_inline(nested_source).unwrap_err();
+    assert_eq!(nested_error.code, "E0876");
+    assert!(
+        nested_error
+            .message
+            .contains("current-thread runtime slice")
+    );
+}

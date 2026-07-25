@@ -11,6 +11,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           components: clippy, rustfmt
+          targets: wasm32-unknown-unknown
       - uses: actions/setup-go@v6
         with:
           go-version: 1.25.12
@@ -37,6 +38,14 @@ jobs:
           -p nomo-wasm
           -p nomo-manifest
           --locked
+      - name: Build and verify browser WebAssembly runtime
+        shell: bash
+        run: |
+          cargo build --locked --release \
+            --target wasm32-unknown-unknown \
+            -p nomo-wasm
+          node scripts/check_browser_wasm.mjs \
+            target/wasm32-unknown-unknown/release/nomo_wasm.wasm
       - name: Check project fixture
         run: cargo run --locked --bin nomo -- check --workspace examples/workspace_basic
       - name: Build release benchmark driver
@@ -65,6 +74,8 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Verify the native C driver
         run: clang --version
+      - name: Run current-thread async yield executor
+        run: cargo run --locked --bin nomo -- run examples/async_yield
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -111,6 +122,8 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
+      - name: Run current-thread async yield executor
+        run: cargo run --locked --bin nomo -- run examples/async_yield
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

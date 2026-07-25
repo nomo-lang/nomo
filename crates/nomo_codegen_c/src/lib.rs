@@ -37,6 +37,8 @@ mod expression_string_char;
 #[path = "expressions/expressions.rs"]
 mod expressions;
 // Runtime and host helper emission.
+#[path = "runtime/host_async_executor_helpers.rs"]
+mod host_async_executor_helpers;
 #[path = "runtime/host_cron_helpers.rs"]
 mod host_cron_helpers;
 #[path = "runtime/host_env_process_helpers.rs"]
@@ -123,6 +125,7 @@ use expression_result_option::*;
 use expression_std_misc::*;
 use expression_string_char::*;
 use expressions::*;
+use host_async_executor_helpers::*;
 use host_cron_helpers::*;
 use host_env_process_helpers::*;
 use host_file_helpers::*;
@@ -196,6 +199,7 @@ const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";
 const BUILTIN_TASK_CANCEL_EXPR: &str = "__nomo_task_cancel";
 const BUILTIN_TASK_CLOSE_EXPR: &str = "__nomo_task_close";
+const BUILTIN_TASK_YIELD_EXPR: &str = "__nomo_task_yield";
 const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
 const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
 const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";

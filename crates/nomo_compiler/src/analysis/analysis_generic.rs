@@ -214,7 +214,7 @@ fn collect_stmt_generic_function_instances(
         Stmt::Defer { stmt, .. } => collect_stmt_generic_function_instances(
             path, stmt, imports, signatures, structs, enums, out,
         ),
-        Stmt::Unsafe { body, .. } => {
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => {
             for stmt in body {
                 collect_stmt_generic_function_instances(
                     path, stmt, imports, signatures, structs, enums, out,

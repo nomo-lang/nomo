@@ -916,3 +916,231 @@ suspend fn main() -> string {
             .contains("async `main` still returns `void`")
     );
 }
+
+#[test]
+fn structured_void_scope_lowers_spawn_and_join_intrinsics() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[0],
+        Statement::Let {
+            name,
+            value_type: ValueType::Struct(task, task_args),
+            initializer: ValueExpr::Call { name: call, args },
+        } if name == "child"
+            && task == "Task"
+            && task_args == &[ValueType::Void]
+            && call == "__nomo_structured_task_spawn::worker"
+            && matches!(args.as_slice(), [ValueExpr::StringLiteral(value)] if value == "value")
+    ));
+    assert!(matches!(
+        &main.body[1],
+        Statement::Let {
+            name,
+            initializer: ValueExpr::Call { name: call, args },
+            ..
+        } if name == "joined"
+            && call == "__nomo_structured_task_join"
+            && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "child")
+    ));
+}
+
+#[test]
+fn structured_task_scope_rejects_invalid_ownership_and_target_shapes() {
+    let outside_scope = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    let child = task.spawn worker()
+}
+"#;
+    let error = parse_inline(outside_scope).unwrap_err();
+    assert_eq!(error.code, "E0871");
+
+    let synchronous_scope = r#"package app.main
+
+import std.task
+
+fn main() -> void {
+    task.scope {
+    }
+}
+"#;
+    let error = parse_inline(synchronous_scope).unwrap_err();
+    assert_eq!(error.code, "E0870");
+
+    let non_suspend_target = r#"package app.main
+
+import std.task
+
+fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+    let error = parse_inline(non_suspend_target).unwrap_err();
+    assert_eq!(error.code, "E0875");
+    assert!(error.message.contains("must be declared `suspend fn`"));
+
+    let non_void_target = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> string {
+    return "value"
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+    let error = parse_inline(non_void_target).unwrap_err();
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("returning void"));
+
+    let double_join = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        let first: Result<void, TaskError> = task.join(child)
+        let second: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+    let error = parse_inline(double_join).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("joined more than once"));
+
+    let escaped_handle = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        io.println(child)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+    let error = parse_inline(escaped_handle).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("may only be consumed by task.join"));
+
+    let unjoined_handles = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let zebra = task.spawn worker()
+        let alpha = task.spawn worker()
+    }
+}
+"#;
+    let error = parse_inline(unjoined_handles).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("alpha, zebra"));
+
+    let nested_control_flow = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    task.scope {
+        return
+    }
+}
+"#;
+    let error = parse_inline(nested_control_flow).unwrap_err();
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("without nested control flow"));
+}
+
+#[test]
+fn structured_void_scope_emits_bounded_fifo_join_wakeup_and_drop_paths() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("NOMO_ASYNC_PENDING_JOIN"));
+    assert!(c.contains("structured_waiter_frame"));
+    assert!(c.contains("structured_waiter_poll"));
+    assert!(c.contains("structured_completed"));
+    assert!(c.contains("owner executor ready queue is full"));
+    assert!(c.contains("nomo_async_ready_enqueue(context, &frame->nomo_async_child_0"));
+    assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0)"));
+    assert!(c.contains("context->task_spawns += 1u;"));
+    assert!(c.contains("context->task_joins += 1u;"));
+    assert!(c.contains("context->join_suspensions += 1u;"));
+    assert!(!c.contains("pthread_create"));
+    assert!(!c.contains("CreateThread"));
+    assert!(!c.contains("__atomic_"));
+    assert!(!c.contains("Interlocked"));
+}

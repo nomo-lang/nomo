@@ -56,7 +56,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
                     ));
                 }
             }
-            Stmt::Unsafe { body, .. } => validate_stmts(path, body)?,
+            Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => validate_stmts(path, body)?,
             Stmt::Let { .. }
             | Stmt::Assign { .. }
             | Stmt::IndexAssign { .. }
@@ -85,6 +85,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::Break { span, .. }
         | Stmt::Continue { span, .. }
         | Stmt::Defer { span, .. }
+        | Stmt::TaskScope { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

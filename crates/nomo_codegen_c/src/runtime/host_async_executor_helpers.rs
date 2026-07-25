@@ -1,9 +1,9 @@
 use super::*;
 
-pub(super) fn function_uses_async_yield(function: &Function) -> bool {
+pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
     function.body.iter().any(|statement| {
         statement_contains_expr(statement, |expr| {
-            expr_is_async_yield(expr) || expr_is_async_sleep(expr)
+            expr_is_async_yield(expr) || expr_is_async_sleep(expr) || expr_is_structured_join(expr)
         })
     })
 }
@@ -12,9 +12,16 @@ pub(super) fn collect_async_function_names(program: &Program) -> BTreeSet<String
     let mut names = program
         .functions
         .iter()
-        .filter(|function| function.is_suspend && function_uses_async_yield(function))
+        .filter(|function| function.is_suspend && function_uses_async_runtime(function))
         .map(|function| function.name.clone())
         .collect::<BTreeSet<_>>();
+    for function in &program.functions {
+        for statement in &function.body {
+            if let Some(spawn) = statement_structured_spawn(statement) {
+                names.insert(spawn.callee.to_string());
+            }
+        }
+    }
 
     loop {
         let discovered = program
@@ -23,11 +30,16 @@ pub(super) fn collect_async_function_names(program: &Program) -> BTreeSet<String
             .filter(|function| function.is_suspend && !names.contains(&function.name))
             .filter(|function| {
                 function.body.iter().any(|statement| {
-                    statement_contains_expr(statement, |expr| {
-                        matches!(
-                            expr,
-                            ValueExpr::Call { name, .. } if names.contains(name)
-                        )
+                    statement_contains_expr(statement, |expr| match expr {
+                        ValueExpr::Call { name, .. } if names.contains(name) => true,
+                        ValueExpr::Call { name, .. }
+                            if name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX) =>
+                        {
+                            names.contains(
+                                name.trim_start_matches(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX),
+                            )
+                        }
+                        _ => false,
                     })
                 })
             })
@@ -61,10 +73,10 @@ pub(super) fn ordered_async_functions<'a>(
             "recursive suspend call graphs must be rejected before C code generation"
         );
         for statement in &function.body {
-            let Some(call) = statement_async_call(statement, async_names) else {
-                continue;
-            };
-            if let Some(child) = functions.get(call.callee) {
+            let callee = statement_async_call(statement, async_names)
+                .map(|call| call.callee)
+                .or_else(|| statement_structured_spawn(statement).map(|spawn| spawn.callee));
+            if let Some(child) = callee.and_then(|callee| functions.get(callee)) {
                 visit(child, functions, async_names, visiting, visited, ordered);
             }
         }
@@ -114,6 +126,14 @@ fn expr_is_async_sleep(expr: &ValueExpr) -> bool {
     )
 }
 
+fn expr_is_structured_join(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1
+    )
+}
+
 fn statement_is_async_yield(statement: &Statement) -> bool {
     matches!(
         statement,
@@ -145,6 +165,71 @@ struct AsyncCall<'a> {
     binding: Option<(&'a str, &'a ValueType)>,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StructuredSpawn<'a> {
+    callee: &'a str,
+    args: &'a [ValueExpr],
+    handle: &'a str,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct StructuredJoin<'a> {
+    handle: &'a str,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_structured_spawn(statement: &Statement) -> Option<StructuredSpawn<'_>> {
+    let Statement::Let {
+        name: handle,
+        initializer: ValueExpr::Call { name, args },
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    let callee = name.strip_prefix(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)?;
+    Some(StructuredSpawn {
+        callee,
+        args,
+        handle,
+    })
+}
+
+fn statement_structured_join(statement: &Statement) -> Option<StructuredJoin<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    if name != BUILTIN_TASK_STRUCTURED_JOIN_EXPR {
+        return None;
+    }
+    let [ValueExpr::Variable(handle)] = args.as_slice() else {
+        return None;
+    };
+    Some(StructuredJoin {
+        handle,
+        binding,
+        value_type,
+    })
+}
+
+fn structured_spawn_index(function: &Function, handle: &str) -> Option<usize> {
+    function
+        .body
+        .iter()
+        .enumerate()
+        .find_map(|(index, statement)| {
+            statement_structured_spawn(statement)
+                .filter(|spawn| spawn.handle == handle)
+                .map(|_| index)
+        })
+}
+
 fn statement_async_call<'a>(
     statement: &'a Statement,
     async_names: &BTreeSet<String>,
@@ -174,6 +259,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
     statement_is_async_yield(statement)
         || statement_async_sleep(statement).is_some()
         || statement_async_call(statement, async_names).is_some()
+        || statement_structured_join(statement).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -193,6 +279,9 @@ fn collect_async_frame_locals(
         .iter()
         .enumerate()
         .filter_map(|(declaration_index, statement)| {
+            if statement_structured_spawn(statement).is_some() {
+                return None;
+            }
             let Statement::Let {
                 name, value_type, ..
             } = statement
@@ -295,6 +384,18 @@ fn async_timer_result_owned_field(index: usize) -> String {
     format!("nomo_async_timer_result_owned_{index}")
 }
 
+fn async_join_result_field(index: usize) -> String {
+    format!("nomo_async_join_result_{index}")
+}
+
+fn async_join_result_owned_field(index: usize) -> String {
+    format!("nomo_async_join_result_owned_{index}")
+}
+
+fn async_spawn_failed_field(index: usize) -> String {
+    format!("nomo_async_spawn_failed_{index}")
+}
+
 fn async_sleep_result_type() -> ValueType {
     ValueType::Enum(
         "Result".to_string(),
@@ -315,8 +416,11 @@ fn emit_async_frame_type(
         "typedef struct {\n\
              uint32_t state;\n\
              nomo_async_context *context;\n\
+             void *structured_waiter_frame;\n\
+             nomo_async_poll_fn structured_waiter_poll;\n\
              uint8_t started;\n\
-             uint8_t dropped;\n",
+             uint8_t dropped;\n\
+             uint8_t structured_completed;\n",
     );
     for parameter in &function.params {
         out.push_str("    ");
@@ -368,7 +472,28 @@ fn emit_async_frame_type(
             out.push_str(&async_timer_result_owned_field(index));
             out.push_str(";\n");
         }
+        if statement_structured_join(statement).is_some() {
+            out.push_str("    ");
+            out.push_str(&c_type(&async_sleep_result_type()));
+            out.push(' ');
+            out.push_str(&async_join_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_join_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if statement_structured_spawn(statement).is_some() {
+            out.push_str("    uint8_t ");
+            out.push_str(&async_spawn_failed_field(index));
+            out.push_str(";\n");
+        }
         let Some(call) = statement_async_call(statement, async_names) else {
+            if let Some(spawn) = statement_structured_spawn(statement) {
+                out.push_str("    ");
+                out.push_str(&async_frame_ident(spawn.callee));
+                out.push(' ');
+                out.push_str(&async_child_field(index));
+                out.push_str(";\n");
+            }
             continue;
         };
         out.push_str("    ");
@@ -520,10 +645,41 @@ fn emit_async_return_value(
         out.push_str(" = 1u;\n");
     }
     emit_async_local_releases(out, local_owned, &[], indent);
+    emit_structured_completion(out, indent);
     write_indent(out, indent);
     out.push_str("frame->state = UINT32_MAX;\n");
     write_indent(out, indent);
     out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+}
+
+fn emit_structured_completion(out: &mut String, indent: usize) {
+    write_indent(out, indent);
+    out.push_str("frame->structured_completed = 1u;\n");
+    write_indent(out, indent);
+    out.push_str("if (frame->structured_waiter_frame != NULL) {\n");
+    write_indent(out, indent + 1);
+    out.push_str(
+        "if (nomo_async_ready_enqueue(\n\
+             ",
+    );
+    write_indent(out, indent + 2);
+    out.push_str("context,\n");
+    write_indent(out, indent + 2);
+    out.push_str("frame->structured_waiter_frame,\n");
+    write_indent(out, indent + 2);
+    out.push_str("frame->structured_waiter_poll\n");
+    write_indent(out, indent + 1);
+    out.push_str(") != 0) {\n");
+    write_indent(out, indent + 2);
+    out.push_str("context->runtime_failed = 1u;\n");
+    write_indent(out, indent + 1);
+    out.push_str("}\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_waiter_frame = NULL;\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_waiter_poll = NULL;\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
 }
 
 fn emit_async_local_releases(
@@ -618,6 +774,61 @@ fn emit_async_timer_result_materialize(out: &mut String, index: usize, indent: u
     out.push_str(" = 1u;\n");
 }
 
+fn emit_structured_join_result_materialize(
+    out: &mut String,
+    spawn_index: usize,
+    join_index: usize,
+    indent: usize,
+) {
+    let result_type = async_sleep_result_type();
+    let ValueType::Enum(_, result_args) = &result_type else {
+        unreachable!("structured void join result is always a Result enum");
+    };
+    let result = format!("frame->{}", async_join_result_field(join_index));
+    write_indent(out, indent);
+    out.push_str("memset(&");
+    out.push_str(&result);
+    out.push_str(", 0, sizeof(");
+    out.push_str(&result);
+    out.push_str("));\n");
+    write_indent(out, indent);
+    out.push_str("if (frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" == 0u) {\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".tag = ");
+    out.push_str(&c_enum_variant_ident("Result", result_args, "Ok"));
+    out.push_str(";\n");
+    write_indent(out, indent);
+    out.push_str("} else {\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".tag = ");
+    out.push_str(&c_enum_variant_ident("Result", result_args, "Err"));
+    out.push_str(";\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push('.');
+    out.push_str(&c_member_ident("code"));
+    out.push_str(" = nomo_string_literal(\"queue_full\");\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push('.');
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_literal(\"owner executor ready queue is full\");\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&async_join_result_owned_field(join_index));
+    out.push_str(" = 1u;\n");
+}
+
 pub(super) fn emit_current_thread_executor(out: &mut String) {
     let runtime = r#"typedef enum {
     NOMO_ASYNC_POLL_READY = 0,
@@ -627,7 +838,8 @@ pub(super) fn emit_current_thread_executor(out: &mut String) {
 typedef enum {
     NOMO_ASYNC_PENDING_NONE = 0,
     NOMO_ASYNC_PENDING_YIELD = 1,
-    NOMO_ASYNC_PENDING_TIMER = 2
+    NOMO_ASYNC_PENDING_TIMER = 2,
+    NOMO_ASYNC_PENDING_JOIN = 3
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -674,6 +886,9 @@ struct nomo_async_context {
     uint64_t ready_queue_enqueues;
     uint64_t ready_queue_dequeues;
     uint64_t ready_queue_saturations;
+    uint64_t task_spawns;
+    uint64_t task_joins;
+    uint64_t join_suspensions;
     uint64_t timer_registrations;
     uint64_t timer_expirations;
     uint64_t timer_cancellations;
@@ -688,6 +903,7 @@ struct nomo_async_context {
     uint32_t ready_head;
     uint32_t ready_tail;
     uint32_t ready_count;
+    uint8_t runtime_failed;
 };
 
 static int nomo_async_ready_enqueue(
@@ -894,6 +1110,9 @@ static int nomo_async_executor_run_root(
     nomo_async_context *context
 ) {
     nomo_async_poll status = nomo_async_poll_task(frame, poll, context);
+    if (context->runtime_failed != 0u) {
+        return 1;
+    }
     if (status == NOMO_ASYNC_POLL_READY) {
         return 0;
     }
@@ -901,7 +1120,8 @@ static int nomo_async_executor_run_root(
         if (nomo_async_ready_enqueue(context, frame, poll) != 0) {
             return 1;
         }
-    } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER) {
+    } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
+        && context->pending_reason != NOMO_ASYNC_PENDING_JOIN) {
         return 1;
     }
     while (context->ready_count != 0u || context->live_timers != 0u) {
@@ -915,12 +1135,16 @@ static int nomo_async_executor_run_root(
             return 1;
         }
         status = nomo_async_poll_task(ready_frame, ready_poll, context);
+        if (context->runtime_failed != 0u) {
+            return 1;
+        }
         if (status == NOMO_ASYNC_POLL_PENDING) {
             if (context->pending_reason == NOMO_ASYNC_PENDING_YIELD) {
                 if (nomo_async_ready_enqueue(context, ready_frame, ready_poll) != 0) {
                     return 1;
                 }
-            } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER) {
+            } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
+                && context->pending_reason != NOMO_ASYNC_PENDING_JOIN) {
                 return 1;
             }
         }
@@ -953,6 +1177,9 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"ready_queue_enqueues\": %" PRIu64 ",\n"
         "    \"ready_queue_dequeues\": %" PRIu64 ",\n"
         "    \"ready_queue_saturations\": %" PRIu64 ",\n"
+        "    \"task_spawns\": %" PRIu64 ",\n"
+        "    \"task_joins\": %" PRIu64 ",\n"
+        "    \"join_suspensions\": %" PRIu64 ",\n"
         "    \"timer_registrations\": %" PRIu64 ",\n"
         "    \"timer_expirations\": %" PRIu64 ",\n"
         "    \"timer_cancellations\": %" PRIu64 ",\n"
@@ -971,6 +1198,9 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->ready_queue_enqueues,
         context->ready_queue_dequeues,
         context->ready_queue_saturations,
+        context->task_spawns,
+        context->task_joins,
+        context->join_suspensions,
         context->timer_registrations,
         context->timer_expirations,
         context->timer_cancellations,
@@ -1029,8 +1259,39 @@ pub(super) fn emit_async_function(
     let mut emitted_terminal_return = false;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
+        if let Some(spawn) = statement_structured_spawn(statement) {
+            let callee = functions
+                .get(spawn.callee)
+                .expect("validated structured spawn target exists");
+            emit_async_child_init(
+                out,
+                AsyncCall {
+                    callee: spawn.callee,
+                    args: spawn.args,
+                    binding: None,
+                },
+                callee,
+                index,
+                3,
+            );
+            out.push_str("            context->task_spawns += 1u;\n");
+            out.push_str("            if (nomo_async_ready_enqueue(context, &frame->");
+            out.push_str(&async_child_field(index));
+            out.push_str(", ");
+            out.push_str(&async_poll_ident(spawn.callee));
+            out.push_str(") != 0) {\n            frame->");
+            out.push_str(&async_spawn_failed_field(index));
+            out.push_str(" = 1u;\n            frame->");
+            out.push_str(&async_child_field(index));
+            out.push_str(".structured_completed = 1u;\n        }\n");
+            continue;
+        }
         if statement_is_async_suspend(statement, async_names) {
             let sleep = statement_async_sleep(statement);
+            let join = statement_structured_join(statement);
+            if join.is_some() {
+                out.push_str("            context->task_joins += 1u;\n");
+            }
             if let Some((_, _, duration)) = sleep {
                 out.push_str("            int64_t nomo_async_sleep_millis_");
                 out.push_str(&index.to_string());
@@ -1088,6 +1349,26 @@ pub(super) fn emit_async_function(
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(";\n");
+            } else if let Some(join) = join {
+                let spawn_index = structured_spawn_index(function, join.handle)
+                    .expect("validated structured join handle has a spawn");
+                out.push_str("            if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_completed == 0u) {\n                frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_waiter_frame = frame;\n                frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(
+                    ".structured_waiter_poll = context->current_poll;\n\
+                     context->join_suspensions += 1u;\n\
+                     context->pending_reason = NOMO_ASYNC_PENDING_JOIN;\n\
+                     return NOMO_ASYNC_POLL_PENDING;\n\
+                 }\n",
+                );
+                emit_structured_join_result_materialize(out, spawn_index, index, 3);
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
             } else {
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
@@ -1109,7 +1390,21 @@ pub(super) fn emit_async_function(
                 );
                 emit_async_timer_result_materialize(out, index, 3);
             }
-            if sleep.is_some() || call.is_some() {
+            if let Some(join) = join {
+                let spawn_index = structured_spawn_index(function, join.handle)
+                    .expect("validated structured join handle has a spawn");
+                out.push_str("            if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(
+                    ".structured_completed == 0u) {\n\
+                     context->join_suspensions += 1u;\n\
+                     context->pending_reason = NOMO_ASYNC_PENDING_JOIN;\n\
+                     return NOMO_ASYNC_POLL_PENDING;\n\
+                 }\n",
+                );
+                emit_structured_join_result_materialize(out, spawn_index, index, 3);
+            }
+            if sleep.is_some() || call.is_some() || join.is_some() {
                 out.push_str("nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(":\n            ;\n");
@@ -1235,6 +1530,53 @@ pub(super) fn emit_async_function(
                     }
                 }
             }
+            if let Some(join) = join {
+                debug_assert_eq!(join.value_type, &async_sleep_result_type());
+                if let Some(frame_local) = frame_locals
+                    .iter()
+                    .find(|local| local.declaration_index == index)
+                {
+                    out.push_str("            frame->");
+                    out.push_str(&async_frame_value_field(join.binding));
+                    out.push_str(" = frame->");
+                    out.push_str(&async_join_result_field(index));
+                    out.push_str(";\n");
+                    if value_type_needs_release(join.value_type) {
+                        out.push_str("            frame->");
+                        out.push_str(&async_frame_owned_field(join.binding));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_join_result_owned_field(index));
+                        out.push_str(";\n            frame->");
+                        out.push_str(&async_join_result_owned_field(index));
+                        out.push_str(" = 0u;\n");
+                    }
+                    emit_async_frame_alias(out, frame_local, 3);
+                } else {
+                    out.push_str("            ");
+                    out.push_str(&c_type(join.value_type));
+                    out.push(' ');
+                    out.push_str(&c_var_ident(join.binding));
+                    out.push_str(" = frame->");
+                    out.push_str(&async_join_result_field(index));
+                    out.push_str(";\n            frame->");
+                    out.push_str(&async_join_result_owned_field(index));
+                    out.push_str(" = 0u;\n");
+                    if let Some(local) = local_array(join.binding, join.value_type) {
+                        local_owned.push(local);
+                    }
+                }
+                let spawn_index = structured_spawn_index(function, join.handle)
+                    .expect("validated structured join handle has a spawn");
+                out.push_str("            ");
+                out.push_str(&async_drop_ident(
+                    statement_structured_spawn(&function.body[spawn_index])
+                        .expect("structured join spawn exists")
+                        .callee,
+                ));
+                out.push_str("(&frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(");\n");
+            }
             continue;
         }
         if let Statement::Return(value) = statement {
@@ -1245,6 +1587,7 @@ pub(super) fn emit_async_function(
                 None => {
                     debug_assert_eq!(function.return_type, ValueType::Void);
                     emit_async_local_releases(out, &local_owned, &[], 3);
+                    emit_structured_completion(out, 3);
                     out.push_str(
                         "            frame->state = UINT32_MAX;\n\
                                      return NOMO_ASYNC_POLL_READY;\n",
@@ -1273,6 +1616,7 @@ pub(super) fn emit_async_function(
     if !emitted_terminal_return {
         debug_assert_eq!(function.return_type, ValueType::Void);
         emit_async_local_releases(out, &local_owned, &[], 3);
+        emit_structured_completion(out, 3);
         out.push_str(
             "            frame->state = UINT32_MAX;\n\
                      return NOMO_ASYNC_POLL_READY;\n",
@@ -1304,6 +1648,23 @@ pub(super) fn emit_async_function(
              }\n",
     );
     for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(spawn) = statement_structured_spawn(statement) else {
+            continue;
+        };
+        out.push_str("    frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(
+            ".structured_waiter_frame = NULL;\n\
+             frame->",
+        );
+        out.push_str(&async_child_field(index));
+        out.push_str(".structured_waiter_poll = NULL;\n    ");
+        out.push_str(&async_drop_ident(spawn.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(");\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(call) = statement_async_call(statement, async_names) else {
             continue;
         };
@@ -1312,6 +1673,18 @@ pub(super) fn emit_async_function(
         out.push_str("(&frame->");
         out.push_str(&async_child_field(index));
         out.push_str(");\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(join) = statement_structured_join(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            join.value_type,
+            &async_join_result_owned_field(index),
+            &async_join_result_field(index),
+            1,
+        );
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_sleep(statement).is_none() {

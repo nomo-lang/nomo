@@ -426,6 +426,21 @@ impl Parser<'_> {
         } else {
             Vec::new()
         };
+        if path == ["task", "spawn"] && !matches!(self.peek().kind, TokenKind::LParen) {
+            if !type_args.is_empty() {
+                return Err(self.error(
+                    "E0875",
+                    "structured task.spawn does not accept explicit type arguments",
+                    self.peek().length(),
+                ));
+            }
+            let target = self.parse_name_or_call()?;
+            return Ok(Expr::Call {
+                callee: vec!["task".to_string(), "\0nomo_structured_spawn".to_string()],
+                type_args: Vec::new(),
+                args: vec![target],
+            });
+        }
         if !matches!(self.peek().kind, TokenKind::LParen) {
             if !type_args.is_empty() {
                 return Err(self.error(

@@ -443,6 +443,9 @@ pub(super) fn lower_stmt(
                 loop_depth,
             )
         }
+        Stmt::TaskScope { .. } => {
+            unreachable!("task.scope is lowered by lower_stmt_into")
+        }
         Stmt::Expr { expr, span } => {
             let (expr_type, lowered) = lower_value_expr_with_expected(
                 path,
@@ -485,6 +488,57 @@ pub(super) fn lower_stmt_into(
     loop_depth: usize,
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
+    if let Stmt::TaskScope { body, span } = stmt {
+        require_import(path, imports, span, "std.task", "task.scope")?;
+        if !current_function_is_suspend(scope) {
+            return Err(Diagnostic::new(
+                "E0870",
+                "synchronous function cannot enter `task.scope`; mark the caller `suspend`",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        if current_function_has_task_scope(scope) {
+            return Err(Diagnostic::new(
+                "E0876",
+                "nested task scopes require the later structured cancellation slice",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        validate_structured_void_scope(path, body, span)?;
+        let mut task_scope = scope.clone();
+        task_scope.insert(
+            TASK_SCOPE_BINDING.to_string(),
+            Binding {
+                value_type: ValueType::Void,
+                mutable: false,
+                source: BindingSource::TaskScope,
+            },
+        );
+        for statement in body {
+            lower_stmt_into(
+                path,
+                statement,
+                &mut task_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                false,
+                loop_depth,
+                out,
+            )?;
+        }
+        return Ok(());
+    }
     if lower_question_exprs_in_stmt_into(
         path,
         stmt,
@@ -512,5 +566,181 @@ pub(super) fn lower_stmt_into(
         is_tail,
         loop_depth,
     )?);
+    Ok(())
+}
+
+fn validate_structured_void_scope(
+    path: &Path,
+    body: &[Stmt],
+    scope_span: &Span,
+) -> Result<(), Diagnostic> {
+    let mut handles = HashMap::<String, bool>::new();
+    for statement in body {
+        let span = statement_span(statement);
+        match statement {
+            Stmt::Let {
+                name,
+                mutable,
+                type_annotation,
+                value:
+                    AstExpr::Call {
+                        callee,
+                        args,
+                        type_args,
+                    },
+                ..
+            } if callee == &["task", TASK_STRUCTURED_SPAWN_AST_NAME] => {
+                if *mutable || type_annotation.is_some() || !type_args.is_empty() {
+                    return Err(Diagnostic::new(
+                        "E0876",
+                        "the first structured task slice requires an inferred immutable spawn handle",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let [AstExpr::Call { .. }] = args.as_slice() else {
+                    return Err(Diagnostic::new(
+                        "E0875",
+                        "task.spawn expects one direct call to a named suspend function",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                handles.insert(name.clone(), false);
+            }
+            Stmt::Let {
+                mutable,
+                value: AstExpr::Call { callee, args, .. },
+                ..
+            } if callee == &["task", "join"] && args.len() == 1 => {
+                if *mutable {
+                    return Err(Diagnostic::new(
+                        "E0876",
+                        "structured join results must use immutable bindings",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let [AstExpr::Name(handle_path)] = args.as_slice() else {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        "task.join expects one scope-owned task handle",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                let [handle] = handle_path.as_slice() else {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        "task.join expects an unqualified scope-owned task handle",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                let Some(joined) = handles.get_mut(handle) else {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        format!("`{handle}` is not a task handle owned by this scope"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                };
+                if *joined {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        format!("task handle `{handle}` is joined more than once"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                *joined = true;
+            }
+            Stmt::TaskScope { .. }
+            | Stmt::LetElse { .. }
+            | Stmt::IfLet { .. }
+            | Stmt::Match { .. }
+            | Stmt::For { .. }
+            | Stmt::Return { .. }
+            | Stmt::Defer { .. }
+            | Stmt::Unsafe { .. }
+            | Stmt::Break { .. }
+            | Stmt::Continue { .. } => {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "the first structured task slice requires a top-level scope body without nested control flow, early exit, defer, or unsafe blocks",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            _ => {
+                let mut escaped = None;
+                visit_statement_expressions(statement, &mut |expression| {
+                    if let AstExpr::Name(name) = expression
+                        && let [name] = name.as_slice()
+                        && handles.contains_key(name)
+                    {
+                        escaped = Some(name.clone());
+                    }
+                    Ok(())
+                })?;
+                if let Some(handle) = escaped {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        format!(
+                            "task handle `{handle}` may only be consumed by task.join inside its scope"
+                        ),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            }
+        }
+    }
+    let mut unjoined = handles
+        .iter()
+        .filter_map(|(name, joined)| (!joined).then_some(name.as_str()))
+        .collect::<Vec<_>>();
+    unjoined.sort_unstable();
+    if !unjoined.is_empty() {
+        return Err(Diagnostic::new(
+            "E0872",
+            format!(
+                "task scope exits with unjoined handle(s): {}; join every child before leaving the scope",
+                unjoined.join(", ")
+            ),
+            path,
+            scope_span.line,
+            scope_span.column,
+            scope_span.length,
+            &scope_span.text,
+        ));
+    }
     Ok(())
 }

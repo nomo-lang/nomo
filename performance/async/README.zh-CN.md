@@ -12,22 +12,28 @@ async runtime。P0 manifest 保留两个 control：
   sampling 与 result schema 管线，但明确不能用于性能宣传。
 
 独立的 `manifest-p1.json` 会再次运行两个 zero-cost control，并启用
-`yield_counter_probe` 与 `timer_counter_probe`。探针不混入 measured sample；
-它们单独设置 `NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
+`yield_counter_probe`、`timer_counter_probe` 与 `task_spawn_complete`。
+counter 探针不混入 measured sample；它们单独设置
+`NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
 版本化的 current-thread JSON 契约。两层 frame、两次 yield 会传递一个 managed
 参数和结果，并必须得到：heap/slab frame allocation 为 0、幂等 frame drop
 为 2、peak live frame 为 2、ready queue 往返为 2、poll 为 5、cooperative
 yield 为 2。timer 探针还要求
 零时长路径 inline ready，正时长恰好注册、到期和入队各一次，总计两次 poll，
 无取消，并在退出时保持 live timer 为 0。
+spawn/complete workload 在同一固定单核配置下运行 32 个 scope-owned Nomo
+`Task<void>` child 与 32 个 Go goroutine；它校验精确的 spawn/join/join
+suspension counter 及 frame/queue 清理，但在 runtime 仍是 current-thread-only
+时不具备性能声明资格。
 
 RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled
 并记录阶段，避免“未覆盖”看起来像“已通过”。owner-local timer 的注册、到期、
 取消、live 与 peak-live counter 已可用。current-thread executor 现在使用
 64 槽有界 FIFO，并通过 `ready_queue_saturations` 记录被拒绝的入队；多任务
-saturation workload 留在 structured-spawn 切片。ARC primitive counter 仍明确
-标记 unavailable，而不是伪装成 0。mutable/affine suspend 参数、完整 unwind
-path、structured spawn/join 与多任务 timer-wheel workload 仍未完成。
+saturation workload 还会证明被拒绝的 spawn 转化为类型化 join error。ARC
+primitive counter 仍明确标记 unavailable，而不是伪装成 0。mutable/affine
+suspend 参数、完整 unwind path、typed structured result、取消与多任务
+timer-wheel workload 仍未完成。
 
 ## 运行方式
 

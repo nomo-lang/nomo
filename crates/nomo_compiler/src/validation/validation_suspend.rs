@@ -171,6 +171,24 @@ fn validate_p1_suspend_function_shape(
                                 && !ast_expr_contains_frame_exit(value)
                         })
                 }
+                Stmt::TaskScope { body, .. } => body.iter().all(|statement| match statement {
+                    Stmt::Let { mutable, value, .. } => {
+                        !mutable
+                            && (ast_expr_is_structured_spawn(value)
+                                || ast_expr_is_structured_join(value)
+                                || !ast_expr_contains_suspension(
+                                    value,
+                                    imports,
+                                    suspending_functions,
+                                ))
+                            && !ast_expr_contains_frame_exit(value)
+                    }
+                    Stmt::Expr { expr, .. } => {
+                        !ast_expr_contains_suspension(expr, imports, suspending_functions)
+                            && !ast_expr_contains_frame_exit(expr)
+                    }
+                    _ => false,
+                }),
                 _ => false,
             });
 
@@ -362,9 +380,11 @@ pub(super) fn validate_p1_yield_ir_function(
 
     let unsupported = body.iter().find_map(|statement| match statement {
         Statement::Let {
-            name, value_type, ..
+            name,
+            value_type,
+            initializer,
         } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
-            Some((name, value_type))
+            (!ir_expr_is_structured_spawn(initializer)).then_some((name, value_type))
         }
         _ => None,
     });
@@ -483,9 +503,11 @@ pub(super) fn validate_p1_suspend_ir_program(
         if let Some((name, value_type)) = function.body.iter().find_map(|statement| match statement
         {
             Statement::Let {
-                name, value_type, ..
+                name,
+                value_type,
+                initializer,
             } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
-                Some((name, value_type))
+                (!ir_expr_is_structured_spawn(initializer)).then_some((name, value_type))
             }
             _ => None,
         }) {
@@ -660,6 +682,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
     ast_statement_any_expr(statement, |candidate| {
         ast_expr_is_direct_yield(candidate, imports)
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
+            || ast_expr_is_structured_join(candidate)
     })
 }
 
@@ -761,7 +784,7 @@ where
             }
         },
         Stmt::Defer { stmt, .. } => ast_statement_any_expr(stmt, predicate),
-        Stmt::Unsafe { body, .. } => body
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => body
             .iter()
             .any(|statement| ast_statement_any_expr(statement, predicate)),
         Stmt::Postfix { .. }
@@ -808,6 +831,32 @@ fn ast_expr_is_direct_suspension(
         && callee
             .last()
             .is_some_and(|name| suspending_functions.contains(name))
+}
+
+fn ast_expr_is_structured_spawn(expr: &AstExpr) -> bool {
+    matches!(
+        expr,
+        AstExpr::Call {
+            callee,
+            type_args,
+            args,
+        } if callee.as_slice() == ["task", TASK_STRUCTURED_SPAWN_AST_NAME]
+            && type_args.is_empty()
+            && args.len() == 1
+    )
+}
+
+fn ast_expr_is_structured_join(expr: &AstExpr) -> bool {
+    matches!(
+        expr,
+        AstExpr::Call {
+            callee,
+            type_args,
+            args,
+        } if callee.as_slice() == ["task", "join"]
+            && type_args.is_empty()
+            && args.len() == 1
+    )
 }
 
 fn ast_expr_is_direct_sleep(
@@ -915,5 +964,14 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             }
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
+                || (name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1)
+    )
+}
+
+fn ir_expr_is_structured_spawn(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. }
+            if name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)
     )
 }

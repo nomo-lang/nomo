@@ -99,8 +99,13 @@
       "id": "task_spawn_complete",
       "kind": "required_async_workload",
       "available_phase": "P1",
-      "enabled": false,
-      "claim_eligible": false
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/task_spawn_complete",
+      "go_project": "reference/go/task_spawn_complete",
+      "expected_stdout": "spawn-complete 32\n",
+      "snapshot": "snapshots/task-spawn-complete.json",
+      "note": "Measures one current-thread batch of 32 scope-owned void children against 32 Go goroutines on the pinned single-core configuration; it is a correctness and evidence workload, not a performance claim."
     },
     {
       "id": "idle_suspended_tasks",

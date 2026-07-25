@@ -45,6 +45,12 @@ pub(super) fn expr(value: &Expr, indent: usize, parent_precedence: u8) -> String
             type_args,
             args,
         } => {
+            if callee.as_slice() == ["task", "\0nomo_structured_spawn"]
+                && type_args.is_empty()
+                && let [target] = args.as_slice()
+            {
+                return format!("task.spawn {}", expr(target, indent, 0));
+            }
             let type_args = if type_args.is_empty() {
                 String::new()
             } else {

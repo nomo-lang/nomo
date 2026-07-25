@@ -1,0 +1,21 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn child(label: string) -> void {
+    io.println(label, "before")
+    task.yield_now()
+    io.println(label, "after")
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let left = task.spawn child("left")
+        let right = task.spawn child("right")
+        let joined_left: Result<void, TaskError> = task.join(left)
+        let joined_right: Result<void, TaskError> = task.join(right)
+        io.println(result.is_ok(joined_left), result.is_ok(joined_right))
+    }
+}

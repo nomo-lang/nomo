@@ -48,6 +48,29 @@ current-thread backend。duration 只求值一次；非正时长 inline 完成�
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
 
+第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
+
+```nomo
+import std.result
+import std.task
+
+suspend fn child(message: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let handle = task.spawn child("ready")
+        let joined: Result<void, TaskError> = task.join(handle)
+        let completed: bool = result.is_ok(joined)
+    }
+}
+```
+
+`task.spawn child(args)` 与带括号的旧 `task.spawn(worker, input)` 有意保持
+不同。结构化形式创建 scope-owned `Task<void>`，单参数 join 必须且只能消费一次
+该 handle。
+
 ## 已实现的 P1 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
@@ -61,6 +84,10 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   用尽时明确报告 saturation，不允许无界增长；
 - 带 generation 校验、monotonic deadline、按 deadline/generation
   确定性排序与幂等 disarm 的有界 owner-local timer table；
+- 入同一有界 FIFO 的内嵌 structured child frame，以及 child 完成时重新入队
+  parent 的单一 owner-local waiter edge；
+- structured spawn 无法进入 64 槽 ready queue 时，由 join 构造
+  `TaskError { code: "queue_full", ... }`；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
@@ -68,7 +95,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。ready
 的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
 frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
-frame drop/live frame、入队/出队/饱和，以及 timer
+frame drop/live frame、入队/出队/饱和、structured spawn/join/join suspension，
+以及 timer
 注册/到期/取消/live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
@@ -82,11 +110,19 @@ unavailable，而不是伪装成 0。
 值 retain 进 child frame，owned temporary 直接 transfer，owned 结果会在
 child drop 前 move 到调用方的不可变 binding。
 
+上述 inline fast path 适用于普通 direct suspend call。structured spawn
+会真正创建并发：不可变且 frame-safe 的参数只求值一次，随后初始化内嵌 child
+frame 并将其调度到有界 FIFO。join 只在目标 child 尚未完成时挂起；child
+完成会唤醒一个 owner-local waiter。显式 join 清理与 parent 清理都会执行幂等
+child drop。该切片不创建 heap task、OS thread、atomic reference count 或
+全局 work-stealing queue。
+
 Browser WASM 的有界沙盒解释器可以运行同一份源码。目前
 `task.yield_now()` 只表示 cooperative boundary；它还不会把控制权交还给
 host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既不阻塞
 也不求值 duration，而是返回
-`TaskError { code: "runtime_unavailable", ... }`。
+`TaskError { code: "runtime_unavailable", ... }`。structured child body
+目前同样不会在 browser 中执行，其 join 返回同一稳定错误。
 
 ## 有意保留的限制
 
@@ -97,7 +133,14 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
-内部挂起、`?`、显式 panic、spawn/join、取消和 reactor I/O 都属于后续小 PR。
+内部挂起、`?`、显式 panic、取消和 reactor I/O 都属于后续小 PR。
+
+structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
+handle 必须使用推导得到的不可变 binding，不得离开 scope，并且必须恰好 join
+一次。target 必须是直接、未限定、non-generic 的顶层 `suspend fn`，参数不可变
+且 frame-safe，并返回 `void`。嵌套 scope、scope 内控制流、early exit、
+defer/unsafe、typed child result、取消、deadline、channel 与 select 仍属于后续
+切片。E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -108,6 +151,8 @@ constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求�
 当前切片已经用 generated-C 测试和 AddressSanitizer 检查精确 spill、dead local
 的 suspension 前清理、child-before-parent ownership bit 清零、重复显式 drop、
 monotonic 不提前唤醒、零时长 timer fast path，以及挂起 child timer 的取消。
+structured task 还覆盖 FIFO 交错、单次 join ownership、waiter wakeup、类型化
+queue saturation、browser 不执行 child，以及幂等 child cleanup。
 后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
@@ -122,4 +167,5 @@ monotonic 不提前唤醒、零时长 timer fast path，以及挂起 child timer
 P0/P1 控制组与原始证据格式位于
 [`performance/async`](../performance/async/README.zh-CN.md)，当前小切片的可运行
 示例位于 [`examples/async_yield`](../examples/async_yield) 与
-[`examples/async_timer`](../examples/async_timer)。
+[`examples/async_timer`](../examples/async_timer)，以及
+[`examples/async_structured_void`](../examples/async_structured_void)。

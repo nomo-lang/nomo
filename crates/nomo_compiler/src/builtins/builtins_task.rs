@@ -5,7 +5,7 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
         callee,
         [module, name]
             if module == "task"
-                && matches!(
+                && (matches!(
                     name.as_str(),
                     "spawn"
                         | "is_cancelled"
@@ -14,7 +14,7 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
                         | "close"
                         | "yield_now"
                         | "sleep"
-                )
+                ) || name == TASK_STRUCTURED_SPAWN_AST_NAME)
     )
 }
 
@@ -40,6 +40,123 @@ pub(super) fn lower_task_builtin(
     let join_type = ValueType::Enum("TaskJoin".to_string(), Vec::new());
 
     match name.as_str() {
+        TASK_STRUCTURED_SPAWN_AST_NAME => {
+            if !current_function_has_task_scope(scope) {
+                return Err(Diagnostic::new(
+                    "E0871",
+                    "structured task.spawn is only allowed inside task.scope",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let [target] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.spawn",
+                    1,
+                    args.len(),
+                ));
+            };
+            let AstExpr::Call {
+                callee,
+                type_args,
+                args: target_args,
+            } = target
+            else {
+                return Err(structured_task_target_diagnostic(
+                    path,
+                    span,
+                    "task.spawn expects one direct call to a named suspend function",
+                ));
+            };
+            let [target_name] = callee.as_slice() else {
+                return Err(structured_task_target_diagnostic(
+                    path,
+                    span,
+                    "task.spawn target must be an unqualified top-level suspend function",
+                ));
+            };
+            let Some(signature) = signatures.get(target_name) else {
+                return Err(structured_task_target_diagnostic(
+                    path,
+                    span,
+                    &format!("unknown structured task function `{target_name}`"),
+                ));
+            };
+            if !signature.is_suspend {
+                return Err(structured_task_target_diagnostic(
+                    path,
+                    span,
+                    &format!("task.spawn target `{target_name}` must be declared `suspend fn`"),
+                ));
+            }
+            if !type_args.is_empty()
+                || !signature.type_params.is_empty()
+                || signature.extern_symbol.is_some()
+                || signature.params.iter().any(|parameter| parameter.mutable)
+            {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "the first structured task slice requires a non-generic suspend target with immutable parameters",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            if signature.return_type != ValueType::Void {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "the first structured task slice supports only suspend targets returning void",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            if target_args.len() != signature.params.len() {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    target_name,
+                    signature.params.len(),
+                    target_args.len(),
+                ));
+            }
+            let mut lowered_args = Vec::with_capacity(target_args.len());
+            let mut mutable_borrows = Vec::new();
+            for (index, (argument, parameter)) in
+                target_args.iter().zip(&signature.params).enumerate()
+            {
+                lowered_args.push(lower_call_arg_for_param(
+                    path,
+                    argument,
+                    parameter,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    span,
+                    target_name,
+                    index + 1,
+                    &mut mutable_borrows,
+                )?);
+            }
+            Ok((
+                ValueType::Struct("Task".to_string(), vec![ValueType::Void]),
+                ValueExpr::Call {
+                    name: format!("{BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX}{target_name}"),
+                    args: lowered_args,
+                },
+            ))
+        }
         "yield_now" => {
             if !args.is_empty() {
                 return Err(task_arity_diagnostic(
@@ -182,6 +299,46 @@ pub(super) fn lower_task_builtin(
             ))
         }
         "join" => {
+            if args.len() == 1 {
+                if !current_function_has_task_scope(scope) {
+                    return Err(Diagnostic::new(
+                        "E0871",
+                        "structured task.join is only allowed inside task.scope",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let (actual_task, task_value) = lower_value_expr(
+                    path, &args[0], scope, imports, signatures, structs, enums, span,
+                )?;
+                let ValueType::Struct(task_name, task_args) = actual_task else {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "task.join expects a scope-owned Task<T> handle",
+                    ));
+                };
+                if task_name != "Task" || task_args != [ValueType::Void] {
+                    return Err(type_mismatch(
+                        path,
+                        span,
+                        "the first structured task.join slice supports only Task<void>",
+                    ));
+                }
+                return Ok((
+                    ValueType::Enum(
+                        "Result".to_string(),
+                        vec![ValueType::Void, error_type.clone()],
+                    ),
+                    ValueExpr::Call {
+                        name: BUILTIN_TASK_STRUCTURED_JOIN_EXPR.to_string(),
+                        args: vec![task_value],
+                    },
+                ));
+            }
             let [task_arg, timeout_arg] = args else {
                 return Err(task_arity_diagnostic(
                     path,
@@ -363,6 +520,18 @@ fn task_arity_diagnostic(
 fn task_worker_diagnostic(path: &Path, span: &Span, message: &str) -> Diagnostic {
     Diagnostic::new(
         "E0820",
+        message,
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
+}
+
+fn structured_task_target_diagnostic(path: &Path, span: &Span, message: &str) -> Diagnostic {
+    Diagnostic::new(
+        "E0875",
         message,
         path,
         span.line,

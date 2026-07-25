@@ -140,12 +140,16 @@ fn validate_task_safe_statement<'a>(
     visiting: &mut Vec<&'a str>,
     checked: &mut HashSet<&'a str>,
 ) -> Result<(), Diagnostic> {
-    if matches!(statement, Stmt::Unsafe { .. }) {
+    if matches!(statement, Stmt::Unsafe { .. } | Stmt::TaskScope { .. }) {
         return Err(task_safety_call_path_diagnostic(
             path,
             statement_span(statement),
             visiting,
-            "unsafe block",
+            if matches!(statement, Stmt::Unsafe { .. }) {
+                "unsafe block"
+            } else {
+                "structured task scope"
+            },
         ));
     }
     let span = statement_span(statement);
@@ -406,6 +410,9 @@ fn validate_task_safe_statement<'a>(
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
         | Stmt::Continue { .. } => Ok(()),
+        Stmt::TaskScope { .. } => {
+            unreachable!("structured task scopes are rejected above")
+        }
         Stmt::Unsafe { .. } => unreachable!("unsafe statements are rejected above"),
     }
 }
@@ -697,7 +704,7 @@ pub(super) fn visit_statement_expressions(
             }
         },
         Stmt::Defer { stmt, .. } => visit_statement_expressions(stmt, visitor),
-        Stmt::Unsafe { body, .. } => visit_statements(body, visitor),
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => visit_statements(body, visitor),
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
@@ -790,6 +797,7 @@ pub(super) fn statement_span(statement: &Stmt) -> &Span {
         | Stmt::Break { span }
         | Stmt::Continue { span }
         | Stmt::Defer { span, .. }
+        | Stmt::TaskScope { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

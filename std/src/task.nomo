@@ -1,4 +1,4 @@
-//! Suspend primitives plus isolated native workers with bounded string messages.
+//! Suspend primitives, scope-owned void children, and isolated native workers.
 package std.task
 
 import std.result
@@ -41,6 +41,16 @@ pub suspend fn yield_now() -> void {
 pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
     return task.sleep(duration)
 }
+
+/// Structured children use source forms recognized by the compiler:
+///
+/// task.scope {
+///     let child = task.spawn child_function(arguments)
+///     let joined: Result<void, TaskError> = task.join(child)
+/// }
+///
+/// This P1 form owns each inferred immutable handle in one lexical scope and
+/// requires exactly one join. It is distinct from the legacy functions below.
 
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {

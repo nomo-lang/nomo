@@ -456,6 +456,11 @@ impl<'a> Formatter<'a> {
                 }
                 _ => unreachable!("formatter validates defer statements before printing"),
             },
+            Stmt::TaskScope { body, .. } => {
+                self.line_at(indent, "task.scope {", stmt_line(stmt));
+                self.stmt_block(body, indent + 1);
+                self.line(indent, "}");
+            }
             Stmt::Unsafe { body, .. } => {
                 self.line_at(indent, "unsafe {", stmt_line(stmt));
                 self.stmt_block(body, indent + 1);
@@ -885,6 +890,21 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() -> void {\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
+
+    #[test]
+    fn formats_structured_task_scope_idempotently() {
+        let source = "package app.main\nimport std.task\n\nsuspend fn worker(value:string)->void{\ntask.yield_now()\n}\n\nsuspend fn main(){\ntask.scope{\nlet child=task.spawn worker(\"value\")\nlet joined:Result<void,TaskError> =task.join(child)\n}\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nimport std.task\n\nsuspend fn worker(value: string) -> void {\n    task.yield_now()\n}\n\nsuspend fn main() -> void {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

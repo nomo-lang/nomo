@@ -50,6 +50,24 @@
       "semantics": "Ready-queue enqueue attempts rejected because the bounded owner-local FIFO was full."
     },
     {
+      "name": "task_spawns",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Structured task.spawn operations executed, including attempts rejected by the bounded owner-local FIFO."
+    },
+    {
+      "name": "task_joins",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "One-shot structured task.join operations started by their owning parent frame."
+    },
+    {
+      "name": "join_suspensions",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Structured join poll boundaries that returned PENDING because the selected child was incomplete."
+    },
+    {
       "name": "timer_registrations",
       "unit": "count",
       "available_phase": "P1",

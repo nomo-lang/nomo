@@ -3,7 +3,9 @@ pub(super) use crate::validation_suspend::{
     validate_p1_suspend_ir_program, validate_p1_suspending_functions, validate_p1_yield_function,
     validate_p1_yield_ir_function, validate_suspend_blocking_calls,
 };
-pub(super) use crate::validation_tasks::validate_task_workers;
+pub(super) use crate::validation_tasks::{
+    statement_span, validate_task_workers, visit_statement_expressions,
+};
 pub(super) use crate::validation_type_diagnostics::{
     unsupported_type_diagnostic, unsupported_type_diagnostic_from_maps,
 };

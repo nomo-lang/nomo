@@ -301,6 +301,9 @@ general closures or shared managed values:
 ```nomo
 task.yield_now() -> void // suspend-only
 task.sleep(duration: Duration) -> Result<void, TaskError> // suspend-only
+task.scope { ... } // suspend-only structured scope
+let child = task.spawn child_function(arguments) // scope-owned Task<void>
+task.join(child) -> Result<void, TaskError> // consumes structured child
 task.spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>
 task.is_cancelled(context: TaskContext) -> bool
 task.join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError>
@@ -327,6 +330,19 @@ land. Browser WASM
 treats yield as a bounded cooperative boundary; sleep returns
 `runtime_unavailable` without evaluating its duration. The host-driven event
 backend is not implemented yet.
+
+The structured forms create true owner-local concurrency without changing
+direct-style child calls. Each child target is currently a direct,
+unqualified, non-generic top-level `suspend fn` with immutable frame-safe
+parameters and a `void` result. Spawn evaluates the arguments once, initializes
+an embedded child frame, and schedules it on the bounded 64-entry FIFO. Join
+suspends only until that child completes and returns
+`Result<void, TaskError>`; queue saturation is reported with the stable
+`queue_full` code. Each inferred immutable handle must stay in its scope and be
+joined exactly once. Nested scopes, control flow or early exit inside the
+scope, typed child results, cancellation, deadlines, channels, and select are
+not in this slice. Browser WASM does not execute the child yet and returns
+`runtime_unavailable` from join.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is

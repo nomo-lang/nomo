@@ -15,7 +15,8 @@ manifest keeps these controls:
   is explicitly ineligible for a performance claim.
 
 The separate `manifest-p1.json` repeats both zero-cost controls and enables
-`yield_counter_probe` plus `timer_counter_probe`. Each probe executes outside
+`yield_counter_probe`, `timer_counter_probe`, and `task_spawn_complete`. Each
+counter probe executes outside
 measured samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the
 versioned current-thread JSON contract against `counter-catalog.json`. The
 two-frame, two-yield chain transfers one managed argument and result, then
@@ -24,6 +25,10 @@ live frames, two queue round trips, five polls, and two cooperative yields. The
 timer probe requires an inline
 zero-duration ready path plus exactly one positive registration, expiry and
 queue round trip, two polls, no cancellation, and zero live timers at exit.
+The spawn/complete workload runs 32 scope-owned Nomo `Task<void>` children and
+32 Go goroutines under the same pinned single-core configuration. It validates
+exact spawn/join/join-suspension counters and frame/queue cleanup, but remains
+claim-ineligible while the runtime is current-thread-only.
 
 All RFC-required async workloads already have manifest entries. Unsupported
 workloads remain disabled with their implementation phase recorded, so missing
@@ -31,10 +36,11 @@ runtime coverage cannot look like a pass. Owner-local timer registration,
 expiry, cancellation, live and peak-live counters are now available. The
 current-thread executor uses a bounded 64-entry FIFO and reports rejected
 enqueue attempts through `ready_queue_saturations`; the multi-task saturation
-workload remains part of the structured-spawn slice. ARC primitive counters
-remain explicitly unavailable rather than being reported as zero.
-Mutable/affine suspend parameters, complete unwind paths, structured
-spawn/join, and the multi-task timer-wheel workload are not complete.
+workload additionally proves that the rejected spawn becomes a typed join
+error. ARC primitive counters remain explicitly unavailable rather than being
+reported as zero. Mutable/affine suspend parameters, complete unwind paths,
+typed structured results, cancellation, and the multi-task timer-wheel
+workload are not complete.
 
 ## Run
 

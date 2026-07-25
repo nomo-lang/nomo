@@ -112,7 +112,9 @@ fn stmt_uses_expr(stmt: &Stmt, expr_uses: &impl Fn(&AstExpr) -> bool) -> bool {
             }
         },
         Stmt::Defer { stmt, .. } => stmt_uses_expr(stmt, expr_uses),
-        Stmt::Unsafe { body, .. } => body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses)),
+        Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => {
+            body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
+        }
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }

@@ -146,6 +146,20 @@ jobs:
               -or $structuredResultPayload.counters.join_suspensions -ne 1) {
             throw "unexpected structured typed-result counters"
           }
+          $structuredReturnMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-return-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $structuredReturnMetrics
+          cargo run --locked --bin nomo -- run examples/async_structured_return
+          $structuredReturnPayload = Get-Content -Raw $structuredReturnMetrics | ConvertFrom-Json
+          if ($structuredReturnPayload.counters.poll_calls -ne 6 `
+              -or $structuredReturnPayload.counters.cooperative_yields -ne 1 `
+              -or $structuredReturnPayload.counters.frame_drops -ne 3 `
+              -or $structuredReturnPayload.counters.ready_queue_enqueues -ne 3 `
+              -or $structuredReturnPayload.counters.ready_queue_dequeues -ne 3 `
+              -or $structuredReturnPayload.counters.task_spawns -ne 1 `
+              -or $structuredReturnPayload.counters.task_joins -ne 1 `
+              -or $structuredReturnPayload.counters.join_suspensions -ne 1) {
+            throw "unexpected structured scope-return counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -211,6 +225,10 @@ jobs:
           NOMO_ASYNC_METRICS_PATH="$structured_result_metrics" \
             cargo run --locked --bin nomo -- run examples/async_structured_results
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 6 and c["frame_drops"] == 3 and c["ready_queue_enqueues"] == 5 and c["ready_queue_dequeues"] == 5 and c["ready_queue_saturations"] == 0 and c["task_spawns"] == 2 and c["task_joins"] == 2 and c["join_suspensions"] == 1' "$structured_result_metrics"
+          structured_return_metrics="$RUNNER_TEMP/nomo-async-structured-return-metrics.json"
+          NOMO_ASYNC_METRICS_PATH="$structured_return_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_structured_return
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 6 and c["cooperative_yields"] == 1 and c["frame_drops"] == 3 and c["ready_queue_enqueues"] == 3 and c["ready_queue_dequeues"] == 3 and c["task_spawns"] == 1 and c["task_joins"] == 1 and c["join_suspensions"] == 1' "$structured_return_metrics"
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

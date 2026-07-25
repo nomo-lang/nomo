@@ -142,9 +142,11 @@ structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 
 handle 必须使用推导得到的不可变 binding，不得离开 scope，并且必须恰好 join
 一次。target 必须是直接、未限定、non-generic 的顶层 `suspend fn`，参数不可变
 且 frame-safe。其返回类型会形成 `Task<T>`，而 `task.join(handle)` 返回
-`Result<T, TaskError>`。嵌套 scope、scope 内控制流、early exit、
-defer/unsafe、取消、deadline、channel 与 select 仍属于后续切片。E0871、
-E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
+`Result<T, TaskError>`。只有在所有 child 都已经显式 join 后，才允许用最后一个
+`return` 离开 scope，从而让嵌套 suspend helper 汇聚 typed result。嵌套 scope、
+scope 内嵌套控制流、仍有未 join child 的 early exit、defer/unsafe、取消、
+deadline、channel 与 select 仍属于后续切片。E0871、E0872、E0875 与 E0876
+会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -158,7 +160,8 @@ monotonic 不提前唤醒、零时长 timer fast path，以及挂起 child timer
 structured task 还覆盖 FIFO 交错、单次 join ownership、waiter wakeup、类型化
 queue saturation、browser 不执行 child，以及幂等 child cleanup。
 managed typed result 还会用 AddressSanitizer 覆盖 child 到 join 的 ownership
-transfer 和 parent 重复 drop。
+transfer、嵌套 helper 唤醒 root frame、post-join scope return 和 parent 重复
+drop。
 后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
@@ -175,4 +178,5 @@ P0/P1 控制组与原始证据格式位于
 示例位于 [`examples/async_yield`](../examples/async_yield) 与
 [`examples/async_timer`](../examples/async_timer)，以及
 [`examples/async_structured_void`](../examples/async_structured_void) 与
-[`examples/async_structured_results`](../examples/async_structured_results)。
+[`examples/async_structured_results`](../examples/async_structured_results)，以及
+[`examples/async_structured_return`](../examples/async_structured_return)。

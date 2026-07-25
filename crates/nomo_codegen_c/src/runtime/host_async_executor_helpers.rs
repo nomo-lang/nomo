@@ -1378,7 +1378,9 @@ pub(super) fn emit_async_function(
                 out.push_str(&async_child_field(spawn_index));
                 out.push_str(".structured_completed == 0u) {\n                frame->");
                 out.push_str(&async_child_field(spawn_index));
-                out.push_str(".structured_waiter_frame = frame;\n                frame->");
+                out.push_str(
+                    ".structured_waiter_frame = context->current_frame;\n                frame->",
+                );
                 out.push_str(&async_child_field(spawn_index));
                 out.push_str(
                     ".structured_waiter_poll = context->current_poll;\n\

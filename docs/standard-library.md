@@ -341,7 +341,8 @@ return type becomes `Task<T>`. Join suspends only until that child completes,
 moves the result exactly once, and returns `Result<T, TaskError>`; queue
 saturation is reported with the stable `queue_full` code. Each inferred
 immutable handle must stay in its scope and be joined exactly once. Nested
-scopes, control flow or early exit inside the scope, cancellation, deadlines,
+helpers may use a final scope `return` after every child is joined. Nested
+scopes, nested control flow, unjoined early exit, cancellation, deadlines,
 channels, and select are not in this slice. Browser WASM does not execute the
 child yet and returns `runtime_unavailable` from join.
 

@@ -1019,6 +1019,54 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_scope_return_after_join_lowers_typed_parent_result() {
+    let source = r#"package app.main
+
+import std.result
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn gather() -> string {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined: Result<string, TaskError> = task.join(child)
+        return result.unwrap_or(joined, "fallback")
+    }
+}
+
+suspend fn main() -> void {
+    let gathered: string = gather()
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let gather = program
+        .functions
+        .iter()
+        .find(|function| function.name == "gather")
+        .unwrap();
+    assert_eq!(gather.body.len(), 3);
+    assert!(matches!(gather.body[2], Statement::Return(Some(_))));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("structured_waiter_frame = context->current_frame;"));
+    assert!(!c.contains(".structured_waiter_frame = frame;"));
+    assert!(c.matches("frame->nomo_async_result = ").count() >= 2);
+    assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0);"));
+}
+
+#[test]
 fn structured_task_scope_rejects_invalid_ownership_and_target_shapes() {
     let outside_scope = r#"package app.main
 
@@ -1140,19 +1188,38 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0872");
     assert!(error.message.contains("alpha, zebra"));
 
-    let nested_control_flow = r#"package app.main
+    let non_terminal_return = r#"package app.main
 
 import std.task
 
 suspend fn main() -> void {
     task.scope {
         return
+        let value: i64 = 1
     }
 }
 "#;
-    let error = parse_inline(nested_control_flow).unwrap_err();
+    let error = parse_inline(non_terminal_return).unwrap_err();
     assert_eq!(error.code, "E0876");
-    assert!(error.message.contains("without nested control flow"));
+    assert!(error.message.contains("final statement"));
+
+    let unjoined_return = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        return
+    }
+}
+"#;
+    let error = parse_inline(unjoined_return).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("unjoined handle"));
 }
 
 #[test]

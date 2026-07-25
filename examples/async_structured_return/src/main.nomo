@@ -1,0 +1,25 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn child(value: string) -> string {
+    io.println(value, "before")
+    task.yield_now()
+    io.println(value, "after")
+    return value
+}
+
+suspend fn gather() -> string {
+    task.scope {
+        let child_task = task.spawn child("gathered")
+        let joined: Result<string, TaskError> = task.join(child_task)
+        return result.unwrap_or(joined, "unavailable")
+    }
+}
+
+suspend fn main() -> void {
+    let value: string = gather()
+    io.println(value)
+}

@@ -575,7 +575,7 @@ fn validate_structured_scope(
     scope_span: &Span,
 ) -> Result<(), Diagnostic> {
     let mut handles = HashMap::<String, bool>::new();
-    for statement in body {
+    for (index, statement) in body.iter().enumerate() {
         let span = statement_span(statement);
         match statement {
             Stmt::Let {
@@ -676,19 +676,52 @@ fn validate_structured_scope(
                 }
                 *joined = true;
             }
+            Stmt::Return { .. } => {
+                if index + 1 != body.len() {
+                    return Err(Diagnostic::new(
+                        "E0876",
+                        "task.scope return must be its final statement in the current post-join slice",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                let mut escaped = None;
+                visit_statement_expressions(statement, &mut |expression| {
+                    if let AstExpr::Name(name) = expression
+                        && let [name] = name.as_slice()
+                        && handles.contains_key(name)
+                    {
+                        escaped = Some(name.clone());
+                    }
+                    Ok(())
+                })?;
+                if let Some(handle) = escaped {
+                    return Err(Diagnostic::new(
+                        "E0872",
+                        format!("task handle `{handle}` cannot be returned from its scope"),
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+            }
             Stmt::TaskScope { .. }
             | Stmt::LetElse { .. }
             | Stmt::IfLet { .. }
             | Stmt::Match { .. }
             | Stmt::For { .. }
-            | Stmt::Return { .. }
             | Stmt::Defer { .. }
             | Stmt::Unsafe { .. }
             | Stmt::Break { .. }
             | Stmt::Continue { .. } => {
                 return Err(Diagnostic::new(
                     "E0876",
-                    "the first structured task slice requires a top-level scope body without nested control flow, early exit, defer, or unsafe blocks",
+                    "the current structured task slice requires a top-level scope body without nested control flow, defer, or unsafe blocks; return is allowed only as the final statement after every child is joined",
                     path,
                     span.line,
                     span.column,

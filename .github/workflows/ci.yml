@@ -166,13 +166,14 @@ jobs:
           grep 'nomo_async_local_nomo_values' "$async_dir/c/main.c"
           grep 'frame->nomo_async_owned_nomo_values = 0u;' "$async_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$async_dir/c/main.c"
-          target/release/nomo build examples/async_structured_results --target x86_64-apple-darwin
-          structured_dir="examples/async_structured_results/build/x86_64-apple-darwin-none"
-          structured_artifact="$structured_dir/bin/async_structured_results"
+          target/release/nomo build examples/async_structured_return --target x86_64-apple-darwin
+          structured_dir="examples/async_structured_return/build/x86_64-apple-darwin-none"
+          structured_artifact="$structured_dir/bin/async_structured_return"
           test "$(lipo -archs "$structured_artifact")" = "x86_64"
           grep 'NOMO_ASYNC_PENDING_JOIN' "$structured_dir/c/main.c"
           grep 'context->task_spawns += 1u;' "$structured_dir/c/main.c"
           grep 'nomo_payload_Ok = frame->nomo_async_child_' "$structured_dir/c/main.c"
+          grep 'structured_waiter_frame = context->current_frame' "$structured_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$structured_dir/c/main.c"
           target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
           sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
@@ -194,7 +195,7 @@ jobs:
             examples/cron_schedule/build/x86_64-apple-darwin-none
             examples/isolated_tasks/build/x86_64-apple-darwin-none
             examples/async_yield/build/x86_64-apple-darwin-none
-            examples/async_structured_results/build/x86_64-apple-darwin-none
+            examples/async_structured_return/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
@@ -255,16 +256,17 @@ jobs:
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$async_dir/c/main.c"
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$async_artifact" \
             | grep '^frame-owned message$'
-          target/release/nomo build examples/async_structured_results --target aarch64-unknown-linux-gnu
-          structured_dir="examples/async_structured_results/build/aarch64-unknown-linux-gnu"
-          structured_artifact="$structured_dir/bin/async_structured_results"
+          target/release/nomo build examples/async_structured_return --target aarch64-unknown-linux-gnu
+          structured_dir="examples/async_structured_return/build/aarch64-unknown-linux-gnu"
+          structured_artifact="$structured_dir/bin/async_structured_return"
           readelf -h "$structured_artifact" | grep 'Machine:.*AArch64'
           grep 'NOMO_ASYNC_PENDING_JOIN' "$structured_dir/c/main.c"
           grep 'context->task_spawns += 1u;' "$structured_dir/c/main.c"
           grep 'nomo_payload_Ok = frame->nomo_async_child_' "$structured_dir/c/main.c"
+          grep 'structured_waiter_frame = context->current_frame' "$structured_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$structured_dir/c/main.c"
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$structured_artifact" \
-            | grep '^left right$'
+            | grep '^gathered$'
           target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
           sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -290,6 +292,6 @@ jobs:
             examples/cron_schedule/build/aarch64-unknown-linux-gnu
             examples/isolated_tasks/build/aarch64-unknown-linux-gnu
             examples/async_yield/build/aarch64-unknown-linux-gnu
-            examples/async_structured_results/build/aarch64-unknown-linux-gnu
+            examples/async_structured_return/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

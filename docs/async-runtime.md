@@ -162,9 +162,12 @@ spawn handle must use an inferred immutable binding, remain in that scope, and
 be joined exactly once. The target must be a direct unqualified, non-generic
 top-level `suspend fn` with immutable frame-safe parameters and result. Its
 return type becomes `Task<T>` and `task.join(handle) -> Result<T, TaskError>`.
-Nested scopes, scope control flow, early exit, defer/unsafe blocks,
-cancellation, deadlines, channels, and select remain later slices. E0871,
-E0872, E0875, and E0876 reject unsupported cases before code generation.
+A final `return` may leave the scope only after every child has been explicitly
+joined; this supports typed result aggregation from a nested suspend helper.
+Nested scopes, nested scope control flow, unjoined early exit,
+defer/unsafe blocks, cancellation, deadlines, channels, and select remain
+later slices. E0871, E0872, E0875, and E0876 reject unsupported cases before
+code generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -179,7 +182,8 @@ armed child timer under generated-C tests and AddressSanitizer. Structured
 tasks additionally test FIFO interleaving, one-shot join ownership, waiter
 wakeup, typed queue saturation, browser non-execution, and idempotent child
 cleanup. Managed typed results additionally test child-to-join ownership
-transfer and repeated parent drop under AddressSanitizer.
+transfer, root-frame wakeup from a nested helper, post-join scope return, and
+repeated parent drop under AddressSanitizer.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
@@ -197,4 +201,6 @@ The P0/P1 controls and raw evidence format live in
 [`examples/async_yield`](../examples/async_yield) and
 [`examples/async_timer`](../examples/async_timer), plus
 [`examples/async_structured_void`](../examples/async_structured_void) and
-[`examples/async_structured_results`](../examples/async_structured_results).
+[`examples/async_structured_results`](../examples/async_structured_results),
+plus
+[`examples/async_structured_return`](../examples/async_structured_return).

@@ -166,6 +166,7 @@ the same code.
 - [E0865](E0865.md) - reserved generic map implementation name collision
 - [E0870](E0870.md) - synchronous function calls a suspend function
 - [E0876](E0876.md) - suspension shape is not supported by the current runtime slice
+- [E0891](E0891.md) - suspend call graph reaches a blocking sleep operation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error
 - [E0903](E0903.md) - module not found

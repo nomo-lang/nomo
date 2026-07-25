@@ -14,6 +14,8 @@ acceptance gate has passed.
   defines transfer and sharing capabilities.
 - [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0034-async-runtime-acceptance-and-benchmark-gates.md)
   defines correctness, portability, memory, and performance gates.
+- [RFC 0035](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0035-monotonic-suspend-timers-and-blocking-sleep-migration.md)
+  defines owner-local timers and the blocking-sleep boundary.
 
 [中文版本](async-runtime.zh-CN.md)
 
@@ -41,6 +43,13 @@ suspend fn main() -> void {
 A normal `fn` cannot call a suspend function. The compiler reports E0870
 instead of adding hidden runtime behavior. Merely declaring or calling an
 always-ready suspend function does not create an executor.
+
+The compiler also rejects a `suspend fn` whose transitive call graph reaches
+the blocking compatibility APIs `time.sleep` or `time.sleep_millis`. E0891
+reports only the function/API call path, never argument values. Synchronous
+functions and legacy isolated workers retain the blocking APIs. The
+nonblocking `task.sleep(Duration) -> Result<void, TaskError>` API remains
+Proposed until its argument/result lowering and owner-local timer runtime land.
 
 ## Implemented P1 Slice
 

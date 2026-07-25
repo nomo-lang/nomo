@@ -457,6 +457,42 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn structured_scope_return_cancels_browser_child_before_returning_value() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn child(secret: string) -> void {
+    io.println(secret)
+}
+
+fn prepare(value: string) -> string {
+    io.println("return evaluated")
+    return value
+}
+
+suspend fn finish(value: string) -> string {
+    task.scope {
+        let child_task = task.spawn child("browser-return-cancel-secret")
+        return prepare(value)
+    }
+}
+
+suspend fn main() -> void {
+    let result: string = finish("browser returned")
+    io.println(result)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "return evaluated\nbrowser returned\n");
+        assert!(!response.stderr.contains("browser-return-cancel-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

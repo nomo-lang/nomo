@@ -101,9 +101,10 @@ On the native C99 backend, a suspend call chain that reaches
   structured spawn cannot enter the 64-entry ready queue;
 - exactly-once transfer of a typed child result into the successful join
   payload before the child frame is dropped;
-- compiler-inserted normal-scope cleanup that cancels unjoined children,
-  removes their ready-queue entries, disarms owned timers, and drops their
-  frames before the next statement after the scope;
+- compiler-inserted scope cleanup on normal fallthrough and final `return` that
+  cancels unjoined children, removes their ready-queue entries, disarms owned
+  timers, and drops their frames before the next statement or return
+  completion;
 - exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
@@ -167,14 +168,15 @@ may be joined at most once. The target must be a direct unqualified,
 non-generic top-level `suspend fn` with immutable frame-safe parameters and
 result. Its return type becomes `Task<T>` and
 `task.join(handle) -> Result<T, TaskError>`.
-A final `return` may leave the scope only after every child has been explicitly
-joined; this supports typed result aggregation from a nested suspend helper.
-On normal fallthrough, an unjoined child is cancelled and cleaned up
-automatically; its body does not resume after cancellation. Nested scopes,
-nested scope control flow, unjoined early control transfer, defer/unsafe
-blocks, explicit cancellation, deadlines, channels, and select remain later
-slices. E0871, E0872, E0875, and E0876 reject unsupported cases before code
-generation.
+A final `return` first evaluates its expression into a private owned temporary,
+then performs compiler-inserted cancellation and drop of every unjoined child.
+The temporary moves into the helper frame before that helper completes and
+wakes its root frame. Normal fallthrough uses the same cleanup before the next
+statement. A cancelled child body does not resume. Nested scopes, nested scope
+control flow, non-final scope return,
+defer/unsafe blocks, `?`, panic, explicit cancellation, deadlines, channels,
+and select remain later slices. E0871, E0872, E0875, and E0876 reject
+unsupported cases before code generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -190,9 +192,10 @@ tasks additionally test FIFO interleaving, one-shot join ownership, waiter
 wakeup, typed queue saturation, browser non-execution, and idempotent child
 cleanup. Managed typed results additionally test child-to-join ownership
 transfer, root-frame wakeup from a nested helper, post-join scope return, and
-repeated parent drop under AddressSanitizer. Normal-scope cancellation tests
-cover both an armed timer and a never-polled ready child, including managed
-parameter release under AddressSanitizer.
+repeated parent drop under AddressSanitizer. Scope cancellation tests cover an
+armed timer, never-polled ready children, and a typed helper return that
+cancels before root-frame wakeup, including managed parameter and result
+release under AddressSanitizer.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
@@ -213,4 +216,5 @@ The P0/P1 controls and raw evidence format live in
 [`examples/async_structured_results`](../examples/async_structured_results),
 plus
 [`examples/async_structured_return`](../examples/async_structured_return) and
-[`examples/async_structured_cancel`](../examples/async_structured_cancel).
+[`examples/async_structured_cancel`](../examples/async_structured_cancel), plus
+[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel).

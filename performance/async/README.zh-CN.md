@@ -12,7 +12,8 @@ async runtime。P0 manifest 保留两个 control：
   sampling 与 result schema 管线，但明确不能用于性能宣传。
 
 独立的 `manifest-p1.json` 会再次运行两个 zero-cost control，并启用
-`yield_counter_probe`、`timer_counter_probe` 与 `task_spawn_complete`。
+`yield_counter_probe`、`timer_counter_probe`、`task_spawn_complete`、
+`structured_cancel_probe` 与 `structured_return_cancel_probe`。
 counter 探针不混入 measured sample；它们单独设置
 `NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
 版本化的 current-thread JSON 契约。两层 frame、两次 yield 会传递一个 managed
@@ -34,11 +35,12 @@ saturation workload 还会证明被拒绝的 spawn 转化为类型化 join error
 取消的 queued entry 与未完成 task 分别由 `ready_queue_cancellations` 和
 `task_cancellations` 精确计数。structured `Task<T>` result 已有
 generated-C、native、WASM 边界与
-post-join 嵌套 scope return、AddressSanitizer 正确性覆盖；normal scope
-取消还通过已启用的 runtime-counter gate 覆盖 armed timer 和 ready queue
-清理。ARC primitive counter 仍明确标记 unavailable，而不是伪装成 0。
-mutable/affine suspend 参数、完整 unwind path、取消传播/early control
-transfer 与多任务 timer-wheel workload 仍未完成。
+post-join 嵌套 scope return、AddressSanitizer 正确性覆盖；scope 取消还通过
+已启用的 runtime-counter gate 覆盖 armed timer、ready queue 清理，以及在
+root-frame wakeup 前取消的 typed final helper return。ARC primitive counter
+仍明确标记 unavailable，而不是伪装成 0。mutable/affine suspend 参数、
+非最终/`?`/panic unwind path、取消传播与多任务 timer-wheel workload
+仍未完成。
 
 ## 运行方式
 

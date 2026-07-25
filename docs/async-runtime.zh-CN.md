@@ -91,8 +91,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   `TaskError { code: "queue_full", ... }`；
 - 在 drop child frame 前，把 typed child result 恰好一次 move 到 join 的成功
   payload；
-- 编译器在 normal scope 边界插入清理：取消未 join child、从 ready queue
-  移除其 entry、disarm timer，并在执行 scope 后语句前 drop frame；
+- 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
+  join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
+  后语句或完成 return 前 drop frame；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
@@ -145,12 +146,13 @@ handle 必须使用推导得到的不可变 binding 且不得离开 scope；若�
 只能恰好 join 一次。target 必须是直接、未限定、non-generic 的顶层
 `suspend fn`，参数不可变且 frame-safe。其返回类型会形成 `Task<T>`，而
 `task.join(handle)` 返回
-`Result<T, TaskError>`。只有在所有 child 都已经显式 join 后，才允许用最后一个
-`return` 离开 scope，从而让嵌套 suspend helper 汇聚 typed result。normal
-fallthrough 会自动取消并清理未 join child，取消后不会继续执行其 body。嵌套
-scope、scope 内嵌套控制流、仍有未 join child 的 early control transfer、
-defer/unsafe、显式取消、deadline、channel 与 select 仍属于后续切片。E0871、
-E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
+`Result<T, TaskError>`。最终 `return` 会先把表达式求值到私有 owned
+temporary，再由编译器取消并 drop 所有未 join child，然后把 temporary move
+到 helper frame，最后完成 helper 并唤醒 root frame。normal fallthrough
+也会在执行下一条语句前做同样清理；取消后不会继续执行 child body。嵌套
+scope、scope 内嵌套控制流、非最终 scope return、
+defer/unsafe、`?`、panic、显式取消、deadline、channel 与 select 仍属于后续
+切片。E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -165,8 +167,9 @@ structured task 还覆盖 FIFO 交错、单次 join ownership、waiter wakeup、
 queue saturation、browser 不执行 child，以及幂等 child cleanup。
 managed typed result 还会用 AddressSanitizer 覆盖 child 到 join 的 ownership
 transfer、嵌套 helper 唤醒 root frame、post-join scope return 和 parent 重复
-drop。normal-scope cancellation 还会在 AddressSanitizer 下覆盖 armed timer、
-从未 poll 的 ready child，以及 managed 参数 release。
+drop。scope cancellation 还会在 AddressSanitizer 下覆盖 armed timer、从未
+poll 的 ready child，以及在 root-frame wakeup 前取消的 typed helper return，
+包括 managed 参数与结果 release。
 后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
@@ -185,4 +188,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_structured_void`](../examples/async_structured_void) 与
 [`examples/async_structured_results`](../examples/async_structured_results)，以及
 [`examples/async_structured_return`](../examples/async_structured_return) 与
-[`examples/async_structured_cancel`](../examples/async_structured_cancel)。
+[`examples/async_structured_cancel`](../examples/async_structured_cancel)，以及
+[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel)。

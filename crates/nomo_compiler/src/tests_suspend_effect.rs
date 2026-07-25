@@ -541,8 +541,12 @@ suspend fn main() -> void {
     assert!(c.contains("nomo_async_poll_main"));
     assert!(c.contains("nomo_async_executor_run_root"));
     assert!(c.contains("nomo_async_ready_enqueue"));
-    assert!(c.contains("context->ready_occupied = 1u;"));
-    assert!(c.contains("context->ready_occupied = 0u;"));
+    assert!(c.contains("#define NOMO_ASYNC_READY_CAPACITY 64u"));
+    assert!(c.contains("nomo_async_ready_slot ready[NOMO_ASYNC_READY_CAPACITY];"));
+    assert!(c.contains("nomo_async_ready_dequeue"));
+    assert!(c.contains("context->ready_count += 1u;"));
+    assert!(c.contains("context->ready_count -= 1u;"));
+    assert!(c.contains("context->ready_queue_saturations += 1u;"));
     assert!(c.contains("context->yield_count += 1u;"));
     assert!(c.contains("context->ready_queue_enqueues += 1u;"));
     assert!(c.contains("context->frame_drops += 1u;"));

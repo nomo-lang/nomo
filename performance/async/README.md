@@ -28,9 +28,12 @@ queue round trip, two polls, no cancellation, and zero live timers at exit.
 All RFC-required async workloads already have manifest entries. Unsupported
 workloads remain disabled with their implementation phase recorded, so missing
 runtime coverage cannot look like a pass. Owner-local timer registration,
-expiry, cancellation, live and peak-live counters are now available. ARC
-primitive counters remain explicitly unavailable rather than being reported
-as zero. Mutable/affine suspend parameters, complete unwind paths, structured
+expiry, cancellation, live and peak-live counters are now available. The
+current-thread executor uses a bounded 64-entry FIFO and reports rejected
+enqueue attempts through `ready_queue_saturations`; the multi-task saturation
+workload remains part of the structured-spawn slice. ARC primitive counters
+remain explicitly unavailable rather than being reported as zero.
+Mutable/affine suspend parameters, complete unwind paths, structured
 spawn/join, and the multi-task timer-wheel workload are not complete.
 
 ## Run

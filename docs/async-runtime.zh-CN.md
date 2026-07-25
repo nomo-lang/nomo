@@ -57,7 +57,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - 每个真正可能挂起的函数各自的 poll/drop pair；
 - 直接 poll child，并把 child 的 `PENDING` 逐层传播到 root；
 - inline initial poll；
-- 仅在返回 `PENDING` 后进入的单槽 current-thread ready queue 路径；
+- 仅在返回 `PENDING` 后进入的 64 槽 owner-local 有界 FIFO ready queue；容量
+  用尽时明确报告 saturation，不允许无界增长；
 - 带 generation 校验、monotonic deadline、按 deadline/generation
   确定性排序与幂等 disarm 的有界 owner-local timer table；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
@@ -67,7 +68,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。ready
 的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
 frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
-frame drop/live frame、入队/出队，以及 timer 注册/到期/取消/live/peak 计数。
+frame drop/live frame、入队/出队/饱和，以及 timer
+注册/到期/取消/live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
 会在 measured run 之后单独执行探针。ARC primitive counter 仍明确标记为

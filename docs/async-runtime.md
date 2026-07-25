@@ -63,7 +63,8 @@ On the native C99 backend, a suspend call chain that reaches
 - one poll/drop pair per actually suspending function;
 - direct child polls whose `PENDING` result propagates to the root;
 - an inline initial poll;
-- a one-entry current-thread ready queue path entered only after `PENDING`;
+- a bounded 64-entry owner-local FIFO ready queue entered only after
+  `PENDING`, with explicit saturation rather than unbounded growth;
 - a bounded owner-local timer table with generation-checked registrations,
   monotonic deadlines, deterministic deadline/generation ordering, and
   idempotent disarm;
@@ -75,7 +76,8 @@ This slice creates no OS thread, heap task, reactor, or atomic metadata. A
 ready zero-duration timer neither registers nor enters the queue. A positive
 timer is not polled again until its deadline moves the owner frame to the ready
 queue. The generated context records poll, yield, frame-drop/live-frame,
-enqueue/dequeue, and timer registration/expiry/cancellation/live/peak counters.
+enqueue/dequeue/saturation, and timer
+registration/expiry/cancellation/live/peak counters.
 Native programs export the versioned
 `nomo-c99-current-thread` JSON payload only when
 `NOMO_ASYNC_METRICS_PATH` is set; ordinary runs perform no metrics I/O.

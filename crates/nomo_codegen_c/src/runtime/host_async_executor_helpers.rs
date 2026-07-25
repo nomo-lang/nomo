@@ -640,6 +640,7 @@ typedef enum {
 typedef struct nomo_async_context nomo_async_context;
 typedef nomo_async_poll (*nomo_async_poll_fn)(void *, nomo_async_context *);
 
+#define NOMO_ASYNC_READY_CAPACITY 64u
 #define NOMO_ASYNC_TIMER_CAPACITY 64u
 
 typedef struct {
@@ -659,6 +660,11 @@ typedef struct {
     uint8_t occupied;
 } nomo_async_timer_slot;
 
+typedef struct {
+    void *frame;
+    nomo_async_poll_fn poll;
+} nomo_async_ready_slot;
+
 struct nomo_async_context {
     uint64_t poll_count;
     uint64_t yield_count;
@@ -667,19 +673,21 @@ struct nomo_async_context {
     uint64_t peak_live_frames;
     uint64_t ready_queue_enqueues;
     uint64_t ready_queue_dequeues;
+    uint64_t ready_queue_saturations;
     uint64_t timer_registrations;
     uint64_t timer_expirations;
     uint64_t timer_cancellations;
     uint64_t live_timers;
     uint64_t peak_live_timers;
     uint32_t next_timer_generation;
-    void *ready_frame;
-    nomo_async_poll_fn ready_poll;
     void *current_frame;
     nomo_async_poll_fn current_poll;
     nomo_async_pending_reason pending_reason;
+    nomo_async_ready_slot ready[NOMO_ASYNC_READY_CAPACITY];
     nomo_async_timer_slot timers[NOMO_ASYNC_TIMER_CAPACITY];
-    uint8_t ready_occupied;
+    uint32_t ready_head;
+    uint32_t ready_tail;
+    uint32_t ready_count;
 };
 
 static int nomo_async_ready_enqueue(
@@ -687,13 +695,35 @@ static int nomo_async_ready_enqueue(
     void *frame,
     nomo_async_poll_fn poll
 ) {
-    if (context->ready_occupied != 0u) {
+    if (context->ready_count == NOMO_ASYNC_READY_CAPACITY) {
+        context->ready_queue_saturations += 1u;
         return 1;
     }
-    context->ready_frame = frame;
-    context->ready_poll = poll;
-    context->ready_occupied = 1u;
+    nomo_async_ready_slot *slot = &context->ready[context->ready_tail];
+    slot->frame = frame;
+    slot->poll = poll;
+    context->ready_tail = (context->ready_tail + 1u) % NOMO_ASYNC_READY_CAPACITY;
+    context->ready_count += 1u;
     context->ready_queue_enqueues += 1u;
+    return 0;
+}
+
+static int nomo_async_ready_dequeue(
+    nomo_async_context *context,
+    void **frame,
+    nomo_async_poll_fn *poll
+) {
+    if (context->ready_count == 0u) {
+        return 1;
+    }
+    nomo_async_ready_slot *slot = &context->ready[context->ready_head];
+    *frame = slot->frame;
+    *poll = slot->poll;
+    slot->frame = NULL;
+    slot->poll = NULL;
+    context->ready_head = (context->ready_head + 1u) % NOMO_ASYNC_READY_CAPACITY;
+    context->ready_count -= 1u;
+    context->ready_queue_dequeues += 1u;
     return 0;
 }
 
@@ -874,17 +904,16 @@ static int nomo_async_executor_run_root(
     } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER) {
         return 1;
     }
-    while (context->ready_occupied != 0u || context->live_timers != 0u) {
-        if (context->ready_occupied == 0u
+    while (context->ready_count != 0u || context->live_timers != 0u) {
+        if (context->ready_count == 0u
             && nomo_async_timer_wait_next(context) != 0) {
             return 1;
         }
-        void *ready_frame = context->ready_frame;
-        nomo_async_poll_fn ready_poll = context->ready_poll;
-        context->ready_frame = NULL;
-        context->ready_poll = NULL;
-        context->ready_occupied = 0u;
-        context->ready_queue_dequeues += 1u;
+        void *ready_frame = NULL;
+        nomo_async_poll_fn ready_poll = NULL;
+        if (nomo_async_ready_dequeue(context, &ready_frame, &ready_poll) != 0) {
+            return 1;
+        }
         status = nomo_async_poll_task(ready_frame, ready_poll, context);
         if (status == NOMO_ASYNC_POLL_PENDING) {
             if (context->pending_reason == NOMO_ASYNC_PENDING_YIELD) {
@@ -923,6 +952,7 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"peak_live_frames\": %" PRIu64 ",\n"
         "    \"ready_queue_enqueues\": %" PRIu64 ",\n"
         "    \"ready_queue_dequeues\": %" PRIu64 ",\n"
+        "    \"ready_queue_saturations\": %" PRIu64 ",\n"
         "    \"timer_registrations\": %" PRIu64 ",\n"
         "    \"timer_expirations\": %" PRIu64 ",\n"
         "    \"timer_cancellations\": %" PRIu64 ",\n"
@@ -940,6 +970,7 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->peak_live_frames,
         context->ready_queue_enqueues,
         context->ready_queue_dequeues,
+        context->ready_queue_saturations,
         context->timer_registrations,
         context->timer_expirations,
         context->timer_cancellations,

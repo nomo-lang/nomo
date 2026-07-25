@@ -7983,6 +7983,155 @@ fn main() -> void {
 }
 
 #[test]
+fn async_ready_queue_is_bounded_fifo_across_wraparound() {
+    let root = temp_test_root("async-ready-queue-fifo");
+    reset_dir(&root);
+    let source = root.join("main.nomo");
+    let generated_c = root.join("generated.c");
+    let binary = root.join(if cfg!(windows) {
+        "async-ready-queue.exe"
+    } else {
+        "async-ready-queue"
+    });
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    task.yield_now()
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&generated_c)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let mut generated = fs::read_to_string(&generated_c).unwrap();
+    let main_start = generated
+        .find("int main(void)")
+        .expect("generated C must contain main");
+    generated.insert_str(
+        main_start,
+        r#"typedef struct {
+    uint32_t id;
+} nomo_async_queue_probe_frame;
+
+static nomo_async_poll nomo_async_queue_probe_poll(
+    void *raw_frame,
+    nomo_async_context *context
+) {
+    (void)raw_frame;
+    (void)context;
+    return NOMO_ASYNC_POLL_READY;
+}
+
+static int nomo_async_ready_queue_probe(void) {
+    nomo_async_context context = {0};
+    nomo_async_queue_probe_frame frames[96] = {0};
+    for (uint32_t index = 0u; index < 96u; index += 1u) {
+        frames[index].id = index;
+    }
+    for (uint32_t index = 0u; index < NOMO_ASYNC_READY_CAPACITY; index += 1u) {
+        if (nomo_async_ready_enqueue(
+                &context,
+                &frames[index],
+                nomo_async_queue_probe_poll
+            ) != 0) {
+            return 1;
+        }
+    }
+    if (nomo_async_ready_enqueue(
+            &context,
+            &frames[64],
+            nomo_async_queue_probe_poll
+        ) == 0) {
+        return 2;
+    }
+    for (uint32_t expected = 0u; expected < 32u; expected += 1u) {
+        void *raw_frame = NULL;
+        nomo_async_poll_fn poll = NULL;
+        if (nomo_async_ready_dequeue(&context, &raw_frame, &poll) != 0
+            || poll != nomo_async_queue_probe_poll
+            || ((nomo_async_queue_probe_frame *)raw_frame)->id != expected) {
+            return 3;
+        }
+    }
+    for (uint32_t index = 64u; index < 96u; index += 1u) {
+        if (nomo_async_ready_enqueue(
+                &context,
+                &frames[index],
+                nomo_async_queue_probe_poll
+            ) != 0) {
+            return 4;
+        }
+    }
+    for (uint32_t expected = 32u; expected < 96u; expected += 1u) {
+        void *raw_frame = NULL;
+        nomo_async_poll_fn poll = NULL;
+        if (nomo_async_ready_dequeue(&context, &raw_frame, &poll) != 0
+            || poll != nomo_async_queue_probe_poll
+            || ((nomo_async_queue_probe_frame *)raw_frame)->id != expected) {
+            return 5;
+        }
+    }
+    if (context.ready_count != 0u
+        || context.ready_queue_enqueues != 96u
+        || context.ready_queue_dequeues != 96u
+        || context.ready_queue_saturations != 1u) {
+        return 6;
+    }
+    return 0;
+}
+
+"#,
+    );
+    generated = generated.replacen(
+        "int main(void) {\n",
+        "int main(void) {\n    if (nomo_async_ready_queue_probe() != 0) {\n        return 77;\n    }\n",
+        1,
+    );
+    fs::write(&generated_c, generated).unwrap();
+
+    let cc_output = Command::new("cc")
+        .arg(&generated_c)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+    let output = Command::new(&binary).output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert!(output.stdout.is_empty());
+    assert!(output.stderr.is_empty());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn async_runtime_exports_versioned_counters_without_polluting_program_output() {
     let root = temp_test_root("async-runtime-counters");
     reset_dir(&root);
@@ -8048,6 +8197,7 @@ suspend fn main() -> void {
     assert_eq!(metrics["counters"]["peak_live_frames"], 2);
     assert_eq!(metrics["counters"]["ready_queue_enqueues"], 2);
     assert_eq!(metrics["counters"]["ready_queue_dequeues"], 2);
+    assert_eq!(metrics["counters"]["ready_queue_saturations"], 0);
     assert_eq!(metrics["counters"]["timer_registrations"], 0);
     assert_eq!(metrics["counters"]["timer_expirations"], 0);
     assert_eq!(metrics["counters"]["timer_cancellations"], 0);
@@ -8200,6 +8350,7 @@ suspend fn main() -> void {
     assert_eq!(metrics["counters"]["peak_live_frames"], 1);
     assert_eq!(metrics["counters"]["ready_queue_enqueues"], 1);
     assert_eq!(metrics["counters"]["ready_queue_dequeues"], 1);
+    assert_eq!(metrics["counters"]["ready_queue_saturations"], 0);
     assert_eq!(metrics["counters"]["timer_registrations"], 1);
     assert_eq!(metrics["counters"]["timer_expirations"], 1);
     assert_eq!(metrics["counters"]["timer_cancellations"], 0);

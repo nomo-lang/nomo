@@ -966,6 +966,59 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_typed_scope_lowers_task_and_join_result_types() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined: Result<string, TaskError> = task.join(child)
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[0],
+        Statement::Let {
+            name,
+            value_type: ValueType::Struct(task, task_args),
+            initializer: ValueExpr::Call { name: call, .. },
+        } if name == "child"
+            && task == "Task"
+            && task_args == &[ValueType::String]
+            && call == "__nomo_structured_task_spawn::worker"
+    ));
+    assert!(matches!(
+        &main.body[1],
+        Statement::Let {
+            name,
+            value_type: ValueType::Enum(result, result_args),
+            initializer: ValueExpr::Call { name: call, .. },
+        } if name == "joined"
+            && result == "Result"
+            && result_args
+                == &[
+                    ValueType::String,
+                    ValueType::Struct("TaskError".to_string(), Vec::new()),
+                ]
+            && call == "__nomo_structured_task_join"
+    ));
+}
+
+#[test]
 fn structured_task_scope_rejects_invalid_ownership_and_target_shapes() {
     let outside_scope = r#"package app.main
 
@@ -1011,12 +1064,12 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0875");
     assert!(error.message.contains("must be declared `suspend fn`"));
 
-    let non_void_target = r#"package app.main
+    let panicking_target = r#"package app.main
 
 import std.task
 
-suspend fn worker() -> string {
-    return "value"
+suspend fn worker() -> void {
+    panic("structured child panic cleanup is not implemented")
 }
 
 suspend fn main() -> void {
@@ -1026,9 +1079,9 @@ suspend fn main() -> void {
     }
 }
 "#;
-    let error = parse_inline(non_void_target).unwrap_err();
+    let error = parse_inline(panicking_target).unwrap_err();
     assert_eq!(error.code, "E0876");
-    assert!(error.message.contains("returning void"));
+    assert!(error.message.contains("explicit panic"));
 
     let double_join = r#"package app.main
 
@@ -1143,4 +1196,41 @@ suspend fn main() -> void {
     assert!(!c.contains("CreateThread"));
     assert!(!c.contains("__atomic_"));
     assert!(!c.contains("Interlocked"));
+}
+
+#[test]
+fn structured_typed_scope_moves_child_result_into_join_once() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("value")
+        let joined: Result<string, TaskError> = task.join(child)
+    }
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains(
+        "frame->nomo_async_join_result_1.payload.nomo_payload_Ok = \
+         frame->nomo_async_child_0.nomo_async_result;"
+    ));
+    assert!(c.contains("frame->nomo_async_child_0.nomo_async_result_owned = 0u;"));
+    assert!(c.contains("frame->nomo_async_join_result_owned_1 = 1u;"));
+    assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0);"));
 }

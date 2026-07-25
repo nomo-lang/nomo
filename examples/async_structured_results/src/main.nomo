@@ -1,0 +1,24 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn child(value: string) -> string {
+    io.println(value, "before")
+    task.yield_now()
+    io.println(value, "after")
+    return value
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let left = task.spawn child("left")
+        let right = task.spawn child("right")
+        let joined_left: Result<string, TaskError> = task.join(left)
+        let joined_right: Result<string, TaskError> = task.join(right)
+        let left_value: string = result.unwrap_or(joined_left, "left unavailable")
+        let right_value: string = result.unwrap_or(joined_right, "right unavailable")
+        io.println(left_value, right_value)
+    }
+}

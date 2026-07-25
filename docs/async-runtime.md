@@ -61,22 +61,24 @@ explicit concurrency creation while keeping child calls direct-style:
 import std.result
 import std.task
 
-suspend fn child(message: string) -> void {
+suspend fn child(message: string) -> string {
     task.yield_now()
+    return message
 }
 
 suspend fn main() -> void {
     task.scope {
         let handle = task.spawn child("ready")
-        let joined: Result<void, TaskError> = task.join(handle)
+        let joined: Result<string, TaskError> = task.join(handle)
         let completed: bool = result.is_ok(joined)
     }
 }
 ```
 
 `task.spawn child(args)` differs deliberately from the legacy
-`task.spawn(worker, input)` call with parentheses. The structured form creates
-a scope-owned `Task<void>`; the one-argument join consumes it exactly once.
+`task.spawn(worker, input)` call with parentheses. The structured form infers
+a scope-owned `Task<T>` from the child return type; the one-argument join
+consumes it exactly once and returns `Result<T, TaskError>`.
 
 ## Implemented P1 Slice
 
@@ -97,6 +99,8 @@ On the native C99 backend, a suspend call chain that reaches
   completes;
 - a typed `TaskError { code: "queue_full", ... }` materialized by join when a
   structured spawn cannot enter the 64-entry ready queue;
+- exactly-once transfer of a typed child result into the successful join
+  payload before the child frame is dropped;
 - exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
@@ -156,11 +160,11 @@ reactor-backed I/O are later slices.
 Structured spawn/join is available only in a top-level `task.scope` body. Each
 spawn handle must use an inferred immutable binding, remain in that scope, and
 be joined exactly once. The target must be a direct unqualified, non-generic
-top-level `suspend fn` with immutable frame-safe parameters and a `void`
-result. Nested scopes, scope control flow, early exit, defer/unsafe blocks,
-typed child results, cancellation, deadlines, channels, and select remain
-later slices. E0871, E0872, E0875, and E0876 reject unsupported cases before
-code generation.
+top-level `suspend fn` with immutable frame-safe parameters and result. Its
+return type becomes `Task<T>` and `task.join(handle) -> Result<T, TaskError>`.
+Nested scopes, scope control flow, early exit, defer/unsafe blocks,
+cancellation, deadlines, channels, and select remain later slices. E0871,
+E0872, E0875, and E0876 reject unsupported cases before code generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -174,7 +178,8 @@ no-early-wake behavior, zero-duration timer fast paths, and cancellation of an
 armed child timer under generated-C tests and AddressSanitizer. Structured
 tasks additionally test FIFO interleaving, one-shot join ownership, waiter
 wakeup, typed queue saturation, browser non-execution, and idempotent child
-cleanup.
+cleanup. Managed typed results additionally test child-to-join ownership
+transfer and repeated parent drop under AddressSanitizer.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
@@ -191,4 +196,5 @@ The P0/P1 controls and raw evidence format live in
 [`performance/async`](../performance/async/README.md). Runnable examples are
 [`examples/async_yield`](../examples/async_yield) and
 [`examples/async_timer`](../examples/async_timer), plus
-[`examples/async_structured_void`](../examples/async_structured_void).
+[`examples/async_structured_void`](../examples/async_structured_void) and
+[`examples/async_structured_results`](../examples/async_structured_results).

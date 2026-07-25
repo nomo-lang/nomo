@@ -512,7 +512,7 @@ pub(super) fn lower_stmt_into(
                 &span.text,
             ));
         }
-        validate_structured_void_scope(path, body, span)?;
+        validate_structured_scope(path, body, span)?;
         let mut task_scope = scope.clone();
         task_scope.insert(
             TASK_SCOPE_BINDING.to_string(),
@@ -569,7 +569,7 @@ pub(super) fn lower_stmt_into(
     Ok(())
 }
 
-fn validate_structured_void_scope(
+fn validate_structured_scope(
     path: &Path,
     body: &[Stmt],
     scope_span: &Span,

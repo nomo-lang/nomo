@@ -223,6 +223,21 @@ pub(super) fn validate_p1_suspending_functions(
         })
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
+    for function in functions {
+        for statement in &function.body {
+            let Stmt::TaskScope { body, .. } = statement else {
+                continue;
+            };
+            for statement in body {
+                let Stmt::Let { value, .. } = statement else {
+                    continue;
+                };
+                if let Some(target) = ast_expr_structured_spawn_target(value) {
+                    suspending.insert(target.to_string());
+                }
+            }
+        }
+    }
 
     loop {
         let discovered = functions
@@ -422,6 +437,13 @@ pub(super) fn validate_p1_suspend_ir_program(
         })
         .map(|function| function.name.clone())
         .collect::<HashSet<_>>();
+    for function in functions {
+        for statement in &function.body {
+            if let Some(target) = ir_statement_structured_spawn_target(statement) {
+                suspending.insert(target.to_string());
+            }
+        }
+    }
 
     loop {
         let discovered = functions
@@ -846,6 +868,27 @@ fn ast_expr_is_structured_spawn(expr: &AstExpr) -> bool {
     )
 }
 
+fn ast_expr_structured_spawn_target(expr: &AstExpr) -> Option<&str> {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return None;
+    };
+    if callee.as_slice() != ["task", TASK_STRUCTURED_SPAWN_AST_NAME] || !type_args.is_empty() {
+        return None;
+    }
+    let [AstExpr::Call { callee, .. }] = args.as_slice() else {
+        return None;
+    };
+    let [target] = callee.as_slice() else {
+        return None;
+    };
+    Some(target)
+}
+
 fn ast_expr_is_structured_join(expr: &AstExpr) -> bool {
     matches!(
         expr,
@@ -974,4 +1017,15 @@ fn ir_expr_is_structured_spawn(expr: &ValueExpr) -> bool {
         ValueExpr::Call { name, .. }
             if name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)
     )
+}
+
+fn ir_statement_structured_spawn_target(statement: &Statement) -> Option<&str> {
+    let Statement::Let {
+        initializer: ValueExpr::Call { name, .. },
+        ..
+    } = statement
+    else {
+        return None;
+    };
+    name.strip_prefix(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)
 }

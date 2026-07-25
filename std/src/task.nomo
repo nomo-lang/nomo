@@ -1,4 +1,4 @@
-//! Suspend primitives, scope-owned void children, and isolated native workers.
+//! Suspend primitives, scope-owned typed children, and isolated native workers.
 package std.task
 
 import std.result
@@ -46,11 +46,12 @@ pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
 ///
 /// task.scope {
 ///     let child = task.spawn child_function(arguments)
-///     let joined: Result<void, TaskError> = task.join(child)
+///     let joined: Result<ChildResult, TaskError> = task.join(child)
 /// }
 ///
-/// This P1 form owns each inferred immutable handle in one lexical scope and
-/// requires exactly one join. It is distinct from the legacy functions below.
+/// The compiler infers Task<ChildResult>, owns each immutable handle in one
+/// lexical scope, and requires exactly one join. It is distinct from the
+/// legacy functions below.
 
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {

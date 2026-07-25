@@ -37,10 +37,11 @@ expiry, cancellation, live and peak-live counters are now available. The
 current-thread executor uses a bounded 64-entry FIFO and reports rejected
 enqueue attempts through `ready_queue_saturations`; the multi-task saturation
 workload additionally proves that the rejected spawn becomes a typed join
-error. ARC primitive counters remain explicitly unavailable rather than being
-reported as zero. Mutable/affine suspend parameters, complete unwind paths,
-typed structured results, cancellation, and the multi-task timer-wheel
-workload are not complete.
+error. Structured `Task<T>` results now have generated-C, native, WASM-boundary,
+and AddressSanitizer correctness coverage, but are not yet a separate measured
+workload. ARC primitive counters remain explicitly unavailable rather than
+being reported as zero. Mutable/affine suspend parameters, complete unwind
+paths, cancellation, and the multi-task timer-wheel workload are not complete.
 
 ## Run
 

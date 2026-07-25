@@ -404,14 +404,15 @@ import std.io
 import std.result
 import std.task
 
-suspend fn child(secret: string) -> void {
-    panic(secret)
+suspend fn child(secret: string) -> string {
+    io.println(secret)
+    return secret
 }
 
 suspend fn main() -> void {
     task.scope {
         let child_task = task.spawn child("browser-structured-task-secret")
-        let joined: Result<void, TaskError> = task.join(child_task)
+        let joined: Result<string, TaskError> = task.join(child_task)
         io.println(result.is_err(joined))
     }
 }

@@ -7665,10 +7665,12 @@ suspend fn main() -> void {
     let state: State = State.Ready("state")
     io.println("before")
     task.yield_now()
-    io.println(message, envelope.body)
+    io.println(message)
+    io.println(envelope.body)
     let state_copy: State = state
     task.yield_now()
-    io.println(values.len())
+    let count: u64 = values.len()
+    io.println("after")
 }
 "#,
     )
@@ -7726,7 +7728,7 @@ suspend fn main() -> void {
         "detect_leaks=1:abort_on_error=1"
     };
     for (name, c_source, expected_stdout) in [
-        ("completed", completed, "before\nlive payload\n2\n"),
+        ("completed", completed, "before\nlive\npayload\nafter\n"),
         ("early", early, "before\n"),
     ] {
         let c_path = root.join(format!("{name}.c"));

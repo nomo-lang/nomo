@@ -7665,12 +7665,11 @@ suspend fn main() -> void {
     let state: State = State.Ready("state")
     io.println("before")
     task.yield_now()
-    io.println(message)
-    io.println(envelope.body)
+    io.println(message, envelope.body)
     let state_copy: State = state
     task.yield_now()
     let count: u64 = values.len()
-    io.println("after")
+    io.println("after", count)
 }
 "#,
     )
@@ -7728,7 +7727,7 @@ suspend fn main() -> void {
         "detect_leaks=1:abort_on_error=1"
     };
     for (name, c_source, expected_stdout) in [
-        ("completed", completed, "before\nlive\npayload\nafter\n"),
+        ("completed", completed, "before\nlive payload\nafter 2\n"),
         ("early", early, "before\n"),
     ] {
         let c_path = root.join(format!("{name}.c"));
@@ -7775,6 +7774,109 @@ suspend fn main() -> void {
             String::from_utf8_lossy(&run_output.stderr)
         );
     }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn io_owned_temporaries_are_asan_clean_when_available() {
+    let root = temp_test_root("asan-io-owned-temporaries");
+    reset_dir(&root);
+
+    if !cc_supports_address_sanitizer(&root) {
+        fs::remove_dir_all(&root).unwrap();
+        return;
+    }
+
+    let source = root.join("main.nomo");
+    let generated_c = root.join("generated.c");
+    let bin_path = root.join("asan-io-owned-temporaries");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.array
+import std.io
+import std.string
+
+fn render() -> string {
+    return string.to_upper("call")
+}
+
+fn main() -> void {
+    let message: string = "borrowed"
+    let values: Array<string> = ["first"]
+    io.print(message, 7)
+    io.println("done", 8)
+    io.println(values[0])
+    io.println(render())
+    io.eprint("error", 9)
+    io.eprintln("done", 10)
+    defer io.println("deferred", 11)
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&generated_c)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(!generated.contains("nomo_string_concat(nomo_message"));
+    assert!(generated.contains("nomo_string nomo__io_value = nomo_num_i64_to_string(7);"));
+    assert!(generated.contains("nomo_string nomo__io_value = nomo_fn_render();"));
+    assert!(generated.contains("nomo_string_release(nomo__io_value);"));
+
+    let cc_output = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-fno-omit-frame-pointer")
+        .arg("-g")
+        .arg(&generated_c)
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let asan_options = if cfg!(target_os = "macos") {
+        "detect_leaks=0:abort_on_error=1"
+    } else {
+        "detect_leaks=1:abort_on_error=1"
+    };
+    let run_output = Command::new(&bin_path)
+        .env("ASAN_OPTIONS", asan_options)
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stdout),
+        "borrowed 7done 8\nfirst\nCALL\ndeferred 11\n"
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&run_output.stderr),
+        "error 9done 10\n"
+    );
 
     fs::remove_dir_all(&root).unwrap();
 }

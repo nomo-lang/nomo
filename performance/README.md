@@ -7,3 +7,8 @@ fails when it exceeds `release-gate-thresholds.json`.
 These preview thresholds catch gross regressions while allowing normal hosted
 runner variance. They are the pre-incremental baseline for RFC 0016, which will
 add representative workspace traces and edit-to-diagnostic measurements.
+
+The versioned async-runtime evidence contract lives in
+[`performance/async/`](async/README.md), with a
+[Chinese guide](async/README.zh-CN.md). P0 validates the zero-cost and harness
+pipeline only; it makes no Nomo-versus-Go performance claim.

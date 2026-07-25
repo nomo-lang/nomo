@@ -487,6 +487,16 @@ infers `i64` from the integer initializer. Semicolons are reserved for
 separating the three header clauses; ordinary Nomo statements remain
 newline-separated.
 
+P0 async effect syntax uses `suspend fn`. Calls stay direct-style without an
+`await` token, but a normal `fn` cannot call a suspend function; E0870 asks the
+caller to declare the effect. Suspend effects are preserved across generics,
+interfaces, local modules, formatter output, documentation, and LSP
+signatures. This slice has no suspension primitive, coroutine frame, executor,
+or async test runner yet: always-ready suspend chains use the existing direct
+C99 path, and `#[test] suspend fn` is rejected until the runtime can drive it.
+See `examples/suspend_ready`, RFC 0031, and the
+[P0 async benchmark gate](performance/async/README.md).
+
 `std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
 primitive scalar or a struct implementing `fmt.Display`;
 `fmt.debug_string(value)` uses `fmt.Debug`. `fmt.format` accepts a compile-time

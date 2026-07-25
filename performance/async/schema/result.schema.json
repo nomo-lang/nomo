@@ -1,0 +1,347 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomo-lang.org/schemas/async-benchmark-result-v1.json",
+  "title": "Nomo async benchmark result",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema",
+    "suite",
+    "phase",
+    "generated_at_utc",
+    "manifest_sha256",
+    "harness_sha256",
+    "counter_catalog_sha256",
+    "revision",
+    "repository_dirty",
+    "host",
+    "toolchains",
+    "configuration",
+    "workloads",
+    "claims"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "suite": {
+      "const": "nomo-async-runtime"
+    },
+    "phase": {
+      "type": "string"
+    },
+    "generated_at_utc": {
+      "type": "string"
+    },
+    "manifest_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "harness_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "counter_catalog_sha256": {
+      "$ref": "#/$defs/sha256"
+    },
+    "revision": {
+      "type": "string",
+      "minLength": 7
+    },
+    "repository_dirty": {
+      "type": "boolean"
+    },
+    "host": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "platform",
+        "machine",
+        "logical_cpu_count",
+        "available_cpu_count",
+        "memory_bytes",
+        "power_mode",
+        "fd_limit_soft",
+        "fd_limit_hard"
+      ],
+      "properties": {
+        "platform": {
+          "type": "string"
+        },
+        "machine": {
+          "type": "string"
+        },
+        "logical_cpu_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "available_cpu_count": {
+          "type": "integer",
+          "minimum": 1
+        },
+        "memory_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 1
+        },
+        "power_mode": {
+          "type": "string"
+        },
+        "fd_limit_soft": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        },
+        "fd_limit_hard": {
+          "type": [
+            "integer",
+            "string",
+            "null"
+          ]
+        }
+      }
+    },
+    "toolchains": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "nomo",
+        "go",
+        "c"
+      ],
+      "properties": {
+        "nomo": {
+          "$ref": "#/$defs/toolchain"
+        },
+        "go": {
+          "$ref": "#/$defs/toolchain"
+        },
+        "c": {
+          "$ref": "#/$defs/toolchain"
+        }
+      }
+    },
+    "configuration": {
+      "type": "object"
+    },
+    "workloads": {
+      "type": "array",
+      "minItems": 1,
+      "items": {
+        "$ref": "#/$defs/workload"
+      }
+    },
+    "claims": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "performance_claim_allowed",
+        "reason"
+      ],
+      "properties": {
+        "performance_claim_allowed": {
+          "const": false
+        },
+        "reason": {
+          "type": "string"
+        }
+      }
+    }
+  },
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "toolchain": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "path",
+        "version",
+        "sha256"
+      ],
+      "properties": {
+        "path": {
+          "type": "string"
+        },
+        "version": {
+          "type": "string"
+        },
+        "sha256": {
+          "$ref": "#/$defs/sha256"
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "wall_ns",
+        "user_cpu_ns",
+        "system_cpu_ns",
+        "peak_rss_bytes"
+      ],
+      "properties": {
+        "wall_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "user_cpu_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "system_cpu_ns": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        },
+        "peak_rss_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "summary": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "runs",
+        "wall_median_ns",
+        "wall_p50_ns",
+        "wall_p99_ns",
+        "wall_p999_ns",
+        "executions_per_second",
+        "peak_rss_bytes"
+      ],
+      "properties": {
+        "runs": {
+          "type": "integer",
+          "minimum": 5
+        },
+        "wall_median_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_p50_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_p99_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "wall_p999_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "executions_per_second": {
+          "type": "number",
+          "minimum": 0
+        },
+        "peak_rss_bytes": {
+          "type": [
+            "integer",
+            "null"
+          ],
+          "minimum": 0
+        }
+      }
+    },
+    "implementation": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "source_sha256",
+        "binary_sha256",
+        "stdout_sha256",
+        "samples",
+        "summary"
+      ],
+      "properties": {
+        "source_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "binary_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "stdout_sha256": {
+          "$ref": "#/$defs/sha256"
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 5,
+          "items": {
+            "$ref": "#/$defs/sample"
+          }
+        },
+        "summary": {
+          "$ref": "#/$defs/summary"
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "id",
+        "kind",
+        "available_phase",
+        "status",
+        "claim_eligible",
+        "implementations",
+        "static_gate",
+        "runtime_counters",
+        "comparison"
+      ],
+      "properties": {
+        "id": {
+          "type": "string"
+        },
+        "kind": {
+          "type": "string"
+        },
+        "available_phase": {
+          "type": "string"
+        },
+        "status": {
+          "enum": [
+            "measured",
+            "unavailable"
+          ]
+        },
+        "claim_eligible": {
+          "type": "boolean"
+        },
+        "implementations": {
+          "type": "object",
+          "additionalProperties": {
+            "$ref": "#/$defs/implementation"
+          }
+        },
+        "static_gate": {
+          "type": [
+            "object",
+            "null"
+          ]
+        },
+        "runtime_counters": {
+          "type": "object"
+        },
+        "comparison": {
+          "type": "object"
+        }
+      }
+    }
+  }
+}

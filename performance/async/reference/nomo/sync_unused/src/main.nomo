@@ -1,0 +1,17 @@
+package app.main
+
+import std.array
+import std.io
+import std.map
+
+fn main() -> void {
+    let values: Array<string> = ["zero", "one", "two"]
+    let mut labels: Map<string, string> = Map.new<string, string>()
+    let previous: Option<string> = map.set<string, string>(mut labels, "result", "answer")
+    let selected: Option<string> = map.get<string, string>(labels, "result")
+    let text: string = match selected {
+        Some(value) => value
+        None => "missing"
+    }
+    io.println("sync-unused", text, values.len())
+}

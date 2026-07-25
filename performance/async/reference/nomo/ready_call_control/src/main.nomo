@@ -1,0 +1,19 @@
+package app.main
+
+import std.io
+
+suspend fn step(value: i64) -> i64 {
+    return value + 1
+}
+
+suspend fn run_iterations() -> i64 {
+    let mut total: i64 = 0
+    for let i: u64 = 0; i < 100000; i++ {
+        total = step(total)
+    }
+    return total
+}
+
+suspend fn main() -> void {
+    io.println("p0-ready-control", run_iterations())
+}

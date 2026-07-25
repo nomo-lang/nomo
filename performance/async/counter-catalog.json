@@ -44,6 +44,12 @@
       "semantics": "Ready-queue entries removed for polling."
     },
     {
+      "name": "ready_queue_saturations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Ready-queue enqueue attempts rejected because the bounded owner-local FIFO was full."
+    },
+    {
       "name": "timer_registrations",
       "unit": "count",
       "available_phase": "P1",

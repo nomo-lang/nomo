@@ -23,9 +23,11 @@ yield 为 2。timer 探针还要求
 
 RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled
 并记录阶段，避免“未覆盖”看起来像“已通过”。owner-local timer 的注册、到期、
-取消、live 与 peak-live counter 已可用；ARC primitive counter 仍明确标记
-unavailable，而不是伪装成 0。mutable/affine suspend 参数、完整 unwind path、
-structured spawn/join 与多任务 timer-wheel workload 仍未完成。
+取消、live 与 peak-live counter 已可用。current-thread executor 现在使用
+64 槽有界 FIFO，并通过 `ready_queue_saturations` 记录被拒绝的入队；多任务
+saturation workload 留在 structured-spawn 切片。ARC primitive counter 仍明确
+标记 unavailable，而不是伪装成 0。mutable/affine suspend 参数、完整 unwind
+path、structured spawn/join 与多任务 timer-wheel workload 仍未完成。
 
 ## 运行方式
 

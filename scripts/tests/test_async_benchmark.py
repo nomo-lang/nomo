@@ -204,6 +204,7 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 "peak_live_frames": 2,
                 "ready_queue_enqueues": 2,
                 "ready_queue_dequeues": 2,
+                "ready_queue_saturations": 0,
                 "timer_registrations": 0,
                 "timer_expirations": 0,
                 "timer_cancellations": 0,

@@ -1066,6 +1066,28 @@ fn nomo_check_preserves_suspend_effects_across_local_modules() {
         String::from_utf8_lossy(&accepted.stderr)
     );
 
+    fs::write(
+        project.join("src/worker.nomo"),
+        "package app.worker\n\nimport std.task\n\npub suspend fn pause() -> void {\n    task.yield_now()\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.worker\n\nsuspend fn main() -> void {\n    pause()\n}\n",
+    )
+    .unwrap();
+    let nested = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        nested.status.success(),
+        "{}",
+        String::from_utf8_lossy(&nested.stderr)
+    );
+    assert!(nested.stdout.is_empty());
+
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -7658,13 +7680,23 @@ enum State {
     Empty
 }
 
+suspend fn child() -> void {
+    let child_message: string = "child"
+    let child_values: Array<string> = ["nested", "frame"]
+    io.println("child-before")
+    task.yield_now()
+    let child_count: u64 = child_values.len()
+    io.println(child_message)
+    io.println(child_count)
+}
+
 suspend fn main() -> void {
     let message: string = "live"
     let values: Array<string> = ["alpha", "beta"]
     let envelope: Envelope = Envelope { body: "payload" }
     let state: State = State.Ready("state")
     io.println("before")
-    task.yield_now()
+    child()
     io.println(message)
     io.println(envelope.body)
     let state_copy: State = state
@@ -7728,8 +7760,12 @@ suspend fn main() -> void {
         "detect_leaks=1:abort_on_error=1"
     };
     for (name, c_source, expected_stdout) in [
-        ("completed", completed, "before\nlive\npayload\nafter\n"),
-        ("early", early, "before\n"),
+        (
+            "completed",
+            completed,
+            "before\nchild-before\nchild\n2\nlive\npayload\nafter\n",
+        ),
+        ("early", early, "before\nchild-before\n"),
     ] {
         let c_path = root.join(format!("{name}.c"));
         let bin_path = root.join(format!("asan-async-frame-{name}"));

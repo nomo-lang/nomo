@@ -437,22 +437,106 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn p1_yield_slice_rejects_non_root_and_nested_suspension() {
-    let helper_source = r#"package app.main
+fn nested_suspend_calls_lower_to_embedded_stackless_frames() {
+    let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn leaf() -> void {
+    let leaf_value: string = "leaf"
+    task.yield_now()
+    io.println(leaf_value)
+}
+
+suspend fn helper() -> void {
+    let child: string = "child"
+    leaf()
+    io.println(child)
+}
+
+suspend fn main() -> void {
+    let parent: string = "parent"
+    helper()
+    io.println(parent)
+}
+"#;
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_frame_leaf"));
+    assert!(c.contains("nomo_async_frame_leaf nomo_async_child_1;"));
+    assert!(c.contains("nomo_async_poll_leaf(&frame->nomo_async_child_1, context)"));
+    assert!(c.contains("nomo_async_frame_helper"));
+    assert!(c.contains("nomo_async_poll_helper"));
+    assert!(c.contains("nomo_async_drop_helper"));
+    assert!(c.contains("nomo_async_frame_helper nomo_async_child_1;"));
+    assert!(c.contains("nomo_async_poll_helper(&frame->nomo_async_child_1, context)"));
+    assert!(c.contains("nomo_async_drop_helper(&frame->nomo_async_child_1);"));
+    assert!(c.contains("nomo_async_frame_main nomo__frame = {0};"));
+
+    let root_drop = c
+        .find("static void nomo_async_drop_main")
+        .expect("root drop must be emitted");
+    let root_drop_body = &c[root_drop..];
+    let child_drop = root_drop_body
+        .find("nomo_async_drop_helper(&frame->nomo_async_child_1);")
+        .expect("root drop must destroy its child");
+    let parent_release = root_drop_body
+        .find("nomo_string_release(frame->nomo_async_local_nomo_parent);")
+        .expect("root drop must release its frame-owned local");
+    assert!(child_drop < parent_release);
+}
+
+#[test]
+fn nested_suspend_slice_rejects_arguments_recursion_and_control_flow() {
+    let parameter_source = r#"package app.main
 
 import std.task
 
-suspend fn helper() -> void {
+suspend fn helper(value: string) -> void {
     task.yield_now()
 }
 
 suspend fn main() -> void {
-    helper()
+    helper("value")
 }
 "#;
-    let helper_error = parse_inline(helper_source).unwrap_err();
-    assert_eq!(helper_error.code, "E0876");
-    assert!(helper_error.message.contains("non-root suspension"));
+    let parameter_error = parse_inline(parameter_source).unwrap_err();
+    assert_eq!(parameter_error.code, "E0876");
+    assert!(parameter_error.message.contains("arguments/results"));
+
+    let recursive_source = r#"package app.main
+
+import std.task
+
+suspend fn first() -> void {
+    second()
+}
+
+suspend fn second() -> void {
+    task.yield_now()
+    first()
+}
+
+suspend fn main() -> void {
+    first()
+}
+"#;
+    let recursive_error = parse_inline(recursive_source).unwrap_err();
+    assert_eq!(recursive_error.code, "E0876");
+    assert!(
+        recursive_error
+            .message
+            .contains("recursive suspend call graph")
+    );
+    assert!(recursive_error.message.contains("first -> second -> first"));
 
     let nested_source = r#"package app.main
 

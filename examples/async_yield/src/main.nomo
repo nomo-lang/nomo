@@ -4,12 +4,16 @@ import std.array
 import std.io
 import std.task
 
-suspend fn main() -> void {
+suspend fn print_frame_message() -> void {
     let message: string = "frame-owned message"
-    let values: Array<i32> = [2, 3, 5]
-    io.println("before yield")
     task.yield_now()
     io.println(message)
+}
+
+suspend fn main() -> void {
+    let values: Array<i32> = [2, 3, 5]
+    io.println("before yield")
+    print_frame_message()
     task.yield_now()
     io.println(values.len())
 }

@@ -123,6 +123,7 @@ pub(super) fn lower_program(
     validate_opaque_handle_release_functions(path, &ast.extern_opaque_types, &signatures)?;
     validate_extern_calls_are_unsafe(path, &ast, &extern_call_names)?;
     validate_task_workers(path, &ast, &imports, &extern_call_names)?;
+    validate_p1_suspending_functions(path, &ast.functions, &imports)?;
     let local_struct_names = ast
         .structs
         .iter()
@@ -440,6 +441,7 @@ pub(super) fn lower_program(
             &const_types,
         )?);
     }
+    validate_p1_suspend_ir_program(path, &functions, &struct_map, &enum_map)?;
 
     Ok(Program {
         package: ast.package.join("."),

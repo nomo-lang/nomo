@@ -7,6 +7,97 @@ pub(super) fn function_uses_async_yield(function: &Function) -> bool {
         .any(|statement| statement_contains_expr(statement, expr_is_async_yield))
 }
 
+pub(super) fn collect_async_function_names(program: &Program) -> BTreeSet<String> {
+    let mut names = program
+        .functions
+        .iter()
+        .filter(|function| function.is_suspend && function_uses_async_yield(function))
+        .map(|function| function.name.clone())
+        .collect::<BTreeSet<_>>();
+
+    loop {
+        let discovered = program
+            .functions
+            .iter()
+            .filter(|function| function.is_suspend && !names.contains(&function.name))
+            .filter(|function| {
+                function.body.iter().any(|statement| {
+                    statement_contains_expr(statement, |expr| {
+                        matches!(
+                            expr,
+                            ValueExpr::Call { name, args }
+                                if args.is_empty() && names.contains(name)
+                        )
+                    })
+                })
+            })
+            .map(|function| function.name.clone())
+            .collect::<Vec<_>>();
+        if discovered.is_empty() {
+            break;
+        }
+        names.extend(discovered);
+    }
+    names
+}
+
+pub(super) fn ordered_async_functions<'a>(
+    program: &'a Program,
+    async_names: &BTreeSet<String>,
+) -> Vec<&'a Function> {
+    fn visit<'a>(
+        function: &'a Function,
+        functions: &HashMap<&str, &'a Function>,
+        async_names: &BTreeSet<String>,
+        visiting: &mut BTreeSet<String>,
+        visited: &mut BTreeSet<String>,
+        ordered: &mut Vec<&'a Function>,
+    ) {
+        if visited.contains(&function.name) {
+            return;
+        }
+        assert!(
+            visiting.insert(function.name.clone()),
+            "recursive suspend call graphs must be rejected before C code generation"
+        );
+        for statement in &function.body {
+            let Some(callee) = statement_async_call(statement, async_names) else {
+                continue;
+            };
+            if let Some(child) = functions.get(callee) {
+                visit(child, functions, async_names, visiting, visited, ordered);
+            }
+        }
+        visiting.remove(&function.name);
+        visited.insert(function.name.clone());
+        ordered.push(function);
+    }
+
+    let functions = program
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<HashMap<_, _>>();
+    let mut visiting = BTreeSet::new();
+    let mut visited = BTreeSet::new();
+    let mut ordered = Vec::new();
+    for function in program
+        .functions
+        .iter()
+        .filter(|function| async_names.contains(&function.name))
+    {
+        visit(
+            function,
+            &functions,
+            async_names,
+            &mut visiting,
+            &mut visited,
+            &mut ordered,
+        );
+    }
+    ordered
+}
+
 fn expr_is_async_yield(expr: &ValueExpr) -> bool {
     matches!(
         expr,
@@ -23,6 +114,24 @@ fn statement_is_async_yield(statement: &Statement) -> bool {
     )
 }
 
+fn statement_async_call<'a>(
+    statement: &'a Statement,
+    async_names: &BTreeSet<String>,
+) -> Option<&'a str> {
+    match statement {
+        Statement::Expr(ValueExpr::Call { name, args })
+            if args.is_empty() && async_names.contains(name) =>
+        {
+            Some(name)
+        }
+        _ => None,
+    }
+}
+
+fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<String>) -> bool {
+    statement_is_async_yield(statement) || statement_async_call(statement, async_names).is_some()
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 struct AsyncFrameLocal {
     name: String,
@@ -31,7 +140,10 @@ struct AsyncFrameLocal {
     last_use_index: usize,
 }
 
-fn collect_async_frame_locals(function: &Function) -> Vec<AsyncFrameLocal> {
+fn collect_async_frame_locals(
+    function: &Function,
+    async_names: &BTreeSet<String>,
+) -> Vec<AsyncFrameLocal> {
     function
         .body
         .iter()
@@ -52,10 +164,10 @@ fn collect_async_frame_locals(function: &Function) -> Vec<AsyncFrameLocal> {
                 .find_map(|(index, statement)| {
                     statement_uses_binding(statement, name).then_some(index)
                 })?;
-            let crosses_yield = function.body[declaration_index + 1..last_use_index]
+            let crosses_suspend = function.body[declaration_index + 1..last_use_index]
                 .iter()
-                .any(statement_is_async_yield);
-            crosses_yield.then(|| AsyncFrameLocal {
+                .any(|statement| statement_is_async_suspend(statement, async_names));
+            crosses_suspend.then(|| AsyncFrameLocal {
                 name: name.clone(),
                 value_type: value_type.clone(),
                 declaration_index,
@@ -91,7 +203,28 @@ fn async_frame_owned_field(name: &str) -> String {
     format!("nomo_async_owned_{}", c_var_ident(name))
 }
 
-fn emit_async_frame_type(out: &mut String, frame_locals: &[AsyncFrameLocal]) {
+fn async_frame_ident(function: &str) -> String {
+    format!("nomo_async_frame_{function}")
+}
+
+fn async_poll_ident(function: &str) -> String {
+    format!("nomo_async_poll_{function}")
+}
+
+fn async_drop_ident(function: &str) -> String {
+    format!("nomo_async_drop_{function}")
+}
+
+fn async_child_field(index: usize) -> String {
+    format!("nomo_async_child_{index}")
+}
+
+fn emit_async_frame_type(
+    out: &mut String,
+    function: &Function,
+    frame_locals: &[AsyncFrameLocal],
+    async_names: &BTreeSet<String>,
+) {
     out.push_str(
         "typedef struct {\n\
              uint32_t state;\n\
@@ -109,7 +242,19 @@ fn emit_async_frame_type(out: &mut String, frame_locals: &[AsyncFrameLocal]) {
             out.push_str(";\n");
         }
     }
-    out.push_str("} nomo_async_frame_main;\n\n");
+    for (index, statement) in function.body.iter().enumerate() {
+        let Some(callee) = statement_async_call(statement, async_names) else {
+            continue;
+        };
+        out.push_str("    ");
+        out.push_str(&async_frame_ident(callee));
+        out.push(' ');
+        out.push_str(&async_child_field(index));
+        out.push_str(";\n");
+    }
+    out.push_str("} ");
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(";\n\n");
 }
 
 fn emit_async_frame_store(out: &mut String, local: &AsyncFrameLocal, indent: usize) {
@@ -177,13 +322,15 @@ fn emit_async_local_releases(
     }
 }
 
-fn next_async_yield(function: &Function, start: usize) -> usize {
+fn next_async_suspend(function: &Function, start: usize, async_names: &BTreeSet<String>) -> usize {
     function
         .body
         .iter()
         .enumerate()
         .skip(start)
-        .find_map(|(index, statement)| statement_is_async_yield(statement).then_some(index))
+        .find_map(|(index, statement)| {
+            statement_is_async_suspend(statement, async_names).then_some(index)
+        })
         .unwrap_or(function.body.len())
 }
 
@@ -252,20 +399,31 @@ pub(super) fn emit_current_thread_executor(out: &mut String) {
     );
 }
 
-pub(super) fn emit_async_main(out: &mut String, function: &Function) {
-    debug_assert_eq!(function.name, "main");
+pub(super) fn emit_async_function(
+    out: &mut String,
+    function: &Function,
+    async_names: &BTreeSet<String>,
+) {
     debug_assert_eq!(function.return_type, ValueType::Void);
     debug_assert!(function.params.is_empty());
-    debug_assert!(function_uses_async_yield(function));
+    debug_assert!(async_names.contains(&function.name));
 
-    let frame_locals = collect_async_frame_locals(function);
-    emit_async_frame_type(out, &frame_locals);
+    let frame_locals = collect_async_frame_locals(function, async_names);
+    emit_async_frame_type(out, function, &frame_locals, async_names);
+    out.push_str("static nomo_async_poll ");
+    out.push_str(&async_poll_ident(&function.name));
     out.push_str(
-        "static nomo_async_poll nomo_async_poll_main(\n\
+        "(\n\
              void *raw_frame,\n\
              nomo_async_context *context\n\
          ) {\n\
-             nomo_async_frame_main *frame = (nomo_async_frame_main *)raw_frame;\n\
+             ",
+    );
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(" *frame = (");
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(
+        " *)raw_frame;\n\
              context->poll_count += 1u;\n\
              switch (frame->state) {\n",
     );
@@ -276,7 +434,7 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
     let mut segment_start = 0usize;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
-        if statement_is_async_yield(statement) {
+        if statement_is_async_suspend(statement, async_names) {
             let moved_to_frame = frame_locals
                 .iter()
                 .filter(|local| {
@@ -300,14 +458,25 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
             out.push_str("            frame->state = ");
             out.push_str(&state.to_string());
             out.push_str("u;\n");
-            out.push_str("            context->yield_count += 1u;\n");
-            out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
+            if statement_is_async_yield(statement) {
+                out.push_str("            context->yield_count += 1u;\n");
+                out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
+            } else {
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+            }
             out.push_str("        }\n");
             out.push_str("        case ");
             out.push_str(&state.to_string());
             out.push_str("u: {\n");
+            if statement_async_call(statement, async_names).is_some() {
+                out.push_str("nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(":\n            ;\n");
+            }
             segment_start = index + 1;
-            let segment_end = next_async_yield(function, segment_start);
+            let segment_end = next_async_suspend(function, segment_start, async_names);
             for local in frame_locals
                 .iter()
                 .filter(|local| local.declaration_index < segment_start)
@@ -318,6 +487,22 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
                 })
             {
                 emit_async_frame_alias(out, local, 3);
+            }
+            if let Some(callee) = statement_async_call(statement, async_names) {
+                out.push_str("            if (");
+                out.push_str(&async_poll_ident(callee));
+                out.push_str("(&frame->");
+                out.push_str(&async_child_field(index));
+                out.push_str(
+                    ", context) == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n\
+                             ",
+                );
+                out.push_str(&async_drop_ident(callee));
+                out.push_str("(&frame->");
+                out.push_str(&async_child_field(index));
+                out.push_str(");\n");
             }
             continue;
         }
@@ -347,12 +532,28 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
              }\n\
          }\n\
          \n\
-         static void nomo_async_drop_main(nomo_async_frame_main *frame) {\n\
+         static void ",
+    );
+    out.push_str(&async_drop_ident(&function.name));
+    out.push('(');
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(
+        " *frame) {\n\
              if (frame->dropped != 0u) {\n\
                  return;\n\
              }\n\
              frame->dropped = 1u;\n",
     );
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(callee) = statement_async_call(statement, async_names) else {
+            continue;
+        };
+        out.push_str("    ");
+        out.push_str(&async_drop_ident(callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(");\n");
+    }
     for local in frame_locals.iter().rev() {
         emit_async_frame_field_drop(out, local, 1);
     }

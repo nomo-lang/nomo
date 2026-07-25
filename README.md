@@ -491,15 +491,17 @@ Async effect syntax uses `suspend fn`. Calls stay direct-style without an
 `await` token, but a normal `fn` cannot call a suspend function; E0870 asks the
 caller to declare the effect. Suspend effects are preserved across generics,
 interfaces, local modules, formatter output, documentation, and LSP
-signatures. P1 adds `task.yield_now()` for a parameterless
-`suspend fn main() -> void`: the C99 backend emits a stackless root frame and
-current-thread executor only when that primitive is reachable. Always-ready
-suspend chains still use the direct C99 path. Immutable top-level locals whose
-transitive value fields are frame-safe may live across a yield: exact liveness
-decides which values enter the frame, and managed fields carry ownership bits
-for idempotent completion or explicit early drop. E0876 still rejects mutable
-locals, resource-handle wrappers, nested control flow, `?`, explicit panic, and
-non-root suspension; nested call frames, complete unwind paths, timers,
+signatures. P1 adds standalone `task.yield_now()` and nested direct-style calls
+between non-generic, parameterless `suspend fn` functions returning `void`.
+The C99 backend emits a stackless root frame with embedded child frames and a
+current-thread executor only when a suspension primitive is reachable.
+Always-ready suspend chains still use the direct C99 path. Immutable top-level
+locals whose transitive value fields are frame-safe may live across a
+suspension: exact liveness decides which values enter each frame, and managed
+fields carry ownership bits for child-first idempotent completion or explicit
+early root drop. E0876 still rejects mutable locals, resource-handle wrappers,
+recursive suspend graphs, suspension in nested control flow or expressions,
+arguments/results, `?`, and explicit panic; complete unwind paths, timers,
 structured spawn/join, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, the

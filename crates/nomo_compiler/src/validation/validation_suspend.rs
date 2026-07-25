@@ -17,18 +17,29 @@ pub(super) fn validate_p1_yield_function(
         return Ok(());
     }
 
-    let supported_signature = function.name == "main"
+    let suspending_functions = HashSet::from([function.name.clone()]);
+    validate_p1_suspend_function_shape(path, function, imports, &suspending_functions)
+}
+
+fn validate_p1_suspend_function_shape(
+    path: &Path,
+    function: &AstFunction,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    let supported_signature = function.type_params.is_empty()
         && function.params.is_empty()
         && function.return_type.path.as_slice() == ["void"]
         && function.return_type.args.is_empty();
     let supported_body = function.body.iter().all(|statement| match statement {
         Stmt::Expr { expr, .. } => {
-            (ast_expr_is_direct_yield(expr, imports) || !ast_expr_contains_yield(expr, imports))
+            (ast_expr_is_direct_suspension(expr, imports, suspending_functions)
+                || !ast_expr_contains_suspension(expr, imports, suspending_functions))
                 && !ast_expr_contains_frame_exit(expr)
         }
         Stmt::Let { mutable, value, .. } => {
             !mutable
-                && !ast_expr_contains_yield(value, imports)
+                && !ast_expr_contains_suspension(value, imports, suspending_functions)
                 && !ast_expr_contains_frame_exit(value)
         }
         _ => false,
@@ -40,13 +51,128 @@ pub(super) fn validate_p1_yield_function(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current frame-liveness slice supports immutable top-level locals and standalone `task.yield_now()` in parameterless `suspend fn main() -> void`; mutable locals, nested control flow, `?`, explicit panic, handles, and non-root suspension require a later slice",
+        "the current nested-frame slice supports immutable top-level locals and standalone suspend calls in non-generic parameterless `suspend fn` functions returning `void`; mutable locals, generics, arguments/results, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
         path,
         function.span.line,
         function.span.column,
         function.span.length,
         &function.span.text,
     ))
+}
+
+pub(super) fn validate_p1_suspending_functions(
+    path: &Path,
+    functions: &[AstFunction],
+    imports: &[String],
+) -> Result<(), Diagnostic> {
+    let mut suspending = functions
+        .iter()
+        .filter(|function| {
+            function.is_suspend
+                && function
+                    .body
+                    .iter()
+                    .any(|statement| ast_statement_contains_yield(statement, imports))
+        })
+        .map(|function| function.name.clone())
+        .collect::<HashSet<_>>();
+
+    loop {
+        let discovered = functions
+            .iter()
+            .filter(|function| function.is_suspend && !suspending.contains(&function.name))
+            .filter(|function| {
+                function
+                    .body
+                    .iter()
+                    .any(|statement| ast_statement_contains_call_to(statement, &suspending))
+            })
+            .map(|function| function.name.clone())
+            .collect::<Vec<_>>();
+        if discovered.is_empty() {
+            break;
+        }
+        suspending.extend(discovered);
+    }
+
+    let function_map = functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<HashMap<_, _>>();
+    let mut visited = HashSet::new();
+    let mut visiting = Vec::new();
+    for function in functions
+        .iter()
+        .filter(|function| suspending.contains(&function.name))
+    {
+        validate_p1_suspend_acyclic(
+            path,
+            function,
+            &function_map,
+            &suspending,
+            &mut visited,
+            &mut visiting,
+        )?;
+        validate_p1_suspend_function_shape(path, function, imports, &suspending)?;
+    }
+
+    Ok(())
+}
+
+fn validate_p1_suspend_acyclic(
+    path: &Path,
+    function: &AstFunction,
+    functions: &HashMap<&str, &AstFunction>,
+    suspending: &HashSet<String>,
+    visited: &mut HashSet<String>,
+    visiting: &mut Vec<String>,
+) -> Result<(), Diagnostic> {
+    if visited.contains(&function.name) {
+        return Ok(());
+    }
+    if let Some(start) = visiting.iter().position(|name| name == &function.name) {
+        let mut cycle = visiting[start..].to_vec();
+        cycle.push(function.name.clone());
+        return Err(Diagnostic::new(
+            "E0876",
+            format!(
+                "recursive suspend call graph `{}` needs dynamically sized frames; break the cycle for the current nested-frame slice",
+                cycle.join(" -> ")
+            ),
+            path,
+            function.span.line,
+            function.span.column,
+            function.span.length,
+            &function.span.text,
+        ));
+    }
+
+    visiting.push(function.name.clone());
+    let mut callees = functions
+        .values()
+        .copied()
+        .filter(|callee| suspending.contains(&callee.name))
+        .filter(|callee| {
+            function
+                .body
+                .iter()
+                .any(|statement| ast_statement_contains_named_call(statement, &callee.name))
+        })
+        .collect::<Vec<_>>();
+    callees.sort_by(|left, right| left.name.cmp(&right.name));
+    for callee_function in callees {
+        validate_p1_suspend_acyclic(
+            path,
+            callee_function,
+            functions,
+            suspending,
+            visited,
+            visiting,
+        )?;
+    }
+    visiting.pop();
+    visited.insert(function.name.clone());
+    Ok(())
 }
 
 pub(super) fn validate_p1_yield_ir_function(
@@ -88,6 +214,79 @@ pub(super) fn validate_p1_yield_ir_function(
             source.span.length,
             &source.span.text,
         ));
+    }
+    Ok(())
+}
+
+pub(super) fn validate_p1_suspend_ir_program(
+    path: &Path,
+    functions: &[Function],
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Result<(), Diagnostic> {
+    let mut suspending = functions
+        .iter()
+        .filter(|function| {
+            function.is_suspend
+                && function.body.iter().any(|statement| {
+                    matches!(
+                        statement,
+                        Statement::Expr(ValueExpr::Call { name, args })
+                            if name == BUILTIN_TASK_YIELD_EXPR && args.is_empty()
+                    )
+                })
+        })
+        .map(|function| function.name.clone())
+        .collect::<HashSet<_>>();
+
+    loop {
+        let discovered = functions
+            .iter()
+            .filter(|function| function.is_suspend && !suspending.contains(&function.name))
+            .filter(|function| {
+                function.body.iter().any(|statement| {
+                    matches!(
+                        statement,
+                        Statement::Expr(ValueExpr::Call { name, args })
+                            if args.is_empty() && suspending.contains(name)
+                    )
+                })
+            })
+            .map(|function| function.name.clone())
+            .collect::<Vec<_>>();
+        if discovered.is_empty() {
+            break;
+        }
+        suspending.extend(discovered);
+    }
+
+    for function in functions
+        .iter()
+        .filter(|function| suspending.contains(&function.name))
+    {
+        if let Some((name, value_type)) = function.body.iter().find_map(|statement| match statement
+        {
+            Statement::Let {
+                name, value_type, ..
+            } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
+                Some((name, value_type))
+            }
+            _ => None,
+        }) {
+            return Err(Diagnostic::new(
+                "E0876",
+                format!(
+                    "local `{name}` in suspend function `{}` has type `{}` without a P1 nested-frame move/drop implementation; keep it within a non-suspending function",
+                    function.name,
+                    value_type.name()
+                ),
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
     }
     Ok(())
 }
@@ -187,26 +386,53 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
 }
 
 fn ast_statement_contains_yield(statement: &Stmt, imports: &[String]) -> bool {
+    ast_statement_any_expr(statement, |candidate| {
+        ast_expr_is_direct_yield(candidate, imports)
+    })
+}
+
+fn ast_statement_contains_call_to(statement: &Stmt, names: &HashSet<String>) -> bool {
+    ast_statement_any_expr(statement, |candidate| {
+        matches!(
+            candidate,
+            AstExpr::Call { callee, .. }
+                if callee.last().is_some_and(|name| names.contains(name))
+        )
+    })
+}
+
+fn ast_statement_contains_named_call(statement: &Stmt, name: &str) -> bool {
+    ast_statement_any_expr(statement, |candidate| {
+        matches!(
+            candidate,
+            AstExpr::Call { callee, .. }
+                if callee.last().is_some_and(|callee| callee == name)
+        )
+    })
+}
+
+fn ast_statement_any_expr<P>(statement: &Stmt, predicate: P) -> bool
+where
+    P: Fn(&AstExpr) -> bool + Copy,
+{
     match statement {
         Stmt::Let { value, .. }
         | Stmt::Assign { value, .. }
         | Stmt::Return {
             value: Some(value), ..
         }
-        | Stmt::Expr { expr: value, .. } => ast_expr_contains_yield(value, imports),
+        | Stmt::Expr { expr: value, .. } => ast_expr_any(value, predicate),
         Stmt::IndexAssign { indices, value, .. } => {
-            indices
-                .iter()
-                .any(|index| ast_expr_contains_yield(index, imports))
-                || ast_expr_contains_yield(value, imports)
+            indices.iter().any(|index| ast_expr_any(index, predicate))
+                || ast_expr_any(value, predicate)
         }
         Stmt::LetElse {
             value, else_body, ..
         } => {
-            ast_expr_contains_yield(value, imports)
+            ast_expr_any(value, predicate)
                 || else_body
                     .iter()
-                    .any(|statement| ast_statement_contains_yield(statement, imports))
+                    .any(|statement| ast_statement_any_expr(statement, predicate))
         }
         Stmt::IfLet {
             value,
@@ -214,32 +440,32 @@ fn ast_statement_contains_yield(statement: &Stmt, imports: &[String]) -> bool {
             else_body,
             ..
         } => {
-            ast_expr_contains_yield(value, imports)
+            ast_expr_any(value, predicate)
                 || body
                     .iter()
-                    .any(|statement| ast_statement_contains_yield(statement, imports))
+                    .any(|statement| ast_statement_any_expr(statement, predicate))
                 || else_body.as_ref().is_some_and(|body| {
                     body.iter()
-                        .any(|statement| ast_statement_contains_yield(statement, imports))
+                        .any(|statement| ast_statement_any_expr(statement, predicate))
                 })
         }
         Stmt::Match { value, arms, .. } => {
-            ast_expr_contains_yield(value, imports)
+            ast_expr_any(value, predicate)
                 || arms.iter().any(|arm| {
                     arm.body
                         .iter()
-                        .any(|statement| ast_statement_contains_yield(statement, imports))
+                        .any(|statement| ast_statement_any_expr(statement, predicate))
                 })
         }
         Stmt::For { variant, .. } => match variant {
             ForVariant::Infinite { body } => body
                 .iter()
-                .any(|statement| ast_statement_contains_yield(statement, imports)),
+                .any(|statement| ast_statement_any_expr(statement, predicate)),
             ForVariant::While { condition, body } => {
-                ast_expr_contains_yield(condition, imports)
+                ast_expr_any(condition, predicate)
                     || body
                         .iter()
-                        .any(|statement| ast_statement_contains_yield(statement, imports))
+                        .any(|statement| ast_statement_any_expr(statement, predicate))
             }
             ForVariant::CStyle {
                 initializer,
@@ -248,24 +474,24 @@ fn ast_statement_contains_yield(statement: &Stmt, imports: &[String]) -> bool {
                 body,
                 ..
             } => {
-                ast_expr_contains_yield(initializer, imports)
-                    || ast_expr_contains_yield(condition, imports)
-                    || ast_statement_contains_yield(update, imports)
+                ast_expr_any(initializer, predicate)
+                    || ast_expr_any(condition, predicate)
+                    || ast_statement_any_expr(update, predicate)
                     || body
                         .iter()
-                        .any(|statement| ast_statement_contains_yield(statement, imports))
+                        .any(|statement| ast_statement_any_expr(statement, predicate))
             }
             ForVariant::Iterate { iterable, body, .. } => {
-                ast_expr_contains_yield(iterable, imports)
+                ast_expr_any(iterable, predicate)
                     || body
                         .iter()
-                        .any(|statement| ast_statement_contains_yield(statement, imports))
+                        .any(|statement| ast_statement_any_expr(statement, predicate))
             }
         },
-        Stmt::Defer { stmt, .. } => ast_statement_contains_yield(stmt, imports),
+        Stmt::Defer { stmt, .. } => ast_statement_any_expr(stmt, predicate),
         Stmt::Unsafe { body, .. } => body
             .iter()
-            .any(|statement| ast_statement_contains_yield(statement, imports)),
+            .any(|statement| ast_statement_any_expr(statement, predicate)),
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
@@ -273,10 +499,31 @@ fn ast_statement_contains_yield(statement: &Stmt, imports: &[String]) -> bool {
     }
 }
 
-fn ast_expr_contains_yield(expr: &AstExpr, imports: &[String]) -> bool {
+fn ast_expr_contains_suspension(
+    expr: &AstExpr,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> bool {
     ast_expr_any(expr, |candidate| {
-        ast_expr_is_direct_yield(candidate, imports)
+        ast_expr_is_direct_suspension(candidate, imports, suspending_functions)
     })
+}
+
+fn ast_expr_is_direct_suspension(
+    expr: &AstExpr,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> bool {
+    if ast_expr_is_direct_yield(expr, imports) {
+        return true;
+    }
+    let AstExpr::Call { callee, args, .. } = expr else {
+        return false;
+    };
+    args.is_empty()
+        && callee
+            .last()
+            .is_some_and(|name| suspending_functions.contains(name))
 }
 
 fn ast_expr_contains_frame_exit(expr: &AstExpr) -> bool {

@@ -18,12 +18,13 @@ All RFC-required async workloads already have manifest entries. They remain
 disabled with their implementation phase recorded, so missing runtime coverage
 cannot look like a passing benchmark.
 
-The separate P1 `async_yield` implementation now provides a stackless root
-frame and current-thread executor. It is intentionally not added to this P0
-measurement series: top-level immutable locals now use exact liveness spills
-and ownership-aware frame drops, but nested task frames, complete unwind paths,
-timers, spawn/join, and runtime counter export are not complete. A versioned P1
-series will enable the relevant workloads without rewriting the P0 evidence.
+The separate P1 `async_yield` implementation now provides nested stackless
+suspend-call frames and a current-thread executor. It is intentionally not
+added to this P0 measurement series: top-level immutable locals now use exact
+liveness spills and child-first ownership-aware frame drops, but
+argument/result frames, complete unwind paths, structured spawn/join, timers,
+and runtime counter export are not complete. A versioned P1 series will enable
+the relevant workloads without rewriting the P0 evidence.
 
 ## Run
 

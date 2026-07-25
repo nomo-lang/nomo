@@ -171,24 +171,46 @@ fn validate_p1_suspend_function_shape(
                                 && !ast_expr_contains_frame_exit(value)
                         })
                 }
-                Stmt::TaskScope { body, .. } => body.iter().all(|statement| match statement {
-                    Stmt::Let { mutable, value, .. } => {
-                        !mutable
-                            && (ast_expr_is_structured_spawn(value)
-                                || ast_expr_is_structured_join(value)
-                                || !ast_expr_contains_suspension(
-                                    value,
-                                    imports,
-                                    suspending_functions,
-                                ))
-                            && !ast_expr_contains_frame_exit(value)
-                    }
-                    Stmt::Expr { expr, .. } => {
-                        !ast_expr_contains_suspension(expr, imports, suspending_functions)
-                            && !ast_expr_contains_frame_exit(expr)
-                    }
-                    _ => false,
-                }),
+                Stmt::TaskScope { body, .. } => {
+                    let has_return = body
+                        .iter()
+                        .any(|statement| matches!(statement, Stmt::Return { .. }));
+                    (!has_return || index + 1 == function.body.len())
+                        && body
+                            .iter()
+                            .enumerate()
+                            .all(|(scope_index, statement)| match statement {
+                                Stmt::Let { mutable, value, .. } => {
+                                    !mutable
+                                        && (ast_expr_is_structured_spawn(value)
+                                            || ast_expr_is_structured_join(value)
+                                            || !ast_expr_contains_suspension(
+                                                value,
+                                                imports,
+                                                suspending_functions,
+                                            ))
+                                        && !ast_expr_contains_frame_exit(value)
+                                }
+                                Stmt::Expr { expr, .. } => {
+                                    !ast_expr_contains_suspension(
+                                        expr,
+                                        imports,
+                                        suspending_functions,
+                                    ) && !ast_expr_contains_frame_exit(expr)
+                                }
+                                Stmt::Return { value, .. } => {
+                                    scope_index + 1 == body.len()
+                                        && value.as_ref().is_none_or(|value| {
+                                            !ast_expr_contains_suspension(
+                                                value,
+                                                imports,
+                                                suspending_functions,
+                                            ) && !ast_expr_contains_frame_exit(value)
+                                        })
+                                }
+                                _ => false,
+                            })
+                }
                 _ => false,
             });
 
@@ -198,7 +220,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, and `let`-bound `task.sleep(Duration)` results in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, and a final task.scope return after every child is joined in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and unjoined scope exits require a later slice",
         path,
         function.span.line,
         function.span.column,

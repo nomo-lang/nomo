@@ -409,18 +409,23 @@ suspend fn child(secret: string) -> string {
     return secret
 }
 
-suspend fn main() -> void {
+suspend fn gather() -> string {
     task.scope {
         let child_task = task.spawn child("browser-structured-task-secret")
         let joined: Result<string, TaskError> = task.join(child_task)
-        io.println(result.is_err(joined))
+        return result.unwrap_or(joined, "runtime_unavailable")
     }
+}
+
+suspend fn main() -> void {
+    let gathered: string = gather()
+    io.println(gathered)
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());
 
         assert_eq!(response.status, "success", "{response:#?}");
-        assert_eq!(response.stdout, "true\n");
+        assert_eq!(response.stdout, "runtime_unavailable\n");
         assert!(!response.stderr.contains("browser-structured-task-secret"));
         assert!(response.diagnostic.is_none());
     }

@@ -32,9 +32,10 @@ RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项�
 64 槽有界 FIFO，并通过 `ready_queue_saturations` 记录被拒绝的入队；多任务
 saturation workload 还会证明被拒绝的 spawn 转化为类型化 join error。
 structured `Task<T>` result 已有 generated-C、native、WASM 边界与
-AddressSanitizer 正确性覆盖，但尚未成为独立 measured workload。ARC primitive
-counter 仍明确标记 unavailable，而不是伪装成 0。mutable/affine suspend
-参数、完整 unwind path、取消与多任务 timer-wheel workload 仍未完成。
+post-join 嵌套 scope return、AddressSanitizer 正确性覆盖，但尚未成为独立
+measured workload。ARC primitive counter 仍明确标记 unavailable，而不是
+伪装成 0。mutable/affine suspend 参数、完整 unwind path、取消与多任务
+timer-wheel workload 仍未完成。
 
 ## 运行方式
 

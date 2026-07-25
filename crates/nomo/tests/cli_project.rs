@@ -7911,7 +7911,7 @@ suspend fn child(value: string) -> string {
     return value
 }
 
-suspend fn main() -> void {
+suspend fn gather() -> string {
     task.scope {
         let left = task.spawn child(message("left"))
         let right = task.spawn child(message("right"))
@@ -7919,8 +7919,13 @@ suspend fn main() -> void {
         let joined_right: Result<string, TaskError> = task.join(right)
         let left_value: string = result.unwrap_or(joined_left, "left failed")
         let right_value: string = result.unwrap_or(joined_right, "right failed")
-        io.println(left_value, right_value)
+        return string.concat(left_value, right_value)
     }
+}
+
+suspend fn main() -> void {
+    let gathered: string = gather()
+    io.println(gathered)
 }
 "#,
     )
@@ -7942,6 +7947,7 @@ suspend fn main() -> void {
 
     let generated = fs::read_to_string(&generated_c).unwrap();
     assert!(generated.contains("structured_waiter_frame"));
+    assert!(generated.contains("structured_waiter_frame = context->current_frame"));
     assert!(generated.contains("nomo_async_parameter_owned_nomo_value"));
     let drop_call = "    nomo_async_drop_main(&nomo__frame);\n";
     let completed = generated.replacen(
@@ -7981,7 +7987,7 @@ suspend fn main() -> void {
         (
             "completed",
             completed,
-            "LEFT before\nRIGHT before\nLEFT after\nRIGHT after\nLEFT RIGHT\n",
+            "LEFT before\nRIGHT before\nLEFT after\nRIGHT after\nLEFTRIGHT\n",
         ),
         ("early", early, ""),
     ] {

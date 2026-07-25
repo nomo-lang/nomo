@@ -35,6 +35,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_timer`: P1 owner-local monotonic `task.sleep` with an inline zero-duration fast path and a positive non-busy timer
 - `async_structured_void`: P1 scope-owned void children spawned onto the bounded owner FIFO and joined with typed queue-saturation errors
 - `async_structured_results`: scope-owned `Task<T>` children whose managed results move exactly once into `Result<T, TaskError>` joins
+- `async_structured_return`: a nested suspend helper that joins its child before returning a typed value from `task.scope`
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

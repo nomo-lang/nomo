@@ -519,12 +519,12 @@ once. E0871, E0872, E0875, and E0876 reject invalid boundaries, ownership,
 targets, and unsupported shapes. Mutable
 parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
-expressions, `?`, explicit panic, cancellation,
+expressions, `?`, explicit panic, unjoined early scope exit, cancellation,
 channels/select, the multi-task timer wheel, and the async test runner land in
 later reviewable slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
 `examples/async_timer`, `examples/async_structured_void`,
-`examples/async_structured_results`, the
+`examples/async_structured_results`, `examples/async_structured_return`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).
 

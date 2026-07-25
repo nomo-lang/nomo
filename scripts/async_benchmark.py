@@ -444,12 +444,14 @@ def git_revision() -> str:
     )
 
 
-def repository_dirty() -> bool:
-    return bool(
+def repository_status() -> str:
+    return (
         run_checked(
             ["git", "status", "--porcelain", "--untracked-files=all"],
             cwd=REPOSITORY_ROOT,
-        ).stdout
+        )
+        .stdout.decode("utf-8", errors="replace")
+        .strip()
     )
 
 
@@ -475,9 +477,13 @@ def main() -> int:
     counter_catalog_path = manifest_root / manifest["counter_catalog"]
     counter_catalog = json.loads(counter_catalog_path.read_text(encoding="utf-8"))
     validate_counter_catalog(counter_catalog)
-    dirty = repository_dirty()
+    dirty_status = repository_status()
+    dirty = bool(dirty_status)
     if args.require_clean and dirty:
-        raise HarnessError("benchmark evidence requires a clean Git checkout")
+        raise HarnessError(
+            "benchmark evidence requires a clean Git checkout:\n"
+            f"{dirty_status}"
+        )
     defaults = manifest["defaults"]
     warmup_runs = (
         args.warmup_runs

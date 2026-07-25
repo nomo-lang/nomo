@@ -415,6 +415,11 @@ suspend fn main() -> void {
     assert!(c.contains("context->ready_occupied = 0u;"));
     assert!(c.contains("context->yield_count += 1u;"));
     assert!(c.contains("context->ready_queue_enqueues += 1u;"));
+    assert!(c.contains("context->frame_drops += 1u;"));
+    assert!(c.contains("context->peak_live_frames = context->live_frames;"));
+    assert!(c.contains("NOMO_ASYNC_METRICS_PATH"));
+    assert!(c.contains("\\\"runtime_abi\\\": 1"));
+    assert!(c.contains("nomo_async_metrics_export(&nomo__context)"));
     assert!(c.contains("case 2u:"));
     assert!(c.contains("nomo_async_drop_main(&nomo__frame);"));
     assert!(!c.contains("pthread_create"));

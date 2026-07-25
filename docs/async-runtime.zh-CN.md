@@ -60,8 +60,11 @@ Native C99 后端遇到最终到达 `task.yield_now()` 的 suspend 调用链时�
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
 
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。生成的
-context 会在内部记录 poll、yield、入队和出队计数；等 P1 counter contract
-稳定后再用版本化 benchmark 导出。
+context 会记录 poll、yield、frame drop/live frame、入队和出队计数。Native
+程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
+`nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
+会在 measured run 之后单独执行探针。ARC primitive counter 与 timer 明确标记为
+unavailable，而不是伪装成 0。
 在 suspension 前已经死亡的局部变量会直接 release，不进入 frame。suspension
 后仍使用的不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用
 的值生成 non-owning C alias。内嵌 child 先 inline poll；同步完成时不分配也不
@@ -101,6 +104,6 @@ constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求�
 - 兼容 C99 与 browser WASM，并继续覆盖 Linux、macOS/BSD 和 Windows reactor；
 - 固定版本、公平 workload 的 Nomo 与 Go 对比，不能通过削弱对照来达标。
 
-P0 控制组与原始证据格式位于
+P0/P1 控制组与原始证据格式位于
 [`performance/async`](../performance/async/README.zh-CN.md)，当前小切片的可运行
 示例位于 [`examples/async_yield`](../examples/async_yield)。

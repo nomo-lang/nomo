@@ -499,14 +499,16 @@ Always-ready suspend chains still use the direct C99 path. Immutable top-level
 locals whose transitive value fields are frame-safe may live across a
 suspension: exact liveness decides which values enter each frame, and managed
 fields carry ownership bits for child-first idempotent completion or explicit
-early root drop. E0876 still rejects mutable locals, resource-handle wrappers,
+early root drop. An opt-in, versioned P1 probe exports exact current-thread
+poll, yield, frame, and ready-queue counters without changing normal stdout.
+E0876 still rejects mutable locals, resource-handle wrappers,
 recursive suspend graphs, suspension in nested control flow or expressions,
 arguments/results, `?`, and explicit panic; complete unwind paths, timers,
 structured spawn/join, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
-[P0 async benchmark gate](performance/async/README.md).
+[P0/P1 async benchmark gates](performance/async/README.md).
 
 `std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
 primitive scalar or a struct implementing `fmt.Display`;

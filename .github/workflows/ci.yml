@@ -54,6 +54,21 @@ jobs:
           path: performance/results/async-p0.json
           if-no-files-found: error
 
+      - name: Run P1 async counter and zero-cost gates
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --manifest performance/async/manifest-p1.json
+          --require-clean
+          --output performance/results/async-p1.json
+
+      - name: Upload P1 async counter evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p1
+          path: performance/results/async-p1.json
+          if-no-files-found: error
+
       - name: Build browser WebAssembly runtime
         run: >-
           cargo build --locked --release

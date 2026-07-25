@@ -228,6 +228,8 @@ fn emit_async_frame_type(
     out.push_str(
         "typedef struct {\n\
              uint32_t state;\n\
+             nomo_async_context *context;\n\
+             uint8_t started;\n\
              uint8_t dropped;\n",
     );
     for local in frame_locals {
@@ -347,6 +349,9 @@ pub(super) fn emit_current_thread_executor(out: &mut String) {
          struct nomo_async_context {\n\
              uint64_t poll_count;\n\
              uint64_t yield_count;\n\
+             uint64_t frame_drops;\n\
+             uint64_t live_frames;\n\
+             uint64_t peak_live_frames;\n\
              uint64_t ready_queue_enqueues;\n\
              uint64_t ready_queue_dequeues;\n\
              void *ready_frame;\n\
@@ -395,6 +400,48 @@ pub(super) fn emit_current_thread_executor(out: &mut String) {
                  }\n\
              }\n\
              return 0;\n\
+         }\n\
+         \n\
+         static int nomo_async_metrics_export(const nomo_async_context *context) {\n\
+             const char *path = getenv(\"NOMO_ASYNC_METRICS_PATH\");\n\
+             if (path == NULL || path[0] == '\\0') {\n\
+                 return 0;\n\
+             }\n\
+             FILE *output = fopen(path, \"wb\");\n\
+             if (output == NULL) {\n\
+                 return 1;\n\
+             }\n\
+             int write_status = fprintf(\n\
+                 output,\n\
+                 \"{\\n\"\n\
+                 \"  \\\"schema\\\": 1,\\n\"\n\
+                 \"  \\\"runtime\\\": \\\"nomo-c99-current-thread\\\",\\n\"\n\
+                 \"  \\\"runtime_abi\\\": 1,\\n\"\n\
+                 \"  \\\"counter_catalog_schema\\\": 1,\\n\"\n\
+                 \"  \\\"counters\\\": {\\n\"\n\
+                 \"    \\\"poll_calls\\\": %\" PRIu64 \",\\n\"\n\
+                 \"    \\\"cooperative_yields\\\": %\" PRIu64 \",\\n\"\n\
+                 \"    \\\"frame_allocations\\\": 0,\\n\"\n\
+                 \"    \\\"frame_drops\\\": %\" PRIu64 \",\\n\"\n\
+                 \"    \\\"peak_live_frames\\\": %\" PRIu64 \",\\n\"\n\
+                 \"    \\\"ready_queue_enqueues\\\": %\" PRIu64 \",\\n\"\n\
+                 \"    \\\"ready_queue_dequeues\\\": %\" PRIu64 \"\\n\"\n\
+                 \"  },\\n\"\n\
+                 \"  \\\"unavailable\\\": {\\n\"\n\
+                 \"    \\\"local_retain\\\": \\\"ARC primitive instrumentation is not implemented in this P1 slice\\\",\\n\"\n\
+                 \"    \\\"local_release\\\": \\\"ARC primitive instrumentation is not implemented in this P1 slice\\\",\\n\"\n\
+                 \"    \\\"live_timers\\\": \\\"the monotonic timer runtime has not landed\\\"\\n\"\n\
+                 \"  }\\n\"\n\
+                 \"}\\n\",\n\
+                 context->poll_count,\n\
+                 context->yield_count,\n\
+                 context->frame_drops,\n\
+                 context->peak_live_frames,\n\
+                 context->ready_queue_enqueues,\n\
+                 context->ready_queue_dequeues\n\
+             );\n\
+             int close_status = fclose(output);\n\
+             return write_status < 0 || close_status != 0;\n\
          }\n",
     );
 }
@@ -424,6 +471,14 @@ pub(super) fn emit_async_function(
     out.push_str(&async_frame_ident(&function.name));
     out.push_str(
         " *)raw_frame;\n\
+             if (frame->started == 0u) {\n\
+                 frame->started = 1u;\n\
+                 frame->context = context;\n\
+                 context->live_frames += 1u;\n\
+                 if (context->live_frames > context->peak_live_frames) {\n\
+                     context->peak_live_frames = context->live_frames;\n\
+                 }\n\
+             }\n\
              context->poll_count += 1u;\n\
              switch (frame->state) {\n",
     );
@@ -542,7 +597,14 @@ pub(super) fn emit_async_function(
              if (frame->dropped != 0u) {\n\
                  return;\n\
              }\n\
-             frame->dropped = 1u;\n",
+             frame->dropped = 1u;\n\
+             if (frame->started != 0u && frame->context != NULL) {\n\
+                 frame->context->frame_drops += 1u;\n\
+                 if (frame->context->live_frames > 0u) {\n\
+                     frame->context->live_frames -= 1u;\n\
+                 }\n\
+                 frame->context = NULL;\n\
+             }\n",
     );
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(callee) = statement_async_call(statement, async_names) else {

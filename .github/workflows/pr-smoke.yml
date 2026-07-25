@@ -64,6 +64,19 @@ jobs:
           name: nomo-async-p0
           path: performance/results/async-p0.json
           if-no-files-found: error
+      - name: Run P1 async counter and zero-cost gates
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --manifest performance/async/manifest-p1.json
+          --require-clean
+          --output performance/results/async-p1.json
+      - name: Upload P1 async counter evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p1
+          path: performance/results/async-p1.json
+          if-no-files-found: error
 
   windows-host-runtime:
     name: Run native host runtimes on Windows
@@ -74,8 +87,19 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Verify the native C driver
         run: clang --version
-      - name: Run current-thread async yield executor
-        run: cargo run --locked --bin nomo -- run examples/async_yield
+      - name: Run current-thread async yield executor and counter probe
+        shell: pwsh
+        run: |
+          $metrics = Join-Path $env:RUNNER_TEMP "nomo-async-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $metrics
+          cargo run --locked --bin nomo -- run examples/async_yield
+          $payload = Get-Content -Raw $metrics | ConvertFrom-Json
+          if ($payload.schema -ne 1 -or $payload.runtime -ne "nomo-c99-current-thread") {
+            throw "unexpected async metrics identity"
+          }
+          if ($payload.counters.frame_allocations -ne 0 -or $payload.counters.frame_drops -ne 2) {
+            throw "unexpected async frame counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -122,8 +146,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run current-thread async yield executor
-        run: cargo run --locked --bin nomo -- run examples/async_yield
+      - name: Run current-thread async yield executor and counter probe
+        shell: bash
+        run: |
+          metrics="$RUNNER_TEMP/nomo-async-metrics.json"
+          NOMO_ASYNC_METRICS_PATH="$metrics" \
+            cargo run --locked --bin nomo -- run examples/async_yield
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert p["counters"]["frame_allocations"] == 0 and p["counters"]["frame_drops"] == 2' "$metrics"
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

@@ -21,10 +21,12 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 REPOSITORY_ROOT / "performance" / "async" / "manifest.json"
             ).read_text(encoding="utf-8")
         )
-
-    def test_repository_manifest_is_valid_and_pins_go_patch(self) -> None:
-        benchmark.validate_manifest(self.manifest)
-        catalog = json.loads(
+        self.p1_manifest = json.loads(
+            (
+                REPOSITORY_ROOT / "performance" / "async" / "manifest-p1.json"
+            ).read_text(encoding="utf-8")
+        )
+        self.catalog = json.loads(
             (
                 REPOSITORY_ROOT
                 / "performance"
@@ -32,7 +34,12 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 / self.manifest["counter_catalog"]
             ).read_text(encoding="utf-8")
         )
-        benchmark.validate_counter_catalog(catalog)
+
+    def test_repository_manifest_is_valid_and_pins_go_patch(self) -> None:
+        benchmark.validate_manifest(self.manifest)
+        benchmark.validate_counter_catalog(self.catalog)
+        benchmark.validate_manifest(self.p1_manifest)
+        self.assertEqual(self.p1_manifest["phase"], "P1")
         self.assertEqual(
             self.manifest["toolchains"]["go"]["version"],
             "go1.25.12",
@@ -59,6 +66,18 @@ class AsyncBenchmarkTests(unittest.TestCase):
         with self.assertRaisesRegex(
             benchmark.HarnessError,
             "cancellation_storm",
+        ):
+            benchmark.validate_manifest(manifest)
+
+    def test_p1_manifest_requires_an_enabled_counter_gate(self) -> None:
+        manifest = copy.deepcopy(self.p1_manifest)
+        for workload in manifest["workloads"]:
+            if workload["kind"] == "runtime_counter_gate":
+                workload["enabled"] = False
+
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "must enable a runtime counter gate",
         ):
             benchmark.validate_manifest(manifest)
 
@@ -139,6 +158,100 @@ class AsyncBenchmarkTests(unittest.TestCase):
             result["forbidden_pattern_counts"],
             {"nomo_executor": 0, "__atomic_": 0},
         )
+        self.assertEqual(result["required_pattern_counts"], {})
+
+    def test_static_gate_requires_exact_generated_c_counts(self) -> None:
+        with tempfile.TemporaryDirectory() as temporary:
+            source = Path(temporary) / "main.c"
+            source.write_text(
+                "void nomo_async_metrics_export(void) {}\n"
+                "nomo_async_metrics_export();\n",
+                encoding="utf-8",
+            )
+            snapshot = {
+                "gate": "p1-runtime-counters",
+                "required_absent_generated_c_patterns": [],
+                "required_generated_c_pattern_counts": {
+                    "nomo_async_metrics_export": 2,
+                },
+            }
+
+            result = benchmark.scan_static_gate(source, snapshot)
+            self.assertEqual(
+                result["required_pattern_counts"],
+                {"nomo_async_metrics_export": 2},
+            )
+            snapshot["required_generated_c_pattern_counts"][
+                "nomo_async_metrics_export"
+            ] = 1
+            with self.assertRaisesRegex(
+                benchmark.HarnessError,
+                "expected:1,found:2",
+            ):
+                benchmark.scan_static_gate(source, snapshot)
+
+    def test_runtime_counter_payload_is_catalog_checked_and_exact(self) -> None:
+        payload = {
+            "schema": 1,
+            "runtime": "nomo-c99-current-thread",
+            "runtime_abi": 1,
+            "counter_catalog_schema": 1,
+            "counters": {
+                "poll_calls": 5,
+                "cooperative_yields": 2,
+                "frame_allocations": 0,
+                "frame_drops": 2,
+                "peak_live_frames": 2,
+                "ready_queue_enqueues": 2,
+                "ready_queue_dequeues": 2,
+            },
+            "unavailable": {
+                "local_retain": "not implemented",
+                "local_release": "not implemented",
+                "live_timers": "not implemented",
+            },
+        }
+        expected = {
+            "counters": {
+                "poll_calls": 5,
+                "frame_allocations": 0,
+            },
+            "unavailable": [
+                "local_retain",
+                "local_release",
+                "live_timers",
+            ],
+        }
+
+        benchmark.validate_runtime_counter_payload(
+            payload,
+            self.catalog,
+            expected,
+        )
+
+        invalid = copy.deepcopy(payload)
+        invalid["counters"]["poll_calls"] = -1
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "non-negative integer",
+        ):
+            benchmark.validate_runtime_counter_payload(
+                invalid,
+                self.catalog,
+                expected,
+            )
+
+        unknown = copy.deepcopy(payload)
+        unknown["counters"]["mystery"] = 1
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "unknown counters: mystery",
+        ):
+            benchmark.validate_runtime_counter_payload(
+                unknown,
+                self.catalog,
+                expected,
+            )
 
     def test_p0_result_rejects_a_performance_claim(self) -> None:
         result = {
@@ -153,7 +266,7 @@ class AsyncBenchmarkTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             benchmark.HarnessError,
-            "must not allow a performance claim",
+            "pre-reactor result must not allow a performance claim",
         ):
             benchmark.validate_result(result, 5)
 

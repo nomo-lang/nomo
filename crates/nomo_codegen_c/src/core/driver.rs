@@ -407,6 +407,12 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         if uses_sqlite_runtime(program) {
             out.push_str("    nomo_sqlite_shutdown();\n");
         }
+        out.push_str(
+            "    if (nomo_async_metrics_export(&nomo__context) != 0) {\n\
+                 fputs(\"error: async metrics export failed\\n\", stderr);\n\
+                 return 1;\n\
+             }\n",
+        );
         out.push_str("    return nomo__status;\n");
     } else if let Some(result_args) = result_void_error(&main.return_type) {
         let result_type = c_enum_ident("Result", &result_args);

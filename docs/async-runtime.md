@@ -66,8 +66,13 @@ On the native C99 backend, a suspend call chain that reaches
 - idempotent child-first frame drop that clears ownership before release.
 
 This slice creates no OS thread, heap task, reactor, or atomic metadata. The
-generated context records poll, yield, enqueue, and dequeue counters internally;
-versioned benchmark export is deferred until the P1 counter contract is ready.
+generated context records poll, yield, frame-drop/live-frame, enqueue, and
+dequeue counters. Native programs export the versioned
+`nomo-c99-current-thread` JSON payload only when
+`NOMO_ASYNC_METRICS_PATH` is set; ordinary runs perform no metrics I/O.
+The P1 benchmark collects that payload in a separate probe after measured runs.
+ARC primitive counters and timers remain explicitly unavailable rather than
+being reported as zero.
 Locals that die before a suspension are released without entering the frame.
 Immutable locals used after a suspension are moved into the frame; only those
 referenced in a resumed segment are reintroduced as non-owning C aliases.
@@ -112,6 +117,6 @@ Later slices must still prove, rather than assume:
 - fair, version-pinned Nomo-versus-Go measurements without weakening either
   workload.
 
-The P0 controls and raw evidence format live in
+The P0/P1 controls and raw evidence format live in
 [`performance/async`](../performance/async/README.md). The runnable current
 slice is [`examples/async_yield`](../examples/async_yield).

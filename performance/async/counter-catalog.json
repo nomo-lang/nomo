@@ -2,29 +2,46 @@
   "schema": 1,
   "counters": [
     {
+      "name": "poll_calls",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Number of generated suspend-frame poll function invocations, including inline child polls."
+    },
+    {
+      "name": "cooperative_yields",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Number of task.yield_now suspension boundaries that returned PENDING."
+    },
+    {
       "name": "frame_allocations",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Logical heap or slab allocations for coroutine frames after allocator warm-up; stack and embedded child frames do not count."
     },
     {
       "name": "frame_drops",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Started coroutine frames whose idempotent drop plan executed for the first time."
     },
     {
       "name": "peak_live_frames",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Maximum simultaneously started and not-yet-dropped coroutine frames."
     },
     {
       "name": "ready_queue_enqueues",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Successful ready-queue enqueue operations."
     },
     {
       "name": "ready_queue_dequeues",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Ready-queue entries removed for polling."
     },
     {
       "name": "reactor_registrations",
@@ -39,12 +56,14 @@
     {
       "name": "local_retain",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Non-atomic ARC retain primitive operations executed by the measured program."
     },
     {
       "name": "local_release",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Non-atomic ARC release primitive operations executed by the measured program."
     },
     {
       "name": "atomic_retain",
@@ -84,7 +103,8 @@
     {
       "name": "live_timers",
       "unit": "count",
-      "available_phase": "P1"
+      "available_phase": "P1",
+      "semantics": "Current owner-local timer registrations at the observation point."
     },
     {
       "name": "blocking_jobs_queued",

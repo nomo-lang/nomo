@@ -7956,6 +7956,105 @@ fn main() -> void {
 }
 
 #[test]
+fn async_runtime_exports_versioned_counters_without_polluting_program_output() {
+    let root = temp_test_root("async-runtime-counters");
+    reset_dir(&root);
+    let project = root.join("counter_probe");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"counter_probe\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn yield_once() -> void {
+    io.println("child-before")
+    task.yield_now()
+    io.println("child-after")
+}
+
+suspend fn main() -> void {
+    io.println("before")
+    yield_once()
+    task.yield_now()
+    io.println("after")
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("runtime-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "before\nchild-before\nchild-after\nafter\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["schema"], 1);
+    assert_eq!(metrics["runtime"], "nomo-c99-current-thread");
+    assert_eq!(metrics["runtime_abi"], 1);
+    assert_eq!(metrics["counter_catalog_schema"], 1);
+    assert_eq!(metrics["counters"]["poll_calls"], 5);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 2);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 2);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 2);
+    assert_eq!(metrics["counters"]["ready_queue_enqueues"], 2);
+    assert_eq!(metrics["counters"]["ready_queue_dequeues"], 2);
+    assert!(metrics["unavailable"]["local_retain"].is_string());
+    assert!(metrics["unavailable"]["local_release"].is_string());
+    assert!(metrics["unavailable"]["live_timers"].is_string());
+    assert!(
+        !fs::read_to_string(&metrics_path)
+            .unwrap()
+            .contains(metrics_path.to_string_lossy().as_ref())
+    );
+
+    let secret_path = root
+        .join("super-secret-metrics-directory")
+        .join("runtime-counters.json");
+    let rejected = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &secret_path)
+        .output()
+        .unwrap();
+    assert!(!rejected.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&rejected.stdout),
+        "before\nchild-before\nchild-after\nafter\n"
+    );
+    let stderr = String::from_utf8_lossy(&rejected.stderr);
+    assert_eq!(
+        stderr,
+        "error: async metrics export failed\nprogram exited with status 1\n"
+    );
+    assert!(!stderr.contains("super-secret"));
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_allows_option_question_early_return() {
     let root = temp_test_root("option-question-early-return");
     reset_dir(&root);

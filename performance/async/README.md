@@ -3,8 +3,8 @@
 Language: English | [中文](README.zh-CN.md)
 
 This directory implements the evidence contract from RFC 0034. It does not
-claim that the P0 compiler is a production async runtime. The only enabled
-workloads are:
+claim that the current P1 compiler is a production async runtime. The P0
+manifest keeps these controls:
 
 - `sync_unused`, which compiles a synchronous program using strings, arrays,
   and the deterministic ordered map, then rejects async/thread/atomic symbols
@@ -14,17 +14,19 @@ workloads are:
   source, binary, output, toolchain, sampling, and result-schema plumbing, but
   is explicitly ineligible for a performance claim.
 
-All RFC-required async workloads already have manifest entries. They remain
-disabled with their implementation phase recorded, so missing runtime coverage
-cannot look like a passing benchmark.
+The separate `manifest-p1.json` repeats both zero-cost controls and enables
+`yield_counter_probe`. The probe executes outside measured samples with
+`NOMO_ASYNC_METRICS_PATH` set, then validates the versioned current-thread JSON
+contract against `counter-catalog.json`. For a two-frame, two-yield chain it
+requires zero heap/slab frame allocations, two idempotent frame drops, peak
+two live frames, two queue round trips, five polls, and two cooperative yields.
 
-The separate P1 `async_yield` implementation now provides nested stackless
-suspend-call frames and a current-thread executor. It is intentionally not
-added to this P0 measurement series: top-level immutable locals now use exact
-liveness spills and child-first ownership-aware frame drops, but
-argument/result frames, complete unwind paths, structured spawn/join, timers,
-and runtime counter export are not complete. A versioned P1 series will enable
-the relevant workloads without rewriting the P0 evidence.
+All RFC-required async workloads already have manifest entries. Unsupported
+workloads remain disabled with their implementation phase recorded, so missing
+runtime coverage cannot look like a pass. ARC primitive counters and timers
+remain explicitly unavailable in the P1 payload rather than being reported as
+zero. Argument/result frames, complete unwind paths, structured spawn/join, and
+timers are not complete.
 
 ## Run
 
@@ -36,19 +38,26 @@ python3 scripts/async_benchmark.py \
   --nomo target/release/nomo \
   --require-clean \
   --output performance/results/async-p0.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
+  --manifest performance/async/manifest-p1.json \
+  --require-clean \
+  --output performance/results/async-p1.json
 ```
 
 The harness rejects a mismatched Go patch, fewer than five measured runs,
 different output bytes, unexpected stderr, non-zero async/atomic symbol counts,
+incorrect generated-C symbol counts, unknown/negative/missing runtime counters,
 failed builds, and dirty checkouts when `--require-clean` is used. Every result
 records SHA-256 identities for the manifest, harness, counter catalog, sources,
-Nomo/Go/C toolchains, and produced binaries.
+Nomo/Go/C toolchains, and produced binaries. A requested metrics path that
+cannot be opened fails with a generic message and never prints the path.
 
-CI uploads raw P0 JSON instead of committing runner-specific timing as a stable
-baseline. Controlled-host evidence must also set `NOMO_BENCH_POWER_MODE` and
-enforce process affinity once those controls arrive with P1/P2. P0 records
-per-process wall time, CPU time, and POSIX `wait4` peak RSS, but it does not yet
-record steady RSS. These samples only test the harness pipeline, and no
+CI uploads raw P0 and P1 JSON instead of treating hosted-runner timing as a
+stable baseline. Controlled-host evidence must also set
+`NOMO_BENCH_POWER_MODE` and enforce process affinity once that control lands.
+The current samples record per-process wall time, CPU time, and POSIX `wait4`
+peak RSS, but not steady RSS. They test harness and counter plumbing only; no
 Nomo-versus-Go ratio is calculated.
 
 ## Change control

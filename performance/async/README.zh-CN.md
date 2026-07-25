@@ -2,8 +2,8 @@
 
 语言： [English](README.md) | 中文
 
-本目录实现 RFC 0034 的证据契约，但不声称 P0 compiler 已经是生产级 async
-runtime。目前仅启用两个 workload：
+本目录实现 RFC 0034 的证据契约，但不声称当前 P1 compiler 已经是生产级
+async runtime。P0 manifest 保留两个 control：
 
 - `sync_unused`：编译使用 string、array 与确定性有序 map 的同步程序，并确认
   generated C 不含 async、thread 或 atomic symbol；
@@ -11,15 +11,17 @@ runtime。目前仅启用两个 workload：
   reference 执行同一确定性计算。它验证 source、binary、output、toolchain、
   sampling 与 result schema 管线，但明确不能用于性能宣传。
 
-RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled，
-并记录预计实现阶段，避免“未覆盖”看起来像“已通过”。
+独立的 `manifest-p1.json` 会再次运行两个 zero-cost control，并启用
+`yield_counter_probe`。探针不混入 measured sample；它单独设置
+`NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验版本化的
+current-thread JSON 契约。两层 frame、两次 yield 必须得到：heap/slab frame
+allocation 为 0、幂等 frame drop 为 2、peak live frame 为 2、ready queue
+往返为 2、poll 为 5、cooperative yield 为 2。
 
-独立的 P1 `async_yield` 实现已经提供嵌套 stackless suspend-call frame 与
-current-thread executor；顶层不可变局部变量已经使用精确 liveness spill 和
-child-first ownership-aware frame drop。但它不会混入这组 P0 measurement
-series：参数/返回值 frame、完整 unwind path、structured spawn/join、timer
-与 runtime counter export 尚未完成。后续会用版本化 P1 series 启用相关
-workload，不会改写既有 P0 证据。
+RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled
+并记录阶段，避免“未覆盖”看起来像“已通过”。ARC primitive counter 和 timer
+在 P1 payload 中明确标记 unavailable，而不是伪装成 0。参数/返回值 frame、
+完整 unwind path、structured spawn/join 与 timer 仍未完成。
 
 ## 运行方式
 
@@ -31,18 +33,25 @@ python3 scripts/async_benchmark.py \
   --nomo target/release/nomo \
   --require-clean \
   --output performance/results/async-p0.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
+  --manifest performance/async/manifest-p1.json \
+  --require-clean \
+  --output performance/results/async-p1.json
 ```
 
 Go patch 不匹配、少于五次 measured run、两侧输出 byte 不同、出现 stderr、
-async/atomic symbol 非零、build 失败，或使用 `--require-clean` 时 checkout 不干净，
+async/atomic symbol 非零、generated-C symbol 数量不符、runtime counter
+未知/负数/缺失、build 失败，或使用 `--require-clean` 时 checkout 不干净，
 harness 都会失败。每份结果记录 manifest、harness、counter catalog、source、
-Nomo/Go/C toolchain 与产物 binary 的 SHA-256。
+Nomo/Go/C toolchain 与产物 binary 的 SHA-256。请求的 metrics path 无法打开时，
+程序只返回不包含路径的通用错误。
 
-CI 上传原始 P0 JSON，不把 hosted runner 的 timing 当成稳定 baseline。后续在
-受控机器采集 release evidence 时还要设置 `NOMO_BENCH_POWER_MODE`，并在 P1/P2
-强制 process affinity。P0 记录每个 process 的 wall time、CPU time 与 POSIX
-`wait4` peak RSS，但还不记录 steady RSS。这些 sample 只验证 harness 管线，
-不会计算 Nomo/Go 比率。
+CI 上传原始 P0 与 P1 JSON，不把 hosted runner timing 当成稳定 baseline。
+后续在受控机器采集 release evidence 时还要设置 `NOMO_BENCH_POWER_MODE` 并
+强制 process affinity。当前记录每个 process 的 wall time、CPU time 与 POSIX
+`wait4` peak RSS，但还不记录 steady RSS。这些 sample 只验证 harness 与
+counter 管线，不会计算 Nomo/Go 比率。
 
 ## 变更控制
 

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Run the versioned P0 async benchmark and zero-cost control harness."""
+"""Run versioned async benchmark, zero-cost, and runtime-counter gates."""
 
 from __future__ import annotations
 
@@ -117,7 +117,7 @@ def validate_result(result: dict[str, Any], minimum_runs: int) -> None:
         raise HarnessError("result identity does not match schema version 1")
     claims = result.get("claims", {})
     if claims.get("performance_claim_allowed") is not False:
-        raise HarnessError("P0 result must not allow a performance claim")
+        raise HarnessError("pre-reactor result must not allow a performance claim")
     workloads = result.get("workloads", [])
     ids = [workload.get("id") for workload in workloads]
     if len(ids) != len(set(ids)):
@@ -199,6 +199,10 @@ def toolchain_metadata(path: Path, version: str) -> dict[str, str]:
 def validate_manifest(manifest: dict[str, Any]) -> None:
     if manifest.get("schema") != 1:
         raise HarnessError("unsupported async benchmark manifest schema")
+    phase_order = {f"P{index}": index for index in range(7)}
+    phase = manifest.get("phase")
+    if phase not in phase_order:
+        raise HarnessError(f"unsupported async benchmark phase: {phase}")
     defaults = manifest.get("defaults", {})
     if int(defaults.get("measured_runs", 0)) < 5:
         raise HarnessError("manifest must require at least five measured runs")
@@ -224,6 +228,21 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     missing = sorted(required.difference(ids))
     if missing:
         raise HarnessError(f"manifest is missing required workloads: {', '.join(missing)}")
+    for workload in workloads:
+        available_phase = workload.get("available_phase")
+        if available_phase not in phase_order:
+            raise HarnessError(
+                f"workload {workload.get('id')} has an invalid available phase"
+            )
+        if workload.get("enabled") and phase_order[available_phase] > phase_order[phase]:
+            raise HarnessError(
+                f"workload {workload.get('id')} cannot be enabled before {available_phase}"
+            )
+    if phase == "P1" and not any(
+        workload.get("enabled") and workload.get("kind") == "runtime_counter_gate"
+        for workload in workloads
+    ):
+        raise HarnessError("P1 manifest must enable a runtime counter gate")
 
 
 def validate_counter_catalog(catalog: dict[str, Any]) -> None:
@@ -238,6 +257,84 @@ def validate_counter_catalog(catalog: dict[str, Any]) -> None:
             raise HarnessError(
                 f"counter {counter.get('name')} must define unit and available phase"
             )
+        if counter.get("available_phase") == "P1" and not counter.get("semantics"):
+            raise HarnessError(
+                f"P1 counter {counter.get('name')} must define exact semantics"
+            )
+
+
+def validate_runtime_counter_payload(
+    payload: dict[str, Any],
+    catalog: dict[str, Any],
+    expected: dict[str, Any],
+) -> None:
+    required_top_level = {
+        "schema",
+        "runtime",
+        "runtime_abi",
+        "counter_catalog_schema",
+        "counters",
+        "unavailable",
+    }
+    if set(payload) != required_top_level:
+        raise HarnessError("runtime counter payload has unexpected top-level fields")
+    if payload.get("schema") != 1:
+        raise HarnessError("unsupported runtime counter payload schema")
+    if payload.get("runtime") != "nomo-c99-current-thread":
+        raise HarnessError("runtime counter payload has an unexpected runtime")
+    if payload.get("runtime_abi") != 1:
+        raise HarnessError("runtime counter payload has an unexpected ABI")
+    if payload.get("counter_catalog_schema") != catalog.get("schema"):
+        raise HarnessError("runtime counter payload catalog schema does not match")
+
+    counters = payload.get("counters")
+    unavailable = payload.get("unavailable")
+    if not isinstance(counters, dict) or not isinstance(unavailable, dict):
+        raise HarnessError("runtime counters and unavailable entries must be objects")
+    catalog_entries = {
+        str(counter["name"]): counter for counter in catalog.get("counters", [])
+    }
+    unknown = sorted((set(counters) | set(unavailable)).difference(catalog_entries))
+    if unknown:
+        raise HarnessError(
+            f"runtime counter payload contains unknown counters: {', '.join(unknown)}"
+        )
+    overlap = sorted(set(counters).intersection(unavailable))
+    if overlap:
+        raise HarnessError(
+            f"runtime counters cannot be both available and unavailable: {', '.join(overlap)}"
+        )
+    for name, value in counters.items():
+        if type(value) is not int or value < 0:
+            raise HarnessError(f"runtime counter {name} must be a non-negative integer")
+    for name, reason in unavailable.items():
+        if not isinstance(reason, str) or not reason:
+            raise HarnessError(f"unavailable runtime counter {name} needs a reason")
+
+    p1_names = {
+        name
+        for name, entry in catalog_entries.items()
+        if entry.get("available_phase") == "P1"
+    }
+    unaccounted = sorted(p1_names.difference(counters, unavailable))
+    if unaccounted:
+        raise HarnessError(
+            f"runtime counter payload does not account for P1 counters: {', '.join(unaccounted)}"
+        )
+
+    for name, value in expected.get("counters", {}).items():
+        if counters.get(name) != value:
+            raise HarnessError(
+                f"runtime counter {name} expected {value}, found {counters.get(name)}"
+            )
+    missing_unavailable = sorted(
+        set(expected.get("unavailable", [])).difference(unavailable)
+    )
+    if missing_unavailable:
+        raise HarnessError(
+            "runtime counter payload is missing unavailable entries: "
+            + ", ".join(missing_unavailable)
+        )
 
 
 def find_single(root: Path, pattern: str, label: str) -> Path:
@@ -305,10 +402,29 @@ def scan_static_gate(main_c: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
     if failures:
         rendered = ", ".join(f"{pattern}={count}" for pattern, count in failures.items())
         raise HarnessError(f"{snapshot['gate']} generated-C gate failed: {rendered}")
+    required_counts = {
+        pattern: generated.count(pattern)
+        for pattern in snapshot.get("required_generated_c_pattern_counts", {})
+    }
+    required_failures = {
+        pattern: {
+            "expected": snapshot["required_generated_c_pattern_counts"][pattern],
+            "found": count,
+        }
+        for pattern, count in required_counts.items()
+        if count != snapshot["required_generated_c_pattern_counts"][pattern]
+    }
+    if required_failures:
+        rendered = ", ".join(
+            f"{pattern}=expected:{details['expected']},found:{details['found']}"
+            for pattern, details in required_failures.items()
+        )
+        raise HarnessError(f"{snapshot['gate']} generated-C gate failed: {rendered}")
     return {
         "gate": snapshot["gate"],
         "generated_c_sha256": sha256_file(main_c),
         "forbidden_pattern_counts": counts,
+        "required_pattern_counts": required_counts,
         "passed": True,
     }
 
@@ -413,6 +529,42 @@ def measure_implementation(
         "samples": samples,
         "summary": summarize_samples(samples),
     }
+
+
+def probe_runtime_counters(
+    executable: Path,
+    workload_id: str,
+    expected_stdout: bytes,
+    runtime_spec: dict[str, Any],
+    catalog: dict[str, Any],
+    temporary_root: Path,
+    timeout_seconds: float,
+) -> dict[str, Any]:
+    metrics_path = temporary_root / f"{workload_id}-runtime-counters.json"
+    env = os.environ.copy()
+    env["NOMO_ASYNC_METRICS_PATH"] = str(metrics_path)
+    completed = run_checked(
+        [str(executable)],
+        env=env,
+        timeout_seconds=timeout_seconds,
+    )
+    if completed.stdout != expected_stdout:
+        raise HarnessError(f"runtime counter probe output mismatch for {executable}")
+    if completed.stderr:
+        raise HarnessError(
+            "runtime counter probe wrote stderr: "
+            + completed.stderr.decode("utf-8", errors="replace")
+        )
+    if not metrics_path.is_file():
+        raise HarnessError("runtime counter probe did not write its payload")
+    try:
+        payload = json.loads(metrics_path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError) as error:
+        raise HarnessError(f"runtime counter payload is not valid JSON: {error}") from error
+    if not isinstance(payload, dict):
+        raise HarnessError("runtime counter payload must be an object")
+    validate_runtime_counter_payload(payload, catalog, runtime_spec)
+    return payload
 
 
 def workload_result_unavailable(workload: dict[str, Any]) -> dict[str, Any]:
@@ -544,6 +696,17 @@ def main() -> int:
                     timeout_seconds,
                 )
             }
+            runtime_counters = snapshot["runtime_counters"]
+            if runtime_counters.get("available") is True:
+                runtime_counters = probe_runtime_counters(
+                    nomo_executable,
+                    workload["id"],
+                    expected_stdout,
+                    runtime_counters,
+                    counter_catalog,
+                    temporary_root,
+                    timeout_seconds,
+                )
 
             if "go_project" in workload:
                 go_source = manifest_root / workload["go_project"]
@@ -573,7 +736,7 @@ def main() -> int:
                     "claim_eligible": bool(workload["claim_eligible"]),
                     "implementations": implementations,
                     "static_gate": static_gate,
-                    "runtime_counters": snapshot["runtime_counters"],
+                    "runtime_counters": runtime_counters,
                     "comparison": {
                         "performed": False,
                         "reason": workload.get(
@@ -605,16 +768,18 @@ def main() -> int:
             "warmup_runs": warmup_runs,
             "measured_runs": measured_runs,
             "resource_note": (
-                "P0 control records per-process wall, CPU, and POSIX wait4 peak RSS. "
-                "Steady RSS and non-POSIX collectors arrive with async workloads."
+                f"{manifest['phase']} controls record per-process wall, CPU, and "
+                "POSIX wait4 peak RSS. Steady RSS and non-POSIX collectors arrive "
+                "with later async workloads."
             ),
         },
         "workloads": results,
         "claims": {
             "performance_claim_allowed": False,
             "reason": (
-                "P0 only validates harness plumbing and zero-cost generated-C gates; "
-                "no nonblocking I/O workload or production async runtime exists yet."
+                f"{manifest['phase']} evidence validates only the implemented "
+                "generated-C and runtime-counter gates; no production reactor "
+                "performance claim is available."
             ),
         },
     }

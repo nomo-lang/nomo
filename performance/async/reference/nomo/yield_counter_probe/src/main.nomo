@@ -1,0 +1,17 @@
+package app.main
+
+import std.io
+import std.task
+
+suspend fn yield_once() -> void {
+    io.println("child-before")
+    task.yield_now()
+    io.println("child-after")
+}
+
+suspend fn main() -> void {
+    io.println("before")
+    yield_once()
+    task.yield_now()
+    io.println("after")
+}

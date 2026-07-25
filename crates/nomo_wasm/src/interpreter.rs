@@ -395,6 +395,9 @@ impl<'a> Interpreter<'a> {
                 fields: HashMap::from([("handle".to_string(), Value::U64(0))]),
             });
         }
+        if name == "__nomo_structured_task_cancel" {
+            return Ok(Value::Void);
+        }
         if matches!(
             name,
             "__nomo_task_join"

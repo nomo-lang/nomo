@@ -50,6 +50,12 @@
       "semantics": "Ready-queue enqueue attempts rejected because the bounded owner-local FIFO was full."
     },
     {
+      "name": "ready_queue_cancellations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Ready-queue entries removed without polling because their owner-local structured task was cancelled."
+    },
+    {
       "name": "task_spawns",
       "unit": "count",
       "available_phase": "P1",
@@ -66,6 +72,12 @@
       "unit": "count",
       "available_phase": "P1",
       "semantics": "Structured join poll boundaries that returned PENDING because the selected child was incomplete."
+    },
+    {
+      "name": "task_cancellations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Incomplete structured task frames transitioned exactly once to the cancelled terminal state."
     },
     {
       "name": "timer_registrations",

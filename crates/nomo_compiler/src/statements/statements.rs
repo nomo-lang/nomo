@@ -512,7 +512,7 @@ pub(super) fn lower_stmt_into(
                 &span.text,
             ));
         }
-        validate_structured_scope(path, body, span)?;
+        let unjoined = validate_structured_scope(path, body, span)?;
         let mut task_scope = scope.clone();
         task_scope.insert(
             TASK_SCOPE_BINDING.to_string(),
@@ -536,6 +536,12 @@ pub(super) fn lower_stmt_into(
                 loop_depth,
                 out,
             )?;
+        }
+        for handle in unjoined {
+            out.push(Statement::Expr(ValueExpr::Call {
+                name: BUILTIN_TASK_STRUCTURED_CANCEL_EXPR.to_string(),
+                args: vec![ValueExpr::Variable(handle)],
+            }));
         }
         return Ok(());
     }
@@ -573,7 +579,7 @@ fn validate_structured_scope(
     path: &Path,
     body: &[Stmt],
     scope_span: &Span,
-) -> Result<(), Diagnostic> {
+) -> Result<Vec<String>, Diagnostic> {
     let mut handles = HashMap::<String, bool>::new();
     for (index, statement) in body.iter().enumerate() {
         let span = statement_span(statement);
@@ -761,11 +767,14 @@ fn validate_structured_scope(
         .filter_map(|(name, joined)| (!joined).then_some(name.as_str()))
         .collect::<Vec<_>>();
     unjoined.sort_unstable();
-    if !unjoined.is_empty() {
+    let exits_with_return = body
+        .last()
+        .is_some_and(|statement| matches!(statement, Stmt::Return { .. }));
+    if exits_with_return && !unjoined.is_empty() {
         return Err(Diagnostic::new(
             "E0872",
             format!(
-                "task scope exits with unjoined handle(s): {}; join every child before leaving the scope",
+                "task scope return has unjoined handle(s): {}; join every child before this early control transfer",
                 unjoined.join(", ")
             ),
             path,
@@ -775,5 +784,5 @@ fn validate_structured_scope(
             &scope_span.text,
         ));
     }
-    Ok(())
+    Ok(unjoined.into_iter().map(str::to_string).collect())
 }

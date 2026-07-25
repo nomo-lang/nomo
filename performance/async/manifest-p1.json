@@ -108,6 +108,17 @@
       "note": "Measures one current-thread batch of 32 scope-owned void children against 32 Go goroutines on the pinned single-core configuration; it is a correctness and evidence workload, not a performance claim."
     },
     {
+      "id": "structured_cancel_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/structured_cancel_probe",
+      "expected_stdout": "slow before\ngate\nscope closed\n",
+      "snapshot": "snapshots/structured-cancel-probe.json",
+      "note": "Validates normal-scope cancellation of one armed timer child and two never-polled ready children, including exact queue, task, timer, and frame counters."
+    },
+    {
       "id": "idle_suspended_tasks",
       "kind": "required_async_workload",
       "available_phase": "P1",

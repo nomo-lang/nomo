@@ -91,6 +91,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   `TaskError { code: "queue_full", ... }`；
 - 在 drop child frame 前，把 typed child result 恰好一次 move 到 join 的成功
   payload；
+- 编译器在 normal scope 边界插入清理：取消未 join child、从 ready queue
+  移除其 entry、disarm timer，并在执行 scope 后语句前 drop frame；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
@@ -98,8 +100,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。ready
 的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
 frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
-frame drop/live frame、入队/出队/饱和、structured spawn/join/join suspension，
-以及 timer
+frame drop/live frame、入队/出队/饱和/取消、
+structured spawn/join/join suspension/取消，以及 timer
 注册/到期/取消/live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
@@ -136,17 +138,19 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
-内部挂起、`?`、显式 panic、取消和 reactor I/O 都属于后续小 PR。
+内部挂起、`?`、显式 panic、显式取消传播和 reactor I/O 都属于后续小 PR。
 
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
-handle 必须使用推导得到的不可变 binding，不得离开 scope，并且必须恰好 join
-一次。target 必须是直接、未限定、non-generic 的顶层 `suspend fn`，参数不可变
-且 frame-safe。其返回类型会形成 `Task<T>`，而 `task.join(handle)` 返回
+handle 必须使用推导得到的不可变 binding 且不得离开 scope；若要观察结果，
+只能恰好 join 一次。target 必须是直接、未限定、non-generic 的顶层
+`suspend fn`，参数不可变且 frame-safe。其返回类型会形成 `Task<T>`，而
+`task.join(handle)` 返回
 `Result<T, TaskError>`。只有在所有 child 都已经显式 join 后，才允许用最后一个
-`return` 离开 scope，从而让嵌套 suspend helper 汇聚 typed result。嵌套 scope、
-scope 内嵌套控制流、仍有未 join child 的 early exit、defer/unsafe、取消、
-deadline、channel 与 select 仍属于后续切片。E0871、E0872、E0875 与 E0876
-会在 codegen 前拒绝这些情况。
+`return` 离开 scope，从而让嵌套 suspend helper 汇聚 typed result。normal
+fallthrough 会自动取消并清理未 join child，取消后不会继续执行其 body。嵌套
+scope、scope 内嵌套控制流、仍有未 join child 的 early control transfer、
+defer/unsafe、显式取消、deadline、channel 与 select 仍属于后续切片。E0871、
+E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -161,7 +165,8 @@ structured task 还覆盖 FIFO 交错、单次 join ownership、waiter wakeup、
 queue saturation、browser 不执行 child，以及幂等 child cleanup。
 managed typed result 还会用 AddressSanitizer 覆盖 child 到 join 的 ownership
 transfer、嵌套 helper 唤醒 root frame、post-join scope return 和 parent 重复
-drop。
+drop。normal-scope cancellation 还会在 AddressSanitizer 下覆盖 armed timer、
+从未 poll 的 ready child，以及 managed 参数 release。
 后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
@@ -179,4 +184,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_timer`](../examples/async_timer)，以及
 [`examples/async_structured_void`](../examples/async_structured_void) 与
 [`examples/async_structured_results`](../examples/async_structured_results)，以及
-[`examples/async_structured_return`](../examples/async_structured_return)。
+[`examples/async_structured_return`](../examples/async_structured_return) 与
+[`examples/async_structured_cancel`](../examples/async_structured_cancel)。

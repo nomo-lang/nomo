@@ -232,3 +232,95 @@ fn emits_fputs_for_eprint_without_newline() {
         fputs_literal("partial error")
     )));
 }
+
+#[test]
+fn output_releases_owned_fragments_without_releasing_borrowed_values() {
+    let joined = ValueExpr::StringConcat {
+        left: Box::new(ValueExpr::Variable("message".to_string())),
+        right: Box::new(ValueExpr::StringConcat {
+            left: Box::new(ValueExpr::StringLiteral(" ".to_string())),
+            right: Box::new(ValueExpr::NumToString {
+                value: Box::new(ValueExpr::IntLiteral(7)),
+                value_type: ValueType::U64,
+            }),
+        }),
+    };
+    let program = Program {
+        consts: Vec::new(),
+        package: "app.main".to_string(),
+        imports: vec!["std.io".to_string()],
+        extern_functions: Vec::new(),
+        structs: Vec::new(),
+        enums: Vec::new(),
+        functions: vec![Function {
+            is_suspend: false,
+            package: "app.main".to_string(),
+            name: "main".to_string(),
+            params: Vec::new(),
+            return_type: ValueType::Void,
+            body: vec![
+                Statement::Let {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                    initializer: ValueExpr::StringLiteral("count".to_string()),
+                },
+                Statement::Println(joined.clone()),
+                Statement::Defer {
+                    call: DeferredCall::Eprint(joined),
+                },
+            ],
+        }],
+    };
+
+    let c = emit_c(&program);
+    assert_eq!(c.matches("nomo_num_u64_to_string(7)").count(), 2);
+    assert_eq!(
+        c.matches("nomo_string nomo__io_value = nomo_num_u64_to_string(7);")
+            .count(),
+        2
+    );
+    assert_eq!(c.matches("nomo_string_release(nomo__io_value);").count(), 2);
+    assert_eq!(c.matches("nomo_string_concat(").count(), 1);
+    assert_eq!(c.matches("nomo_string_release(nomo_message);").count(), 1);
+    assert!(c.contains("fputc('\\n', stdout);"));
+}
+
+#[test]
+fn output_releases_owned_function_results() {
+    let program = Program {
+        consts: Vec::new(),
+        package: "app.main".to_string(),
+        imports: vec!["std.io".to_string()],
+        extern_functions: Vec::new(),
+        structs: Vec::new(),
+        enums: Vec::new(),
+        functions: vec![
+            Function {
+                is_suspend: false,
+                package: "app.main".to_string(),
+                name: "render".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::String,
+                body: vec![Statement::Return(Some(ValueExpr::StringLiteral(
+                    "rendered".to_string(),
+                )))],
+            },
+            Function {
+                is_suspend: false,
+                package: "app.main".to_string(),
+                name: "main".to_string(),
+                params: Vec::new(),
+                return_type: ValueType::Void,
+                body: vec![Statement::Println(ValueExpr::Call {
+                    name: "render".to_string(),
+                    args: Vec::new(),
+                })],
+            },
+        ],
+    };
+
+    let c = emit_c(&program);
+    assert!(c.contains("nomo_string nomo__io_value = nomo_fn_render();"));
+    assert!(c.contains("puts(nomo__io_value.data);"));
+    assert!(c.contains("nomo_string_release(nomo__io_value);"));
+}

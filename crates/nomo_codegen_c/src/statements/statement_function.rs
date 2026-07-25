@@ -112,32 +112,10 @@ fn emit_deferred_call(out: &mut String, indent: usize, call: &DeferredCall) {
             emit_expr(out, expr);
             out.push_str(";\n");
         }
-        DeferredCall::Println(arg) => {
-            write_indent(out, indent);
-            out.push_str("puts(");
-            emit_string_data_expr(out, arg);
-            out.push_str(");\n");
-        }
-        DeferredCall::Print(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stdout);\n");
-        }
-        DeferredCall::Eprintln(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stderr);\n");
-            write_indent(out, indent);
-            out.push_str("fputc('\\n', stderr);\n");
-        }
-        DeferredCall::Eprint(arg) => {
-            write_indent(out, indent);
-            out.push_str("fputs(");
-            emit_string_data_expr(out, arg);
-            out.push_str(", stderr);\n");
-        }
+        DeferredCall::Println(arg) => emit_io_output(out, arg, false, true, indent),
+        DeferredCall::Print(arg) => emit_io_output(out, arg, false, false, indent),
+        DeferredCall::Eprintln(arg) => emit_io_output(out, arg, true, true, indent),
+        DeferredCall::Eprint(arg) => emit_io_output(out, arg, true, false, indent),
     }
 }
 

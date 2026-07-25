@@ -280,7 +280,6 @@ pub(super) fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
         | ValueExpr::NumParseI64 { value: expr }
         | ValueExpr::NumParseU64 { value: expr }
         | ValueExpr::NumParseF64 { value: expr }
-        | ValueExpr::NumToString { value: expr, .. }
         | ValueExpr::ArrayLen { array: expr }
         | ValueExpr::EnumVariant {
             payload: Some(expr),
@@ -341,6 +340,7 @@ pub(super) fn expr_may_share_array_storage(value: &ValueExpr) -> bool {
                 || expr_may_share_array_storage(port)
         }
         ValueExpr::StringConcat { .. }
+        | ValueExpr::NumToString { .. }
         | ValueExpr::StringIsEmpty { .. }
         | ValueExpr::StringContains { .. }
         | ValueExpr::StringStartsWith { .. }

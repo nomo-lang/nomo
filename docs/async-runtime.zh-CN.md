@@ -76,7 +76,9 @@ unavailable，而不是伪装成 0。
 后仍使用的不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用
 的值生成 non-owning C alias。内嵌 child 先 inline poll；同步完成时不分配也不
 进入 ready queue。正常完成和显式 early root drop 共用同一条 child-first 幂等
-清理路径。
+清理路径。不可变且 frame-safe 的调用参数按源码顺序只求值一次；共享 managed
+值 retain 进 child frame，owned temporary 直接 transfer，owned 结果会在
+child drop 前 move 到调用方的不可变 binding。
 
 Browser WASM 的有界沙盒解释器可以运行同一份源码。目前
 `task.yield_now()` 只表示 cooperative boundary；它还不会把控制权交还给
@@ -87,14 +89,13 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 ## 有意保留的限制
 
 对暂不支持的挂起形态，编译器报告 E0876，而不是生成错误代码。当前
-`task.yield_now()` 和对无参数、真正可能挂起函数的调用必须是独立语句；
-`task.sleep(Duration)` 必须作为不可变 `let` 的 initializer，并绑定为
-`Result<void, TaskError>`。所在 `suspend fn` 仍须 non-generic、无参数且返回
-`void`。不可变的顶层 scalar、string、struct、enum、Result 与已支持 array
-局部变量可以跨 suspension 存活，前提是所有传递 value field 都满足
-frame-safe。mutable local、borrow、guard、resource handle 或包含它的 wrapper、
-递归 suspend graph、控制流或其他表达式内部挂起、通用 suspend 函数参数/返回值、
-`?`、显式 panic、spawn/join、取消和 reactor I/O 都属于后续小 PR。
+`task.yield_now()` 和不返回值的 suspend 调用必须是独立语句；返回值的 suspend
+调用与 `task.sleep(Duration)` 必须作为不可变顶层 `let` 的 initializer。
+所在 `suspend fn` 仍须 non-generic；参数、结果和跨 suspension local 必须是
+不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
+async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
+handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
+内部挂起、`?`、显式 panic、spawn/join、取消和 reactor I/O 都属于后续小 PR。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它

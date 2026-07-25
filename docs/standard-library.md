@@ -309,9 +309,9 @@ task.close(task_value: Task) -> Result<void, TaskError>
 ```
 
 `task.yield_now` and `task.sleep` are the first new `suspend fn` runtime
-primitives. In P1, yield and parameterless suspend-function calls are standalone
-statements; sleep is an immutable `let` initializer returning
-`Result<void, TaskError>`. Native C99 execution uses a stack-allocated root
+primitives. In P1, yield and void suspend-function calls are standalone
+statements; value-returning suspend calls and sleep are immutable top-level
+`let` initializers. Native C99 execution uses a stack-allocated root
 frame with embedded child frames and a current-thread executor. Child polls run
 inline; yield enters the ready queue immediately, while a positive sleep
 registers a bounded owner-local monotonic timer and enters the queue only after
@@ -319,9 +319,11 @@ expiry. A non-positive sleep completes inline without registration or queue
 traffic. Immutable top-level locals with frame-safe transitive value fields can
 live across suspension: only live values enter frames, and managed ARC/COW
 fields use ownership bits so child-first normal completion and explicit early
-root drop are idempotent. Mutable locals, resource handles or wrappers
-containing them, recursive suspension, general suspend arguments/results, `?`,
-and explicit panic remain E0876 until their cleanup paths land. Browser WASM
+root drop are idempotent. Immutable frame-safe parameters evaluate once and
+managed results move before child drop. Mutable parameters/locals, resource
+handles or wrappers containing them, recursive suspension, suspending argument
+expressions, `?`, and explicit panic remain E0876 until their cleanup paths
+land. Browser WASM
 treats yield as a bounded cooperative boundary; sleep returns
 `runtime_unavailable` without evaluating its duration. The host-driven event
 backend is not implemented yet.

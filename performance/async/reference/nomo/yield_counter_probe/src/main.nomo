@@ -3,15 +3,16 @@ package app.main
 import std.io
 import std.task
 
-suspend fn yield_once() -> void {
+suspend fn yield_once(result: string) -> string {
     io.println("child-before")
     task.yield_now()
     io.println("child-after")
+    return result
 }
 
 suspend fn main() -> void {
     io.println("before")
-    yield_once()
+    let result: string = yield_once("after")
     task.yield_now()
-    io.println("after")
+    io.println(result)
 }

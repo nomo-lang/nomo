@@ -31,6 +31,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
 - `suspend_ready`: P0 direct-style `suspend fn` effect on an always-ready call chain; no executor or suspension primitive yet
 - `async_yield`: P1 direct-style nested stackless frames driven by the current-thread executor across two cooperative yields
+- `async_call_abi`: P1 frame-safe suspend arguments and an owned result transferred across child and parent yields
 - `async_timer`: P1 owner-local monotonic `task.sleep` with an inline zero-duration fast path and a positive non-busy timer
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read

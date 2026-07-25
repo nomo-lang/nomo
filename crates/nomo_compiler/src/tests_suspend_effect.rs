@@ -657,7 +657,7 @@ suspend fn main() -> void {
 "#;
     let mutable_error = parse_inline(mutable_source).unwrap_err();
     assert_eq!(mutable_error.code, "E0876");
-    assert!(mutable_error.message.contains("mutable locals"));
+    assert!(mutable_error.message.contains("mutable parameters/locals"));
 
     let panic_source = r#"package app.main
 
@@ -756,22 +756,68 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn nested_suspend_slice_rejects_arguments_recursion_and_control_flow() {
-    let parameter_source = r#"package app.main
+fn nested_suspend_call_abi_lowers_arguments_and_results() {
+    let source = r#"package app.main
 
+import std.io
 import std.task
 
-suspend fn helper(value: string) -> void {
+suspend fn helper(value: string, count: u64) -> string {
+    let owned: string = value
     task.yield_now()
+    io.println(count)
+    return owned
 }
 
 suspend fn main() -> void {
-    helper("value")
+    let result: string = helper("value", 7)
+    task.yield_now()
+    io.println(result)
 }
 "#;
-    let parameter_error = parse_inline(parameter_source).unwrap_err();
-    assert_eq!(parameter_error.code, "E0876");
-    assert!(parameter_error.message.contains("arguments/results"));
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_string nomo_async_parameter_nomo_value;"));
+    assert!(c.contains("uint64_t nomo_async_parameter_nomo_count;"));
+    assert!(c.contains("uint8_t nomo_async_parameter_owned_nomo_value;"));
+    assert!(c.contains("nomo_string nomo_async_result;"));
+    assert!(c.contains("uint8_t nomo_async_result_owned;"));
+    assert!(c.contains(
+        "frame->nomo_async_child_0.nomo_async_parameter_nomo_value = nomo_string_literal(\"value\")"
+    ));
+    assert!(c.contains("frame->nomo_async_child_0.nomo_async_parameter_nomo_count = 7;"));
+    assert!(c.contains("nomo_string nomo_value = frame->nomo_async_parameter_nomo_value;"));
+    assert!(c.contains(
+        "frame->nomo_async_local_nomo_result = frame->nomo_async_child_0.nomo_async_result;"
+    ));
+    assert!(c.contains("frame->nomo_async_child_0.nomo_async_result_owned = 0u;"));
+}
+
+#[test]
+fn nested_suspend_slice_rejects_unbound_results_recursion_and_control_flow() {
+    let unbound_source = r#"package app.main
+
+import std.task
+
+suspend fn helper() -> string {
+    task.yield_now()
+    return "value"
+}
+
+suspend fn main() -> void {
+    helper()
+}
+"#;
+    let unbound_error = parse_inline(unbound_source).unwrap_err();
+    assert_eq!(unbound_error.code, "E0876");
+    assert!(unbound_error.message.contains("bind the result"));
 
     let recursive_source = r#"package app.main
 
@@ -812,4 +858,57 @@ suspend fn main() -> void {
     let nested_error = parse_inline(nested_source).unwrap_err();
     assert_eq!(nested_error.code, "E0876");
     assert!(nested_error.message.contains("nested control flow"));
+}
+
+#[test]
+fn suspend_call_abi_rejects_mutable_affine_and_root_result_shapes() {
+    let mutable_parameter_source = r#"package app.main
+
+import std.task
+
+suspend fn helper(mut value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    helper("value")
+}
+"#;
+    let mutable_error = parse_inline(mutable_parameter_source).unwrap_err();
+    assert_eq!(mutable_error.code, "E0876");
+    assert!(mutable_error.message.contains("mutable parameters/locals"));
+
+    let affine_parameter_source = r#"package app.main
+
+import std.task
+
+suspend fn helper(value: Task) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.yield_now()
+}
+"#;
+    let affine_error = parse_inline(affine_parameter_source).unwrap_err();
+    assert_eq!(affine_error.code, "E0876");
+    assert!(affine_error.message.contains("parameter `value`"));
+    assert!(affine_error.message.contains("frame-safe"));
+
+    let root_result_source = r#"package app.main
+
+import std.task
+
+suspend fn main() -> string {
+    task.yield_now()
+    return "not-an-exit-status-yet"
+}
+"#;
+    let root_error = parse_inline(root_result_source).unwrap_err();
+    assert_eq!(root_error.code, "E0876");
+    assert!(
+        root_error
+            .message
+            .contains("async `main` still returns `void`")
+    );
 }

@@ -141,25 +141,38 @@ fn validate_p1_suspend_function_shape(
     imports: &[String],
     suspending_functions: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    let returns_void =
+        function.return_type.path.as_slice() == ["void"] && function.return_type.args.is_empty();
     let supported_signature = function.type_params.is_empty()
-        && function.params.is_empty()
-        && function.return_type.path.as_slice() == ["void"]
-        && function.return_type.args.is_empty();
-    let supported_body = function.body.iter().all(|statement| match statement {
-        Stmt::Expr { expr, .. } => {
-            ((ast_expr_is_direct_suspension(expr, imports, suspending_functions)
-                && !ast_expr_is_direct_sleep(expr, imports, suspending_functions))
-                || !ast_expr_contains_suspension(expr, imports, suspending_functions))
-                && !ast_expr_contains_frame_exit(expr)
-        }
-        Stmt::Let { mutable, value, .. } => {
-            !mutable
-                && (ast_expr_is_direct_sleep(value, imports, suspending_functions)
-                    || !ast_expr_contains_suspension(value, imports, suspending_functions))
-                && !ast_expr_contains_frame_exit(value)
-        }
-        _ => false,
-    });
+        && function.params.iter().all(|parameter| !parameter.mutable)
+        && (function.name != "main" || returns_void);
+    let supported_body =
+        function
+            .body
+            .iter()
+            .enumerate()
+            .all(|(index, statement)| match statement {
+                Stmt::Expr { expr, .. } => {
+                    ((ast_expr_is_direct_suspension(expr, imports, suspending_functions)
+                        && !ast_expr_is_direct_sleep(expr, imports, suspending_functions))
+                        || !ast_expr_contains_suspension(expr, imports, suspending_functions))
+                        && !ast_expr_contains_frame_exit(expr)
+                }
+                Stmt::Let { mutable, value, .. } => {
+                    !mutable
+                        && (ast_expr_is_direct_suspension(value, imports, suspending_functions)
+                            || !ast_expr_contains_suspension(value, imports, suspending_functions))
+                        && !ast_expr_contains_frame_exit(value)
+                }
+                Stmt::Return { value, .. } => {
+                    index + 1 == function.body.len()
+                        && value.as_ref().is_none_or(|value| {
+                            !ast_expr_contains_suspension(value, imports, suspending_functions)
+                                && !ast_expr_contains_frame_exit(value)
+                        })
+                }
+                _ => false,
+            });
 
     if supported_signature && supported_body {
         return Ok(());
@@ -167,7 +180,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, standalone parameterless suspend calls, and `let`-bound `task.sleep(Duration)` results in non-generic parameterless `suspend fn` functions returning `void`; mutable locals, generics, general suspend arguments/results, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, and `let`-bound `task.sleep(Duration)` results in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and handles require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -229,9 +242,53 @@ pub(super) fn validate_p1_suspending_functions(
             &mut visited,
             &mut visiting,
         )?;
+        validate_p1_suspend_call_bindings(path, function, &function_map, &suspending)?;
         validate_p1_suspend_function_shape(path, function, imports, &suspending)?;
     }
 
+    Ok(())
+}
+
+fn validate_p1_suspend_call_bindings(
+    path: &Path,
+    function: &AstFunction,
+    functions: &HashMap<&str, &AstFunction>,
+    suspending: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    for statement in &function.body {
+        let Stmt::Expr {
+            expr: AstExpr::Call { callee, .. },
+            span,
+        } = statement
+        else {
+            continue;
+        };
+        let Some(name) = callee.last() else {
+            continue;
+        };
+        if !suspending.contains(name) {
+            continue;
+        }
+        let Some(callee_function) = functions.get(name.as_str()) else {
+            continue;
+        };
+        let returns_void = callee_function.return_type.path.as_slice() == ["void"]
+            && callee_function.return_type.args.is_empty();
+        if returns_void {
+            continue;
+        }
+        return Err(Diagnostic::new(
+            "E0876",
+            format!(
+                "suspend call to `{name}` returns a value; bind the result with an immutable `let`"
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
     Ok(())
 }
 
@@ -351,13 +408,10 @@ pub(super) fn validate_p1_suspend_ir_program(
             .iter()
             .filter(|function| function.is_suspend && !suspending.contains(&function.name))
             .filter(|function| {
-                function.body.iter().any(|statement| {
-                    matches!(
-                        statement,
-                        Statement::Expr(ValueExpr::Call { name, args })
-                            if args.is_empty() && suspending.contains(name)
-                    )
-                })
+                function
+                    .body
+                    .iter()
+                    .any(|statement| ir_statement_calls_any(statement, &suspending))
             })
             .map(|function| function.name.clone())
             .collect::<Vec<_>>();
@@ -371,6 +425,61 @@ pub(super) fn validate_p1_suspend_ir_program(
         .iter()
         .filter(|function| suspending.contains(&function.name))
     {
+        if let Some(parameter) = function.params.iter().find(|parameter| {
+            parameter.mutable
+                || !p1_frame_value_type_supported(
+                    &parameter.value_type,
+                    structs,
+                    enums,
+                    &mut Vec::new(),
+                )
+        }) {
+            return Err(Diagnostic::new(
+                "E0876",
+                format!(
+                    "parameter `{}` in suspend function `{}` must be immutable and frame-safe for the current call ABI slice",
+                    parameter.name, function.name
+                ),
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
+        if function.name == "main" && function.return_type != ValueType::Void {
+            return Err(Diagnostic::new(
+                "E0876",
+                "async `main` must return `void` until the root result-to-exit-status ABI lands",
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
+        if function.return_type != ValueType::Void
+            && !p1_frame_value_type_supported(
+                &function.return_type,
+                structs,
+                enums,
+                &mut Vec::new(),
+            )
+        {
+            return Err(Diagnostic::new(
+                "E0876",
+                format!(
+                    "result of suspend function `{}` has type `{}` without a frame-safe result-slot implementation",
+                    function.name,
+                    function.return_type.name()
+                ),
+                path,
+                1,
+                1,
+                1,
+                "",
+            ));
+        }
         if let Some((name, value_type)) = function.body.iter().find_map(|statement| match statement
         {
             Statement::Let {
@@ -394,8 +503,61 @@ pub(super) fn validate_p1_suspend_ir_program(
                 "",
             ));
         }
+        for statement in &function.body {
+            let Some((callee_name, binding)) =
+                ir_statement_direct_suspend_call(statement, &suspending)
+            else {
+                continue;
+            };
+            let Some(callee) = functions
+                .iter()
+                .find(|candidate| candidate.name == callee_name)
+            else {
+                continue;
+            };
+            if binding.is_none() && callee.return_type != ValueType::Void {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    format!(
+                        "suspend call to `{callee_name}` returns `{}`; bind the result with an immutable `let`",
+                        callee.return_type.name()
+                    ),
+                    path,
+                    1,
+                    1,
+                    1,
+                    "",
+                ));
+            }
+        }
     }
     Ok(())
+}
+
+fn ir_statement_calls_any(statement: &Statement, names: &HashSet<String>) -> bool {
+    matches!(
+        statement,
+        Statement::Expr(ValueExpr::Call { name, .. })
+            | Statement::Let {
+                initializer: ValueExpr::Call { name, .. },
+                ..
+            } if names.contains(name)
+    )
+}
+
+fn ir_statement_direct_suspend_call<'a>(
+    statement: &'a Statement,
+    names: &HashSet<String>,
+) -> Option<(&'a str, Option<(&'a str, &'a ValueType)>)> {
+    match statement {
+        Statement::Expr(ValueExpr::Call { name, .. }) if names.contains(name) => Some((name, None)),
+        Statement::Let {
+            name: binding,
+            value_type,
+            initializer: ValueExpr::Call { name, .. },
+        } if names.contains(name) => Some((name, Some((binding, value_type)))),
+        _ => None,
+    }
 }
 
 fn p1_frame_value_type_supported(
@@ -630,10 +792,19 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_sleep(expr, imports, suspending_functions) {
         return true;
     }
-    let AstExpr::Call { callee, args, .. } = expr else {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
         return false;
     };
-    args.is_empty()
+    type_args.is_empty()
+        && args.iter().all(|argument| {
+            !ast_expr_contains_suspension(argument, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(argument)
+        })
         && callee
             .last()
             .is_some_and(|name| suspending_functions.contains(name))

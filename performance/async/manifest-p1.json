@@ -82,7 +82,7 @@
       "nomo_project": "reference/nomo/yield_counter_probe",
       "expected_stdout": "before\nchild-before\nchild-after\nafter\n",
       "snapshot": "snapshots/yield-counter-probe.json",
-      "note": "Validates the versioned current-thread runtime counter contract in a separate unmeasured probe run; it is not a performance comparison."
+      "note": "Validates managed suspend argument/result transfer plus the versioned current-thread runtime counter contract in a separate unmeasured probe run; it is not a performance comparison."
     },
     {
       "id": "timer_counter_probe",

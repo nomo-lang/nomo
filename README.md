@@ -493,7 +493,9 @@ caller to declare the effect. Suspend effects are preserved across generics,
 interfaces, local modules, formatter output, documentation, and LSP
 signatures. P1 adds standalone `task.yield_now()`, `let`-bound
 `task.sleep(Duration) -> Result<void, TaskError>`, and nested direct-style calls
-between non-generic, parameterless `suspend fn` functions returning `void`.
+between non-generic `suspend fn` functions with immutable frame-safe
+parameters and results. Value-returning suspend calls are bound by an immutable
+top-level `let`; void calls remain standalone.
 The C99 backend emits a stackless root frame with embedded child frames and a
 current-thread executor only when a suspension primitive is reachable.
 Always-ready suspend chains still use the direct C99 path. Immutable top-level
@@ -504,13 +506,16 @@ early root drop. Positive sleeps use bounded, generation-checked owner-local
 monotonic timers and are not polled before expiry; non-positive sleeps complete
 inline without registration or queue traffic. Opt-in, versioned P1 probes
 export exact current-thread poll, yield, frame, ready-queue, and timer counters
-without changing normal stdout.
-E0876 still rejects mutable locals, resource-handle wrappers,
+without changing normal stdout. Managed call arguments are evaluated once and
+retained or transferred into the child frame; owned results move out before
+child drop.
+E0876 still rejects mutable parameters/locals, resource-handle wrappers,
 recursive suspend graphs, suspension in nested control flow or expressions,
-general suspend arguments/results, `?`, and explicit panic; complete unwind
+suspending argument expressions, `?`, and explicit panic; complete unwind
 paths, structured spawn/join, the multi-task timer wheel, and the async test
 runner land in later reviewable slices. See
-`examples/suspend_ready`, `examples/async_yield`, `examples/async_timer`, the
+`examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
+`examples/async_timer`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).
 

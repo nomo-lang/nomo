@@ -342,16 +342,17 @@ fn main() -> void {
 import std.io
 import std.task
 
-suspend fn yield_once() -> void {
+suspend fn yield_once(result: string) -> string {
     io.println("child-before")
     task.yield_now()
     io.println("child-after")
+    return result
 }
 
 suspend fn main() -> void {
     io.println("before")
-    yield_once()
-    io.println("after")
+    let result: string = yield_once("after")
+    io.println(result)
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());

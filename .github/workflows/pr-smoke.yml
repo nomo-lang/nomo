@@ -87,17 +87,20 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Verify the native C driver
         run: clang --version
-      - name: Run current-thread async yield and timer counter probes
+      - name: Run current-thread async call ABI and timer counter probes
         shell: pwsh
         run: |
           $metrics = Join-Path $env:RUNNER_TEMP "nomo-async-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $metrics
-          cargo run --locked --bin nomo -- run examples/async_yield
+          cargo run --locked --bin nomo -- run examples/async_call_abi
           $payload = Get-Content -Raw $metrics | ConvertFrom-Json
           if ($payload.schema -ne 1 -or $payload.runtime -ne "nomo-c99-current-thread") {
             throw "unexpected async metrics identity"
           }
-          if ($payload.counters.frame_allocations -ne 0 -or $payload.counters.frame_drops -ne 2) {
+          if ($payload.counters.poll_calls -ne 5 `
+              -or $payload.counters.cooperative_yields -ne 2 `
+              -or $payload.counters.frame_allocations -ne 0 `
+              -or $payload.counters.frame_drops -ne 2) {
             throw "unexpected async frame counters"
           }
           if ($payload.counters.timer_registrations -ne 0 -or $payload.counters.live_timers -ne 0) {
@@ -161,13 +164,13 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
-      - name: Run current-thread async yield and timer counter probes
+      - name: Run current-thread async call ABI and timer counter probes
         shell: bash
         run: |
           metrics="$RUNNER_TEMP/nomo-async-metrics.json"
           NOMO_ASYNC_METRICS_PATH="$metrics" \
-            cargo run --locked --bin nomo -- run examples/async_yield
-          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert p["counters"]["frame_allocations"] == 0 and p["counters"]["frame_drops"] == 2; assert p["counters"]["timer_registrations"] == 0 and p["counters"]["live_timers"] == 0' "$metrics"
+            cargo run --locked --bin nomo -- run examples/async_call_abi
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert c["poll_calls"] == 5 and c["cooperative_yields"] == 2 and c["frame_allocations"] == 0 and c["frame_drops"] == 2; assert c["timer_registrations"] == 0 and c["live_timers"] == 0' "$metrics"
           timer_metrics="$RUNNER_TEMP/nomo-async-timer-metrics.json"
           NOMO_ASYNC_METRICS_PATH="$timer_metrics" \
             cargo run --locked --bin nomo -- run examples/async_timer

@@ -7708,6 +7708,7 @@ fn async_frame_completion_and_early_drop_are_asan_clean_when_available() {
 import std.array
 import std.io
 import std.result
+import std.string
 import std.task
 import std.time
 
@@ -7720,9 +7721,13 @@ enum State {
     Empty
 }
 
-suspend fn child() -> void {
-    let child_message: string = "child"
-    let child_values: Array<string> = ["nested", "frame"]
+fn child_input() -> string {
+    return string.to_upper("child")
+}
+
+suspend fn child(message: string, values: Array<string>) -> string {
+    let child_message: string = message
+    let child_values: Array<string> = values
     io.println("child-before")
     let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(1))
@@ -7730,6 +7735,7 @@ suspend fn child() -> void {
     let child_count: u64 = child_values.len()
     io.println(child_message)
     io.println(child_count)
+    return child_message
 }
 
 suspend fn main() -> void {
@@ -7738,8 +7744,8 @@ suspend fn main() -> void {
     let envelope: Envelope = Envelope { body: "payload" }
     let state: State = State.Ready("state")
     io.println("before")
-    child()
-    io.println(message, envelope.body)
+    let child_result: string = child(child_input(), ["nested", "frame"])
+    io.println(message, envelope.body, child_result)
     let state_copy: State = state
     task.yield_now()
     let count: u64 = values.len()
@@ -7765,6 +7771,9 @@ suspend fn main() -> void {
 
     let generated = fs::read_to_string(&generated_c).unwrap();
     assert!(generated.contains("nomo_async_timer_disarm"));
+    assert!(generated.contains("nomo_async_parameter_owned_nomo_message"));
+    assert!(generated.contains("nomo_async_parameter_owned_nomo_values"));
+    assert!(generated.contains("nomo_async_result_owned"));
     let drop_call = "    nomo_async_drop_main(&nomo__frame);\n";
     assert_eq!(generated.matches(drop_call).count(), 1);
     let completed = generated.replacen(
@@ -7805,7 +7814,7 @@ suspend fn main() -> void {
         (
             "completed",
             completed,
-            "before\nchild-before\ntrue\nchild\n2\nlive payload\nafter 2\n",
+            "before\nchild-before\ntrue\nCHILD\n2\nlive payload CHILD\nafter 2\n",
         ),
         ("early", early, "before\nchild-before\n"),
     ] {

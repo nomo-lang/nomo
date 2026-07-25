@@ -26,8 +26,7 @@ pub(super) fn collect_async_function_names(program: &Program) -> BTreeSet<String
                     statement_contains_expr(statement, |expr| {
                         matches!(
                             expr,
-                            ValueExpr::Call { name, args }
-                                if args.is_empty() && names.contains(name)
+                            ValueExpr::Call { name, .. } if names.contains(name)
                         )
                     })
                 })
@@ -62,10 +61,10 @@ pub(super) fn ordered_async_functions<'a>(
             "recursive suspend call graphs must be rejected before C code generation"
         );
         for statement in &function.body {
-            let Some(callee) = statement_async_call(statement, async_names) else {
+            let Some(call) = statement_async_call(statement, async_names) else {
                 continue;
             };
-            if let Some(child) = functions.get(callee) {
+            if let Some(child) = functions.get(call.callee) {
                 visit(child, functions, async_names, visiting, visited, ordered);
             }
         }
@@ -139,16 +138,34 @@ fn statement_async_sleep(statement: &Statement) -> Option<(&str, &ValueType, &Va
     }
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AsyncCall<'a> {
+    callee: &'a str,
+    args: &'a [ValueExpr],
+    binding: Option<(&'a str, &'a ValueType)>,
+}
+
 fn statement_async_call<'a>(
     statement: &'a Statement,
     async_names: &BTreeSet<String>,
-) -> Option<&'a str> {
+) -> Option<AsyncCall<'a>> {
     match statement {
-        Statement::Expr(ValueExpr::Call { name, args })
-            if args.is_empty() && async_names.contains(name) =>
-        {
-            Some(name)
+        Statement::Expr(ValueExpr::Call { name, args }) if async_names.contains(name) => {
+            Some(AsyncCall {
+                callee: name,
+                args,
+                binding: None,
+            })
         }
+        Statement::Let {
+            name: binding,
+            value_type,
+            initializer: ValueExpr::Call { name, args },
+        } if async_names.contains(name) => Some(AsyncCall {
+            callee: name,
+            args,
+            binding: Some((binding, value_type)),
+        }),
         _ => None,
     }
 }
@@ -230,6 +247,22 @@ fn async_frame_owned_field(name: &str) -> String {
     format!("nomo_async_owned_{}", c_var_ident(name))
 }
 
+fn async_parameter_field(name: &str) -> String {
+    format!("nomo_async_parameter_{}", c_var_ident(name))
+}
+
+fn async_parameter_owned_field(name: &str) -> String {
+    format!("nomo_async_parameter_owned_{}", c_var_ident(name))
+}
+
+fn async_result_field() -> &'static str {
+    "nomo_async_result"
+}
+
+fn async_result_owned_field() -> &'static str {
+    "nomo_async_result_owned"
+}
+
 fn async_frame_ident(function: &str) -> String {
     format!("nomo_async_frame_{function}")
 }
@@ -285,6 +318,30 @@ fn emit_async_frame_type(
              uint8_t started;\n\
              uint8_t dropped;\n",
     );
+    for parameter in &function.params {
+        out.push_str("    ");
+        out.push_str(&c_type(&parameter.value_type));
+        out.push(' ');
+        out.push_str(&async_parameter_field(&parameter.name));
+        out.push_str(";\n");
+        if value_type_needs_release(&parameter.value_type) {
+            out.push_str("    uint8_t ");
+            out.push_str(&async_parameter_owned_field(&parameter.name));
+            out.push_str(";\n");
+        }
+    }
+    if function.return_type != ValueType::Void {
+        out.push_str("    ");
+        out.push_str(&c_type(&function.return_type));
+        out.push(' ');
+        out.push_str(async_result_field());
+        out.push_str(";\n");
+        if value_type_needs_release(&function.return_type) {
+            out.push_str("    uint8_t ");
+            out.push_str(async_result_owned_field());
+            out.push_str(";\n");
+        }
+    }
     for local in frame_locals {
         out.push_str("    ");
         out.push_str(&c_type(&local.value_type));
@@ -311,11 +368,11 @@ fn emit_async_frame_type(
             out.push_str(&async_timer_result_owned_field(index));
             out.push_str(";\n");
         }
-        let Some(callee) = statement_async_call(statement, async_names) else {
+        let Some(call) = statement_async_call(statement, async_names) else {
             continue;
         };
         out.push_str("    ");
-        out.push_str(&async_frame_ident(callee));
+        out.push_str(&async_frame_ident(call.callee));
         out.push(' ');
         out.push_str(&async_child_field(index));
         out.push_str(";\n");
@@ -354,23 +411,119 @@ fn emit_async_frame_field_drop(out: &mut String, local: &AsyncFrameLocal, indent
     if !value_type_needs_release(&local.value_type) {
         return;
     }
-    let owned = async_frame_owned_field(&local.name);
+    emit_async_owned_field_drop(
+        out,
+        &local.value_type,
+        &async_frame_owned_field(&local.name),
+        &async_frame_value_field(&local.name),
+        indent,
+    );
+}
+
+fn emit_async_owned_field_drop(
+    out: &mut String,
+    value_type: &ValueType,
+    owned_field: &str,
+    value_field: &str,
+    indent: usize,
+) {
     write_indent(out, indent);
     out.push_str("if (frame->");
-    out.push_str(&owned);
+    out.push_str(owned_field);
     out.push_str(" != 0u) {\n");
     write_indent(out, indent + 1);
     out.push_str("frame->");
-    out.push_str(&owned);
+    out.push_str(owned_field);
     out.push_str(" = 0u;\n");
     emit_value_release_in_place(
         out,
-        &local.value_type,
-        &format!("frame->{}", async_frame_value_field(&local.name)),
+        value_type,
+        &format!("frame->{value_field}"),
         indent + 1,
     );
     write_indent(out, indent);
     out.push_str("}\n");
+}
+
+fn emit_async_parameter_aliases(out: &mut String, function: &Function, indent: usize) {
+    for parameter in &function.params {
+        write_indent(out, indent);
+        out.push_str(&c_type(&parameter.value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(&parameter.name));
+        out.push_str(" = frame->");
+        out.push_str(&async_parameter_field(&parameter.name));
+        out.push_str(";\n");
+    }
+}
+
+fn emit_async_child_init(
+    out: &mut String,
+    call: AsyncCall<'_>,
+    callee: &Function,
+    index: usize,
+    indent: usize,
+) {
+    debug_assert_eq!(call.args.len(), callee.params.len());
+    let child = async_child_field(index);
+    for (argument, parameter) in call.args.iter().zip(&callee.params) {
+        let field = async_parameter_field(&parameter.name);
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&child);
+        out.push('.');
+        out.push_str(&field);
+        out.push_str(" = ");
+        emit_expr(out, argument);
+        out.push_str(";\n");
+        if value_type_needs_release(&parameter.value_type) {
+            let c_value = format!("frame->{child}.{field}");
+            if expr_may_share_array_storage(argument) {
+                emit_value_retain_in_place(out, &parameter.value_type, &c_value, indent);
+            }
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&child);
+            out.push('.');
+            out.push_str(&async_parameter_owned_field(&parameter.name));
+            out.push_str(" = 1u;\n");
+        }
+    }
+}
+
+fn emit_async_return_value(
+    out: &mut String,
+    function: &Function,
+    value: &ValueExpr,
+    local_owned: &[LocalArray],
+    indent: usize,
+) {
+    debug_assert_ne!(function.return_type, ValueType::Void);
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(async_result_field());
+    out.push_str(" = ");
+    emit_expr(out, value);
+    out.push_str(";\n");
+    if value_type_needs_release(&function.return_type) {
+        if expr_may_share_array_storage(value) {
+            emit_value_retain_in_place(
+                out,
+                &function.return_type,
+                &format!("frame->{}", async_result_field()),
+                indent,
+            );
+        }
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(async_result_owned_field());
+        out.push_str(" = 1u;\n");
+    }
+    emit_async_local_releases(out, local_owned, &[], indent);
+    write_indent(out, indent);
+    out.push_str("frame->state = UINT32_MAX;\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
 }
 
 fn emit_async_local_releases(
@@ -804,9 +957,9 @@ pub(super) fn emit_async_function(
     out: &mut String,
     function: &Function,
     async_names: &BTreeSet<String>,
+    functions: &HashMap<&str, &Function>,
 ) {
-    debug_assert_eq!(function.return_type, ValueType::Void);
-    debug_assert!(function.params.is_empty());
+    debug_assert!(function.params.iter().all(|parameter| !parameter.mutable));
     debug_assert!(async_names.contains(&function.name));
 
     let frame_locals = collect_async_frame_locals(function, async_names);
@@ -833,14 +986,16 @@ pub(super) fn emit_async_function(
                      context->peak_live_frames = context->live_frames;\n\
                  }\n\
              }\n\
-             context->poll_count += 1u;\n\
-             switch (frame->state) {\n",
+             context->poll_count += 1u;\n",
     );
+    emit_async_parameter_aliases(out, function, 1);
+    out.push_str("    switch (frame->state) {\n");
 
     let empty_deferred = Vec::new();
     let mut local_owned = Vec::new();
     let mut state = 0u32;
     let mut segment_start = 0usize;
+    let mut emitted_terminal_return = false;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
         if statement_is_async_suspend(statement, async_names) {
@@ -851,6 +1006,13 @@ pub(super) fn emit_async_function(
                 out.push_str(" = (");
                 emit_expr(out, duration);
                 out.push_str(").nomo_member_millis;\n");
+            }
+            let call = statement_async_call(statement, async_names);
+            if let Some(call) = call {
+                let callee = functions
+                    .get(call.callee)
+                    .expect("validated suspend call target exists");
+                emit_async_child_init(out, call, callee, index, 3);
             }
             let moved_to_frame = frame_locals
                 .iter()
@@ -916,7 +1078,7 @@ pub(super) fn emit_async_function(
                 );
                 emit_async_timer_result_materialize(out, index, 3);
             }
-            if sleep.is_some() || statement_async_call(statement, async_names).is_some() {
+            if sleep.is_some() || call.is_some() {
                 out.push_str("nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(":\n            ;\n");
@@ -935,9 +1097,12 @@ pub(super) fn emit_async_function(
             {
                 emit_async_frame_alias(out, local, 3);
             }
-            if let Some(callee) = statement_async_call(statement, async_names) {
+            if let Some(call) = call {
+                let callee = functions
+                    .get(call.callee)
+                    .expect("validated suspend call target exists");
                 out.push_str("            if (");
-                out.push_str(&async_poll_ident(callee));
+                out.push_str(&async_poll_ident(call.callee));
                 out.push_str("(&frame->");
                 out.push_str(&async_child_field(index));
                 out.push_str(
@@ -946,7 +1111,60 @@ pub(super) fn emit_async_function(
                              }\n\
                              ",
                 );
-                out.push_str(&async_drop_ident(callee));
+                if callee.return_type != ValueType::Void {
+                    let (binding, value_type) = call
+                        .binding
+                        .expect("value-returning suspend calls require a binding");
+                    debug_assert_eq!(value_type, &callee.return_type);
+                    if let Some(frame_local) = frame_locals
+                        .iter()
+                        .find(|local| local.declaration_index == index)
+                    {
+                        out.push_str("            frame->");
+                        out.push_str(&async_frame_value_field(binding));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_child_field(index));
+                        out.push('.');
+                        out.push_str(async_result_field());
+                        out.push_str(";\n");
+                        if value_type_needs_release(value_type) {
+                            out.push_str("            frame->");
+                            out.push_str(&async_frame_owned_field(binding));
+                            out.push_str(" = frame->");
+                            out.push_str(&async_child_field(index));
+                            out.push('.');
+                            out.push_str(async_result_owned_field());
+                            out.push_str(";\n            frame->");
+                            out.push_str(&async_child_field(index));
+                            out.push('.');
+                            out.push_str(async_result_owned_field());
+                            out.push_str(" = 0u;\n");
+                        }
+                        emit_async_frame_alias(out, frame_local, 3);
+                    } else {
+                        out.push_str("            ");
+                        out.push_str(&c_type(value_type));
+                        out.push(' ');
+                        out.push_str(&c_var_ident(binding));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_child_field(index));
+                        out.push('.');
+                        out.push_str(async_result_field());
+                        out.push_str(";\n");
+                        if value_type_needs_release(value_type) {
+                            out.push_str("            frame->");
+                            out.push_str(&async_child_field(index));
+                            out.push('.');
+                            out.push_str(async_result_owned_field());
+                            out.push_str(" = 0u;\n");
+                        }
+                        if let Some(local) = local_array(binding, value_type) {
+                            local_owned.push(local);
+                        }
+                    }
+                }
+                out.push_str("            ");
+                out.push_str(&async_drop_ident(call.callee));
                 out.push_str("(&frame->");
                 out.push_str(&async_child_field(index));
                 out.push_str(");\n");
@@ -988,12 +1206,29 @@ pub(super) fn emit_async_function(
             }
             continue;
         }
+        if let Statement::Return(value) = statement {
+            match value {
+                Some(value) => {
+                    emit_async_return_value(out, function, value, &local_owned, 3);
+                }
+                None => {
+                    debug_assert_eq!(function.return_type, ValueType::Void);
+                    emit_async_local_releases(out, &local_owned, &[], 3);
+                    out.push_str(
+                        "            frame->state = UINT32_MAX;\n\
+                                     return NOMO_ASYNC_POLL_READY;\n",
+                    );
+                }
+            }
+            emitted_terminal_return = true;
+            break;
+        }
         emit_stmt(
             out,
             statement,
             3,
             &empty_deferred,
-            &ValueType::Void,
+            &function.return_type,
             &local_owned,
             0,
             0,
@@ -1004,11 +1239,16 @@ pub(super) fn emit_async_function(
             local_owned.push(local);
         }
     }
-    emit_async_local_releases(out, &local_owned, &[], 3);
+    if !emitted_terminal_return {
+        debug_assert_eq!(function.return_type, ValueType::Void);
+        emit_async_local_releases(out, &local_owned, &[], 3);
+        out.push_str(
+            "            frame->state = UINT32_MAX;\n\
+                     return NOMO_ASYNC_POLL_READY;\n",
+        );
+    }
     out.push_str(
-        "            frame->state = UINT32_MAX;\n\
-                     return NOMO_ASYNC_POLL_READY;\n\
-                 }\n\
+        "        }\n\
                  default:\n\
                      return NOMO_ASYNC_POLL_READY;\n\
              }\n\
@@ -1033,11 +1273,11 @@ pub(super) fn emit_async_function(
              }\n",
     );
     for (index, statement) in function.body.iter().enumerate().rev() {
-        let Some(callee) = statement_async_call(statement, async_names) else {
+        let Some(call) = statement_async_call(statement, async_names) else {
             continue;
         };
         out.push_str("    ");
-        out.push_str(&async_drop_ident(callee));
+        out.push_str(&async_drop_ident(call.callee));
         out.push_str("(&frame->");
         out.push_str(&async_child_field(index));
         out.push_str(");\n");
@@ -1061,8 +1301,28 @@ pub(super) fn emit_async_function(
         );
         out.push_str("    }\n");
     }
+    if value_type_needs_release(&function.return_type) {
+        emit_async_owned_field_drop(
+            out,
+            &function.return_type,
+            async_result_owned_field(),
+            async_result_field(),
+            1,
+        );
+    }
     for local in frame_locals.iter().rev() {
         emit_async_frame_field_drop(out, local, 1);
+    }
+    for parameter in function.params.iter().rev() {
+        if value_type_needs_release(&parameter.value_type) {
+            emit_async_owned_field_drop(
+                out,
+                &parameter.value_type,
+                &async_parameter_owned_field(&parameter.name),
+                &async_parameter_field(&parameter.name),
+                1,
+            );
+        }
     }
     out.push_str(
         "    frame->context = NULL;\n\

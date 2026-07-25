@@ -1,0 +1,22 @@
+package async_call_abi.main
+
+import std.io
+import std.task
+
+fn make_value() -> string {
+    io.println("argument")
+    return "frame result"
+}
+
+suspend fn echo_after_yield(value: string, count: u64) -> string {
+    let owned: string = value
+    task.yield_now()
+    io.println(count)
+    return owned
+}
+
+suspend fn main() -> void {
+    let result: string = echo_after_yield(make_value(), 7)
+    task.yield_now()
+    io.println(result)
+}

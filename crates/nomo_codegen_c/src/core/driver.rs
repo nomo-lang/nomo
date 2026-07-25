@@ -305,6 +305,11 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         .expect("checked programs always contain main");
     let async_names = collect_async_function_names(program);
     let async_functions = ordered_async_functions(program, &async_names);
+    let function_map = program
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<HashMap<_, _>>();
     let main_uses_async = async_names.contains("main");
     let main_returns_result = result_void_error(&main.return_type).is_some();
     let emit_main_function = !main_uses_async
@@ -377,7 +382,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     for function in async_functions {
-        emit_async_function(&mut out, function, &async_names);
+        emit_async_function(&mut out, function, &async_names, &function_map);
         out.push('\n');
     }
 

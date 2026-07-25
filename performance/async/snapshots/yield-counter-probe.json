@@ -12,7 +12,11 @@
     "static int nomo_async_metrics_export": 1,
     "nomo_async_metrics_export(&nomo__context)": 1,
     "context->frame_drops += 1u;": 2,
-    "context->peak_live_frames = context->live_frames;": 2
+    "context->peak_live_frames = context->live_frames;": 2,
+    "nomo_string nomo_async_parameter_nomo_result;": 1,
+    "nomo_string nomo_async_result;": 1,
+    "frame->nomo_async_child_1.nomo_async_parameter_nomo_result = nomo_string_literal(\"after\");": 1,
+    "frame->nomo_async_child_1.nomo_async_result_owned = 0u;": 1
   },
   "runtime_counters": {
     "available": true,

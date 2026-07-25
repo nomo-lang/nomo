@@ -87,7 +87,11 @@ Immutable locals used after a suspension are moved into the frame; only those
 referenced in a resumed segment are reintroduced as non-owning C aliases.
 An embedded child is polled inline and does not allocate or enter the ready
 queue when it completes synchronously. Normal completion and explicit early
-root drop share the same child-first idempotent cleanup path.
+root drop share the same child-first idempotent cleanup path. Immutable
+frame-safe call arguments evaluate exactly once from left to right. Shared
+managed values are retained into the child frame, owned temporaries transfer
+directly, and an owned result moves into its immutable caller binding before
+the child frame is dropped.
 
 Browser WASM accepts the same source in its bounded sandbox interpreter.
 `task.yield_now()` is currently a cooperative boundary there; it does not yet
@@ -98,17 +102,16 @@ block or evaluate its duration in the browser sandbox; it returns
 ## Deliberate Restrictions
 
 E0876 rejects unsupported suspension rather than miscompiling it. In this
-slice, `task.yield_now()` and calls to parameterless actually suspending
-functions must be standalone statements; `task.sleep(Duration)` must be the
-initializer of an immutable `let` binding with `Result<void, TaskError>`. The
-containing `suspend fn` remains non-generic, parameterless, and
-`void`-returning. Immutable top-level scalar, string, struct, enum, Result, and
-supported array locals may live across a suspension when every transitive
-value field is frame-safe. Mutable locals, borrows, guards, resource handles
-or wrappers containing them, recursive suspend graphs, suspension in control
-flow or other expressions, general suspend function arguments/results, `?`,
-explicit panic, spawn/join, cancellation, and reactor-backed I/O are later
-slices.
+slice, `task.yield_now()` and value-less calls to actually suspending functions
+must be standalone statements. A value-returning suspend call and
+`task.sleep(Duration)` must initialize an immutable top-level `let`. The
+containing `suspend fn` remains non-generic; its parameters, result, and
+cross-suspension locals must be immutable frame-safe scalar, string, struct,
+enum, Result, or supported array values. Async `main` still returns `void`.
+Mutable parameters/locals, borrows, guards, resource handles or wrappers
+containing them, recursive suspend graphs, suspension in control flow, nested
+expressions or argument expressions, `?`, explicit panic, spawn/join,
+cancellation, and reactor-backed I/O are later slices.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native

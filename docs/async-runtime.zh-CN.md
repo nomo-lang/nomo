@@ -11,6 +11,8 @@ RFC acceptance gate 已经通过。
   定义跨任务转移与显式共享能力。
 - [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0034-async-runtime-acceptance-and-benchmark-gates.md)
   定义正确性、可移植性、内存和性能门禁。
+- [RFC 0035](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0035-monotonic-suspend-timers-and-blocking-sleep-migration.md)
+  定义 owner-local timer 与阻塞 sleep 边界。
 
 [English](async-runtime.md)
 
@@ -37,6 +39,12 @@ suspend fn main() -> void {
 
 普通 `fn` 不能调用 suspend 函数；编译器报告 E0870，而不是偷偷引入运行时。
 只声明或调用 always-ready suspend 函数不会创建 executor。
+
+编译器还会拒绝传递调用图最终到达阻塞兼容 API `time.sleep` 或
+`time.sleep_millis` 的 `suspend fn`。E0891 只报告函数/API 调用路径，绝不回显
+参数值。同步函数与旧的隔离 worker 仍可使用阻塞 API。非阻塞
+`task.sleep(Duration) -> Result<void, TaskError>` 在参数/结果 lowering 与
+owner-local timer runtime 落地前仍处于 Proposed 状态。
 
 ## 已实现的 P1 小切片
 

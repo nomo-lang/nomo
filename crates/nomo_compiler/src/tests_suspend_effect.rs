@@ -232,6 +232,132 @@ fn main() -> void {
 }
 
 #[test]
+fn rejects_blocking_sleep_directly_from_suspend_function() {
+    let source = r#"package app.main
+
+import std.time
+
+suspend fn main() -> void {
+    time.sleep_millis(1)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("main -> time.sleep_millis"));
+    assert!(error.message.contains("bounded blocking pool"));
+    assert_eq!(error.line, 6);
+}
+
+#[test]
+fn rejects_specifically_imported_blocking_sleep_from_suspend_function() {
+    let source = r#"package app.main
+
+import std.time.sleep_millis
+
+suspend fn main() -> void {
+    sleep_millis(1)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("main -> time.sleep_millis"));
+}
+
+#[test]
+fn rejects_transitive_blocking_sleep_with_a_secret_safe_call_path() {
+    let source = r#"package app.main
+
+import std.time
+
+fn pause(secret: string) -> void {
+    time.sleep_millis(1)
+}
+
+fn helper(secret: string) -> void {
+    pause(secret)
+}
+
+suspend fn main() -> void {
+    helper("sk-must-not-appear")
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(
+        error
+            .message
+            .contains("main -> helper -> pause -> time.sleep_millis")
+    );
+    assert!(!error.message.contains("sk-must-not-appear"));
+}
+
+#[test]
+fn allows_blocking_sleep_from_synchronous_and_legacy_worker_functions() {
+    let synchronous = r#"package app.main
+
+import std.time
+
+fn main() -> void {
+    time.sleep_millis(0)
+}
+"#;
+    parse_inline(synchronous).unwrap();
+
+    let worker = r#"package app.main
+
+import std.task
+import std.time
+
+fn worker(context: TaskContext, input: string) -> string {
+    time.sleep_millis(0)
+    return input
+}
+
+fn main() -> void {
+    let started: Result<Task, TaskError> = task.spawn(worker, "ready")
+}
+"#;
+    parse_inline(worker).unwrap();
+}
+
+#[test]
+fn rejects_blocking_sleep_reached_through_an_imported_public_function() {
+    let root = std::env::temp_dir().join(format!(
+        "nomo-suspend-blocking-import-{}",
+        std::process::id()
+    ));
+    let src = root.join("src");
+    std::fs::create_dir_all(&src).unwrap();
+    std::fs::write(
+        src.join("worker.nomo"),
+        "package app.worker\n\nimport std.time\n\npub fn pause() -> void {\n    time.sleep_millis(1)\n}\n",
+    )
+    .unwrap();
+    let main = src.join("main.nomo");
+    let source = r#"package app.main
+
+import app.worker
+
+suspend fn main() -> void {
+    pause()
+}
+"#;
+
+    let error =
+        check_source_text_with_project_modules(&main, source, Some(&src), &[], &[]).unwrap_err();
+    std::fs::remove_dir_all(&root).unwrap();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("main -> pause -> time.sleep_millis"));
+}
+
+#[test]
 fn specifically_imported_yield_now_lowers_to_the_current_thread_executor() {
     let source = r#"package app.main
 

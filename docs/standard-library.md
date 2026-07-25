@@ -257,7 +257,11 @@ num.wrapping_mul(left: integer, right: same integer type) -> same integer type
 
 `std.time` provides wall-clock, monotonic-clock, duration, formatting, and sleep
 helpers. Durations store signed milliseconds, `format_duration` returns strings
-such as `1500ms`, and sleep helpers panic for negative durations.
+such as `1500ms`, and sleep helpers panic for negative durations. `sleep` and
+`sleep_millis` block the current OS thread. They remain compatible in
+synchronous code and legacy isolated workers, but E0891 rejects any transitive
+path from a `suspend fn` to either operation. The RFC 0035 nonblocking
+`task.sleep` API is not exposed until the owner-local timer runtime lands.
 
 ### `std.cron`
 

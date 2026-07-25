@@ -1,4 +1,116 @@
 use super::*;
+use crate::validation_tasks::{statement_span, visit_statement_expressions};
+
+pub(super) fn validate_suspend_blocking_calls(
+    path: &Path,
+    ast: &SourceFile,
+    imports: &[String],
+) -> Result<(), Diagnostic> {
+    let functions = ast
+        .functions
+        .iter()
+        .map(|function| (function.name.as_str(), function))
+        .collect::<HashMap<_, _>>();
+
+    for function in ast.functions.iter().filter(|function| function.is_suspend) {
+        let mut visiting = Vec::new();
+        validate_suspend_blocking_function(path, function, imports, &functions, &mut visiting)?;
+    }
+    for method in ast
+        .impls
+        .iter()
+        .flat_map(|impl_block| impl_block.methods.iter())
+        .filter(|method| method.is_suspend)
+    {
+        let mut visiting = Vec::new();
+        validate_suspend_blocking_function(path, method, imports, &functions, &mut visiting)?;
+    }
+
+    Ok(())
+}
+
+fn validate_suspend_blocking_function<'a>(
+    path: &Path,
+    function: &'a AstFunction,
+    imports: &[String],
+    functions: &HashMap<&str, &'a AstFunction>,
+    visiting: &mut Vec<&'a str>,
+) -> Result<(), Diagnostic> {
+    if visiting.contains(&function.name.as_str()) {
+        return Ok(());
+    }
+    visiting.push(function.name.as_str());
+    for statement in &function.body {
+        let span = statement_span(statement);
+        visit_statement_expressions(statement, &mut |expression| {
+            let AstExpr::Call { callee, .. } = expression else {
+                return Ok(());
+            };
+            if let Some(operation) = blocking_sleep_operation(callee.as_slice(), imports) {
+                let mut call_path = visiting.join(" -> ");
+                call_path.push_str(" -> ");
+                call_path.push_str(operation);
+                return Err(Diagnostic::new(
+                    "E0891",
+                    format!(
+                        "suspend function reaches a blocking operation via {call_path}; use `task.sleep` after its timer-runtime slice lands, or move the whole operation to the bounded blocking pool"
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let Some(name) = callee.last() else {
+                return Ok(());
+            };
+            let Some(callee_function) = functions.get(name.as_str()).copied() else {
+                return Ok(());
+            };
+            validate_suspend_blocking_function(path, callee_function, imports, functions, visiting)
+        })?;
+    }
+    visiting.pop();
+    Ok(())
+}
+
+fn blocking_sleep_operation(callee: &[String], imports: &[String]) -> Option<&'static str> {
+    let resolved = if let [name] = callee
+        && let Some(qualified) = resolve_specific_value_builtin(name, imports)
+    {
+        qualified
+    } else {
+        callee.to_vec()
+    };
+    match resolved.as_slice() {
+        [module, operation]
+            if module == "time"
+                && matches!(operation.as_str(), "sleep" | "sleep_millis")
+                && imports
+                    .iter()
+                    .any(|item| item == "std.time" || item == &format!("std.time.{operation}")) =>
+        {
+            Some(if operation == "sleep" {
+                "time.sleep"
+            } else {
+                "time.sleep_millis"
+            })
+        }
+        [root, module, operation]
+            if root == "std"
+                && module == "time"
+                && matches!(operation.as_str(), "sleep" | "sleep_millis") =>
+        {
+            Some(if operation == "sleep" {
+                "time.sleep"
+            } else {
+                "time.sleep_millis"
+            })
+        }
+        _ => None,
+    }
+}
 
 pub(super) fn validate_p1_yield_function(
     path: &Path,

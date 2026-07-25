@@ -630,7 +630,7 @@ fn is_constructor_like_call(name: &str) -> bool {
         || name.chars().next().is_some_and(char::is_uppercase)
 }
 
-fn visit_statement_expressions(
+pub(super) fn visit_statement_expressions(
     statement: &Stmt,
     visitor: &mut impl FnMut(&AstExpr) -> Result<(), Diagnostic>,
 ) -> Result<(), Diagnostic> {
@@ -715,7 +715,7 @@ fn visit_statements(
     Ok(())
 }
 
-fn visit_expression(
+pub(super) fn visit_expression(
     expression: &AstExpr,
     visitor: &mut impl FnMut(&AstExpr) -> Result<(), Diagnostic>,
 ) -> Result<(), Diagnostic> {
@@ -775,7 +775,7 @@ fn visit_expression(
     Ok(())
 }
 
-fn statement_span(statement: &Stmt) -> &Span {
+pub(super) fn statement_span(statement: &Stmt) -> &Span {
     match statement {
         Stmt::Let { span, .. }
         | Stmt::LetElse { span, .. }

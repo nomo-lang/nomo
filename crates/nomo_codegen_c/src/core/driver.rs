@@ -303,12 +303,14 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         .iter()
         .find(|function| function.name == "main")
         .expect("checked programs always contain main");
-    let main_uses_async_yield = function_uses_async_yield(main);
+    let async_names = collect_async_function_names(program);
+    let async_functions = ordered_async_functions(program, &async_names);
+    let main_uses_async = async_names.contains("main");
     let main_returns_result = result_void_error(&main.return_type).is_some();
-    let emit_main_function = !main_uses_async_yield
+    let emit_main_function = !main_uses_async
         && (main_returns_result || uses_task_runtime(program) || uses_sqlite_runtime(program));
 
-    if main_uses_async_yield {
+    if !async_names.is_empty() {
         emit_current_thread_executor(&mut out);
         out.push('\n');
     }
@@ -316,6 +318,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     for function in program
         .functions
         .iter()
+        .filter(|function| !async_names.contains(&function.name))
         .filter(|function| function.name != "main" || emit_main_function)
     {
         emit_prototype(&mut out, function);
@@ -367,13 +370,14 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     for function in program
         .functions
         .iter()
+        .filter(|function| !async_names.contains(&function.name))
         .filter(|function| function.name != "main" || emit_main_function)
     {
         emit_function(&mut out, function);
         out.push('\n');
     }
-    if main_uses_async_yield {
-        emit_async_main(&mut out, main);
+    for function in async_functions {
+        emit_async_function(&mut out, function, &async_names);
         out.push('\n');
     }
 
@@ -386,7 +390,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push_str("    nomo_argc = argc;\n");
         out.push_str("    nomo_argv = argv;\n");
     }
-    if main_uses_async_yield {
+    if main_uses_async {
         out.push_str("    nomo_async_frame_main nomo__frame = {0};\n");
         out.push_str("    nomo_async_context nomo__context = {0};\n");
         out.push_str(

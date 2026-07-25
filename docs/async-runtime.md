@@ -10,9 +10,9 @@ acceptance gate has passed.
 - [RFC 0032](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0032-sharded-executor-reactor-and-blocking-pool.md)
   defines the executor/reactor, owner affinity, platform backends, and blocking
   pool migration.
-- [RFC 0033](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0033-concurrency-capabilities-and-shared-storage.md)
+- [RFC 0033](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0033-task-ownership-transfer-and-concurrent-values.md)
   defines transfer and sharing capabilities.
-- [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0034-async-runtime-acceptance-gates.md)
+- [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0034-async-runtime-acceptance-and-benchmark-gates.md)
   defines correctness, portability, memory, and performance gates.
 
 [中文版本](async-runtime.zh-CN.md)
@@ -27,9 +27,13 @@ package app.main
 import std.io
 import std.task
 
+suspend fn yield_once() -> void {
+    task.yield_now()
+}
+
 suspend fn main() -> void {
     io.println("before")
-    task.yield_now()
+    yield_once()
     io.println("after")
 }
 ```
@@ -40,24 +44,27 @@ always-ready suspend function does not create an executor.
 
 ## Implemented P1 Slice
 
-On the native C99 backend, a root program with `task.yield_now()` emits:
+On the native C99 backend, a suspend call chain that reaches
+`task.yield_now()` emits:
 
-- a stack-allocated root frame with an explicit state;
-- a poll function that returns `READY` or `PENDING`;
+- a stack-allocated root frame with an explicit state and embedded child frames;
+- one poll/drop pair per actually suspending function;
+- direct child polls whose `PENDING` result propagates to the root;
 - an inline initial poll;
 - a one-entry current-thread ready queue path entered only after `PENDING`;
-- exact top-level local liveness across each yield;
+- exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
-- an idempotent root-frame drop function that clears ownership before release.
+- idempotent child-first frame drop that clears ownership before release.
 
 This slice creates no OS thread, heap task, reactor, or atomic metadata. The
 generated context records poll, yield, enqueue, and dequeue counters internally;
 versioned benchmark export is deferred until the P1 counter contract is ready.
-Locals that die before a yield are released without entering the frame.
-Immutable locals used after a yield are moved into the frame; only those that
-are referenced in a resumed segment are reintroduced as non-owning C aliases.
-Normal completion and an explicit early frame drop share the same idempotent
-cleanup path.
+Locals that die before a suspension are released without entering the frame.
+Immutable locals used after a suspension are moved into the frame; only those
+referenced in a resumed segment are reintroduced as non-owning C aliases.
+An embedded child is polled inline and does not allocate or enter the ready
+queue when it completes synchronously. Normal completion and explicit early
+root drop share the same child-first idempotent cleanup path.
 
 Browser WASM accepts the same source in its bounded sandbox interpreter.
 `task.yield_now()` is currently a cooperative boundary there; it does not yet
@@ -66,13 +73,14 @@ return control to a host Promise or browser event loop.
 ## Deliberate Restrictions
 
 E0876 rejects unsupported suspension rather than miscompiling it. In this
-slice, `task.yield_now()` must be a standalone statement in a parameterless
-root `suspend fn main() -> void`. Immutable top-level scalar, string, struct,
-enum, and supported array locals may live across a yield when every transitive
+slice, `task.yield_now()` and calls to actually suspending functions must be
+standalone statements in non-generic, parameterless `suspend fn` functions
+returning `void`. Immutable top-level scalar, string, struct, enum, and
+supported array locals may live across a suspension when every transitive
 value field is frame-safe. Mutable locals, borrows, guards, resource handles
-or wrappers containing them, nested suspend calls, suspension in control flow
-or expressions, `?`, explicit panic, non-void results, timers, spawn/join,
-cancellation, and reactor-backed I/O are later slices.
+or wrappers containing them, recursive suspend graphs, suspension in control
+flow or expressions, arguments/results, `?`, explicit panic, timers,
+spawn/join, cancellation, and reactor-backed I/O are later slices.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -80,8 +88,9 @@ thread. RFC 0032 requires its migration to a bounded, lazy blocking pool.
 
 ## Correctness and Cost Gates
 
-This slice checks exact spills, pre-yield cleanup for dead locals, ownership-bit
-clearing, and repeated explicit drop under generated-C tests and AddressSanitizer.
+This slice checks exact spills, pre-suspension cleanup for dead locals,
+child-before-parent ownership-bit clearing, and repeated explicit drop under
+generated-C tests and AddressSanitizer.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;

@@ -1,6 +1,7 @@
 pub(super) use crate::validation_imports::{validate_imports, validate_standard_type_imports};
 pub(super) use crate::validation_suspend::{
-    validate_p1_yield_function, validate_p1_yield_ir_function,
+    validate_p1_suspend_ir_program, validate_p1_suspending_functions, validate_p1_yield_function,
+    validate_p1_yield_ir_function,
 };
 pub(super) use crate::validation_tasks::validate_task_workers;
 pub(super) use crate::validation_type_diagnostics::{

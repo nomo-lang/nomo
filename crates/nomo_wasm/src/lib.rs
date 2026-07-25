@@ -342,16 +342,25 @@ fn main() -> void {
 import std.io
 import std.task
 
+suspend fn yield_once() -> void {
+    io.println("child-before")
+    task.yield_now()
+    io.println("child-after")
+}
+
 suspend fn main() -> void {
     io.println("before")
-    task.yield_now()
+    yield_once()
     io.println("after")
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());
 
         assert_eq!(response.status, "success", "{response:#?}");
-        assert_eq!(response.stdout, "before\nafter\n");
+        assert_eq!(
+            response.stdout,
+            "before\nchild-before\nchild-after\nafter\n"
+        );
         assert!(response.diagnostic.is_none());
         assert!(response.stats.steps >= 2);
     }

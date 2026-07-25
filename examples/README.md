@@ -30,7 +30,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `mcp_stdio`: bounded newline-framed JSON-RPC initialization and `tools/list` exchange with a local MCP stdio server
 - `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
 - `suspend_ready`: P0 direct-style `suspend fn` effect on an always-ready call chain; no executor or suspension primitive yet
-- `async_yield`: P1 stackless root coroutine driven by the current-thread executor across two cooperative yields
+- `async_yield`: P1 direct-style nested stackless frames driven by the current-thread executor across two cooperative yields
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

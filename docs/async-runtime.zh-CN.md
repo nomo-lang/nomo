@@ -7,9 +7,9 @@ RFC acceptance gate 已经通过。
   定义 direct-style suspend effect、stackless lowering、frame 析构与结构化并发。
 - [RFC 0032](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0032-sharded-executor-reactor-and-blocking-pool.md)
   定义 executor/reactor、owner affinity、平台后端与 blocking pool 迁移。
-- [RFC 0033](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0033-concurrency-capabilities-and-shared-storage.md)
+- [RFC 0033](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0033-task-ownership-transfer-and-concurrent-values.md)
   定义跨任务转移与显式共享能力。
-- [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0034-async-runtime-acceptance-gates.md)
+- [RFC 0034](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0034-async-runtime-acceptance-and-benchmark-gates.md)
   定义正确性、可移植性、内存和性能门禁。
 
 [English](async-runtime.md)
@@ -24,9 +24,13 @@ package app.main
 import std.io
 import std.task
 
+suspend fn yield_once() -> void {
+    task.yield_now()
+}
+
 suspend fn main() -> void {
     io.println("before")
-    task.yield_now()
+    yield_once()
     io.println("after")
 }
 ```
@@ -36,22 +40,25 @@ suspend fn main() -> void {
 
 ## 已实现的 P1 小切片
 
-Native C99 后端遇到根函数中的 `task.yield_now()` 时会生成：
+Native C99 后端遇到最终到达 `task.yield_now()` 的 suspend 调用链时会生成：
 
-- 栈上分配且带显式 state 的 root frame；
-- 返回 `READY` 或 `PENDING` 的 poll 函数；
+- 栈上分配、带显式 state 且内嵌 child frame 的 root frame；
+- 每个真正可能挂起的函数各自的 poll/drop pair；
+- 直接 poll child，并把 child 的 `PENDING` 逐层传播到 root；
 - inline initial poll；
 - 仅在返回 `PENDING` 后进入的单槽 current-thread ready queue 路径；
-- 每个 yield 上精确的顶层局部变量 liveness；
+- 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
-- release 前先清 ownership bit 的幂等 root-frame drop 函数。
+- release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
 
 这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。生成的
 context 会在内部记录 poll、yield、入队和出队计数；等 P1 counter contract
 稳定后再用版本化 benchmark 导出。
-在 yield 前已经死亡的局部变量会直接 release，不进入 frame。yield 后仍使用的
-不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用的值生成
-non-owning C alias。正常完成和显式 early frame drop 共用同一条幂等清理路径。
+在 suspension 前已经死亡的局部变量会直接 release，不进入 frame。suspension
+后仍使用的不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用
+的值生成 non-owning C alias。内嵌 child 先 inline poll；同步完成时不分配也不
+进入 ready queue。正常完成和显式 early root drop 共用同一条 child-first 幂等
+清理路径。
 
 Browser WASM 的有界沙盒解释器可以运行同一份源码。目前
 `task.yield_now()` 只表示 cooperative boundary；它还不会把控制权交还给
@@ -60,12 +67,12 @@ host Promise 或浏览器 event loop。
 ## 有意保留的限制
 
 对暂不支持的挂起形态，编译器报告 E0876，而不是生成错误代码。当前
-`task.yield_now()` 必须是无参数根 `suspend fn main() -> void` 中的独立语句。
-不可变的顶层 scalar、string、struct、enum 与已支持 array 局部变量可以跨
-yield 存活，前提是所有传递 value field 都满足 frame-safe。mutable local、
-borrow、guard、resource handle 或包含它的 wrapper、嵌套 suspend 调用、控制流
-或表达式内部挂起、`?`、显式 panic、非 void 结果、timer、spawn/join、取消和
-reactor I/O 都属于后续小 PR。
+`task.yield_now()` 和对真正可能挂起函数的调用，必须是 non-generic、无参数、
+返回 `void` 的 `suspend fn` 中的独立语句。不可变的顶层 scalar、string、
+struct、enum 与已支持 array 局部变量可以跨 suspension 存活，前提是所有传递
+value field 都满足 frame-safe。mutable local、borrow、guard、resource handle
+或包含它的 wrapper、递归 suspend graph、控制流或表达式内部挂起、参数/返回值、
+`?`、显式 panic、timer、spawn/join、取消和 reactor I/O 都属于后续小 PR。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -74,8 +81,8 @@ constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求�
 ## 正确性与成本门禁
 
 当前切片已经用 generated-C 测试和 AddressSanitizer 检查精确 spill、dead local
-的 yield 前清理、ownership bit 清零和重复显式 drop。后续实现仍必须用测试和
-证据证明：
+的 suspension 前清理、child-before-parent ownership bit 清零和重复显式 drop。
+后续实现仍必须用测试和证据证明：
 
 - error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
   release 一次；

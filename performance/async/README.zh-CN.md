@@ -14,11 +14,12 @@ runtime。目前仅启用两个 workload：
 RFC 要求的所有 async workload 已经登记在 manifest 中；未实现项保持 disabled，
 并记录预计实现阶段，避免“未覆盖”看起来像“已通过”。
 
-独立的 P1 `async_yield` 实现已经提供 stackless root frame 与 current-thread
-executor；顶层不可变局部变量已经使用精确 liveness spill 和
-ownership-aware frame drop。但它不会混入这组 P0 measurement series：嵌套
-task frame、完整 unwind path、timer、spawn/join 与 runtime counter export
-尚未完成。后续会用版本化 P1 series 启用相关 workload，不会改写既有 P0 证据。
+独立的 P1 `async_yield` 实现已经提供嵌套 stackless suspend-call frame 与
+current-thread executor；顶层不可变局部变量已经使用精确 liveness spill 和
+child-first ownership-aware frame drop。但它不会混入这组 P0 measurement
+series：参数/返回值 frame、完整 unwind path、structured spawn/join、timer
+与 runtime counter export 尚未完成。后续会用版本化 P1 series 启用相关
+workload，不会改写既有 P0 证据。
 
 ## 运行方式
 

@@ -80,6 +80,16 @@ fn collect_stmt_generic_function_instances(
                 path, value, imports, signatures, structs, enums, out,
             )
         }
+        Stmt::IndexAssign { indices, value, .. } => {
+            for index in indices {
+                collect_expr_generic_function_instances(
+                    path, index, imports, signatures, structs, enums, out,
+                )?;
+            }
+            collect_expr_generic_function_instances(
+                path, value, imports, signatures, structs, enums, out,
+            )
+        }
         Stmt::LetElse {
             value, else_body, ..
         } => {
@@ -227,13 +237,51 @@ fn collect_expr_generic_function_instances(
     out: &mut Vec<FunctionInstance>,
 ) -> Result<(), Diagnostic> {
     match expr {
+        AstExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                collect_expr_generic_function_instances(
+                    path, element, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
+        AstExpr::Index { base, index } => {
+            collect_expr_generic_function_instances(
+                path, base, imports, signatures, structs, enums, out,
+            )?;
+            collect_expr_generic_function_instances(
+                path, index, imports, signatures, structs, enums, out,
+            )
+        }
         AstExpr::Call {
             callee,
             type_args,
             args,
         } => {
-            if callee.len() == 1 && !type_args.is_empty() {
-                let name = &callee[0];
+            let map_operation = match callee.as_slice() {
+                [module, operation]
+                    if (module == "map"
+                        && matches!(
+                            operation.as_str(),
+                            "new"
+                                | "len"
+                                | "is_empty"
+                                | "contains_key"
+                                | "get"
+                                | "set"
+                                | "remove"
+                                | "clear"
+                                | "keys"
+                                | "values"
+                        ))
+                        || (module == "Map" && operation == "new") =>
+                {
+                    Some(format!("__nomo_map_{operation}"))
+                }
+                _ => None,
+            };
+            if (callee.len() == 1 || map_operation.is_some()) && !type_args.is_empty() {
+                let name = map_operation.as_ref().unwrap_or(&callee[0]);
                 if resolve_specific_value_builtin(name, imports).is_some() {
                     for arg in args {
                         collect_expr_generic_function_instances(

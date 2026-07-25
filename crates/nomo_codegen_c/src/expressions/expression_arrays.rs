@@ -2,6 +2,41 @@ use super::*;
 
 pub(super) fn emit_array_expr(out: &mut String, expr: &ValueExpr) -> bool {
     match expr {
+        ValueExpr::ArrayLiteral {
+            elements,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            if elements.is_empty() {
+                out.push_str(&c_array_ident(element_type));
+                out.push_str("_new()");
+            } else {
+                out.push_str(&c_array_ident(element_type));
+                out.push_str("_from_values(");
+                out.push_str(&elements.len().to_string());
+                out.push_str(", (");
+                out.push_str(&c_type(element_type));
+                out.push_str("[]){");
+                for (index, element) in elements.iter().enumerate() {
+                    if index != 0 {
+                        out.push_str(", ");
+                    }
+                    emit_expr(out, element);
+                }
+                out.push_str("})");
+            }
+        }
+        ValueExpr::ArrayIndex {
+            array,
+            index,
+            element_type,
+        } if is_supported_array_element(element_type) => {
+            out.push_str(&c_array_ident(element_type));
+            out.push_str("_index(");
+            emit_expr(out, array);
+            out.push_str(", ");
+            emit_expr(out, index);
+            out.push(')');
+        }
         ValueExpr::ArrayNew { element_type } if is_supported_array_element(element_type) => {
             out.push_str(&c_array_ident(element_type));
             out.push_str("_new()");
@@ -109,6 +144,8 @@ pub(super) fn emit_array_expr(out: &mut String, expr: &ValueExpr) -> bool {
             out.push(')');
         }
         ValueExpr::ArrayNew { element_type }
+        | ValueExpr::ArrayLiteral { element_type, .. }
+        | ValueExpr::ArrayIndex { element_type, .. }
         | ValueExpr::ArrayIter { element_type, .. }
         | ValueExpr::ArrayGet { element_type, .. }
         | ValueExpr::ArrayPop { element_type, .. }

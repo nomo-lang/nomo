@@ -187,9 +187,10 @@ pub(super) fn expr_uses_fs_open(expr: &ValueExpr) -> bool {
             expr_uses_fs_open(map) || expr_uses_fs_open(key) || expr_uses_fs_open(value)
         }
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_open(array),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_uses_fs_open(array) || expr_uses_fs_open(index)
         }
+        ValueExpr::ArrayLiteral { elements, .. } => elements.iter().any(expr_uses_fs_open),
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_open(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_fs_open(value),

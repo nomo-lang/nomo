@@ -349,6 +349,17 @@ fn validate_extern_stmt_is_unsafe(
         | Stmt::Expr { expr: value, span } => {
             validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)
         }
+        Stmt::IndexAssign {
+            indices,
+            value,
+            span,
+            ..
+        } => {
+            for index in indices {
+                validate_extern_expr_is_unsafe(path, index, in_unsafe, extern_names, span)?;
+            }
+            validate_extern_expr_is_unsafe(path, value, in_unsafe, extern_names, span)
+        }
         Stmt::LetElse {
             value,
             else_body,
@@ -457,6 +468,16 @@ fn validate_extern_expr_is_unsafe(
     span: &Span,
 ) -> Result<(), Diagnostic> {
     match expr {
+        AstExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                validate_extern_expr_is_unsafe(path, element, in_unsafe, extern_names, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::Index { base, index } => {
+            validate_extern_expr_is_unsafe(path, base, in_unsafe, extern_names, span)?;
+            validate_extern_expr_is_unsafe(path, index, in_unsafe, extern_names, span)
+        }
         AstExpr::Call { callee, args, .. } => {
             if callee.len() == 1 && extern_names.contains(&callee[0]) && !in_unsafe {
                 return Err(Diagnostic::new(

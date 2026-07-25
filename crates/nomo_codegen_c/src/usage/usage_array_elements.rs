@@ -205,6 +205,20 @@ pub(super) fn collect_statement_array_elements(
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => collect_expr_array_elements(value, seen, out),
+        Statement::ArrayIndexAssign {
+            indices,
+            array_types,
+            value,
+            ..
+        } => {
+            for ty in array_types {
+                collect_type_array_elements(ty, seen, out);
+            }
+            for index in indices {
+                collect_expr_array_elements(index, seen, out);
+            }
+            collect_expr_array_elements(value, seen, out);
+        }
         Statement::Loop { kind, body } => match kind {
             LoopKind::Infinite => {
                 for stmt in body {
@@ -299,6 +313,24 @@ pub(super) fn collect_expr_array_elements(
             push_array_element_type(seen, out, element_type);
         }
         ValueExpr::ArrayLen { array } => collect_expr_array_elements(array, seen, out),
+        ValueExpr::ArrayLiteral {
+            elements,
+            element_type,
+        } => {
+            push_array_element_type(seen, out, element_type);
+            for element in elements {
+                collect_expr_array_elements(element, seen, out);
+            }
+        }
+        ValueExpr::ArrayIndex {
+            array,
+            index,
+            element_type,
+        } => {
+            push_array_element_type(seen, out, element_type);
+            collect_expr_array_elements(array, seen, out);
+            collect_expr_array_elements(index, seen, out);
+        }
         ValueExpr::Binary { left, right, .. }
         | ValueExpr::StringCompare { left, right, .. }
         | ValueExpr::StringConcat { left, right }

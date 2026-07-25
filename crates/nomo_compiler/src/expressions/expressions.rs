@@ -27,6 +27,127 @@ pub(super) fn lower_value_expr_with_expected(
     span: &Span,
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     match expr {
+        AstExpr::ArrayLiteral { elements } => {
+            let expected_element = match expected {
+                Some(ValueType::Array(element)) => Some(element.as_ref()),
+                Some(other) => {
+                    return Err(type_mismatch_expected_found(
+                        path,
+                        span,
+                        "array literal requires an Array<T> context",
+                        other,
+                        &ValueType::Array(Box::new(ValueType::Never)),
+                    ));
+                }
+                None => None,
+            };
+            if elements.is_empty() && expected_element.is_none() {
+                return Err(Diagnostic::new(
+                    "E0860",
+                    "cannot infer the element type of empty array `[]`; add an `Array<T>` annotation",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let mut lowered = Vec::with_capacity(elements.len());
+            let mut element_type = expected_element.cloned();
+            if element_type.is_none() && matches!(elements.first(), Some(AstExpr::Int(_))) {
+                // Collection literals use the fixed-width v0.1 element default
+                // requested by RFC 0030 without changing the established scalar
+                // integer default used by existing Nomo programs.
+                element_type = Some(ValueType::I32);
+            }
+            for (position, element) in elements.iter().enumerate() {
+                let (actual, value) = lower_value_expr_with_expected(
+                    path,
+                    element,
+                    scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    element_type.as_ref(),
+                    span,
+                )?;
+                if let Some(expected) = &element_type {
+                    if &actual != expected {
+                        return Err(Diagnostic::new(
+                            "E0861",
+                            format!(
+                                "array element {position} has type `{}` but `{}` was expected; array literals do not perform implicit conversion",
+                                actual.name(),
+                                expected.name()
+                            ),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                } else {
+                    element_type = Some(actual.clone());
+                }
+                lowered.push(value);
+            }
+            let element_type = element_type.expect("empty literal has expected element type");
+            Ok((
+                ValueType::Array(Box::new(element_type.clone())),
+                ValueExpr::ArrayLiteral {
+                    elements: lowered,
+                    element_type,
+                },
+            ))
+        }
+        AstExpr::Index { base, index } => {
+            let (array_type, array) =
+                lower_value_expr(path, base, scope, imports, signatures, structs, enums, span)?;
+            let ValueType::Array(element_type) = array_type else {
+                return Err(Diagnostic::new(
+                    "E0862",
+                    format!(
+                        "cannot index value of type `{}`; expected `Array<T>`",
+                        array_type.name()
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (index_type, index) = lower_value_expr_with_expected(
+                path,
+                index,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if index_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "array index must have type `u64`",
+                    &ValueType::U64,
+                    &index_type,
+                ));
+            }
+            Ok((
+                element_type.as_ref().clone(),
+                ValueExpr::ArrayIndex {
+                    array: Box::new(array),
+                    index: Box::new(index),
+                    element_type: element_type.as_ref().clone(),
+                },
+            ))
+        }
         AstExpr::String(value) => Ok((ValueType::String, ValueExpr::StringLiteral(value.clone()))),
         AstExpr::Int(value) => lower_int_literal(path, *value, expected, span),
         AstExpr::Float(value) => Ok((ValueType::Float, ValueExpr::FloatLiteral(value.clone()))),

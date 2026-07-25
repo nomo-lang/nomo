@@ -165,6 +165,12 @@ pub enum Stmt {
         value: Expr,
         span: Span,
     },
+    IndexAssign {
+        root: String,
+        indices: Vec<Expr>,
+        value: Expr,
+        span: Span,
+    },
     Postfix {
         target: Vec<String>,
         op: PostfixOp,
@@ -251,6 +257,13 @@ pub enum ForVariant {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Expr {
+    ArrayLiteral {
+        elements: Vec<Expr>,
+    },
+    Index {
+        base: Box<Expr>,
+        index: Box<Expr>,
+    },
     Call {
         callee: Vec<String>,
         type_args: Vec<TypeRef>,

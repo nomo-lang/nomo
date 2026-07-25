@@ -59,6 +59,7 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
             Stmt::Unsafe { body, .. } => validate_stmts(path, body)?,
             Stmt::Let { .. }
             | Stmt::Assign { .. }
+            | Stmt::IndexAssign { .. }
             | Stmt::Postfix { .. }
             | Stmt::Return { .. }
             | Stmt::Expr { .. }
@@ -75,6 +76,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::LetElse { span, .. }
         | Stmt::IfLet { span, .. }
         | Stmt::Assign { span, .. }
+        | Stmt::IndexAssign { span, .. }
         | Stmt::Postfix { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Match { span, .. }

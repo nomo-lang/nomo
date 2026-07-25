@@ -1,0 +1,17 @@
+package app.main
+
+import std.array
+import std.io
+import std.num
+
+fn main() -> void {
+    let values = [1, 2, 3]
+    let mut matrix = [[1, 2], [3, 4]]
+    let snapshot = matrix
+    let empty: Array<i32> = []
+    matrix[0][1] = 7
+    io.println(num.to_string(values[0]))
+    io.println(num.to_string(matrix[0][1]))
+    io.println(num.to_string(snapshot[0][1]))
+    io.println(num.to_string(empty.len()))
+}

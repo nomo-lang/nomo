@@ -46,6 +46,9 @@ impl Parser<'_> {
         if matches!(token.kind, TokenKind::Unsafe) {
             return self.parse_unsafe_stmt(token);
         }
+        if self.starts_index_assignment() {
+            return self.parse_index_assign_stmt(token);
+        }
         if matches!(token.kind, TokenKind::Ident(_))
             && (assign_op_from_token(&self.peek_n(1).kind).is_some()
                 || (matches!(self.peek_n(1).kind, TokenKind::Dot)
@@ -62,6 +65,71 @@ impl Parser<'_> {
         }
         Ok(Stmt::Expr {
             expr: self.parse_expr()?,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: token.length(),
+                text: token.text,
+            },
+        })
+    }
+
+    fn starts_index_assignment(&self) -> bool {
+        if !matches!(self.peek().kind, TokenKind::Ident(_))
+            || !matches!(self.peek_n(1).kind, TokenKind::LBracket)
+        {
+            return false;
+        }
+        let mut depth = 0usize;
+        let mut offset = 1usize;
+        loop {
+            match self.peek_n(offset).kind {
+                TokenKind::LBracket => depth += 1,
+                TokenKind::RBracket => {
+                    if depth == 0 {
+                        return false;
+                    }
+                    depth -= 1;
+                }
+                TokenKind::Equal if depth == 0 => return true,
+                TokenKind::Newline | TokenKind::Semicolon | TokenKind::Eof => return false,
+                _ => {}
+            }
+            offset += 1;
+        }
+    }
+
+    fn parse_index_assign_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        let path = self.parse_path()?;
+        let [root] = path.as_slice() else {
+            return Err(self.error(
+                "E0864",
+                "indexed assignment root must be a variable",
+                token.length(),
+            ));
+        };
+        let mut indices = Vec::new();
+        while matches!(self.peek().kind, TokenKind::LBracket) {
+            self.advance();
+            self.skip_newlines();
+            indices.push(self.parse_expr()?);
+            self.skip_newlines();
+            self.expect_kind(
+                TokenKind::RBracket,
+                "E0863",
+                "expected `]` after array index",
+            )?;
+        }
+        self.expect_kind(
+            TokenKind::Equal,
+            "E0864",
+            "expected `=` after indexed assignment target",
+        )?;
+        let value = self.parse_expr()?;
+        Ok(Stmt::IndexAssign {
+            root: root.clone(),
+            indices,
+            value,
             span: Span {
                 line: token.line,
                 column: token.column,

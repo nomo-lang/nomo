@@ -119,6 +119,17 @@ pub(super) fn validate_stmt_type_imports(
         | Stmt::Expr { expr: value, span } => {
             validate_expr_type_imports(path, imports, value, span)
         }
+        Stmt::IndexAssign {
+            indices,
+            value,
+            span,
+            ..
+        } => {
+            for index in indices {
+                validate_expr_type_imports(path, imports, index, span)?;
+            }
+            validate_expr_type_imports(path, imports, value, span)
+        }
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
@@ -186,6 +197,16 @@ pub(super) fn validate_expr_type_imports(
     span: &Span,
 ) -> Result<(), Diagnostic> {
     match expr {
+        AstExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                validate_expr_type_imports(path, imports, element, span)?;
+            }
+            Ok(())
+        }
+        AstExpr::Index { base, index } => {
+            validate_expr_type_imports(path, imports, base, span)?;
+            validate_expr_type_imports(path, imports, index, span)
+        }
         AstExpr::Call {
             type_args, args, ..
         } => {

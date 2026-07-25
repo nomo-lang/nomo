@@ -38,6 +38,7 @@ pub fn embedded_module_source(module_path: &str) -> Option<&'static str> {
         "std.json" => Some(include_str!("json.nomo")),
         "std.jsonrpc" => Some(include_str!("jsonrpc.nomo")),
         "std.log" => Some(include_str!("log.nomo")),
+        "std.map" => Some(include_str!("map.nomo")),
         "std.math" => Some(include_str!("math.nomo")),
         "std.net" => Some(include_str!("net.nomo")),
         "std.num" => Some(include_str!("num.nomo")),
@@ -109,6 +110,19 @@ const COLLECTIONS_ITEMS: &[&str] = &[
     "set_len",
     "set_new",
     "set_remove",
+];
+const MAP_ITEMS: &[&str] = &[
+    "Map",
+    "clear",
+    "contains_key",
+    "get",
+    "is_empty",
+    "keys",
+    "len",
+    "new",
+    "remove",
+    "set",
+    "values",
 ];
 const CRON_ITEMS: &[&str] = &[
     "CronError",
@@ -594,6 +608,12 @@ pub const MODULES: &[StandardModule] = &[
         path: "std.collections",
         docs: "string map and string set helpers",
         items: COLLECTIONS_ITEMS,
+        doc_items: &[],
+    },
+    StandardModule {
+        path: "std.map",
+        docs: "deterministic insertion-ordered generic maps",
+        items: MAP_ITEMS,
         doc_items: &[],
     },
     StandardModule {
@@ -1349,13 +1369,14 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 297);
+        assert_eq!(imports.len(), 309);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
         assert!(is_supported_import("std.num.to_string"));
         assert!(is_supported_import("std.jsonrpc.feed"));
         assert!(is_supported_import("std.cron.next_after"));
+        assert!(is_supported_import("std.map.Map"));
         assert!(!is_supported_import("std.io.flush"));
     }
 

@@ -156,6 +156,20 @@ fn collect_stmt_struct(
         | Statement::Return(Some(value)) => {
             collect_expr_struct(value, seen, out);
         }
+        Statement::ArrayIndexAssign {
+            indices,
+            array_types,
+            value,
+            ..
+        } => {
+            for ty in array_types {
+                collect_type_struct(ty, seen, out);
+            }
+            for index in indices {
+                collect_expr_struct(index, seen, out);
+            }
+            collect_expr_struct(value, seen, out);
+        }
         Statement::Loop { kind, body } => {
             match kind {
                 LoopKind::Infinite => {}
@@ -692,6 +706,15 @@ fn collect_expr_struct(
         ValueExpr::EnvCwd | ValueExpr::EnvHomeDir | ValueExpr::EnvTempDir => {}
         ValueExpr::EnvArgs => {}
         ValueExpr::ArrayNew { element_type } => collect_type_struct(element_type, seen, out),
+        ValueExpr::ArrayLiteral {
+            elements,
+            element_type,
+        } => {
+            collect_type_struct(element_type, seen, out);
+            for element in elements {
+                collect_expr_struct(element, seen, out);
+            }
+        }
         ValueExpr::ArrayLen { array } => collect_expr_struct(array, seen, out),
         ValueExpr::ArrayIter {
             array,
@@ -701,6 +724,11 @@ fn collect_expr_struct(
             collect_expr_struct(array, seen, out);
         }
         ValueExpr::ArrayGet {
+            array,
+            index,
+            element_type,
+        }
+        | ValueExpr::ArrayIndex {
             array,
             index,
             element_type,

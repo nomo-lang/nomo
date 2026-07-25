@@ -191,8 +191,11 @@ pub(super) fn expr_uses_fs_read_to_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::ArrayLen { array } => expr_uses_fs_read_to_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_read_to_string(array),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_uses_fs_read_to_string(array) || expr_uses_fs_read_to_string(index)
+        }
+        ValueExpr::ArrayLiteral { elements, .. } => {
+            elements.iter().any(expr_uses_fs_read_to_string)
         }
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_read_to_string(index),

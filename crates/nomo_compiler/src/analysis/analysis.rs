@@ -53,6 +53,9 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
         collections: imports
             .iter()
             .any(|item| item == "std.collections" || item.starts_with("std.collections.")),
+        map: imports
+            .iter()
+            .any(|item| item == "std.map" || item.starts_with("std.map.")),
         time: imports
             .iter()
             .any(|item| item == "std.time" || item.starts_with("std.time."))
@@ -68,7 +71,10 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
         option: imports
             .iter()
             .any(|item| item == "std.option" || item == "std.option.Option")
-            || source_uses_option_prelude_variant(ast),
+            || source_uses_option_prelude_variant(ast)
+            || imports
+                .iter()
+                .any(|item| item == "std.map" || item.starts_with("std.map.")),
         // std.collections/std.regex are backed by Array<string> and Option in v0.1.
         array: imports.iter().any(|item| {
             item == "std.array" || item == "std.array.Array" || item.starts_with("std.array.")
@@ -76,6 +82,8 @@ pub(super) fn standard_type_needs(imports: &[String], ast: &SourceFile) -> Stand
             || imports.iter().any(|item| {
                 item == "std.collections"
                     || item.starts_with("std.collections.")
+                    || item == "std.map"
+                    || item.starts_with("std.map.")
                     || item == "std.regex"
                     || item.starts_with("std.regex.")
                     || item == "std.sqlite"
@@ -169,6 +177,9 @@ pub(super) fn standard_struct_names(
     if needs.collections {
         names.push(("StringMap".to_string(), 0));
         names.push(("StringSet".to_string(), 0));
+    }
+    if needs.map {
+        names.push(("Map".to_string(), 2));
     }
     if needs.time {
         names.push(("Duration".to_string(), 0));
@@ -997,6 +1008,23 @@ pub(super) fn inject_standard_types(
                 StructField {
                     name: "values".to_string(),
                     value_type: ValueType::Array(Box::new(ValueType::String)),
+                },
+            ],
+        });
+    }
+    if needs.map && !structs.iter().any(|item| item.name == "Map") {
+        structs.push(StructType {
+            package: "std.map".to_string(),
+            name: "Map".to_string(),
+            type_params: vec!["K".to_string(), "V".to_string()],
+            fields: vec![
+                StructField {
+                    name: "keys".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::TypeParam("K".to_string()))),
+                },
+                StructField {
+                    name: "values".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::TypeParam("V".to_string()))),
                 },
             ],
         });

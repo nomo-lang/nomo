@@ -552,6 +552,9 @@ pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
                     .any(|arm| arm.body.iter().any(statement_uses_fs_read_to_string))
         }
         Statement::Defer { call } => deferred_uses_fs_read_to_string(call),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses_fs_read_to_string) || expr_uses_fs_read_to_string(value)
+        }
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,
     }
@@ -642,6 +645,9 @@ pub(super) fn statement_uses_fs_write_string(statement: &Statement) -> bool {
                     .any(|arm| arm.body.iter().any(statement_uses_fs_write_string))
         }
         Statement::Defer { call } => deferred_uses_fs_write_string(call),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses_fs_write_string) || expr_uses_fs_write_string(value)
+        }
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,
     }
@@ -728,6 +734,9 @@ pub(super) fn statement_uses_fs_open(statement: &Statement) -> bool {
                     .any(|arm| arm.body.iter().any(statement_uses_fs_open))
         }
         Statement::Defer { call } => deferred_uses_fs_open(call),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(expr_uses_fs_open) || expr_uses_fs_open(value)
+        }
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,
     }

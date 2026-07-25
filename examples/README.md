@@ -85,6 +85,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `array_struct`: `Array<T>` with local struct elements
 - `array_swap`: `Array.set`, `mut` call arguments, and statement `match` arms
 - `array_value_semantics`: `Array<T>` assignment followed by isolated mutation
+- `collection_literals`: inferred and contextual array literals, nested reads/writes, and copy-on-write snapshots
+- `generic_map`: deterministic insertion-ordered `Map<K, V>` with struct values
 - `c_keywords`: C keyword-like field and variant names through the C backend
 - `generic_function`: generic function instantiation
 - `generic_enum`: generic enum instantiation with multiple concrete payload types

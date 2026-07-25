@@ -158,6 +158,12 @@ the same code.
 - [E0830](E0830.md) - invalid SQLite operation or opaque handle use
 - [E0840](E0840.md) - invalid JSON-RPC operation or opaque value use
 - [E0850](E0850.md) - invalid opaque cron schedule access
+- [E0860](E0860.md) - array literal element type cannot be inferred
+- [E0861](E0861.md) - array literal elements have incompatible types
+- [E0862](E0862.md) - indexed value is not an array
+- [E0863](E0863.md) - malformed array indexing syntax
+- [E0864](E0864.md) - indexed assignment through an immutable root
+- [E0865](E0865.md) - reserved generic map implementation name collision
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error
 - [E0903](E0903.md) - module not found

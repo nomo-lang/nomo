@@ -3,6 +3,10 @@ use super::*;
 pub(super) fn ast_expr_contains_question(expr: &AstExpr) -> bool {
     match expr {
         AstExpr::Question { .. } => true,
+        AstExpr::ArrayLiteral { elements } => elements.iter().any(ast_expr_contains_question),
+        AstExpr::Index { base, index } => {
+            ast_expr_contains_question(base) || ast_expr_contains_question(index)
+        }
         AstExpr::Call { args, .. } => args.iter().any(ast_expr_contains_question),
         AstExpr::StructLiteral { fields, .. } => fields
             .iter()
@@ -54,6 +58,54 @@ pub(super) fn extract_question_exprs(
     out: &mut Vec<Statement>,
 ) -> Result<(AstExpr, bool), Diagnostic> {
     match expr {
+        AstExpr::ArrayLiteral { elements } => {
+            let (elements, changed) = extract_question_exprs_from_vec(
+                path,
+                elements,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((AstExpr::ArrayLiteral { elements }, changed))
+        }
+        AstExpr::Index { base, index } => {
+            let (base, base_changed) = extract_question_exprs(
+                path,
+                base,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            let (index, index_changed) = extract_question_exprs(
+                path,
+                index,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                span,
+                out,
+            )?;
+            Ok((
+                AstExpr::Index {
+                    base: Box::new(base),
+                    index: Box::new(index),
+                },
+                base_changed || index_changed,
+            ))
+        }
         AstExpr::Question { expr } => {
             let (rewritten_result, _) = extract_question_exprs(
                 path,

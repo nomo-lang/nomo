@@ -25,6 +25,21 @@ pub(super) fn type_ref(ty: &TypeRef) -> String {
 pub(super) fn expr(value: &Expr, indent: usize, parent_precedence: u8) -> String {
     let precedence = expr_precedence(value);
     let rendered = match value {
+        Expr::ArrayLiteral { elements } => format!(
+            "[{}]",
+            elements
+                .iter()
+                .map(|element| expr(element, indent, 0))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+        Expr::Index { base, index } => {
+            format!(
+                "{}[{}]",
+                expr(base, indent, precedence),
+                expr(index, indent, 0)
+            )
+        }
         Expr::Call {
             callee,
             type_args,
@@ -151,7 +166,9 @@ fn expr_precedence(value: &Expr) -> u8 {
         Expr::Cast { .. } => 7,
         Expr::Unary { .. } => 8,
         Expr::Question { .. } => 9,
-        Expr::Call { .. }
+        Expr::Index { .. } => 10,
+        Expr::ArrayLiteral { .. }
+        | Expr::Call { .. }
         | Expr::StructLiteral { .. }
         | Expr::Panic { .. }
         | Expr::MutArg { .. }

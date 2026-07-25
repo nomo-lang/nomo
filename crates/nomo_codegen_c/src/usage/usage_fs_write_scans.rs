@@ -190,9 +190,10 @@ pub(super) fn expr_uses_fs_write_string(expr: &ValueExpr) -> bool {
         }
         ValueExpr::ArrayLen { array } => expr_uses_fs_write_string(array),
         ValueExpr::ArrayIter { array, .. } => expr_uses_fs_write_string(array),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_uses_fs_write_string(array) || expr_uses_fs_write_string(index)
         }
+        ValueExpr::ArrayLiteral { elements, .. } => elements.iter().any(expr_uses_fs_write_string),
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_uses_fs_write_string(index),
         ValueExpr::ArrayPush { value, .. } => expr_uses_fs_write_string(value),

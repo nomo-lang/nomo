@@ -23,6 +23,12 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
         Stmt::Let { value, .. } | Stmt::Assign { value, .. } => {
             expr_uses_core_prelude_variant(value, enum_name)
         }
+        Stmt::IndexAssign { indices, value, .. } => {
+            indices
+                .iter()
+                .any(|index| expr_uses_core_prelude_variant(index, enum_name))
+                || expr_uses_core_prelude_variant(value, enum_name)
+        }
         Stmt::LetElse {
             pattern,
             value,
@@ -108,6 +114,13 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
 
 fn expr_uses_core_prelude_variant(expr: &AstExpr, enum_name: &str) -> bool {
     match expr {
+        AstExpr::ArrayLiteral { elements } => elements
+            .iter()
+            .any(|element| expr_uses_core_prelude_variant(element, enum_name)),
+        AstExpr::Index { base, index } => {
+            expr_uses_core_prelude_variant(base, enum_name)
+                || expr_uses_core_prelude_variant(index, enum_name)
+        }
         AstExpr::Call { callee, args, .. } => {
             pattern_uses_core_prelude_variant(callee, enum_name)
                 || args

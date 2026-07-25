@@ -166,6 +166,32 @@ fn validate_task_safe_statement<'a>(
             visiting,
             checked,
         ),
+        Stmt::IndexAssign { indices, value, .. } => {
+            for index in indices {
+                validate_task_expression_tree(
+                    path,
+                    index,
+                    span,
+                    imports,
+                    extern_calls,
+                    functions,
+                    local_method_names,
+                    visiting,
+                    checked,
+                )?;
+            }
+            validate_task_expression_tree(
+                path,
+                value,
+                span,
+                imports,
+                extern_calls,
+                functions,
+                local_method_names,
+                visiting,
+                checked,
+            )
+        }
         Stmt::LetElse {
             value, else_body, ..
         } => {
@@ -615,6 +641,12 @@ fn visit_statement_expressions(
             value: Some(value), ..
         }
         | Stmt::Expr { expr: value, .. } => visit_expression(value, visitor),
+        Stmt::IndexAssign { indices, value, .. } => {
+            for index in indices {
+                visit_expression(index, visitor)?;
+            }
+            visit_expression(value, visitor)
+        }
         Stmt::LetElse {
             value, else_body, ..
         } => {
@@ -689,6 +721,15 @@ fn visit_expression(
 ) -> Result<(), Diagnostic> {
     visitor(expression)?;
     match expression {
+        AstExpr::ArrayLiteral { elements } => {
+            for element in elements {
+                visit_expression(element, visitor)?;
+            }
+        }
+        AstExpr::Index { base, index } => {
+            visit_expression(base, visitor)?;
+            visit_expression(index, visitor)?;
+        }
         AstExpr::Call { args, .. } => {
             for arg in args {
                 visit_expression(arg, visitor)?;
@@ -740,6 +781,7 @@ fn statement_span(statement: &Stmt) -> &Span {
         | Stmt::LetElse { span, .. }
         | Stmt::IfLet { span, .. }
         | Stmt::Assign { span, .. }
+        | Stmt::IndexAssign { span, .. }
         | Stmt::Postfix { span, .. }
         | Stmt::Return { span, .. }
         | Stmt::Match { span, .. }

@@ -76,6 +76,10 @@ pub(super) fn statement_contains_expr(
         | Statement::Panic(value)
         | Statement::Expr(value)
         | Statement::Return(Some(value)) => expr_contains(value, predicate),
+        Statement::ArrayIndexAssign { indices, value, .. } => {
+            indices.iter().any(|index| expr_contains(index, predicate))
+                || expr_contains(value, predicate)
+        }
         Statement::Loop { kind, body } => match kind {
             LoopKind::Infinite => body
                 .iter()
@@ -246,9 +250,12 @@ pub(super) fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool)
         ValueExpr::JsonStructured { args, .. }
         | ValueExpr::JsonRpc { args, .. }
         | ValueExpr::Cron { args, .. } => args.iter().any(|arg| expr_contains(arg, predicate)),
-        ValueExpr::ArrayGet { array, index, .. } => {
+        ValueExpr::ArrayGet { array, index, .. } | ValueExpr::ArrayIndex { array, index, .. } => {
             expr_contains(array, predicate) || expr_contains(index, predicate)
         }
+        ValueExpr::ArrayLiteral { elements, .. } => elements
+            .iter()
+            .any(|element| expr_contains(element, predicate)),
         ValueExpr::ArrayPop { .. } | ValueExpr::ArrayClear { .. } => false,
         ValueExpr::ArrayRemove { index, .. } => expr_contains(index, predicate),
         ValueExpr::ArraySet { index, value, .. } => {

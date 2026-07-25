@@ -23,6 +23,170 @@ fn statement_is_async_yield(statement: &Statement) -> bool {
     )
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct AsyncFrameLocal {
+    name: String,
+    value_type: ValueType,
+    declaration_index: usize,
+    last_use_index: usize,
+}
+
+fn collect_async_frame_locals(function: &Function) -> Vec<AsyncFrameLocal> {
+    function
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(declaration_index, statement)| {
+            let Statement::Let {
+                name, value_type, ..
+            } = statement
+            else {
+                return None;
+            };
+            let last_use_index = function
+                .body
+                .iter()
+                .enumerate()
+                .skip(declaration_index + 1)
+                .rev()
+                .find_map(|(index, statement)| {
+                    statement_uses_binding(statement, name).then_some(index)
+                })?;
+            let crosses_yield = function.body[declaration_index + 1..last_use_index]
+                .iter()
+                .any(statement_is_async_yield);
+            crosses_yield.then(|| AsyncFrameLocal {
+                name: name.clone(),
+                value_type: value_type.clone(),
+                declaration_index,
+                last_use_index,
+            })
+        })
+        .collect()
+}
+
+fn statement_uses_binding(statement: &Statement, binding: &str) -> bool {
+    statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+}
+
+fn expr_uses_binding(expr: &ValueExpr, binding: &str) -> bool {
+    match expr {
+        ValueExpr::Variable(name) | ValueExpr::FieldAccess { base: name, .. } => name == binding,
+        ValueExpr::MutBorrow(path) => path.first().is_some_and(|name| name == binding),
+        ValueExpr::ArrayPop { array, .. }
+        | ValueExpr::ArrayRemove { array, .. }
+        | ValueExpr::ArrayPush { array, .. }
+        | ValueExpr::ArraySet { array, .. }
+        | ValueExpr::ArrayInsert { array, .. }
+        | ValueExpr::ArrayClear { array, .. } => array == binding,
+        _ => false,
+    }
+}
+
+fn async_frame_value_field(name: &str) -> String {
+    format!("nomo_async_local_{}", c_var_ident(name))
+}
+
+fn async_frame_owned_field(name: &str) -> String {
+    format!("nomo_async_owned_{}", c_var_ident(name))
+}
+
+fn emit_async_frame_type(out: &mut String, frame_locals: &[AsyncFrameLocal]) {
+    out.push_str(
+        "typedef struct {\n\
+             uint32_t state;\n\
+             uint8_t dropped;\n",
+    );
+    for local in frame_locals {
+        out.push_str("    ");
+        out.push_str(&c_type(&local.value_type));
+        out.push(' ');
+        out.push_str(&async_frame_value_field(&local.name));
+        out.push_str(";\n");
+        if value_type_needs_release(&local.value_type) {
+            out.push_str("    uint8_t ");
+            out.push_str(&async_frame_owned_field(&local.name));
+            out.push_str(";\n");
+        }
+    }
+    out.push_str("} nomo_async_frame_main;\n\n");
+}
+
+fn emit_async_frame_store(out: &mut String, local: &AsyncFrameLocal, indent: usize) {
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&async_frame_value_field(&local.name));
+    out.push_str(" = ");
+    out.push_str(&c_var_ident(&local.name));
+    out.push_str(";\n");
+    if value_type_needs_release(&local.value_type) {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_owned_field(&local.name));
+        out.push_str(" = 1u;\n");
+    }
+}
+
+fn emit_async_frame_alias(out: &mut String, local: &AsyncFrameLocal, indent: usize) {
+    write_indent(out, indent);
+    out.push_str(&c_type(&local.value_type));
+    out.push(' ');
+    out.push_str(&c_var_ident(&local.name));
+    out.push_str(" = frame->");
+    out.push_str(&async_frame_value_field(&local.name));
+    out.push_str(";\n");
+}
+
+fn emit_async_frame_field_drop(out: &mut String, local: &AsyncFrameLocal, indent: usize) {
+    if !value_type_needs_release(&local.value_type) {
+        return;
+    }
+    let owned = async_frame_owned_field(&local.name);
+    write_indent(out, indent);
+    out.push_str("if (frame->");
+    out.push_str(&owned);
+    out.push_str(" != 0u) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->");
+    out.push_str(&owned);
+    out.push_str(" = 0u;\n");
+    emit_value_release_in_place(
+        out,
+        &local.value_type,
+        &format!("frame->{}", async_frame_value_field(&local.name)),
+        indent + 1,
+    );
+    write_indent(out, indent);
+    out.push_str("}\n");
+}
+
+fn emit_async_local_releases(
+    out: &mut String,
+    locals: &[LocalArray],
+    moved_to_frame: &[AsyncFrameLocal],
+    indent: usize,
+) {
+    for local in locals.iter().rev() {
+        if moved_to_frame
+            .iter()
+            .any(|frame_local| frame_local.name == local.name)
+        {
+            continue;
+        }
+        emit_value_release_binding(out, &local.name, &local.value_type, indent);
+    }
+}
+
+fn next_async_yield(function: &Function, start: usize) -> usize {
+    function
+        .body
+        .iter()
+        .enumerate()
+        .skip(start)
+        .find_map(|(index, statement)| statement_is_async_yield(statement).then_some(index))
+        .unwrap_or(function.body.len())
+}
+
 pub(super) fn emit_current_thread_executor(out: &mut String) {
     out.push_str(
         "typedef enum {\n\
@@ -94,13 +258,10 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
     debug_assert!(function.params.is_empty());
     debug_assert!(function_uses_async_yield(function));
 
+    let frame_locals = collect_async_frame_locals(function);
+    emit_async_frame_type(out, &frame_locals);
     out.push_str(
-        "typedef struct {\n\
-             uint32_t state;\n\
-             uint8_t dropped;\n\
-         } nomo_async_frame_main;\n\
-         \n\
-         static nomo_async_poll nomo_async_poll_main(\n\
+        "static nomo_async_poll nomo_async_poll_main(\n\
              void *raw_frame,\n\
              nomo_async_context *context\n\
          ) {\n\
@@ -110,11 +271,31 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
     );
 
     let empty_deferred = Vec::new();
-    let empty_locals = Vec::new();
+    let mut local_owned = Vec::new();
     let mut state = 0u32;
+    let mut segment_start = 0usize;
     out.push_str("        case 0u: {\n");
-    for statement in &function.body {
+    for (index, statement) in function.body.iter().enumerate() {
         if statement_is_async_yield(statement) {
+            let moved_to_frame = frame_locals
+                .iter()
+                .filter(|local| {
+                    local.declaration_index >= segment_start && local.declaration_index < index
+                })
+                .cloned()
+                .collect::<Vec<_>>();
+            for local in &moved_to_frame {
+                emit_async_frame_store(out, local, 3);
+            }
+            emit_async_local_releases(out, &local_owned, &moved_to_frame, 3);
+            local_owned.clear();
+            for local in frame_locals
+                .iter()
+                .filter(|local| local.declaration_index < segment_start)
+                .filter(|local| local.last_use_index < index)
+            {
+                emit_async_frame_field_drop(out, local, 3);
+            }
             state += 1;
             out.push_str("            frame->state = ");
             out.push_str(&state.to_string());
@@ -125,6 +306,19 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
             out.push_str("        case ");
             out.push_str(&state.to_string());
             out.push_str("u: {\n");
+            segment_start = index + 1;
+            let segment_end = next_async_yield(function, segment_start);
+            for local in frame_locals
+                .iter()
+                .filter(|local| local.declaration_index < segment_start)
+                .filter(|local| {
+                    function.body[segment_start..segment_end]
+                        .iter()
+                        .any(|statement| statement_uses_binding(statement, &local.name))
+                })
+            {
+                emit_async_frame_alias(out, local, 3);
+            }
             continue;
         }
         emit_stmt(
@@ -133,13 +327,17 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
             3,
             &empty_deferred,
             &ValueType::Void,
-            &empty_locals,
+            &local_owned,
             0,
             0,
             0,
             0,
         );
+        if let Some(local) = local_array_from_statement(statement) {
+            local_owned.push(local);
+        }
     }
+    emit_async_local_releases(out, &local_owned, &[], 3);
     out.push_str(
         "            frame->state = UINT32_MAX;\n\
                      return NOMO_ASYNC_POLL_READY;\n\
@@ -153,8 +351,13 @@ pub(super) fn emit_async_main(out: &mut String, function: &Function) {
              if (frame->dropped != 0u) {\n\
                  return;\n\
              }\n\
-             frame->dropped = 1u;\n\
-             frame->state = UINT32_MAX;\n\
+             frame->dropped = 1u;\n",
+    );
+    for local in frame_locals.iter().rev() {
+        emit_async_frame_field_drop(out, local, 1);
+    }
+    out.push_str(
+        "    frame->state = UINT32_MAX;\n\
          }\n",
     );
 }

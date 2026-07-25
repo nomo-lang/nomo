@@ -417,6 +417,7 @@ pub(super) fn lower_function_as(
             &mut body,
         )?;
     }
+    validate_p1_yield_ir_function(path, function, &body, structs, enums)?;
 
     if signature.return_type != ValueType::Void && !statements_satisfy_function_return(&body) {
         return Err(Diagnostic::new(

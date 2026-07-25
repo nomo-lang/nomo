@@ -1,9 +1,9 @@
 use super::*;
 
-pub(super) fn statement_contains_expr(
-    statement: &Statement,
-    predicate: fn(&ValueExpr) -> bool,
-) -> bool {
+pub(super) fn statement_contains_expr<P>(statement: &Statement, predicate: P) -> bool
+where
+    P: Fn(&ValueExpr) -> bool + Copy,
+{
     match statement {
         Statement::Let { initializer, .. } => expr_contains(initializer, predicate),
         Statement::LetIf {
@@ -123,10 +123,10 @@ pub(super) fn statement_contains_expr(
     }
 }
 
-pub(super) fn deferred_contains_expr(
-    call: &DeferredCall,
-    predicate: fn(&ValueExpr) -> bool,
-) -> bool {
+pub(super) fn deferred_contains_expr<P>(call: &DeferredCall, predicate: P) -> bool
+where
+    P: Fn(&ValueExpr) -> bool + Copy,
+{
     match call {
         DeferredCall::Expr(expr)
         | DeferredCall::Println(expr)
@@ -136,7 +136,10 @@ pub(super) fn deferred_contains_expr(
     }
 }
 
-pub(super) fn expr_contains(expr: &ValueExpr, predicate: fn(&ValueExpr) -> bool) -> bool {
+pub(super) fn expr_contains<P>(expr: &ValueExpr, predicate: P) -> bool
+where
+    P: Fn(&ValueExpr) -> bool + Copy,
+{
     if predicate(expr) {
         return true;
     }

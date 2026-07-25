@@ -7630,6 +7630,154 @@ fn main() -> void {
 }
 
 #[test]
+fn async_frame_completion_and_early_drop_are_asan_clean_when_available() {
+    let root = temp_test_root("asan-async-frame-drop");
+    reset_dir(&root);
+
+    if !cc_supports_address_sanitizer(&root) {
+        fs::remove_dir_all(&root).unwrap();
+        return;
+    }
+
+    let source = root.join("main.nomo");
+    let generated_c = root.join("generated.c");
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.array
+import std.io
+import std.task
+
+struct Envelope {
+    body: string
+}
+
+enum State {
+    Ready(string)
+    Empty
+}
+
+suspend fn main() -> void {
+    let message: string = "live"
+    let values: Array<string> = ["alpha", "beta"]
+    let envelope: Envelope = Envelope { body: "payload" }
+    let state: State = State.Ready("state")
+    io.println("before")
+    task.yield_now()
+    io.println(message, envelope.body)
+    let state_copy: State = state
+    task.yield_now()
+    io.println(values.len())
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&generated_c)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    let drop_call = "    nomo_async_drop_main(&nomo__frame);\n";
+    assert_eq!(generated.matches(drop_call).count(), 1);
+    let completed = generated.replacen(
+        drop_call,
+        "    nomo_async_drop_main(&nomo__frame);\n    nomo_async_drop_main(&nomo__frame);\n",
+        1,
+    );
+
+    let mut early = completed.clone();
+    let executor_call = early
+        .rfind("nomo_async_executor_run_root(")
+        .expect("generated main must invoke the root executor");
+    early.replace_range(
+        executor_call..executor_call + "nomo_async_executor_run_root".len(),
+        "nomo_async_poll_once_root",
+    );
+    let main_start = early
+        .find("int main(void)")
+        .expect("generated C must contain main");
+    early.insert_str(
+        main_start,
+        "static int nomo_async_poll_once_root(\n\
+         void *frame,\n\
+         nomo_async_poll_fn poll,\n\
+         nomo_async_context *context\n\
+         ) {\n\
+             (void)poll(frame, context);\n\
+             return 0;\n\
+         }\n\n",
+    );
+
+    let asan_options = if cfg!(target_os = "macos") {
+        "detect_leaks=0:abort_on_error=1"
+    } else {
+        "detect_leaks=1:abort_on_error=1"
+    };
+    for (name, c_source, expected_stdout) in [
+        ("completed", completed, "before\nlive payload\n2\n"),
+        ("early", early, "before\n"),
+    ] {
+        let c_path = root.join(format!("{name}.c"));
+        let bin_path = root.join(format!("asan-async-frame-{name}"));
+        fs::write(&c_path, c_source).unwrap();
+
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&c_path)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{} compile stdout:\n{}\ncompile stderr:\n{}",
+            name,
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+
+        let run_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .output()
+            .unwrap();
+        assert!(
+            run_output.status.success(),
+            "{} stdout:\n{}\nstderr:\n{}",
+            name,
+            String::from_utf8_lossy(&run_output.stdout),
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&run_output.stdout),
+            expected_stdout,
+            "{name}"
+        );
+        assert!(
+            String::from_utf8_lossy(&run_output.stderr).is_empty(),
+            "{} stderr:\n{}",
+            name,
+            String::from_utf8_lossy(&run_output.stderr)
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_allows_option_question_early_return() {
     let root = temp_test_root("option-question-early-return");
     reset_dir(&root);

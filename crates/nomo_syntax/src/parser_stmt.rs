@@ -9,6 +9,12 @@ impl Parser<'_> {
         {
             return self.parse_task_scope_stmt(token);
         }
+        if matches!(&token.kind, TokenKind::Ident(name) if name == "task")
+            && matches!(self.peek_n(1).kind, TokenKind::Dot)
+            && matches!(&self.peek_n(2).kind, TokenKind::Ident(name) if name == "deadline")
+        {
+            return self.parse_task_deadline_stmt(token);
+        }
         if matches!(token.kind, TokenKind::Let) {
             return self.parse_let_stmt(token);
         }
@@ -494,6 +500,36 @@ impl Parser<'_> {
                 column: token.column,
                 length: "task.scope".len(),
                 text: "task.scope".to_string(),
+            },
+        })
+    }
+
+    fn parse_task_deadline_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        let module = self.expect_ident("expected `task`")?;
+        debug_assert_eq!(module, "task");
+        self.expect_kind(TokenKind::Dot, "E0871", "expected `.` after `task`")?;
+        let operation = self.expect_ident("expected `deadline` after `task.`")?;
+        debug_assert_eq!(operation, "deadline");
+        self.expect_kind(
+            TokenKind::LParen,
+            "E0871",
+            "expected `(` after `task.deadline`",
+        )?;
+        let duration = self.parse_expr()?;
+        self.expect_kind(
+            TokenKind::RParen,
+            "E0871",
+            "expected `)` after task deadline duration",
+        )?;
+        let body = self.parse_stmt_block("E0871", "expected `{` before task deadline body")?;
+        Ok(Stmt::TaskDeadline {
+            duration,
+            body,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: "task.deadline".len(),
+                text: "task.deadline".to_string(),
             },
         })
     }

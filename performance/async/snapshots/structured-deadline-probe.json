@@ -1,6 +1,6 @@
 {
   "schema": 1,
-  "gate": "p1-structured-task-spawn-complete",
+  "gate": "p1-structured-deadline-timeout",
   "required_absent_generated_c_patterns": [
     "pthread_create",
     "CreateThread",
@@ -11,37 +11,36 @@
   "required_generated_c_pattern_counts": {
     "static int nomo_async_metrics_export": 1,
     "nomo_async_metrics_export(&nomo__context)": 1,
-    "context->task_spawns += 1u;": 32,
-    "context->task_joins += 1u;": 32,
-    "context->join_suspensions += 1u;": 64,
-    "nomo_async_ready_enqueue(context, &frame->nomo_async_child_": 32,
-    "nomo_async_drop_child(&frame->nomo_async_child_": 64
+    "frame->nomo_async_deadline_outcome = nomo_async_deadline_arm(": 1,
+    "nomo_async_task_failure_code(frame->nomo_async_child_0.structured_failure)": 2,
+    "context->deadline_expirations += 1u;": 5,
+    "nomo_async_timer_disarm(&frame->nomo_async_deadline_timer": 10
   },
   "runtime_counters": {
     "available": true,
     "schema": 1,
     "counters": {
-      "poll_calls": 34,
+      "poll_calls": 4,
       "cooperative_yields": 0,
       "frame_allocations": 0,
-      "frame_drops": 33,
-      "peak_live_frames": 33,
-      "ready_queue_enqueues": 33,
-      "ready_queue_dequeues": 33,
+      "frame_drops": 2,
+      "peak_live_frames": 2,
+      "ready_queue_enqueues": 3,
+      "ready_queue_dequeues": 3,
       "ready_queue_saturations": 0,
       "ready_queue_cancellations": 0,
-      "task_spawns": 32,
-      "task_joins": 32,
+      "task_spawns": 1,
+      "task_joins": 1,
       "join_suspensions": 1,
       "task_cancellations": 0,
-      "deadline_registrations": 0,
-      "deadline_expirations": 0,
+      "deadline_registrations": 1,
+      "deadline_expirations": 1,
       "deadline_cancellations": 0,
-      "timer_registrations": 0,
-      "timer_expirations": 0,
-      "timer_cancellations": 0,
+      "timer_registrations": 2,
+      "timer_expirations": 1,
+      "timer_cancellations": 1,
       "live_timers": 0,
-      "peak_live_timers": 0
+      "peak_live_timers": 2
     },
     "unavailable": [
       "local_retain",

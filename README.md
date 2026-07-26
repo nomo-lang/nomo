@@ -534,12 +534,22 @@ cancels incomplete children, removes ready/timer registrations, drops every
 frame, runs shutdown and metrics export, then prints and releases the original
 message before exiting with status 1. Browser WASM returns the corresponding
 runtime error without executing structured child bodies.
+The first deadline slice adds one non-nested
+`task.deadline(Duration) { ... }` per suspend function and the
+allocation-free, non-suspending `task.check_cancelled()` observation point.
+Non-positive durations fail with stable code `timeout` before the body and
+without timer registration. Positive deadlines use the owner-local monotonic
+timer table; normal fallthrough disarms the timer, while timeout cancels the
+current child subtree and becomes a typed structured-join error or a
+secret-safe nonzero root failure. Browser WASM rejects the deadline without
+evaluating its duration or body.
 E0871, E0872, E0875, and E0876 reject invalid boundaries, ownership, targets,
 and unsupported shapes. Mutable
 parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
-non-final scope return, cancellation tokens/deadlines, channels/select,
+non-final scope return, cancellation tokens, nested/general deadline exits,
+channels/select,
 the multi-task timer wheel, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
@@ -549,6 +559,7 @@ slices. See
 `examples/async_structured_return_cancel`,
 `examples/async_structured_question_cancel`,
 `examples/async_structured_explicit_cancel`,
+`examples/async_structured_deadline`,
 `examples/async_structured_panic_cleanup`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).

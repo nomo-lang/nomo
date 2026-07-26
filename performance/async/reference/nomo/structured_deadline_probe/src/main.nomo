@@ -1,0 +1,22 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn bounded_work() -> string {
+    task.deadline(time.duration_millis(5)) {
+        let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+        task.check_cancelled()
+    }
+    return "completed"
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn bounded_work()
+        let joined: Result<string, TaskError> = task.join(child)
+        io.println("deadline elapsed", result.is_err(joined))
+    }
+}

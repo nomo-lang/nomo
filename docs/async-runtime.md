@@ -88,6 +88,37 @@ already-completed child returns `Ok(void)`; a child whose spawn was rejected
 returns the same stable `queue_full` error. This overload is distinct from the
 legacy synchronous `task.cancel(Task)` worker request.
 
+The first deadline slice is another compiler-recognized structured scope:
+
+```nomo
+import std.task
+import std.time
+
+suspend fn bounded_work() -> string {
+    task.deadline(time.duration_millis(50)) {
+        let waited: Result<void, TaskError> =
+            task.sleep(time.duration_millis(1000))
+        task.check_cancelled()
+    }
+    return "completed"
+}
+```
+
+The duration is evaluated exactly once. A non-positive duration terminates the
+current suspend task with `TaskError { code: "timeout", ... }` before executing
+the body and without registering a timer. A positive duration arms one
+owner-local monotonic timer. Normal fallthrough disarms it; expiry cancels the
+current frame's child subtree and pending timer/ready registrations before
+completing the task. A structured parent observes that failure through
+`task.join` rather than receiving a fabricated child value. A root timeout
+prints only the stable code and exits nonzero.
+
+`task.check_cancelled()` is non-suspending and does not allocate or enqueue.
+It is an explicit cooperative observation point; the generated state machine
+also checks immediately before and after runtime suspension boundaries.
+Timeout wins if a ready operation and its deadline are both observable at a
+resume boundary.
+
 ## Implemented P1 Slice
 
 On the native C99 backend, a suspend call chain that reaches
@@ -113,6 +144,10 @@ On the native C99 backend, a suspend call chain that reaches
   cancellation through the child subtree, removes ready/timer registrations,
   waits for terminal cleanup, returns `Result<void, TaskError>`, and drops the
   consumed child frame;
+- one non-nested `task.deadline(Duration)` scope per suspend function, with
+  immediate non-positive timeout, saturating monotonic deadline calculation,
+  deterministic ready/timeout checks, typed child failure, and child-first
+  cancellation cleanup;
 - compiler-inserted scope cleanup on normal fallthrough and final `return` that
   cancels unjoined children, removes their ready-queue entries, disarms owned
   timers, and drops their frames before the next statement or return
@@ -128,7 +163,8 @@ ready zero-duration timer neither registers nor enters the queue. A positive
 timer is not polled again until its deadline moves the owner frame to the ready
 queue. The generated context records poll, yield, frame-drop/live-frame,
 enqueue/dequeue/saturation/cancellation, structured
-spawn/join/join-suspension/cancellation, and timer
+spawn/join/join-suspension/cancellation, deadline
+registration/expiry/disarm, and timer
 registration/expiry/cancellation/live/peak counters.
 Native programs export the versioned
 `nomo-c99-current-thread` JSON payload only when
@@ -169,7 +205,9 @@ return control to a host Promise or browser event loop. `task.sleep` does not
 block or evaluate its duration in the browser sandbox; it returns
 `TaskError { code: "runtime_unavailable", ... }`. Structured child bodies are
 also not evaluated there yet; their join and structured cancel return the same
-stable error and consume the inert browser handle.
+stable error and consume the inert browser handle. `task.deadline` currently
+returns a sandbox capability error without evaluating either its duration or
+body; host-driven browser deadlines remain a later backend slice.
 
 ## Deliberate Restrictions
 
@@ -184,7 +222,17 @@ Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
 expressions or argument expressions, `?` outside the direct structured binding
 described below, panic nested inside another expression, cancellation
-tokens/deadlines, and reactor-backed I/O are later slices.
+tokens, and reactor-backed I/O are later slices.
+
+The current deadline slice permits one non-nested
+`task.deadline(Duration) { ... }` per suspend function. Its body has the same
+top-level structured spawn/join/cancel ownership rules as `task.scope` and may
+contain the supported direct suspension shapes plus
+`task.check_cancelled()`. It is deliberately non-value-producing and must
+fall through normally. Nested deadlines/scopes, control flow, `return`, `?`,
+panic, defer, or unsafe inside the deadline body require the later general
+structured-exit and nested-deadline lowering. No public cancellation-token
+value exists in v0.1.
 
 Structured spawn/join is available only in a top-level `task.scope` body. Each
 spawn handle must use an inferred immutable binding, remain in that scope, and
@@ -217,8 +265,9 @@ then prints and releases the original message before exiting with status 1.
 runtime error while keeping structured child bodies inert. Nested scopes,
 nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
 other positions, panic nested in another expression, cancellation tokens,
-deadlines, channels, and select remain later slices. E0871, E0872, E0875, and
-E0876 reject unsupported cases before code generation.
+nested/general deadline exits, channels, and select remain later slices.
+E0871, E0872, E0875, and E0876 reject unsupported cases before code
+generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -243,6 +292,10 @@ cancellation, an armed sibling timer, exact frame/task/timer counters, and the
 browser-WASM boundary. Explicit structured-cancel tests cover an armed timer,
 the exact result/handle ownership transition, generated pending ABI, native
 and browser behavior, exact counters, and AddressSanitizer cleanup.
+Deadline tests additionally cover non-positive body suppression, normal
+disarm, timeout while a child frame owns an armed sleep, typed join failure,
+root secret-safe failure, exact timer/deadline counters, browser
+non-evaluation, and AddressSanitizer cleanup.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on the remaining error, cancellation, timeout,

@@ -1,0 +1,3 @@
+[package]
+name = "async_structured_deadline"
+version = "0.1.0"

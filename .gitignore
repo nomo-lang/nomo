@@ -1,5 +1,6 @@
 /target/
 /performance/results/
+/performance/async/reference/nomo/*/build/
 **/__pycache__/
 **/.nomo/*
 !**/.nomo/config.toml

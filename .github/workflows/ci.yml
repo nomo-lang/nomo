@@ -208,6 +208,14 @@ jobs:
           grep 'nomo_async_cancel_slow_child' "$explicit_cancel_dir/c/main.c"
           grep 'nomo_async_timer_disarm' "$explicit_cancel_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$explicit_cancel_dir/c/main.c"
+          target/release/nomo build examples/async_structured_deadline --target x86_64-apple-darwin
+          deadline_dir="examples/async_structured_deadline/build/x86_64-apple-darwin-none"
+          deadline_artifact="$deadline_dir/bin/async_structured_deadline"
+          test "$(lipo -archs "$deadline_artifact")" = "x86_64"
+          grep 'nomo_async_deadline_arm' "$deadline_dir/c/main.c"
+          grep 'NOMO_ASYNC_TASK_FAILURE_TIMEOUT' "$deadline_dir/c/main.c"
+          grep 'deadline_expirations += 1u' "$deadline_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$deadline_dir/c/main.c"
           target/release/nomo build examples/async_structured_panic_cleanup --target x86_64-apple-darwin
           panic_dir="examples/async_structured_panic_cleanup/build/x86_64-apple-darwin-none"
           panic_artifact="$panic_dir/bin/async_structured_panic_cleanup"
@@ -241,6 +249,7 @@ jobs:
             examples/async_structured_return_cancel/build/x86_64-apple-darwin-none
             examples/async_structured_question_cancel/build/x86_64-apple-darwin-none
             examples/async_structured_explicit_cancel/build/x86_64-apple-darwin-none
+            examples/async_structured_deadline/build/x86_64-apple-darwin-none
             examples/async_structured_panic_cleanup/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
@@ -354,6 +363,16 @@ jobs:
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$explicit_cancel_dir/c/main.c"
           explicit_cancel_output=$(qemu-aarch64 -L /usr/aarch64-linux-gnu "$explicit_cancel_artifact")
           test "$explicit_cancel_output" = "$(printf 'managed before\ncancelled true')"
+          target/release/nomo build examples/async_structured_deadline --target aarch64-unknown-linux-gnu
+          deadline_dir="examples/async_structured_deadline/build/aarch64-unknown-linux-gnu"
+          deadline_artifact="$deadline_dir/bin/async_structured_deadline"
+          readelf -h "$deadline_artifact" | grep 'Machine:.*AArch64'
+          grep 'nomo_async_deadline_arm' "$deadline_dir/c/main.c"
+          grep 'NOMO_ASYNC_TASK_FAILURE_TIMEOUT' "$deadline_dir/c/main.c"
+          grep 'deadline_expirations += 1u' "$deadline_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$deadline_dir/c/main.c"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$deadline_artifact" \
+            | grep '^deadline elapsed true$'
           target/release/nomo build examples/async_structured_panic_cleanup --target aarch64-unknown-linux-gnu
           panic_dir="examples/async_structured_panic_cleanup/build/aarch64-unknown-linux-gnu"
           panic_artifact="$panic_dir/bin/async_structured_panic_cleanup"
@@ -399,6 +418,7 @@ jobs:
             examples/async_structured_return_cancel/build/aarch64-unknown-linux-gnu
             examples/async_structured_question_cancel/build/aarch64-unknown-linux-gnu
             examples/async_structured_explicit_cancel/build/aarch64-unknown-linux-gnu
+            examples/async_structured_deadline/build/aarch64-unknown-linux-gnu
             examples/async_structured_panic_cleanup/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

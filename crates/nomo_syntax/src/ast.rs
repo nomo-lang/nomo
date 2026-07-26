@@ -209,6 +209,11 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    TaskDeadline {
+        duration: Expr,
+        body: Vec<Stmt>,
+        span: Span,
+    },
     Unsafe {
         body: Vec<Stmt>,
         span: Span,

@@ -457,6 +457,17 @@ fn validate_extern_stmt_is_unsafe(
             }
             Ok(())
         }
+        Stmt::TaskDeadline {
+            duration,
+            body,
+            span,
+        } => {
+            validate_extern_expr_is_unsafe(path, duration, in_unsafe, extern_names, span)?;
+            for stmt in body {
+                validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+            }
+            Ok(())
+        }
         Stmt::Unsafe { body, .. } => {
             for stmt in body {
                 validate_extern_stmt_is_unsafe(path, stmt, true, extern_names)?;

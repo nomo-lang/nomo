@@ -9176,6 +9176,312 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_deadline_times_out_child_and_is_asan_clean() {
+    let root = temp_test_root("structured-deadline-timeout");
+    reset_dir(&root);
+    let project = root.join("structured_deadline_timeout");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_deadline_timeout\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn bounded_work() -> string {
+    task.deadline(time.duration_millis(5)) {
+        let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+        task.check_cancelled()
+    }
+    return "completed"
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn bounded_work()
+        let joined: Result<string, TaskError> = task.join(child)
+        io.println("deadline elapsed", result.is_err(joined))
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-deadline-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "deadline elapsed true\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["poll_calls"], 4);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 2);
+    assert_eq!(metrics["counters"]["task_spawns"], 1);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["deadline_registrations"], 1);
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["deadline_cancellations"], 0);
+    assert_eq!(metrics["counters"]["timer_registrations"], 2);
+    assert_eq!(metrics["counters"]["timer_expirations"], 1);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["peak_live_timers"], 2);
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_async_deadline_arm("));
+    assert!(generated.contains("NOMO_ASYNC_TASK_FAILURE_TIMEOUT"));
+    assert!(generated.contains("nomo_async_task_failure_code"));
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-structured-deadline.exe"
+        } else {
+            "asan-structured-deadline"
+        });
+        let asan_metrics_path = root.join("asan-metrics.json");
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "deadline elapsed true\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn root_zero_deadline_fails_before_body_without_registering_a_timer() {
+    let root = temp_test_root("root-zero-deadline");
+    reset_dir(&root);
+    let project = root.join("root_zero_deadline");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"root_zero_deadline\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.task
+import std.time
+
+suspend fn bounded() -> void {
+    task.deadline(time.duration_millis(0)) {
+        io.println("deadline-body-secret")
+    }
+}
+
+suspend fn main() -> void {
+    bounded()
+    io.println("deadline-caller-after-secret")
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("root-zero-deadline-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert_eq!(
+        stderr,
+        "error: async task failed: timeout\nprogram exited with status 1\n"
+    );
+    assert!(!stderr.contains("deadline-body-secret"));
+    assert!(!stderr.contains("deadline-caller-after-secret"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["deadline_registrations"], 0);
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["deadline_cancellations"], 0);
+    assert_eq!(metrics["counters"]["timer_registrations"], 0);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn positive_deadline_disarms_after_normal_fallthrough() {
+    let root = temp_test_root("normal-deadline-fallthrough");
+    reset_dir(&root);
+    let project = root.join("normal_deadline_fallthrough");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"normal_deadline_fallthrough\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.deadline(time.duration_millis(10000)) {
+        task.check_cancelled()
+        io.println("completed")
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("normal-deadline-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "completed\n");
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["deadline_registrations"], 1);
+    assert_eq!(metrics["counters"]["deadline_expirations"], 0);
+    assert_eq!(metrics["counters"]["deadline_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_cancel_observes_an_already_failed_deadline_child() {
+    let root = temp_test_root("cancel-failed-deadline-child");
+    reset_dir(&root);
+    let project = root.join("cancel_failed_deadline_child");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"cancel_failed_deadline_child\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn bounded() -> void {
+    task.deadline(time.duration_millis(0)) {
+        io.println("failed-child-body-secret")
+    }
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let failed = task.spawn bounded()
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(failed)
+        io.println("cancel observed timeout", result.is_err(cancelled))
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "cancel observed timeout true\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn structured_child_panic_cancels_root_siblings_and_is_asan_clean() {
     let root = temp_test_root("structured-child-panic-cleanup");
     reset_dir(&root);

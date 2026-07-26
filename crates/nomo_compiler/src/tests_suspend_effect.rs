@@ -318,6 +318,110 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn task_deadline_lowers_one_structured_marker_pair_and_cancel_check() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.deadline(time.duration_millis(5)) {
+        task.check_cancelled()
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[0],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_task_deadline_enter"
+                && matches!(args.as_slice(), [ValueExpr::TimeDurationMillis { .. }])
+    ));
+    assert!(matches!(
+        &main.body[1],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_task_check_cancelled" && args.is_empty()
+    ));
+    assert!(matches!(
+        &main.body[2],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_task_deadline_exit" && args.is_empty()
+    ));
+}
+
+#[test]
+fn task_deadline_and_cancel_check_require_suspend_functions() {
+    for body in [
+        "task.deadline(time.duration_millis(1)) {\n        task.check_cancelled()\n    }",
+        "task.check_cancelled()",
+    ] {
+        let source = format!(
+            "package app.main\n\nimport std.task\nimport std.time\n\nfn main() -> void {{\n    {body}\n}}\n"
+        );
+        let error = parse_inline(&source).unwrap_err();
+        assert_eq!(error.code, "E0870");
+        assert!(error.message.contains("suspend"));
+    }
+}
+
+#[test]
+fn task_deadline_rejects_wrong_duration_and_unsupported_early_exit() {
+    let wrong_duration = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    task.deadline(1) {
+        task.check_cancelled()
+    }
+}
+"#;
+    let error = parse_inline(wrong_duration).unwrap_err();
+    assert_eq!(error.code, "E0404");
+    assert!(error.message.contains("Duration"));
+
+    let early_return = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.deadline(time.duration_millis(1)) {
+        return
+    }
+}
+"#;
+    let error = parse_inline(early_return).unwrap_err();
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("deadline return"));
+}
+
+#[test]
+fn task_deadline_rejects_nested_structured_scopes_in_the_first_slice() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.deadline(time.duration_millis(1)) {
+        task.scope {
+        }
+    }
+}
+"#;
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("task.deadline"));
+}
+
+#[test]
 fn specifically_imported_task_sleep_lowers_to_the_timer_runtime() {
     let source = r#"package app.main
 

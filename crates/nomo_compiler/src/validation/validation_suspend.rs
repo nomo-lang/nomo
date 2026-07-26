@@ -126,7 +126,10 @@ pub(super) fn validate_p1_yield_function(
     }
 
     if function.package.as_slice() == ["std", "task"]
-        && matches!(function.name.as_str(), "yield_now" | "sleep")
+        && matches!(
+            function.name.as_str(),
+            "yield_now" | "sleep" | "check_cancelled"
+        )
     {
         return Ok(());
     }
@@ -240,6 +243,45 @@ fn validate_p1_suspend_function_shape(
                                 _ => false,
                             })
                 }
+                Stmt::TaskDeadline { duration, body, .. } => {
+                    !ast_expr_contains_suspension(duration, imports, suspending_functions)
+                        && !ast_expr_contains_frame_exit(duration)
+                        && body.iter().all(|statement| match statement {
+                            Stmt::Let { mutable, value, .. } => {
+                                !mutable
+                                    && (ast_expr_is_structured_spawn(value)
+                                        || ast_expr_is_structured_join(value)
+                                        || ast_expr_is_structured_cancel(value)
+                                        || ast_expr_is_direct_suspension(
+                                            value,
+                                            imports,
+                                            suspending_functions,
+                                        )
+                                        || !ast_expr_contains_suspension(
+                                            value,
+                                            imports,
+                                            suspending_functions,
+                                        ))
+                                    && !ast_expr_contains_frame_exit(value)
+                            }
+                            Stmt::Expr { expr, .. } => {
+                                ((ast_expr_is_direct_suspension(
+                                    expr,
+                                    imports,
+                                    suspending_functions,
+                                ) && !ast_expr_is_direct_sleep(
+                                    expr,
+                                    imports,
+                                    suspending_functions,
+                                )) || !ast_expr_contains_suspension(
+                                    expr,
+                                    imports,
+                                    suspending_functions,
+                                )) && !ast_expr_contains_frame_exit(expr)
+                            }
+                            _ => false,
+                        })
+                }
                 _ => false,
             });
 
@@ -249,7 +291,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, deadline return/`?`/panic, and non-final early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -276,8 +318,9 @@ pub(super) fn validate_p1_suspending_functions(
         .collect::<HashSet<_>>();
     for function in functions {
         for statement in &function.body {
-            let Stmt::TaskScope { body, .. } = statement else {
-                continue;
+            let body = match statement {
+                Stmt::TaskScope { body, .. } | Stmt::TaskDeadline { body, .. } => body,
+                _ => continue,
             };
             for statement in body {
                 let Stmt::Let { value, .. } = statement else {
@@ -757,9 +800,13 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
 }
 
 fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) -> bool {
+    if matches!(statement, Stmt::TaskDeadline { .. }) {
+        return true;
+    }
     ast_statement_any_expr(statement, |candidate| {
         ast_expr_is_direct_yield(candidate, imports)
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
+            || ast_expr_is_check_cancelled(candidate, imports)
             || ast_expr_is_structured_join(candidate)
             || ast_expr_is_structured_cancel(candidate)
     })
@@ -866,6 +913,12 @@ where
         Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => body
             .iter()
             .any(|statement| ast_statement_any_expr(statement, predicate)),
+        Stmt::TaskDeadline { duration, body, .. } => {
+            ast_expr_any(duration, predicate)
+                || body
+                    .iter()
+                    .any(|statement| ast_statement_any_expr(statement, predicate))
+        }
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
@@ -1067,6 +1120,24 @@ fn ast_expr_is_direct_yield(expr: &AstExpr, imports: &[String]) -> bool {
                 && imports.iter().any(|item| item == "std.task.yield_now")))
 }
 
+fn ast_expr_is_check_cancelled(expr: &AstExpr, imports: &[String]) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    type_args.is_empty()
+        && args.is_empty()
+        && (callee.as_slice() == ["task", "check_cancelled"]
+            || (callee.as_slice() == ["check_cancelled"]
+                && imports
+                    .iter()
+                    .any(|item| item == "std.task.check_cancelled")))
+}
+
 fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
     matches!(
         statement,
@@ -1077,6 +1148,8 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             }
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
+                || (name == BUILTIN_TASK_CHECK_CANCELLED_EXPR && args.is_empty())
+                || (name == BUILTIN_TASK_DEADLINE_ENTER_EXPR && args.len() == 1)
                 || (name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1)
                 || (name == BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR && args.len() == 1)
     )

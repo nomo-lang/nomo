@@ -397,6 +397,39 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn rejects_task_deadline_without_evaluating_duration_or_body() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+import std.time
+
+fn duration() -> Duration {
+    panic("browser-deadline-duration-secret")
+}
+
+suspend fn main() -> void {
+    task.deadline(duration()) {
+        io.println("browser-deadline-body-secret")
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("browser deadline should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("task deadlines"));
+        assert!(!response.stdout.contains("browser-deadline-body-secret"));
+        assert!(!error.message.contains("browser-deadline-duration-secret"));
+        assert!(!error.message.contains("browser-deadline-body-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn returns_structured_task_runtime_unavailable_without_invoking_the_child() {
         let source = r#"package app.main
 

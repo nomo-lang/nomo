@@ -16,8 +16,8 @@
     "nomo_async_timer_start(&frame->": 2,
     "nomo_async_timer_resume(&frame->": 2,
     "nomo_async_timer_disarm(&frame->": 4,
-    "context->timer_registrations += 1u;": 1,
-    "context->timer_expirations += 1u;": 1
+    "context->timer_registrations += 1u;": 2,
+    "context->timer_expirations += 1u;": 2
   },
   "runtime_counters": {
     "available": true,
@@ -36,6 +36,9 @@
       "task_joins": 0,
       "join_suspensions": 0,
       "task_cancellations": 0,
+      "deadline_registrations": 0,
+      "deadline_expirations": 0,
+      "deadline_cancellations": 0,
       "timer_registrations": 1,
       "timer_expirations": 1,
       "timer_cancellations": 0,

@@ -17,9 +17,12 @@ manifest keeps these controls:
 The separate `manifest-p1.json` repeats both zero-cost controls and enables
 `yield_counter_probe`, `timer_counter_probe`, `task_spawn_complete`,
 `structured_cancel_probe`, `structured_return_cancel_probe`, and
-`structured_question_cancel_probe`. Each counter probe executes outside
-measured samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the
-versioned current-thread JSON contract against `counter-catalog.json`. The
+`structured_question_cancel_probe`, plus
+`structured_panic_cleanup_probe`. Each counter probe executes outside measured
+samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the versioned
+current-thread JSON contract against `counter-catalog.json`. Panic is an
+explicit expected-failure contract with exact stderr and exit status; it is
+never accepted as an accidental command failure. The
 two-frame, two-yield chain transfers one managed argument and result, then
 requires zero heap/slab frame allocations, two idempotent frame drops, peak two
 live frames, two queue round trips, five polls, and two cooperative yields. The
@@ -44,11 +47,14 @@ results now have generated-C, native, WASM-boundary,
 post-join nested-scope return, and AddressSanitizer correctness coverage.
 Scope cancellation additionally covers armed-timer and ready-queue cleanup,
 plus typed final-return and `?` error-propagation paths that cancel before
-root-frame wakeup, through enabled runtime-counter gates. ARC primitive
-counters remain explicitly unavailable rather than being reported as zero.
-Mutable/affine suspend parameters, non-final return, `?` in other positions,
-panic unwind, cancellation propagation, and the multi-task timer-wheel
-workload are not complete.
+root-frame wakeup, through enabled runtime-counter gates. The panic gate
+preserves a managed child message, cancels an armed-timer sibling through the
+root, drops all frames, exports counters, and only then exits with the original
+panic. ARC primitive counters remain explicitly unavailable rather than being
+reported as zero. Mutable/affine suspend parameters, non-final return, `?` in
+other positions, nested-expression or runtime-originated panic unwind,
+cancellation propagation, and the multi-task timer-wheel workload are not
+complete.
 
 ## Run
 

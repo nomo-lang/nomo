@@ -527,6 +527,42 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn structured_scope_panic_does_not_invoke_browser_child() {
+        let source = r#"package app.main
+
+import std.io
+import std.string
+import std.task
+
+suspend fn child(secret: string) -> void {
+    io.println(secret)
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child_task = task.spawn child("browser-panic-cancel-secret")
+        let prefix: string = "browser"
+        let message: string = prefix.concat(" panic")
+        panic(message)
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        assert!(response.stdout.is_empty());
+        assert!(!response.stderr.contains("browser-panic-cancel-secret"));
+        assert_eq!(
+            response
+                .runtime_error
+                .as_ref()
+                .map(|error| error.message.as_str()),
+            Some("panic: browser panic")
+        );
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

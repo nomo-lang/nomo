@@ -162,8 +162,8 @@ enum, Result, or supported array values. Async `main` still returns `void`.
 Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
 expressions or argument expressions, `?` outside the direct structured binding
-described below, explicit panic, explicit
-cancellation propagation, and reactor-backed I/O are later slices.
+described below, panic nested inside another expression, explicit cancellation
+propagation, and reactor-backed I/O are later slices.
 
 Structured spawn/join is available only in a top-level `task.scope` body. Each
 spawn handle must use an inferred immutable binding, remain in that scope, and
@@ -182,8 +182,15 @@ helper completes and wakes its parent. On success, the payload may cross a
 later suspension through the normal frame liveness plan. `expression` may be
 non-suspending or the direct `task.join(handle)?` form; an explicit type
 annotation remains required in this slice. A cancelled child body does not
-resume. Nested scopes, nested scope control flow, non-final scope return,
-defer/unsafe blocks, `?` in other positions, panic, explicit cancellation,
+resume. A direct top-level `panic(message)` statement evaluates and owns its
+non-suspending message before propagation. A child panic stops the executor;
+the root recursively cancels every incomplete child, removes ready entries,
+disarms timers, drops all frames, runs runtime shutdown and metrics export,
+then prints and releases the original message before exiting with status 1.
+`debug.panic` uses the same statement path. Browser WASM returns the same
+runtime error while keeping structured child bodies inert. Nested scopes,
+nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
+other positions, panic nested in another expression, explicit cancellation,
 deadlines, channels, and select remain later slices. E0871, E0872, E0875, and
 E0876 reject unsupported cases before code generation.
 
@@ -204,11 +211,14 @@ transfer, root-frame wakeup from a nested helper, post-join scope return, and
 repeated parent drop under AddressSanitizer. Scope cancellation tests cover an
 armed timer, never-polled ready children, a typed helper return, and typed `?`
 error propagation that cancel before root-frame wakeup, including managed
-parameter, propagated error, and result release under AddressSanitizer.
+parameter, propagated error, and result release under AddressSanitizer. Panic
+tests cover managed sync messages, a spawned panicking child, recursive root
+cancellation, an armed sibling timer, exact frame/task/timer counters, and the
+browser-WASM boundary.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on the remaining error, cancellation, timeout,
-  and panic paths;
+  and nested-expression or runtime-originated panic paths;
 - no unsafe mutable borrow or guard crossing a suspension point;
 - no runtime, thread, coroutine metadata, or atomic collection cost for
   programs that do not use suspension;
@@ -229,4 +239,6 @@ plus
 [`examples/async_structured_cancel`](../examples/async_structured_cancel), plus
 [`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel)
 and
-[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel).
+[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel),
+plus
+[`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup).

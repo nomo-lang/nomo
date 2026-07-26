@@ -470,7 +470,13 @@ pub(super) fn lower_stmt(
                     &span.text,
                 ));
             }
-            Ok(Statement::Expr(lowered))
+            match lowered {
+                ValueExpr::Panic {
+                    message,
+                    fallback_type: ValueType::Void,
+                } => Ok(Statement::Panic(*message)),
+                other => Ok(Statement::Expr(other)),
+            }
         }
     }
 }

@@ -1092,7 +1092,8 @@ typedef enum {
     NOMO_ASYNC_PENDING_NONE = 0,
     NOMO_ASYNC_PENDING_YIELD = 1,
     NOMO_ASYNC_PENDING_TIMER = 2,
-    NOMO_ASYNC_PENDING_JOIN = 3
+    NOMO_ASYNC_PENDING_JOIN = 3,
+    NOMO_ASYNC_PENDING_PANIC = 4
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -1159,6 +1160,9 @@ struct nomo_async_context {
     uint32_t ready_tail;
     uint32_t ready_count;
     uint8_t runtime_failed;
+    uint8_t panicking;
+    uint8_t panic_message_owned;
+    nomo_string panic_message;
 };
 
 static int nomo_async_ready_enqueue(
@@ -1398,6 +1402,9 @@ static int nomo_async_executor_run_root(
     if (context->runtime_failed != 0u) {
         return 1;
     }
+    if (context->panicking != 0u) {
+        return 1;
+    }
     if (status == NOMO_ASYNC_POLL_READY) {
         return 0;
     }
@@ -1421,6 +1428,9 @@ static int nomo_async_executor_run_root(
         }
         status = nomo_async_poll_task(ready_frame, ready_poll, context);
         if (context->runtime_failed != 0u) {
+            return 1;
+        }
+        if (context->panicking != 0u) {
             return 1;
         }
         if (status == NOMO_ASYNC_POLL_PENDING) {
@@ -1947,6 +1957,45 @@ pub(super) fn emit_async_function(
                     );
                 }
             }
+            emitted_terminal_return = true;
+            break;
+        }
+        if let Statement::Panic(message) = statement {
+            out.push_str("            nomo_string nomo_async_panic_message_");
+            out.push_str(&index.to_string());
+            out.push_str(" = ");
+            emit_expr(out, message);
+            out.push_str(";\n");
+            if expr_may_share_array_storage(message) {
+                emit_value_retain_in_place(
+                    out,
+                    &ValueType::String,
+                    &format!("nomo_async_panic_message_{index}"),
+                    3,
+                );
+            }
+            out.push_str(
+                "            if (context->panic_message_owned == 0u) {\n\
+                                 context->panic_message = nomo_async_panic_message_",
+            );
+            out.push_str(&index.to_string());
+            out.push_str(
+                ";\n\
+                                 context->panic_message_owned = 1u;\n\
+                             } else {\n\
+                                 nomo_string_release(nomo_async_panic_message_",
+            );
+            out.push_str(&index.to_string());
+            out.push_str(
+                ");\n\
+                             }\n\
+                             context->panicking = 1u;\n",
+            );
+            emit_async_local_releases(out, &local_owned, &[], 3);
+            out.push_str(
+                "            context->pending_reason = NOMO_ASYNC_PENDING_PANIC;\n\
+                             return NOMO_ASYNC_POLL_PENDING;\n",
+            );
             emitted_terminal_return = true;
             break;
         }

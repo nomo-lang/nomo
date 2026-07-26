@@ -238,6 +238,17 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
             raise HarnessError(
                 f"workload {workload.get('id')} cannot be enabled before {available_phase}"
             )
+        expected_exit_code = workload.get("expected_exit_code", 0)
+        if type(expected_exit_code) is not int or not 0 <= expected_exit_code <= 255:
+            raise HarnessError(
+                f"workload {workload.get('id')} has an invalid expected exit code"
+            )
+        if not isinstance(workload.get("expected_stdout", ""), str) or not isinstance(
+            workload.get("expected_stderr", ""), str
+        ):
+            raise HarnessError(
+                f"workload {workload.get('id')} expected output must be text"
+            )
     if phase == "P1" and not any(
         workload.get("enabled") and workload.get("kind") == "runtime_counter_gate"
         for workload in workloads
@@ -432,6 +443,8 @@ def scan_static_gate(main_c: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
 def timed_run(
     command: list[str],
     expected_stdout: bytes,
+    expected_stderr: bytes,
+    expected_exit_code: int,
     timeout_seconds: float,
 ) -> tuple[dict[str, int | None], bytes]:
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
@@ -473,9 +486,10 @@ def timed_run(
         stderr_file.seek(0)
         stdout = stdout_file.read()
         stderr = stderr_file.read()
-    if process.returncode != 0:
+    if process.returncode != expected_exit_code:
         raise HarnessError(
-            f"command failed ({' '.join(command)}):\n"
+            f"exit status mismatch for {' '.join(command)}: "
+            f"expected {expected_exit_code}, found {process.returncode}\n"
             f"{stdout.decode('utf-8', errors='replace')}"
             f"{stderr.decode('utf-8', errors='replace')}"
         )
@@ -484,10 +498,10 @@ def timed_run(
             f"output mismatch for {' '.join(command)}: "
             f"expected {expected_stdout!r}, found {stdout!r}"
         )
-    if stderr:
+    if stderr != expected_stderr:
         raise HarnessError(
-            f"unexpected stderr for {' '.join(command)}: "
-            f"{stderr.decode('utf-8', errors='replace')}"
+            f"stderr mismatch for {' '.join(command)}: "
+            f"expected {expected_stderr!r}, found {stderr!r}"
         )
     rss_scale = 1024 if platform.system() == "Linux" else 1
     return (
@@ -505,13 +519,25 @@ def measure_implementation(
     executable: Path,
     source_sha256: str,
     expected_stdout: bytes,
+    expected_stderr: bytes,
+    expected_exit_code: int,
     warmup_runs: int,
     measured_runs: int,
     timeout_seconds: float,
 ) -> dict[str, Any]:
     for _ in range(warmup_runs):
-        completed = run_checked([str(executable)], timeout_seconds=timeout_seconds)
-        if completed.stdout != expected_stdout or completed.stderr:
+        completed = subprocess.run(
+            [str(executable)],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+        if (
+            completed.returncode != expected_exit_code
+            or completed.stdout != expected_stdout
+            or completed.stderr != expected_stderr
+        ):
             raise HarnessError(f"warm-up output mismatch for {executable}")
     samples = []
     stdout = b""
@@ -519,6 +545,8 @@ def measure_implementation(
         sample, stdout = timed_run(
             [str(executable)],
             expected_stdout,
+            expected_stderr,
+            expected_exit_code,
             timeout_seconds,
         )
         samples.append(sample)
@@ -535,6 +563,8 @@ def probe_runtime_counters(
     executable: Path,
     workload_id: str,
     expected_stdout: bytes,
+    expected_stderr: bytes,
+    expected_exit_code: int,
     runtime_spec: dict[str, Any],
     catalog: dict[str, Any],
     temporary_root: Path,
@@ -543,17 +573,25 @@ def probe_runtime_counters(
     metrics_path = temporary_root / f"{workload_id}-runtime-counters.json"
     env = os.environ.copy()
     env["NOMO_ASYNC_METRICS_PATH"] = str(metrics_path)
-    completed = run_checked(
+    completed = subprocess.run(
         [str(executable)],
         env=env,
-        timeout_seconds=timeout_seconds,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        timeout=timeout_seconds,
+        check=False,
     )
+    if completed.returncode != expected_exit_code:
+        raise HarnessError(
+            f"runtime counter probe exit status mismatch for {executable}: "
+            f"expected {expected_exit_code}, found {completed.returncode}"
+        )
     if completed.stdout != expected_stdout:
         raise HarnessError(f"runtime counter probe output mismatch for {executable}")
-    if completed.stderr:
+    if completed.stderr != expected_stderr:
         raise HarnessError(
-            "runtime counter probe wrote stderr: "
-            + completed.stderr.decode("utf-8", errors="replace")
+            f"runtime counter probe stderr mismatch for {executable}: "
+            f"expected {expected_stderr!r}, found {completed.stderr!r}"
         )
     if not metrics_path.is_file():
         raise HarnessError("runtime counter probe did not write its payload")
@@ -686,11 +724,15 @@ def main() -> int:
             )
             static_gate = scan_static_gate(main_c, snapshot)
             expected_stdout = workload["expected_stdout"].encode("utf-8")
+            expected_stderr = workload.get("expected_stderr", "").encode("utf-8")
+            expected_exit_code = int(workload.get("expected_exit_code", 0))
             implementations = {
                 "nomo": measure_implementation(
                     nomo_executable,
                     nomo_source_sha,
                     expected_stdout,
+                    expected_stderr,
+                    expected_exit_code,
                     warmup_runs,
                     measured_runs,
                     timeout_seconds,
@@ -702,6 +744,8 @@ def main() -> int:
                     nomo_executable,
                     workload["id"],
                     expected_stdout,
+                    expected_stderr,
+                    expected_exit_code,
                     runtime_counters,
                     counter_catalog,
                     temporary_root,
@@ -722,6 +766,8 @@ def main() -> int:
                     go_executable,
                     go_source_sha,
                     expected_stdout,
+                    expected_stderr,
+                    expected_exit_code,
                     warmup_runs,
                     measured_runs,
                     timeout_seconds,

@@ -405,6 +405,11 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
                      &nomo__context\n\
                  );\n",
         );
+        out.push_str(
+            "    if (nomo__context.panicking != 0u) {\n\
+                 nomo_async_cancel_main(&nomo__frame, &nomo__context);\n\
+             }\n",
+        );
         out.push_str("    nomo_async_drop_main(&nomo__frame);\n");
         if uses_task_runtime(program) {
             out.push_str("    nomo_task_shutdown();\n");
@@ -413,7 +418,16 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
             out.push_str("    nomo_sqlite_shutdown();\n");
         }
         out.push_str(
-            "    if (nomo_async_metrics_export(&nomo__context) != 0) {\n\
+            "    int nomo__metrics_status = nomo_async_metrics_export(&nomo__context);\n\
+             if (nomo__context.panicking != 0u) {\n\
+                 if (nomo__metrics_status != 0) {\n\
+                     fputs(\"error: async metrics export failed\\n\", stderr);\n\
+                 }\n\
+                 nomo_string nomo__panic_message = nomo__context.panic_message;\n\
+                 nomo__context.panic_message_owned = 0u;\n\
+                 nomo_panic_string(nomo__panic_message);\n\
+             }\n\
+             if (nomo__metrics_status != 0) {\n\
                  fputs(\"error: async metrics export failed\\n\", stderr);\n\
                  return 1;\n\
              }\n",

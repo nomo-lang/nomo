@@ -129,6 +129,7 @@ fn emits_panic_statement_and_expression() {
     let c = emit_c(&program);
     assert!(c.contains("static void nomo_panic"));
     assert!(c.contains(&panic_literal("boom")));
+    assert!(c.contains("nomo_panic_string(nomo__panic_message);"));
     assert!(
         c.contains("(nomo_panic((nomo_string_literal(\"no\")).data), nomo_string_literal(\"\"))")
     );

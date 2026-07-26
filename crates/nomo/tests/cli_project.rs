@@ -8934,6 +8934,159 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_child_panic_cancels_root_siblings_and_is_asan_clean() {
+    let root = temp_test_root("structured-child-panic-cleanup");
+    reset_dir(&root);
+    let project = root.join("structured_child_panic_cleanup");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_child_panic_cleanup\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.string
+import std.task
+import std.time
+
+suspend fn slow_child(value: string) -> void {
+    io.println(value, "slow before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println(value, "slow after")
+}
+
+suspend fn panicking_child(prefix: string) -> void {
+    task.yield_now()
+    let message: string = prefix.concat(" child")
+    panic(message)
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let slow = task.spawn slow_child("managed")
+        let failure = task.spawn panicking_child("panic from")
+        let joined: Result<void, TaskError> = task.join(failure)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-child-panic-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "managed slow before\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("panic: panic from child"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    let retain = generated
+        .find("nomo_async_panic_message_2 = nomo_string_retain(nomo_async_panic_message_2);")
+        .unwrap();
+    let publish = generated[retain..]
+        .find("context->panic_message = nomo_async_panic_message_2;")
+        .map(|index| retain + index)
+        .unwrap();
+    let local_release = generated[publish..]
+        .find("nomo_string_release(nomo_message);")
+        .map(|index| publish + index)
+        .unwrap();
+    let propagate = generated[local_release..]
+        .find("context->pending_reason = NOMO_ASYNC_PENDING_PANIC;")
+        .map(|index| local_release + index)
+        .unwrap();
+    assert!(retain < publish);
+    assert!(publish < local_release);
+    assert!(local_release < propagate);
+    let root_cancel = generated
+        .find("nomo_async_cancel_main(&nomo__frame, &nomo__context);")
+        .unwrap();
+    let root_drop = generated[root_cancel..]
+        .find("nomo_async_drop_main(&nomo__frame);")
+        .map(|index| root_cancel + index)
+        .unwrap();
+    assert!(root_cancel < root_drop);
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["poll_calls"], 4);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 1);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 3);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 3);
+    assert_eq!(metrics["counters"]["task_spawns"], 2);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["task_cancellations"], 3);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-structured-child-panic-cleanup.exe"
+        } else {
+            "asan-structured-child-panic-cleanup"
+        });
+        let asan_metrics_path = root.join("asan-metrics.json");
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(!asan_output.status.success());
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "managed slow before\n"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stderr),
+            "panic: panic from child\n"
+        );
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn structured_scope_question_join_spills_managed_success_across_later_suspension() {
     let root = temp_test_root("structured-scope-question-join-success");
     reset_dir(&root);
@@ -11022,6 +11175,105 @@ fn main() -> void {
     assert!(stdout.is_empty(), "{stdout}");
     assert!(stderr.contains("panic: boom"), "{stderr}");
     assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn managed_sync_panic_message_survives_local_cleanup_and_is_asan_clean() {
+    let root = temp_test_root("managed-sync-panic");
+    reset_dir(&root);
+    let project = root.join("managed_sync_panic");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"managed_sync_panic\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.string
+
+fn main() -> void {
+    let prefix: string = "managed"
+    let message: string = prefix.concat(" sync panic")
+    panic(message)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("panic: managed sync panic"), "{stderr}");
+    assert!(stderr.contains("program exited with status 1"), "{stderr}");
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    let capture = generated
+        .find("nomo_string nomo__panic_message = nomo_message;")
+        .unwrap();
+    let retain = generated[capture..]
+        .find("nomo__panic_message = nomo_string_retain(nomo__panic_message);")
+        .map(|index| capture + index)
+        .unwrap();
+    let release = generated[retain..]
+        .find("nomo_string_release(nomo_message);")
+        .map(|index| retain + index)
+        .unwrap();
+    let terminate = generated[release..]
+        .find("nomo_panic_string(nomo__panic_message);")
+        .map(|index| release + index)
+        .unwrap();
+    assert!(capture < retain);
+    assert!(retain < release);
+    assert!(release < terminate);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-managed-sync-panic.exe"
+        } else {
+            "asan-managed-sync-panic"
+        });
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .output()
+            .unwrap();
+        assert!(!asan_output.status.success());
+        assert!(asan_output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stderr),
+            "panic: managed sync panic\n"
+        );
+    }
 
     fs::remove_dir_all(&root).unwrap();
 }

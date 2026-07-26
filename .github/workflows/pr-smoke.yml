@@ -220,6 +220,33 @@ jobs:
               -or $structuredQuestionCancelPayload.counters.peak_live_timers -ne 1) {
             throw "unexpected structured scope-question-cancel counters"
           }
+          $structuredPanicMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-panic-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $structuredPanicMetrics
+          $structuredPanicOutput = cargo run --locked --bin nomo -- run examples/async_structured_panic_cleanup 2>&1
+          $structuredPanicStatus = $LASTEXITCODE
+          $LASTEXITCODE = 0
+          if ($structuredPanicStatus -ne 1) {
+            throw "structured panic example returned unexpected status $structuredPanicStatus"
+          }
+          $structuredPanicText = $structuredPanicOutput -join "`n"
+          if ($structuredPanicText -notmatch "managed slow before" `
+              -or $structuredPanicText -notmatch "panic: panic from child") {
+            throw "unexpected structured panic output"
+          }
+          $structuredPanicPayload = Get-Content -Raw $structuredPanicMetrics | ConvertFrom-Json
+          if ($structuredPanicPayload.counters.poll_calls -ne 4 `
+              -or $structuredPanicPayload.counters.frame_drops -ne 3 `
+              -or $structuredPanicPayload.counters.peak_live_frames -ne 3 `
+              -or $structuredPanicPayload.counters.task_spawns -ne 2 `
+              -or $structuredPanicPayload.counters.task_joins -ne 1 `
+              -or $structuredPanicPayload.counters.join_suspensions -ne 1 `
+              -or $structuredPanicPayload.counters.task_cancellations -ne 3 `
+              -or $structuredPanicPayload.counters.timer_registrations -ne 1 `
+              -or $structuredPanicPayload.counters.timer_expirations -ne 0 `
+              -or $structuredPanicPayload.counters.timer_cancellations -ne 1 `
+              -or $structuredPanicPayload.counters.live_timers -ne 0) {
+            throw "unexpected structured panic counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -301,6 +328,16 @@ jobs:
           NOMO_ASYNC_METRICS_PATH="$structured_question_cancel_metrics" \
             cargo run --locked --bin nomo -- run examples/async_structured_question_cancel
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 6 and c["frame_drops"] == 4 and c["peak_live_frames"] == 4 and c["ready_queue_enqueues"] == 3 and c["ready_queue_dequeues"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 1 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_question_cancel_metrics"
+          structured_panic_metrics="$RUNNER_TEMP/nomo-async-structured-panic-metrics.json"
+          set +e
+          structured_panic_output=$(NOMO_ASYNC_METRICS_PATH="$structured_panic_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_structured_panic_cleanup 2>&1)
+          structured_panic_status=$?
+          set -e
+          test "$structured_panic_status" -eq 1
+          printf '%s\n' "$structured_panic_output" | grep '^managed slow before$'
+          printf '%s\n' "$structured_panic_output" | grep '^panic: panic from child$'
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 3 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0' "$structured_panic_metrics"
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

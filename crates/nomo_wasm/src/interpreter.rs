@@ -402,6 +402,7 @@ impl<'a> Interpreter<'a> {
             name,
             "__nomo_task_join"
                 | "__nomo_structured_task_join"
+                | "__nomo_structured_task_cancel_join"
                 | "__nomo_task_cancel"
                 | "__nomo_task_close"
         ) {

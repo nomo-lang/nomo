@@ -796,7 +796,7 @@ fn validate_structured_scope(
                     && type_args.is_empty()
                     && args.len() == 1
                 {
-                    consume_structured_join_handle(path, span, args, &mut handles)?;
+                    consume_structured_handle(path, span, args, &mut handles, "task.join")?;
                 } else {
                     let mut escaped = None;
                     visit_statement_expressions(statement, &mut |expression| {
@@ -812,7 +812,7 @@ fn validate_structured_scope(
                         return Err(Diagnostic::new(
                             "E0872",
                             format!(
-                                "task handle `{handle}` may only be consumed by task.join inside its scope"
+                                "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
                             ),
                             path,
                             span.line,
@@ -823,6 +823,27 @@ fn validate_structured_scope(
                     }
                 }
                 question_cancellations.insert(index, unjoined_structured_handles(&handles));
+            }
+            Stmt::Let {
+                mutable,
+                value: AstExpr::Call { callee, args, .. },
+                ..
+            } if callee == &["task", "cancel"]
+                && args.len() == 1
+                && call_targets_structured_handle(args, &handles) =>
+            {
+                if *mutable {
+                    return Err(Diagnostic::new(
+                        "E0876",
+                        "structured cancel results must use immutable bindings",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                consume_structured_handle(path, span, args, &mut handles, "task.cancel")?;
             }
             Stmt::Let {
                 mutable,
@@ -840,7 +861,7 @@ fn validate_structured_scope(
                         &span.text,
                     ));
                 }
-                consume_structured_join_handle(path, span, args, &mut handles)?;
+                consume_structured_handle(path, span, args, &mut handles, "task.join")?;
             }
             Stmt::Return { .. } => {
                 if index + 1 != body.len() {
@@ -910,7 +931,7 @@ fn validate_structured_scope(
                     return Err(Diagnostic::new(
                         "E0872",
                         format!(
-                            "task handle `{handle}` may only be consumed by task.join inside its scope"
+                            "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
                         ),
                         path,
                         span.line,
@@ -928,16 +949,25 @@ fn validate_structured_scope(
     })
 }
 
-fn consume_structured_join_handle(
+fn call_targets_structured_handle(args: &[AstExpr], handles: &HashMap<String, bool>) -> bool {
+    matches!(
+        args,
+        [AstExpr::Name(handle_path)]
+            if matches!(handle_path.as_slice(), [handle] if handles.contains_key(handle))
+    )
+}
+
+fn consume_structured_handle(
     path: &Path,
     span: &Span,
     args: &[AstExpr],
     handles: &mut HashMap<String, bool>,
+    operation: &str,
 ) -> Result<(), Diagnostic> {
     let [AstExpr::Name(handle_path)] = args else {
         return Err(Diagnostic::new(
             "E0872",
-            "task.join expects one scope-owned task handle",
+            format!("{operation} expects one scope-owned task handle"),
             path,
             span.line,
             span.column,
@@ -948,7 +978,7 @@ fn consume_structured_join_handle(
     let [handle] = handle_path.as_slice() else {
         return Err(Diagnostic::new(
             "E0872",
-            "task.join expects an unqualified scope-owned task handle",
+            format!("{operation} expects an unqualified scope-owned task handle"),
             path,
             span.line,
             span.column,
@@ -956,7 +986,7 @@ fn consume_structured_join_handle(
             &span.text,
         ));
     };
-    let Some(joined) = handles.get_mut(handle) else {
+    let Some(consumed) = handles.get_mut(handle) else {
         return Err(Diagnostic::new(
             "E0872",
             format!("`{handle}` is not a task handle owned by this scope"),
@@ -967,10 +997,15 @@ fn consume_structured_join_handle(
             &span.text,
         ));
     };
-    if *joined {
+    if *consumed {
+        let message = if operation == "task.join" {
+            format!("task handle `{handle}` is joined more than once or after cancellation")
+        } else {
+            format!("task handle `{handle}` is cancelled more than once or after join")
+        };
         return Err(Diagnostic::new(
             "E0872",
-            format!("task handle `{handle}` is joined more than once"),
+            message,
             path,
             span.line,
             span.column,
@@ -978,7 +1013,7 @@ fn consume_structured_join_handle(
             &span.text,
         ));
     }
-    *joined = true;
+    *consumed = true;
     Ok(())
 }
 

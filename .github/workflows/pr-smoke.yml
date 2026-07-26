@@ -220,6 +220,32 @@ jobs:
               -or $structuredQuestionCancelPayload.counters.peak_live_timers -ne 1) {
             throw "unexpected structured scope-question-cancel counters"
           }
+          $structuredExplicitCancelMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-explicit-cancel-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $structuredExplicitCancelMetrics
+          $structuredExplicitCancelOutput = cargo run --locked --bin nomo -- run examples/async_structured_explicit_cancel
+          if (($structuredExplicitCancelOutput -join "`n") -notmatch "managed before`ncancelled true") {
+            throw "unexpected structured explicit-cancel output"
+          }
+          $structuredExplicitCancelPayload = Get-Content -Raw $structuredExplicitCancelMetrics | ConvertFrom-Json
+          if ($structuredExplicitCancelPayload.counters.poll_calls -ne 5 `
+              -or $structuredExplicitCancelPayload.counters.cooperative_yields -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.frame_allocations -ne 0 `
+              -or $structuredExplicitCancelPayload.counters.frame_drops -ne 3 `
+              -or $structuredExplicitCancelPayload.counters.peak_live_frames -ne 3 `
+              -or $structuredExplicitCancelPayload.counters.ready_queue_enqueues -ne 4 `
+              -or $structuredExplicitCancelPayload.counters.ready_queue_dequeues -ne 4 `
+              -or $structuredExplicitCancelPayload.counters.ready_queue_cancellations -ne 0 `
+              -or $structuredExplicitCancelPayload.counters.task_spawns -ne 2 `
+              -or $structuredExplicitCancelPayload.counters.task_joins -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.join_suspensions -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.task_cancellations -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.timer_registrations -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.timer_expirations -ne 0 `
+              -or $structuredExplicitCancelPayload.counters.timer_cancellations -ne 1 `
+              -or $structuredExplicitCancelPayload.counters.live_timers -ne 0 `
+              -or $structuredExplicitCancelPayload.counters.peak_live_timers -ne 1) {
+            throw "unexpected structured explicit-cancel counters"
+          }
           $structuredPanicMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-panic-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $structuredPanicMetrics
           $structuredPanicOutput = cargo run --locked --bin nomo -- run examples/async_structured_panic_cleanup 2>&1
@@ -328,6 +354,11 @@ jobs:
           NOMO_ASYNC_METRICS_PATH="$structured_question_cancel_metrics" \
             cargo run --locked --bin nomo -- run examples/async_structured_question_cancel
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 6 and c["frame_drops"] == 4 and c["peak_live_frames"] == 4 and c["ready_queue_enqueues"] == 3 and c["ready_queue_dequeues"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 1 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_question_cancel_metrics"
+          structured_explicit_cancel_metrics="$RUNNER_TEMP/nomo-async-structured-explicit-cancel-metrics.json"
+          structured_explicit_cancel_output=$(NOMO_ASYNC_METRICS_PATH="$structured_explicit_cancel_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_structured_explicit_cancel)
+          test "$structured_explicit_cancel_output" = "$(printf 'managed before\ncancelled true')"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 5 and c["cooperative_yields"] == 1 and c["frame_allocations"] == 0 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["ready_queue_enqueues"] == 4 and c["ready_queue_dequeues"] == 4 and c["ready_queue_cancellations"] == 0 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 1 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_explicit_cancel_metrics"
           structured_panic_metrics="$RUNNER_TEMP/nomo-async-structured-panic-metrics.json"
           set +e
           structured_panic_output=$(NOMO_ASYNC_METRICS_PATH="$structured_panic_metrics" \

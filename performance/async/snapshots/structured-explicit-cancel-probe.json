@@ -1,0 +1,53 @@
+{
+  "schema": 1,
+  "gate": "p1-structured-explicit-cancel-and-join",
+  "required_absent_generated_c_patterns": [
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static int nomo_async_metrics_export": 1,
+    "nomo_async_metrics_export(&nomo__context)": 1,
+    "NOMO_ASYNC_PENDING_CANCEL": 3,
+    "context->task_cancellations += 1u;": 3,
+    "context->ready_queue_cancellations += 1u;": 1,
+    "if (frame->initialized == 0u || frame->cancelled != 0u": 3,
+    "nomo_async_ready_cancel_frame(context, frame);": 3,
+    "nomo_async_timer_disarm(&frame->": 2,
+    "nomo_async_cancel_slow_child(&frame->": 2,
+    "frame->nomo_async_cancel_join_result_3.tag": 4,
+    "frame->nomo_async_cancel_join_result_owned_3 = 1u;": 2,
+    "nomo_async_drop_slow_child(&frame->nomo_async_child_0);": 2
+  },
+  "runtime_counters": {
+    "available": true,
+    "schema": 1,
+    "counters": {
+      "poll_calls": 5,
+      "cooperative_yields": 1,
+      "frame_allocations": 0,
+      "frame_drops": 3,
+      "peak_live_frames": 3,
+      "ready_queue_enqueues": 4,
+      "ready_queue_dequeues": 4,
+      "ready_queue_saturations": 0,
+      "ready_queue_cancellations": 0,
+      "task_spawns": 2,
+      "task_joins": 1,
+      "join_suspensions": 1,
+      "task_cancellations": 1,
+      "timer_registrations": 1,
+      "timer_expirations": 0,
+      "timer_cancellations": 1,
+      "live_timers": 0,
+      "peak_live_timers": 1
+    },
+    "unavailable": [
+      "local_retain",
+      "local_release"
+    ]
+  }
+}

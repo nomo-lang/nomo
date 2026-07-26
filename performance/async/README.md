@@ -18,6 +18,7 @@ The separate `manifest-p1.json` repeats both zero-cost controls and enables
 `yield_counter_probe`, `timer_counter_probe`, `task_spawn_complete`,
 `structured_cancel_probe`, `structured_return_cancel_probe`, and
 `structured_question_cancel_probe`, plus
+`structured_explicit_cancel_probe` and
 `structured_panic_cleanup_probe`. Each counter probe executes outside measured
 samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the versioned
 current-thread JSON contract against `counter-catalog.json`. Panic is an
@@ -47,7 +48,10 @@ results now have generated-C, native, WASM-boundary,
 post-join nested-scope return, and AddressSanitizer correctness coverage.
 Scope cancellation additionally covers armed-timer and ready-queue cleanup,
 plus typed final-return and `?` error-propagation paths that cancel before
-root-frame wakeup, through enabled runtime-counter gates. The panic gate
+root-frame wakeup, through enabled runtime-counter gates. The explicit
+cancel-and-join gate consumes a scope-owned handle, disarms its live timer,
+returns a typed success only after terminal cleanup, and preserves the
+allocation-free current-thread fast path. The panic gate
 preserves a managed child message, cancels an armed-timer sibling through the
 root, drops all frames, exports counters, and only then exits with the original
 panic. ARC primitive counters remain explicitly unavailable rather than being

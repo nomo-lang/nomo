@@ -527,6 +527,34 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn structured_explicit_cancel_consumes_inert_browser_child() {
+        let source = r#"package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn child(secret: string) -> void {
+    io.println(secret)
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child_task = task.spawn child("browser-explicit-cancel-secret")
+        let cancelled: Result<void, TaskError> = task.cancel(child_task)
+        io.println(result.is_err(cancelled))
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "true\n");
+        assert!(!response.stderr.contains("browser-explicit-cancel-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn structured_scope_panic_does_not_invoke_browser_child() {
         let source = r#"package app.main
 

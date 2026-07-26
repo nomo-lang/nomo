@@ -374,12 +374,12 @@ pub(super) fn lower_task_builtin(
                 },
             ))
         }
-        "cancel" | "close" => {
+        "cancel" => {
             let [task_arg] = args else {
                 return Err(task_arity_diagnostic(
                     path,
                     span,
-                    &format!("task.{name}"),
+                    "task.cancel",
                     1,
                     args.len(),
                 ));
@@ -387,22 +387,57 @@ pub(super) fn lower_task_builtin(
             let (actual, task_value) = lower_value_expr(
                 path, task_arg, scope, imports, signatures, structs, enums, span,
             )?;
-            require_task_type(
-                path,
-                span,
-                &format!("task.{name} task"),
-                &task_type,
+            if matches!(
                 &actual,
-            )?;
+                ValueType::Struct(task_name, task_args)
+                    if task_name == "Task" && task_args.len() == 1
+            ) {
+                if !current_function_has_task_scope(scope) {
+                    return Err(Diagnostic::new(
+                        "E0871",
+                        "structured task.cancel is only allowed inside task.scope",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                return Ok((
+                    ValueType::Enum("Result".to_string(), vec![ValueType::Void, error_type]),
+                    ValueExpr::Call {
+                        name: BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR.to_string(),
+                        args: vec![task_value],
+                    },
+                ));
+            }
+            require_task_type(path, span, "task.cancel task", &task_type, &actual)?;
             Ok((
                 ValueType::Enum("Result".to_string(), vec![ValueType::Void, error_type]),
                 ValueExpr::Call {
-                    name: if name == "cancel" {
-                        BUILTIN_TASK_CANCEL_EXPR
-                    } else {
-                        BUILTIN_TASK_CLOSE_EXPR
-                    }
-                    .to_string(),
+                    name: BUILTIN_TASK_CANCEL_EXPR.to_string(),
+                    args: vec![task_value],
+                },
+            ))
+        }
+        "close" => {
+            let [task_arg] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.close",
+                    1,
+                    args.len(),
+                ));
+            };
+            let (actual, task_value) = lower_value_expr(
+                path, task_arg, scope, imports, signatures, structs, enums, span,
+            )?;
+            require_task_type(path, span, "task.close task", &task_type, &actual)?;
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, error_type]),
+                ValueExpr::Call {
+                    name: BUILTIN_TASK_CLOSE_EXPR.to_string(),
                     args: vec![task_value],
                 },
             ))

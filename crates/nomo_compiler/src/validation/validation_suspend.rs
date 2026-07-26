@@ -201,6 +201,7 @@ fn validate_p1_suspend_function_shape(
                                         !mutable
                                             && (ast_expr_is_structured_spawn(value)
                                                 || ast_expr_is_structured_join(value)
+                                                || ast_expr_is_structured_cancel(value)
                                                 || !ast_expr_contains_suspension(
                                                     value,
                                                     imports,
@@ -760,6 +761,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
         ast_expr_is_direct_yield(candidate, imports)
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
             || ast_expr_is_structured_join(candidate)
+            || ast_expr_is_structured_cancel(candidate)
     })
 }
 
@@ -957,6 +959,19 @@ fn ast_expr_is_structured_join(expr: &AstExpr) -> bool {
     )
 }
 
+fn ast_expr_is_structured_cancel(expr: &AstExpr) -> bool {
+    matches!(
+        expr,
+        AstExpr::Call {
+            callee,
+            type_args,
+            args,
+        } if callee.as_slice() == ["task", "cancel"]
+            && type_args.is_empty()
+            && args.len() == 1
+    )
+}
+
 fn ast_expr_is_direct_sleep(
     expr: &AstExpr,
     imports: &[String],
@@ -1063,6 +1078,7 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
                 || (name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1)
+                || (name == BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR && args.len() == 1)
     )
 }
 

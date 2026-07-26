@@ -80,6 +80,14 @@ suspend fn main() -> void {
 a scope-owned `Task<T>` from the child return type; the one-argument join
 consumes it exactly once and returns `Result<T, TaskError>`.
 
+An immutable top-level
+`let cancelled: Result<void, TaskError> = task.cancel(handle)` is the
+structured consuming cancel-and-join operation. It requests cancellation,
+waits for terminal child cleanup, then consumes and drops the handle. An
+already-completed child returns `Ok(void)`; a child whose spawn was rejected
+returns the same stable `queue_full` error. This overload is distinct from the
+legacy synchronous `task.cancel(Task)` worker request.
+
 ## Implemented P1 Slice
 
 On the native C99 backend, a suspend call chain that reaches
@@ -101,6 +109,10 @@ On the native C99 backend, a suspend call chain that reaches
   structured spawn cannot enter the 64-entry ready queue;
 - exactly-once transfer of a typed child result into the successful join
   payload before the child frame is dropped;
+- a structured cancel-and-join suspension boundary that propagates
+  cancellation through the child subtree, removes ready/timer registrations,
+  waits for terminal cleanup, returns `Result<void, TaskError>`, and drops the
+  consumed child frame;
 - compiler-inserted scope cleanup on normal fallthrough and final `return` that
   cancels unjoined children, removes their ready-queue entries, disarms owned
   timers, and drops their frames before the next statement or return
@@ -143,12 +155,21 @@ completion wakes one owner-local waiter, and both explicit join cleanup and
 parent cleanup use idempotent child drop. This slice creates no heap task, OS
 thread, atomic reference count, or global work-stealing queue.
 
+Structured cancel is suspend-capable for the future shard-acknowledgement
+path, but the current-thread owner can complete cancellation and frame cleanup
+inline. The ready fast path therefore allocates nothing and does not add a
+queue round trip. The generated ABI still records
+`NOMO_ASYNC_PENDING_CANCEL` so a later owner-shard implementation can suspend
+the parent until the owner acknowledges terminal cleanup without changing
+source semantics.
+
 Browser WASM accepts the same source in its bounded sandbox interpreter.
 `task.yield_now()` is currently a cooperative boundary there; it does not yet
 return control to a host Promise or browser event loop. `task.sleep` does not
 block or evaluate its duration in the browser sandbox; it returns
 `TaskError { code: "runtime_unavailable", ... }`. Structured child bodies are
-also not evaluated there yet; their join returns the same stable error.
+also not evaluated there yet; their join and structured cancel return the same
+stable error and consume the inert browser handle.
 
 ## Deliberate Restrictions
 
@@ -162,12 +183,17 @@ enum, Result, or supported array values. Async `main` still returns `void`.
 Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
 expressions or argument expressions, `?` outside the direct structured binding
-described below, panic nested inside another expression, explicit cancellation
-propagation, and reactor-backed I/O are later slices.
+described below, panic nested inside another expression, cancellation
+tokens/deadlines, and reactor-backed I/O are later slices.
 
 Structured spawn/join is available only in a top-level `task.scope` body. Each
 spawn handle must use an inferred immutable binding, remain in that scope, and
-may be joined at most once. The target must be a direct unqualified,
+may be consumed at most once by a direct immutable `task.join(handle)` or
+`task.cancel(handle)` binding. Structured cancel returns
+`Result<void, TaskError>` only after the child is terminal and its
+registrations are removed; an already-completed child succeeds. The handle
+cannot then be joined or cancelled again. The target must be a direct
+unqualified,
 non-generic top-level `suspend fn` with immutable frame-safe parameters and
 result. Its return type becomes `Task<T>` and
 `task.join(handle) -> Result<T, TaskError>`.
@@ -190,7 +216,7 @@ then prints and releases the original message before exiting with status 1.
 `debug.panic` uses the same statement path. Browser WASM returns the same
 runtime error while keeping structured child bodies inert. Nested scopes,
 nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
-other positions, panic nested in another expression, explicit cancellation,
+other positions, panic nested in another expression, cancellation tokens,
 deadlines, channels, and select remain later slices. E0871, E0872, E0875, and
 E0876 reject unsupported cases before code generation.
 
@@ -214,7 +240,9 @@ error propagation that cancel before root-frame wakeup, including managed
 parameter, propagated error, and result release under AddressSanitizer. Panic
 tests cover managed sync messages, a spawned panicking child, recursive root
 cancellation, an armed sibling timer, exact frame/task/timer counters, and the
-browser-WASM boundary.
+browser-WASM boundary. Explicit structured-cancel tests cover an armed timer,
+the exact result/handle ownership transition, generated pending ABI, native
+and browser behavior, exact counters, and AddressSanitizer cleanup.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on the remaining error, cancellation, timeout,
@@ -240,5 +268,7 @@ plus
 [`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel)
 and
 [`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel),
+plus
+[`examples/async_structured_explicit_cancel`](../examples/async_structured_explicit_cancel),
 plus
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup).

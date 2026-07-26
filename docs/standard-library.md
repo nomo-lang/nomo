@@ -305,6 +305,7 @@ task.sleep(duration: Duration) -> Result<void, TaskError> // suspend-only
 task.scope { ... } // suspend-only structured scope
 let child = task.spawn child_function(arguments) // scope-owned Task<T>
 task.join(child) -> Result<T, TaskError> // consumes structured child
+task.cancel(child) -> Result<void, TaskError> // suspend-capable, consumes structured child
 task.spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError>
 task.is_cancelled(context: TaskContext) -> bool
 task.join(task_value: Task, timeout_millis: u64) -> Result<TaskJoin, TaskError>
@@ -342,7 +343,14 @@ embedded child frame, and schedules it on the bounded 64-entry FIFO. The child
 return type becomes `Task<T>`. Join suspends only until that child completes,
 moves the result exactly once, and returns `Result<T, TaskError>`; queue
 saturation is reported with the stable `queue_full` code. Each inferred
-immutable handle must stay in its scope and may be joined at most once. Normal
+immutable handle must stay in its scope and may be consumed at most once by
+join or structured cancel. Structured `task.cancel(child)` is a
+suspend-capable cancel-and-join boundary: it propagates cancellation through
+the child subtree, removes its ready/timer registrations, waits for terminal
+cleanup, returns `Result<void, TaskError>`, and drops the consumed frame. An
+already-completed child succeeds. The current-thread owner completes this
+inline without allocation or new queue traffic; the generated pending ABI is
+reserved for later owner-shard acknowledgement. Normal
 scope fallthrough automatically cancels and drops unjoined children, including
 ready-queue and timer cleanup. A nested helper may also use a final scope
 `return`; its expression evaluates first, then unjoined children are cancelled
@@ -353,12 +361,12 @@ live children are cancelled and dropped, while a success payload follows the
 normal liveness plan. The operand may be non-suspending or a direct
 `task.join(handle)?`, and currently needs an explicit binding type. Nested
 scopes, nested control flow, non-final scope return, `?` in other positions,
-panic nested in another expression, explicit cancellation, deadlines,
+panic nested in another expression, cancellation tokens, deadlines,
 channels, and select are not in this slice. A direct panic owns its
 non-suspending message, stops the executor, recursively cancels the root task
 tree, drops every frame, completes runtime shutdown and metrics export, then
 prints and releases the original message before process exit. Browser WASM
-does not execute structured children; join returns
+does not execute structured children; join and structured cancel return
 `runtime_unavailable`, while non-suspending `?` preserves the same early-exit
 result and inert cleanup boundary, and a direct panic becomes the same
 deterministic runtime error without executing a child.
@@ -377,7 +385,8 @@ handles, and a join timeout may not exceed 900,000 milliseconds.
 `Task` and `TaskContext` are runtime-owned opaque values; direct construction
 or field access is rejected with `E0820`.
 
-`cancel` is cooperative. `TaskJoin.Cancelled` is observable only after the
+The legacy `task.cancel(Task)` below the structured overload is cooperative.
+`TaskJoin.Cancelled` is observable only after the
 worker sees or races with the request and returns; a request alone does not
 terminate a thread. `join(..., 0)` is a nonblocking poll and returns
 `TaskJoin.Timeout` while work remains. `close` returns `busy` until the worker

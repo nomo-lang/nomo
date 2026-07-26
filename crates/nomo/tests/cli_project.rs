@@ -8934,6 +8934,248 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_explicit_cancel_consumes_child_and_is_asan_clean() {
+    let root = temp_test_root("structured-explicit-cancel");
+    reset_dir(&root);
+    let project = root.join("structured_explicit_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_explicit_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+suspend fn slow_child(value: string) -> void {
+    io.println(value, "before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println(value, "after")
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn slow_child("managed")
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(child)
+        io.println("cancelled", result.is_ok(cancelled))
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-explicit-cancel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "managed before\ncancelled true\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    let cancel = generated
+        .find("nomo_async_cancel_slow_child(&frame->nomo_async_child_0, context);")
+        .unwrap();
+    let pending = generated[cancel..]
+        .find("context->pending_reason = NOMO_ASYNC_PENDING_CANCEL;")
+        .map(|index| cancel + index)
+        .unwrap();
+    let result = generated[pending..]
+        .find("frame->nomo_async_cancel_join_result_3.tag")
+        .map(|index| pending + index)
+        .unwrap();
+    let drop_child = generated[result..]
+        .find("nomo_async_drop_slow_child(&frame->nomo_async_child_0);")
+        .map(|index| result + index)
+        .unwrap();
+    assert!(cancel < pending);
+    assert!(pending < result);
+    assert!(result < drop_child);
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["poll_calls"], 5);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 1);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 3);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 3);
+    assert_eq!(metrics["counters"]["ready_queue_enqueues"], 4);
+    assert_eq!(metrics["counters"]["ready_queue_dequeues"], 4);
+    assert_eq!(metrics["counters"]["ready_queue_saturations"], 0);
+    assert_eq!(metrics["counters"]["ready_queue_cancellations"], 0);
+    assert_eq!(metrics["counters"]["task_spawns"], 2);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["task_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["peak_live_timers"], 1);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-structured-explicit-cancel.exe"
+        } else {
+            "asan-structured-explicit-cancel"
+        });
+        let asan_metrics_path = root.join("asan-metrics.json");
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "managed before\ncancelled true\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_explicit_cancel_handles_not_started_and_completed_children() {
+    let root = temp_test_root("structured-explicit-cancel-terminal-states");
+    reset_dir(&root);
+    let project = root.join("structured_explicit_cancel_terminal_states");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_explicit_cancel_terminal_states\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn ready_child(value: string) -> void {
+    io.println(value)
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let before_start = task.spawn ready_child("before-start body")
+        let before_start_cancelled: Result<void, TaskError> = task.cancel(before_start)
+        io.println("before-start", result.is_ok(before_start_cancelled))
+    }
+    task.scope {
+        let completed = task.spawn ready_child("completed body")
+        let completed_gate = task.spawn gate()
+        let completed_gate_joined: Result<void, TaskError> = task.join(completed_gate)
+        let completed_cancelled: Result<void, TaskError> = task.cancel(completed)
+        io.println("completed", result.is_ok(completed_cancelled))
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-explicit-cancel-terminal-states.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "before-start true\ncompleted body\ncompleted true\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["poll_calls"], 5);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 1);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 3);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 3);
+    assert_eq!(metrics["counters"]["ready_queue_enqueues"], 5);
+    assert_eq!(metrics["counters"]["ready_queue_dequeues"], 4);
+    assert_eq!(metrics["counters"]["ready_queue_saturations"], 0);
+    assert_eq!(metrics["counters"]["ready_queue_cancellations"], 1);
+    assert_eq!(metrics["counters"]["task_spawns"], 3);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["task_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 0);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn structured_child_panic_cancels_root_siblings_and_is_asan_clean() {
     let root = temp_test_root("structured-child-panic-cleanup");
     reset_dir(&root);

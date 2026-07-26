@@ -234,8 +234,10 @@ const MATH_ITEMS: &[&str] = &[
 const NET_ITEMS: &[&str] = &[
     "NetError",
     "NetErrorKind",
+    "TcpChunk",
     "TcpListener",
     "TcpStream",
+    "TcpTextChunk",
     "UdpDatagram",
     "UdpSocket",
     "connect",
@@ -1384,7 +1386,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 324);
+        assert_eq!(imports.len(), 326);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
@@ -1394,6 +1396,8 @@ mod tests {
         assert!(is_supported_import("std.map.Map"));
         assert!(is_supported_import("std.net.connect"));
         assert!(is_supported_import("std.net.connect_blocking"));
+        assert!(is_supported_import("std.net.TcpChunk"));
+        assert!(is_supported_import("std.net.TcpTextChunk"));
         assert!(is_supported_import("std.task.yield_now"));
         assert!(is_supported_import("std.task.sleep"));
         assert!(is_supported_import("std.task.check_cancelled"));

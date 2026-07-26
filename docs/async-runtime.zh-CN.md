@@ -52,7 +52,7 @@ current-thread backend。duration 只求值一次；非正时长 inline 完成�
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
 
-P2-TCP-A 还提供 direct-style 的数值地址 connect：
+P2-TCP-A/B 还提供 direct-style 的数值地址 connect、有界增量读取与完整写入：
 
 ```nomo
 import std.net
@@ -62,19 +62,36 @@ suspend fn main() -> void {
     let connected: Result<TcpStream, NetError> =
         net.connect("127.0.0.1", 8080, 1000)
 }
+
+suspend fn exchange(stream: TcpStream) -> void {
+    let wrote: Result<void, NetError> =
+        stream.write_string("ping", 1000)
+    let received: Result<TcpTextChunk, NetError> =
+        stream.read_string(4096, 1000)
+}
 ```
 
 Linux 与 macOS 会以 nonblocking socket 发起连接，并通过一个带 generation
 校验的 epoll/kqueue registration 挂起。`TcpStream` 固定到 owner executor，
 属于 Local/!Send。正 timeout 使用 monotonic clock，最大 15 分钟；零 timeout
-只立即尝试一次，不注册 reactor。bounded resolver 落地前，hostname 返回
-`NetErrorKind.Unsupported`。Windows 当前可以编译，并明确返回 `Unsupported`，
+只立即尝试一次，不注册 reactor。每条 stream 同时最多有一个 pending read
+和一个 pending write；同方向冲突返回 `Busy`。`read` 返回一块
+`Array<u32>` 字节，`read_string` 校验一块 UTF-8，二者都不会隐式 read-to-EOF。
+每个 payload 最大 1 MiB。write 仅跨 one-shot readiness 保留未发送后缀，
+每次 executor poll 最多推进 64 KiB 以保证公平性，并且要么完整写入 payload，
+要么返回错误。timeout 与 structured cancellation 会清除 registration 和
+retained buffer；除非显式 close，stream 仍可复用。
+
+bounded resolver 落地前，hostname 返回 `NetErrorKind.Unsupported`。Windows
+当前可以编译，并在不求值 write payload 的情况下明确返回 `Unsupported`，
 不声称已经支持 IOCP socket completion。预览期的阻塞名称是
 `net.connect_blocking`、`read_to_string_blocking` 与
 `write_string_blocking`；suspend 调用图到达这些 API 时报告 E0891。
-第一个 stackless 小切片需要像上例一样绑定完整 `Result`；在通用的
-suspend-question lowering 落地前，直接对 `net.connect(...)` 使用 `?` 仍会
-报告 E0876。
+当前 stackless 小切片需要像上例一样绑定每个完整 `Result`；在通用的
+suspend-question lowering 落地前，直接对这些 I/O 操作使用 `?` 仍会报告
+E0876。P2-TCP-B 尚未提供 `shutdown_write` 半关闭操作；在该独立生命周期
+切片落地前请使用 `close`。示例见
+[`examples/async_tcp_io`](../examples/async_tcp_io)。
 
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
 
@@ -233,7 +250,7 @@ structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand
 `runtime_unavailable`，不会用顺序执行伪装 select。示例见
 [`examples/async_static_select`](../examples/async_static_select)。
 
-## 已实现的 P1、P2 Reactor/P2-TCP-A 与 P3-B/P3-C 小切片
+## 已实现的 P1、P2 Reactor/P2-TCP-A/B 与 P3-B/P3-C 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -252,6 +269,10 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - 64 槽有界 I/O owner table、slot generation 与 exclusive close；每个 pending
   数值地址 TCP connect 在 epoll/kqueue 上只使用一个内嵌 registration 和一个
   timeout timer；
+- 每个源码 read/write operation 使用一个内嵌 registration；每个 stream
+  direction 最多一个 pending operation，并支持 one-shot readiness rearm、
+  完整 partial-write progress、有界 retained-byte metric，以及 timeout/
+  cancellation 的恰好一次清理；
 - 入同一有界 FIFO 的内嵌 structured child frame，以及 child 完成时重新入队
   parent 的单一 owner-local waiter edge；
 - structured spawn 无法进入 64 槽 ready queue 时，由 join 构造

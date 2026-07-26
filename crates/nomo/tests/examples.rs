@@ -4,7 +4,7 @@ use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::net::TcpListener;
+use std::net::{Shutdown, TcpListener};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 use std::sync::{Arc, Condvar, Mutex};
@@ -30,6 +30,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_call_abi",
     "async_timer",
     "async_tcp_connect",
+    "async_tcp_io",
     "async_publication_move",
     "async_bounded_channel",
     "async_static_select",
@@ -288,6 +289,14 @@ fn assert_cli_run(example: &Path) {
                 .env("NOMO_OPENAI_BASE_URL", endpoint)
                 .env("NOMO_OPENAI_API_KEY", "local-streaming-token")
                 .env("NOMO_HTTP_CA_BUNDLE", ca_bundle)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        }),
+        "async_tcp_io" => run_with_tcp_echo_server(|port| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_TCP_ECHO_PORT", port.to_string())
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
         }),
@@ -749,6 +758,13 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
         }),
+        "async_tcp_io" => run_with_tcp_echo_server(|port| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_TCP_ECHO_PORT", port.to_string())
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        }),
         _ => Command::new(bin)
             .current_dir(project_root)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
@@ -803,6 +819,45 @@ where
                 Err(err) => panic!("failed to accept HTTP client connection: {err}"),
             }
         }
+    });
+    let output = run(port);
+    server.join().unwrap();
+    output
+}
+
+fn run_with_tcp_echo_server<F>(run: F) -> Output
+where
+    F: FnOnce(u16) -> Output,
+{
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    listener.set_nonblocking(true).unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let started = Instant::now();
+        let mut stream = loop {
+            match listener.accept() {
+                Ok((stream, _)) => break stream,
+                Err(err)
+                    if err.kind() == ErrorKind::WouldBlock
+                        && started.elapsed() < Duration::from_secs(10) =>
+                {
+                    std::thread::sleep(Duration::from_millis(10));
+                }
+                Err(err) => panic!("failed to accept TCP echo connection: {err}"),
+            }
+        };
+        stream
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        stream
+            .set_write_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut payload = [0_u8; 15];
+        stream.read_exact(&mut payload).unwrap();
+        assert_eq!(&payload, b"hello from Nomo");
+        stream.write_all(&payload).unwrap();
+        stream.flush().unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
     });
     let output = run(port);
     server.join().unwrap();
@@ -1301,6 +1356,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_tcp_connect" => {
             "hostnames require the bounded resolver slice; use a numeric address\n"
         }
+        "async_tcp_io" => "hello from Nomo\n",
         "async_structured_void" => {
             "left before\nright before\nleft after\nright after\ntrue true\n"
         }

@@ -854,6 +854,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
         ast_expr_is_direct_yield(candidate, imports)
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
             || ast_expr_is_direct_net_connect(candidate, imports)
+            || ast_expr_is_direct_tcp_stream_io(candidate, imports)
             || ast_expr_is_direct_channel_suspend(candidate, imports)
             || ast_expr_is_check_cancelled(candidate, imports)
             || ast_expr_is_structured_join(candidate)
@@ -1033,6 +1034,9 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_net_connect(expr, imports) {
         return true;
     }
+    if ast_expr_is_direct_tcp_stream_io(expr, imports) {
+        return true;
+    }
     if ast_expr_is_direct_channel_suspend(expr, imports) {
         return true;
     }
@@ -1070,6 +1074,31 @@ fn ast_expr_is_direct_net_connect(expr: &AstExpr, imports: &[String]) -> bool {
     direct
         && type_args.is_empty()
         && args.len() == 3
+        && args.iter().all(|argument| {
+            !ast_expr_contains_suspension(argument, imports, &HashSet::new())
+                && !ast_expr_contains_frame_exit(argument)
+        })
+}
+
+fn ast_expr_is_direct_tcp_stream_io(expr: &AstExpr, imports: &[String]) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    matches!(
+        callee.as_slice(),
+        [_, operation]
+            if matches!(
+                operation.as_str(),
+                "read" | "read_string" | "write" | "write_string"
+            )
+    ) && imports.iter().any(|item| item == "std.net")
+        && type_args.is_empty()
+        && args.len() == 2
         && args.iter().all(|argument| {
             !ast_expr_contains_suspension(argument, imports, &HashSet::new())
                 && !ast_expr_contains_frame_exit(argument)
@@ -1291,6 +1320,13 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
                 || (name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3)
+                || (matches!(
+                    name.as_str(),
+                    BUILTIN_TCP_STREAM_READ_EXPR
+                        | BUILTIN_TCP_STREAM_READ_STRING_EXPR
+                        | BUILTIN_TCP_STREAM_WRITE_EXPR
+                        | BUILTIN_TCP_STREAM_WRITE_STRING_EXPR
+                ) && args.len() == 3)
                 || (name.starts_with(BUILTIN_TASK_SEND_PREFIX) && args.len() == 2)
                 || (name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX) && args.len() == 1)
                 || (name == BUILTIN_TASK_CHECK_CANCELLED_EXPR && args.is_empty())

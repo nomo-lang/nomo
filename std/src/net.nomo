@@ -32,6 +32,22 @@ pub struct TcpStream {
     handle: u64
 }
 
+/// A bounded binary chunk returned by an async TCP read.
+pub struct TcpChunk {
+    /// Bytes encoded as `u32` values in `0..=255`.
+    pub data: Array<u32>
+    /// Whether the peer has closed its write side.
+    pub eof: bool
+}
+
+/// A bounded UTF-8 chunk returned by an async TCP read.
+pub struct TcpTextChunk {
+    /// UTF-8 text read from the stream.
+    pub data: string
+    /// Whether the peer has closed its write side.
+    pub eof: bool
+}
+
 /// An opaque blocking TCP listener.
 pub struct TcpListener {
     handle: u64
@@ -73,6 +89,26 @@ pub fn udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError> {
 }
 
 impl TcpStream {
+    /// Reads at least one byte, EOF, or a bounded failure without reading to EOF.
+    pub suspend fn read(self, max_bytes: u64, timeout_millis: u64) -> Result<TcpChunk, NetError> {
+        return self.read(max_bytes, timeout_millis)
+    }
+
+    /// Reads one bounded UTF-8 chunk without reading to EOF.
+    pub suspend fn read_string(self, max_bytes: u64, timeout_millis: u64) -> Result<TcpTextChunk, NetError> {
+        return self.read_string(max_bytes, timeout_millis)
+    }
+
+    /// Writes one bounded byte array completely or returns an error.
+    pub suspend fn write(self, data: Array<u32>, timeout_millis: u64) -> Result<void, NetError> {
+        return self.write(data, timeout_millis)
+    }
+
+    /// Writes one bounded string completely or returns an error.
+    pub suspend fn write_string(self, content: string, timeout_millis: u64) -> Result<void, NetError> {
+        return self.write_string(content, timeout_millis)
+    }
+
     /// Reads until the peer closes its write side.
     pub fn read_to_string_blocking(self) -> Result<string, NetError> {
         return self.read_to_string_blocking()

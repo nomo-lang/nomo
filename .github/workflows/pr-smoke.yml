@@ -38,10 +38,10 @@ jobs:
           -p nomo-wasm
           -p nomo-manifest
           --locked
-      - name: Run owner-affine async TCP connect through epoll
+      - name: Run owner-affine async TCP lifecycle through epoll
         run: >-
           cargo test -p nomo --test cli_project
-          owner_affine_async_tcp_connect
+          async_tcp
           --locked
       - name: Build and verify browser WebAssembly runtime
         shell: bash
@@ -500,10 +500,10 @@ jobs:
           printf '%s\n' "$structured_panic_output" | grep '^managed slow before$'
           printf '%s\n' "$structured_panic_output" | grep '^panic: panic from child$'
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 3 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0' "$structured_panic_metrics"
-      - name: Run owner-affine async TCP connect through kqueue
+      - name: Run owner-affine async TCP lifecycle through kqueue
         run: >-
           cargo test -p nomo --test cli_project
-          owner_affine_async_tcp_connect
+          async_tcp
           --locked
       - name: Run structured JSON conformance and boundary gates
         run: >-

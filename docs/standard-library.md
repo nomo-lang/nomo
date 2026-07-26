@@ -859,6 +859,12 @@ blocking compatibility helpers:
 
 ```nomo
 net.connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError>
+TcpStream.read(max_bytes: u64, timeout_millis: u64) -> Result<TcpChunk, NetError>
+TcpStream.read_string(max_bytes: u64, timeout_millis: u64) -> Result<TcpTextChunk, NetError>
+TcpStream.write(data: Array<u32>, timeout_millis: u64) -> Result<void, NetError>
+TcpStream.write_string(content: string, timeout_millis: u64) -> Result<void, NetError>
+TcpStream.close() -> void
+
 net.connect_blocking(host: string, port: i64) -> Result<TcpStream, NetError>
 net.listen(host: string, port: i64) -> Result<TcpListener, NetError>
 net.udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError>
@@ -871,12 +877,40 @@ until the bounded resolver slice; Windows returns the same category until its
 native IOCP connect slice. A zero timeout performs one immediate attempt and
 does not initialize or register with the reactor. The first stackless slice
 requires binding the complete `Result`; direct `?` propagation on
-`net.connect(...)` remains an E0876 limitation.
+these suspend I/O operations remains an E0876 limitation.
+
+`read` returns after at least one byte, EOF, timeout, cancellation, or error;
+it never reads to EOF implicitly. `TcpChunk.data` uses the v0.1 byte
+convention (`Array<u32>` values in `0..=255`). `read_string` returns one valid
+UTF-8 chunk; invalid UTF-8 or embedded NUL is `NetErrorKind.Read` and never
+exposes partial text. `eof` may be true with empty data.
+
+One read/write payload is limited to 1,048,576 bytes and one timeout to
+900,000 milliseconds. Zero makes one immediate attempt with no I/O
+registration. A positive operation uses one owner-local timer and one
+epoll/kqueue one-shot registration only when it would block. Writes retain
+progress and the bounded unsent suffix across readiness events, cap work at
+64 KiB per executor poll for fairness, suppress Unix `SIGPIPE`, and complete
+the whole input or fail. At most one operation per stream direction may be
+pending; a conflict returns `Busy`.
+
+Timeout and structured cancellation deregister readiness, disarm the timer,
+release the direction claim and retained payload exactly once, and leave the
+stream open. `close` invalidates its owner-table generation and is idempotent
+against stale copies. The runtime exports exact connect/read/write, readiness,
+timeout/cancellation/error, live-operation, live-handle, and retained-byte
+counters. See `examples/async_tcp_io`.
 
 `NetError.kind` is a portable `NetErrorKind`; applications must not parse
 platform details from `message`. `TcpStream` is Local/!Send and identifies its
 owner-table slot and generation rather than exposing a raw socket as
 authority. `close` is idempotent against stale generations.
+
+P2-TCP-B executes read/write natively on Linux and macOS. Windows returns
+`Unsupported` without evaluating write payloads until the IOCP slice; browser
+raw TCP remains a later host-driven capability. Hostname resolution remains
+P2-TCP-C. A dedicated `shutdown_write` half-close operation is not part of
+P2-TCP-B; callers must use `close` until that focused lifecycle slice lands.
 
 For the preview migration window, `connect_blocking`,
 `read_to_string_blocking`, and `write_string_blocking` retain the old blocking

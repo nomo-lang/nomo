@@ -589,7 +589,8 @@ slices. See
 `examples/async_structured_explicit_cancel`,
 `examples/async_structured_deadline`,
 `examples/async_structured_panic_cleanup`,
-`examples/async_bounded_channel`, `examples/async_static_select`, the
+`examples/async_bounded_channel`, `examples/async_static_select`,
+`examples/async_tcp_connect`, `examples/async_tcp_io`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1/P3 async benchmark gates](performance/async/README.md).
 
@@ -782,16 +783,23 @@ toolchain-owned adapters, so application code needs no C FFI. Browser WASM
 rejects controlled process calls before evaluating their arguments. See
 `examples/process_controlled`.
 
-`std.net` provides blocking TCP and UDP helpers in v0.1. `net.connect` opens a
-TCP connection and returns `Result<TcpStream, NetError>`. `net.listen` binds a
-blocking `TcpListener`; `TcpListener.accept` returns the next `TcpStream`, and
-`TcpListener.close` closes the listener socket. `TcpStream.write_string` writes
-a string, `TcpStream.read_to_string` reads until the peer closes its write side,
-and `TcpStream.close` closes the stream socket. `net.udp_bind` binds a blocking
-`UdpSocket`; `UdpSocket.recv_from_string` returns a `UdpDatagram` with `data`,
-`host`, and `port`, `UdpSocket.send_to_string` sends a datagram, and
-`UdpSocket.close` closes the socket. Listener address inspection, backlog
-configuration, and nonblocking handles remain separate `std.net` slices.
+`std.net` now provides owner-affine direct-style suspend TCP client operations.
+`net.connect` accepts a numeric IPv4/IPv6 address and returns
+`Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
+complete `write`/`write_string` use epoll on Linux and kqueue on macOS without
+blocking the current-thread executor. Reads and writes are limited to 1 MiB,
+timeouts to 15 minutes, each stream direction to one pending operation, and
+write progress to 64 KiB per executor poll for fairness. Windows returns
+explicit `Unsupported` without evaluating write payloads until the IOCP slice,
+and hostnames await the bounded resolver slice.
+
+The preview blocking client names are `net.connect_blocking`,
+`TcpStream.read_to_string_blocking`, and
+`TcpStream.write_string_blocking`. `net.listen`, `TcpListener.accept`, and UDP
+remain blocking compatibility APIs. See the
+[standard-library guide](docs/standard-library.md),
+[async runtime guide](docs/async-runtime.md), and
+`examples/async_tcp_connect` / `examples/async_tcp_io`.
 
 `std.http` provides a bounded blocking HTTP/HTTPS client in v0.1.
 `http.send(HttpRequest)` accepts `GET` and `POST`, custom application headers,

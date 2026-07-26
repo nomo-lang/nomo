@@ -30,6 +30,172 @@ pub(super) fn lower_tcp_stream_value_method(
     let receiver_expr = binding_value_expr(name, binding);
     let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
     match method.as_str() {
+        "read" | "read_string" => {
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    format!(
+                        "synchronous function cannot call suspend function `TcpStream.{method}`; mark the caller `suspend`"
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let [max_bytes_arg, timeout_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`TcpStream.{method}` expects max_bytes and timeout_millis arguments"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (max_bytes_type, max_bytes) = lower_value_expr_with_expected(
+                path,
+                max_bytes_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if max_bytes_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`TcpStream.{method}` expects a u64 max_bytes"),
+                    &ValueType::U64,
+                    &max_bytes_type,
+                ));
+            }
+            let (timeout_type, timeout) = lower_value_expr_with_expected(
+                path,
+                timeout_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if timeout_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`TcpStream.{method}` expects a u64 timeout_millis"),
+                    &ValueType::U64,
+                    &timeout_type,
+                ));
+            }
+            let chunk = if method == "read" {
+                ValueType::Struct("TcpChunk".to_string(), Vec::new())
+            } else {
+                ValueType::Struct("TcpTextChunk".to_string(), Vec::new())
+            };
+            let intrinsic = if method == "read" {
+                BUILTIN_TCP_STREAM_READ_EXPR
+            } else {
+                BUILTIN_TCP_STREAM_READ_STRING_EXPR
+            };
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![chunk, net_error]),
+                ValueExpr::Call {
+                    name: intrinsic.to_string(),
+                    args: vec![receiver_expr, max_bytes, timeout],
+                },
+            ))
+        }
+        "write" | "write_string" => {
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    format!(
+                        "synchronous function cannot call suspend function `TcpStream.{method}`; mark the caller `suspend`"
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let [payload_arg, timeout_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!("`TcpStream.{method}` expects a payload and timeout_millis arguments"),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let payload_expected = if method == "write" {
+                ValueType::Array(Box::new(ValueType::U32))
+            } else {
+                ValueType::String
+            };
+            let (payload_type, payload) = lower_value_expr_with_expected(
+                path,
+                payload_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&payload_expected),
+                span,
+            )?;
+            if payload_type != payload_expected {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`TcpStream.{method}` expects {}", payload_expected.name()),
+                    &payload_expected,
+                    &payload_type,
+                ));
+            }
+            let (timeout_type, timeout) = lower_value_expr_with_expected(
+                path,
+                timeout_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if timeout_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    format!("`TcpStream.{method}` expects a u64 timeout_millis"),
+                    &ValueType::U64,
+                    &timeout_type,
+                ));
+            }
+            let intrinsic = if method == "write" {
+                BUILTIN_TCP_STREAM_WRITE_EXPR
+            } else {
+                BUILTIN_TCP_STREAM_WRITE_STRING_EXPR
+            };
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, net_error]),
+                ValueExpr::Call {
+                    name: intrinsic.to_string(),
+                    args: vec![receiver_expr, payload, timeout],
+                },
+            ))
+        }
         "close" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(

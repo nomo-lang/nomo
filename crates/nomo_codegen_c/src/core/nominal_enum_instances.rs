@@ -81,6 +81,16 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
             push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
         }
     }
+    if uses_async_tcp_io(program) {
+        let error = ValueType::Struct("NetError".to_string(), Vec::new());
+        for ok in [
+            ValueType::Struct("TcpChunk".to_string(), Vec::new()),
+            ValueType::Struct("TcpTextChunk".to_string(), Vec::new()),
+            ValueType::Void,
+        ] {
+            push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
+        }
+    }
     for element in collect_channel_element_types(program) {
         let channel = ValueType::Struct("Channel".to_string(), vec![element.clone()]);
         let channel_error = ValueType::Struct("ChannelError".to_string(), Vec::new());

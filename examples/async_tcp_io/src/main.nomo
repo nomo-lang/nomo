@@ -1,0 +1,66 @@
+package async_tcp_io.main
+
+import std.env
+import std.io
+import std.net
+import std.num
+import std.result
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn require_write(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn print_chunk(result: Result<TcpTextChunk, NetError>) -> void {
+    match result {
+        Result.Ok(chunk) => {
+            io.println(chunk.data)
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn echo_port() -> i64 {
+    let configured: Option<string> = env.get("NOMO_TCP_ECHO_PORT")
+    match configured {
+        Some(value) => {
+            match num.parse_i64(value) {
+                Ok(port) => {
+                    return port
+                }
+                Err(error) => {
+                    panic(error.message)
+                }
+            }
+        }
+        None => {
+            return 9000
+        }
+    }
+}
+
+// Run a local TCP echo service on 127.0.0.1:9000, or set
+// NOMO_TCP_ECHO_PORT to another local port.
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", echo_port(), 1000)
+    let stream: TcpStream = require_stream(connected)
+    let wrote: Result<void, NetError> = stream.write_string("hello from Nomo", 1000)
+    require_write(wrote)
+    let received: Result<TcpTextChunk, NetError> = stream.read_string(4096, 1000)
+    print_chunk(received)
+    stream.close()
+}

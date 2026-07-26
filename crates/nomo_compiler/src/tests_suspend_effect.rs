@@ -1059,6 +1059,80 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_cancel_is_suspend_capable_consuming_and_affine() {
+    let source = r#"package app.main
+
+import std.result
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker("managed")
+        let cancelled: Result<void, TaskError> = task.cancel(child)
+        let ok: bool = result.is_ok(cancelled)
+    }
+}
+"#;
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(main.body.iter().any(|statement| {
+        matches!(
+            statement,
+            Statement::Let {
+                initializer: ValueExpr::Call { name, args },
+                ..
+            } if name == "__nomo_structured_task_cancel_join" && args.len() == 1
+        )
+    }));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("NOMO_ASYNC_PENDING_CANCEL"));
+    assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_0, context);"));
+    assert!(c.contains("nomo_async_cancel_join_result_1"));
+    assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0);"));
+
+    let double_cancel = source.replace(
+        "        let ok: bool = result.is_ok(cancelled)",
+        "        let second: Result<void, TaskError> = task.cancel(child)",
+    );
+    let error = parse_inline(&double_cancel).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("cancelled more than once"));
+
+    let join_after_cancel = source.replace(
+        "        let ok: bool = result.is_ok(cancelled)",
+        "        let joined: Result<string, TaskError> = task.join(child)",
+    );
+    let error = parse_inline(&join_after_cancel).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("after cancellation"));
+
+    let cancel_after_join = source.replace(
+        "        let cancelled: Result<void, TaskError> = task.cancel(child)\n        let ok: bool = result.is_ok(cancelled)",
+        "        let joined: Result<string, TaskError> = task.join(child)\n        let cancelled: Result<void, TaskError> = task.cancel(child)",
+    );
+    let error = parse_inline(&cancel_after_join).unwrap_err();
+    assert_eq!(error.code, "E0872");
+    assert!(error.message.contains("after join"));
+}
+
+#[test]
 fn structured_scope_return_after_join_lowers_typed_parent_result() {
     let source = r#"package app.main
 

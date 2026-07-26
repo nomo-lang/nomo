@@ -207,6 +207,7 @@ const BUILTIN_TASK_SLEEP_EXPR: &str = "__nomo_task_sleep";
 const BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX: &str = "__nomo_structured_task_spawn::";
 const BUILTIN_TASK_STRUCTURED_JOIN_EXPR: &str = "__nomo_structured_task_join";
 const BUILTIN_TASK_STRUCTURED_CANCEL_EXPR: &str = "__nomo_structured_task_cancel";
+const BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR: &str = "__nomo_structured_task_cancel_join";
 const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
 const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
 const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";

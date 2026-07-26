@@ -203,6 +203,13 @@ struct StructuredCancel<'a> {
     handle: &'a str,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct StructuredCancelJoin<'a> {
+    handle: &'a str,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
 fn statement_structured_spawn(statement: &Statement) -> Option<StructuredSpawn<'_>> {
     let Statement::Let {
         name: handle,
@@ -253,6 +260,28 @@ fn statement_structured_cancel(statement: &Statement) -> Option<StructuredCancel
         return None;
     };
     Some(StructuredCancel { handle })
+}
+
+fn statement_structured_cancel_join(statement: &Statement) -> Option<StructuredCancelJoin<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    if name != BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR {
+        return None;
+    }
+    let [ValueExpr::Variable(handle)] = args.as_slice() else {
+        return None;
+    };
+    Some(StructuredCancelJoin {
+        handle,
+        binding,
+        value_type,
+    })
 }
 
 fn emit_async_structured_cancel(
@@ -319,6 +348,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
         || statement_async_sleep(statement).is_some()
         || statement_async_call(statement, async_names).is_some()
         || statement_structured_join(statement).is_some()
+        || statement_structured_cancel_join(statement).is_some()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -458,6 +488,14 @@ fn async_join_result_owned_field(index: usize) -> String {
     format!("nomo_async_join_result_owned_{index}")
 }
 
+fn async_cancel_join_result_field(index: usize) -> String {
+    format!("nomo_async_cancel_join_result_{index}")
+}
+
+fn async_cancel_join_result_owned_field(index: usize) -> String {
+    format!("nomo_async_cancel_join_result_owned_{index}")
+}
+
 fn async_spawn_failed_field(index: usize) -> String {
     format!("nomo_async_spawn_failed_{index}")
 }
@@ -549,6 +587,17 @@ fn emit_async_frame_type(
             out.push_str(&async_join_result_field(index));
             out.push_str(";\n    uint8_t ");
             out.push_str(&async_join_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if statement_structured_cancel_join(statement).is_some() {
+            let cancel = statement_structured_cancel_join(statement)
+                .expect("structured cancel was checked immediately above");
+            out.push_str("    ");
+            out.push_str(&c_type(cancel.value_type));
+            out.push(' ');
+            out.push_str(&async_cancel_join_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_cancel_join_result_owned_field(index));
             out.push_str(";\n");
         }
         if statement_structured_spawn(statement).is_some() {
@@ -1082,6 +1131,61 @@ fn emit_structured_join_result_materialize(
     out.push_str(" = 1u;\n");
 }
 
+fn emit_structured_cancel_join_result_materialize(
+    out: &mut String,
+    spawn_index: usize,
+    cancel_index: usize,
+    result_type: &ValueType,
+    indent: usize,
+) {
+    let ValueType::Enum(_, result_args) = result_type else {
+        unreachable!("structured cancel result is always a Result enum");
+    };
+    let result = format!("frame->{}", async_cancel_join_result_field(cancel_index));
+    write_indent(out, indent);
+    out.push_str("memset(&");
+    out.push_str(&result);
+    out.push_str(", 0, sizeof(");
+    out.push_str(&result);
+    out.push_str("));\n");
+    write_indent(out, indent);
+    out.push_str("if (frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" == 0u) {\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".tag = ");
+    out.push_str(&c_enum_variant_ident("Result", result_args, "Ok"));
+    out.push_str(";\n");
+    write_indent(out, indent);
+    out.push_str("} else {\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".tag = ");
+    out.push_str(&c_enum_variant_ident("Result", result_args, "Err"));
+    out.push_str(";\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push('.');
+    out.push_str(&c_member_ident("code"));
+    out.push_str(" = nomo_string_literal(\"queue_full\");\n");
+    write_indent(out, indent + 1);
+    out.push_str(&result);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident("Err"));
+    out.push('.');
+    out.push_str(&c_member_ident("message"));
+    out.push_str(" = nomo_string_literal(\"owner executor ready queue is full\");\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&async_cancel_join_result_owned_field(cancel_index));
+    out.push_str(" = 1u;\n");
+}
+
 pub(super) fn emit_current_thread_executor(out: &mut String) {
     let runtime = r#"typedef enum {
     NOMO_ASYNC_POLL_READY = 0,
@@ -1093,7 +1197,8 @@ typedef enum {
     NOMO_ASYNC_PENDING_YIELD = 1,
     NOMO_ASYNC_PENDING_TIMER = 2,
     NOMO_ASYNC_PENDING_JOIN = 3,
-    NOMO_ASYNC_PENDING_PANIC = 4
+    NOMO_ASYNC_PENDING_PANIC = 4,
+    NOMO_ASYNC_PENDING_CANCEL = 5
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -1593,6 +1698,7 @@ pub(super) fn emit_async_function(
         if statement_is_async_suspend(statement, async_names) {
             let sleep = statement_async_sleep(statement);
             let join = statement_structured_join(statement);
+            let cancel_join = statement_structured_cancel_join(statement);
             if join.is_some() {
                 out.push_str("            context->task_joins += 1u;\n");
             }
@@ -1687,6 +1793,39 @@ pub(super) fn emit_async_function(
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(";\n");
+            } else if let Some(cancel) = cancel_join {
+                let spawn_index = structured_spawn_index(function, cancel.handle)
+                    .expect("validated structured cancel handle has a spawn");
+                let spawn = statement_structured_spawn(&function.body[spawn_index])
+                    .expect("structured cancel spawn exists");
+                out.push_str("            ");
+                out.push_str(&async_cancel_ident(spawn.callee));
+                out.push_str("(&frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(", context);\n            if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_completed == 0u) {\n                frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(
+                    ".structured_waiter_frame = context->current_frame;\n                frame->",
+                );
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(
+                    ".structured_waiter_poll = context->current_poll;\n\
+                     context->pending_reason = NOMO_ASYNC_PENDING_CANCEL;\n\
+                     return NOMO_ASYNC_POLL_PENDING;\n\
+                 }\n",
+                );
+                emit_structured_cancel_join_result_materialize(
+                    out,
+                    spawn_index,
+                    index,
+                    cancel.value_type,
+                    3,
+                );
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
             } else {
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
@@ -1734,7 +1873,26 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            if sleep.is_some() || call.is_some() || join.is_some() {
+            if let Some(cancel) = cancel_join {
+                let spawn_index = structured_spawn_index(function, cancel.handle)
+                    .expect("validated structured cancel handle has a spawn");
+                out.push_str("            if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(
+                    ".structured_completed == 0u) {\n\
+                     context->pending_reason = NOMO_ASYNC_PENDING_CANCEL;\n\
+                     return NOMO_ASYNC_POLL_PENDING;\n\
+                 }\n",
+                );
+                emit_structured_cancel_join_result_materialize(
+                    out,
+                    spawn_index,
+                    index,
+                    cancel.value_type,
+                    3,
+                );
+            }
+            if sleep.is_some() || call.is_some() || join.is_some() || cancel_join.is_some() {
                 out.push_str("nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(":\n            ;\n");
@@ -1905,6 +2063,57 @@ pub(super) fn emit_async_function(
                 out.push_str(&async_drop_ident(
                     statement_structured_spawn(&function.body[spawn_index])
                         .expect("structured join spawn exists")
+                        .callee,
+                ));
+                out.push_str("(&frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(");\n");
+            }
+            if let Some(cancel) = cancel_join {
+                let ValueType::Enum(result_name, result_args) = cancel.value_type else {
+                    unreachable!("structured cancel result is always a Result enum");
+                };
+                debug_assert_eq!(result_name, "Result");
+                debug_assert_eq!(result_args.len(), 2);
+                if let Some(frame_local) = frame_locals
+                    .iter()
+                    .find(|local| local.declaration_index == index)
+                {
+                    out.push_str("            frame->");
+                    out.push_str(&async_frame_value_field(cancel.binding));
+                    out.push_str(" = frame->");
+                    out.push_str(&async_cancel_join_result_field(index));
+                    out.push_str(";\n");
+                    if value_type_needs_release(cancel.value_type) {
+                        out.push_str("            frame->");
+                        out.push_str(&async_frame_owned_field(cancel.binding));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_cancel_join_result_owned_field(index));
+                        out.push_str(";\n            frame->");
+                        out.push_str(&async_cancel_join_result_owned_field(index));
+                        out.push_str(" = 0u;\n");
+                    }
+                    emit_async_frame_alias(out, frame_local, 3);
+                } else {
+                    out.push_str("            ");
+                    out.push_str(&c_type(cancel.value_type));
+                    out.push(' ');
+                    out.push_str(&c_var_ident(cancel.binding));
+                    out.push_str(" = frame->");
+                    out.push_str(&async_cancel_join_result_field(index));
+                    out.push_str(";\n            frame->");
+                    out.push_str(&async_cancel_join_result_owned_field(index));
+                    out.push_str(" = 0u;\n");
+                    if let Some(local) = local_array(cancel.binding, cancel.value_type) {
+                        local_owned.push(local);
+                    }
+                }
+                let spawn_index = structured_spawn_index(function, cancel.handle)
+                    .expect("validated structured cancel handle has a spawn");
+                out.push_str("            ");
+                out.push_str(&async_drop_ident(
+                    statement_structured_spawn(&function.body[spawn_index])
+                        .expect("structured cancel spawn exists")
                         .callee,
                 ));
                 out.push_str("(&frame->");
@@ -2085,6 +2294,18 @@ pub(super) fn emit_async_function(
             join.value_type,
             &async_join_result_owned_field(index),
             &async_join_result_field(index),
+            1,
+        );
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(cancel) = statement_structured_cancel_join(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            cancel.value_type,
+            &async_cancel_join_result_owned_field(index),
+            &async_cancel_join_result_field(index),
             1,
         );
     }

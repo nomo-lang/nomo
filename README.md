@@ -510,12 +510,17 @@ without changing normal stdout. Managed call arguments are evaluated once and
 retained or transferred into the child frame; owned results move out before
 child drop.
 The structured slice adds `task.scope`, direct `task.spawn child(args)`, and
-one-argument `task.join(handle)` for scope-owned `Task<T>` children. Spawned
+one-argument `task.join(handle)` and `task.cancel(handle)` for scope-owned
+`Task<T>` children. Spawned
 frames enter the same bounded owner FIFO; child completion re-enqueues a
 waiting parent, typed results move exactly once into
 `Result<T, TaskError>`, and saturation becomes a typed `queue_full` join error.
-Each inferred immutable handle must remain in its scope and be joined exactly
-once when its result is observed. Normal scope fallthrough and a final scope
+Each inferred immutable handle must remain in its scope and may be consumed
+exactly once by join or cancel. Structured cancel is a consuming
+cancel-and-join operation: it requests cancellation, completes child cleanup
+before returning `Result<void, TaskError>`, and rejects subsequent handle use.
+On the current-thread backend this completes inline without a new allocation
+or queue operation. Normal scope fallthrough and a final scope
 `return` cancel unjoined children, remove their ready/timer registrations, and
 drop their frames before code after the scope or return completion runs. A
 return expression evaluates into an owned temporary before that cleanup.
@@ -534,7 +539,7 @@ and unsupported shapes. Mutable
 parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
-non-final scope return, explicit cancellation propagation, channels/select,
+non-final scope return, cancellation tokens/deadlines, channels/select,
 the multi-task timer wheel, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
@@ -543,6 +548,7 @@ slices. See
 `examples/async_structured_cancel`,
 `examples/async_structured_return_cancel`,
 `examples/async_structured_question_cancel`,
+`examples/async_structured_explicit_cancel`,
 `examples/async_structured_panic_cleanup`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).

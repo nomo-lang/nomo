@@ -15,6 +15,7 @@ async runtime。P0 manifest 保留两个 control：
 `yield_counter_probe`、`timer_counter_probe`、`task_spawn_complete`、
 `structured_cancel_probe`、`structured_return_cancel_probe` 与
 `structured_question_cancel_probe`，以及
+`structured_explicit_cancel_probe` 与
 `structured_panic_cleanup_probe`。
 counter 探针不混入 measured sample；它们单独设置
 `NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
@@ -44,6 +45,8 @@ post-join 嵌套 scope return、AddressSanitizer 正确性覆盖；scope 取消�
 root-frame wakeup 前取消的 typed final helper return 与 `?` error
 propagation。panic gate 会保留 managed child message，通过 root 取消 armed
 timer sibling，drop 全部 frame，导出 counter，最后才以原始 panic 退出。
+显式 cancel-and-join gate 会消费 scope-owned handle、disarm live timer，并且
+只在终态清理完成后返回类型化成功，同时保持 current-thread fast path 零分配。
 ARC primitive counter 仍明确标记 unavailable，而不是伪装成 0。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload

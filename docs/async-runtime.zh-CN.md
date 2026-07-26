@@ -72,6 +72,13 @@ suspend fn main() -> void {
 不同。结构化形式从 child 返回类型推导 scope-owned `Task<T>`，单参数 join
 必须且只能消费一次该 handle，并返回 `Result<T, TaskError>`。
 
+顶层不可变
+`let cancelled: Result<void, TaskError> = task.cancel(handle)` 是 structured
+cancel-and-join：它请求取消，等待 child 完成终态清理，再消费并 drop handle。
+已经完成的 child 返回 `Ok(void)`；spawn 因 ready queue 满而失败时返回稳定的
+`queue_full` error。这个 overload 与旧的同步 `task.cancel(Task)` worker
+取消请求不同。
+
 ## 已实现的 P1 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
@@ -91,6 +98,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   `TaskError { code: "queue_full", ... }`；
 - 在 drop child frame 前，把 typed child result 恰好一次 move 到 join 的成功
   payload；
+- structured cancel-and-join 挂起边界：向 child subtree 传播取消、移除 ready
+  queue/timer 注册、等待终态清理、返回 `Result<void, TaskError>`，再 drop
+  已消费的 child frame；
 - 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
   join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
   后语句或完成 return 前 drop frame；
@@ -125,12 +135,19 @@ frame 并将其调度到有界 FIFO。join 只在目标 child 尚未完成时挂
 child drop。该切片不创建 heap task、OS thread、atomic reference count 或
 全局 work-stealing queue。
 
+structured cancel 为未来 shard acknowledgement 路径保留了可挂起语义，但
+current-thread owner 可以 inline 完成取消与 frame 清理，所以 ready fast path
+既不分配也不会额外往返 ready queue。generated ABI 仍保留
+`NOMO_ASYNC_PENDING_CANCEL`，后续 owner-shard 实现可以等待 owner 确认终态
+清理，而不改变源码语义。
+
 Browser WASM 的有界沙盒解释器可以运行同一份源码。目前
 `task.yield_now()` 只表示 cooperative boundary；它还不会把控制权交还给
 host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既不阻塞
 也不求值 duration，而是返回
 `TaskError { code: "runtime_unavailable", ... }`。structured child body
-目前同样不会在 browser 中执行，其 join 返回同一稳定错误。
+目前同样不会在 browser 中执行，其 join 和 structured cancel 返回同一稳定
+错误，并消费 inert browser handle。
 
 ## 有意保留的限制
 
@@ -142,11 +159,14 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
 内部挂起、下述 structured binding 之外的 `?`、其他表达式内部的 panic、
-显式取消传播和 reactor I/O 都属于后续小 PR。
+取消 token/deadline 和 reactor I/O 都属于后续小 PR。
 
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
 handle 必须使用推导得到的不可变 binding 且不得离开 scope；若要观察结果，
-只能恰好 join 一次。target 必须是直接、未限定、non-generic 的顶层
+只能由直接不可变 `task.join(handle)` 或 `task.cancel(handle)` binding 恰好
+消费一次。structured cancel 在 child 进入终态并移除注册后才返回
+`Result<void, TaskError>`；已经完成的 child 也会成功。之后不得再次 join 或
+cancel 该 handle。target 必须是直接、未限定、non-generic 的顶层
 `suspend fn`，参数不可变且 frame-safe。其返回类型会形成 `Task<T>`，而
 `task.join(handle)` 返回
 `Result<T, TaskError>`。最终 `return` 会先把表达式求值到私有 owned
@@ -164,7 +184,7 @@ entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics e
 最后打印并 release 原始消息，以状态 1 退出。`debug.panic` 走同一 statement
 路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
 body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
-其他位置的 `?`、其他表达式内部的 panic、显式取消、deadline、channel 与
+其他位置的 `?`、其他表达式内部的 panic、取消 token、deadline、channel 与
 select 仍属于后续切片。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
@@ -186,6 +206,9 @@ poll 的 ready child，以及在 root-frame wakeup 前取消的 typed helper ret
 和 typed `?` error propagation，包括 managed 参数、传播 error 与结果 release。
 panic 测试还覆盖 managed 同步消息、spawn child panic、root 递归取消、
 armed sibling timer、精确 frame/task/timer counter 与 browser-WASM 边界。
+显式 structured-cancel 测试覆盖 armed timer、精确 result/handle ownership
+转移、generated pending ABI、native/browser 行为、精确 counter 与
+AddressSanitizer 清理。
 后续实现仍必须用测试和证据证明：
 
 - 其余 error、cancellation、timeout 和嵌套表达式或 runtime-originated panic
@@ -207,4 +230,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_structured_cancel`](../examples/async_structured_cancel)，以及
 [`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel) 与
 [`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel)，以及
+[`examples/async_structured_explicit_cancel`](../examples/async_structured_explicit_cancel)，以及
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup)。

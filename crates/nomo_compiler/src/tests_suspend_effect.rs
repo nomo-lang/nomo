@@ -1244,9 +1244,99 @@ suspend fn main() -> void {
     }
 }
 "#;
-    let error = parse_inline(unjoined_return).unwrap_err();
+    let program = parse_inline(unjoined_return).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[1],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_structured_task_cancel"
+                && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "child")
+    ));
+    assert!(matches!(main.body[2], Statement::Return(None)));
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        unjoined_return,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains(concat!(
+        "            nomo_async_cancel_worker(&frame->nomo_async_child_0, context);\n",
+        "            nomo_async_drop_worker(&frame->nomo_async_child_0);\n",
+        "            frame->structured_completed = 1u;"
+    )));
+
+    let typed_return_with_temporary_collision = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn finish() -> string {
+    task.scope {
+        let child = task.spawn worker()
+        let __nomo_structured_return_value: string = "value"
+        return __nomo_structured_return_value
+    }
+}
+
+suspend fn main() -> void {
+    let value: string = finish()
+}
+"#;
+    let program = parse_inline(typed_return_with_temporary_collision).unwrap();
+    let finish = program
+        .functions
+        .iter()
+        .find(|function| function.name == "finish")
+        .unwrap();
+    assert!(matches!(
+        &finish.body[2],
+        Statement::Let {
+            name,
+            value_type: ValueType::String,
+            initializer: ValueExpr::Variable(value),
+        } if name == "__nomo_structured_return_value_"
+            && value == "__nomo_structured_return_value"
+    ));
+    assert!(matches!(
+        &finish.body[3],
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == "__nomo_structured_task_cancel"
+                && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "child")
+    ));
+    assert!(matches!(
+        &finish.body[4],
+        Statement::Return(Some(ValueExpr::Variable(value)))
+            if value == "__nomo_structured_return_value_"
+    ));
+
+    let returned_handle = r#"package app.main
+
+import std.task
+
+suspend fn worker() -> void {
+}
+
+suspend fn escape() -> void {
+    task.scope {
+        let child = task.spawn worker()
+        return child
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let error = parse_inline(returned_handle).unwrap_err();
     assert_eq!(error.code, "E0872");
-    assert!(error.message.contains("unjoined handle"));
+    assert!(error.message.contains("cannot be returned"));
 }
 
 #[test]

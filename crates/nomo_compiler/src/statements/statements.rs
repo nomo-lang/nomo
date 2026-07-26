@@ -512,7 +512,10 @@ pub(super) fn lower_stmt_into(
                 &span.text,
             ));
         }
-        let unjoined = validate_structured_scope(path, body, span)?;
+        let unjoined = validate_structured_scope(path, body)?;
+        let exits_with_return = body
+            .last()
+            .is_some_and(|statement| matches!(statement, Stmt::Return { .. }));
         let mut task_scope = scope.clone();
         task_scope.insert(
             TASK_SCOPE_BINDING.to_string(),
@@ -522,7 +525,40 @@ pub(super) fn lower_stmt_into(
                 source: BindingSource::TaskScope,
             },
         );
-        for statement in body {
+        for (index, statement) in body.iter().enumerate() {
+            if exits_with_return && index + 1 == body.len() && !unjoined.is_empty() {
+                let mut lowered_return = Vec::new();
+                lower_stmt_into(
+                    path,
+                    statement,
+                    &mut task_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    false,
+                    loop_depth,
+                    &mut lowered_return,
+                )?;
+                let [Statement::Return(value)] = lowered_return.as_slice() else {
+                    unreachable!("validated final scope return lowers to one return statement");
+                };
+                if let Some(value) = value {
+                    let temporary = structured_return_temporary(&task_scope);
+                    out.push(Statement::Let {
+                        name: temporary.clone(),
+                        value_type: return_type.clone(),
+                        initializer: value.clone(),
+                    });
+                    push_structured_cancellations(out, &unjoined);
+                    out.push(Statement::Return(Some(ValueExpr::Variable(temporary))));
+                } else {
+                    push_structured_cancellations(out, &unjoined);
+                    out.push(Statement::Return(None));
+                }
+                continue;
+            }
             lower_stmt_into(
                 path,
                 statement,
@@ -537,11 +573,8 @@ pub(super) fn lower_stmt_into(
                 out,
             )?;
         }
-        for handle in unjoined {
-            out.push(Statement::Expr(ValueExpr::Call {
-                name: BUILTIN_TASK_STRUCTURED_CANCEL_EXPR.to_string(),
-                args: vec![ValueExpr::Variable(handle)],
-            }));
+        if !exits_with_return {
+            push_structured_cancellations(out, &unjoined);
         }
         return Ok(());
     }
@@ -575,11 +608,24 @@ pub(super) fn lower_stmt_into(
     Ok(())
 }
 
-fn validate_structured_scope(
-    path: &Path,
-    body: &[Stmt],
-    scope_span: &Span,
-) -> Result<Vec<String>, Diagnostic> {
+fn structured_return_temporary(scope: &HashMap<String, Binding>) -> String {
+    let mut name = "__nomo_structured_return_value".to_string();
+    while scope.contains_key(&name) {
+        name.push('_');
+    }
+    name
+}
+
+fn push_structured_cancellations(out: &mut Vec<Statement>, handles: &[String]) {
+    for handle in handles {
+        out.push(Statement::Expr(ValueExpr::Call {
+            name: BUILTIN_TASK_STRUCTURED_CANCEL_EXPR.to_string(),
+            args: vec![ValueExpr::Variable(handle.clone())],
+        }));
+    }
+}
+
+fn validate_structured_scope(path: &Path, body: &[Stmt]) -> Result<Vec<String>, Diagnostic> {
     let mut handles = HashMap::<String, bool>::new();
     for (index, statement) in body.iter().enumerate() {
         let span = statement_span(statement);
@@ -727,7 +773,7 @@ fn validate_structured_scope(
             | Stmt::Continue { .. } => {
                 return Err(Diagnostic::new(
                     "E0876",
-                    "the current structured task slice requires a top-level scope body without nested control flow, defer, or unsafe blocks; return is allowed only as the final statement after every child is joined",
+                    "the current structured task slice requires a top-level scope body without nested control flow, defer, or unsafe blocks; return is allowed only as the final statement, when unjoined children can be cancelled before completion",
                     path,
                     span.line,
                     span.column,
@@ -767,22 +813,5 @@ fn validate_structured_scope(
         .filter_map(|(name, joined)| (!joined).then_some(name.as_str()))
         .collect::<Vec<_>>();
     unjoined.sort_unstable();
-    let exits_with_return = body
-        .last()
-        .is_some_and(|statement| matches!(statement, Stmt::Return { .. }));
-    if exits_with_return && !unjoined.is_empty() {
-        return Err(Diagnostic::new(
-            "E0872",
-            format!(
-                "task scope return has unjoined handle(s): {}; join every child before this early control transfer",
-                unjoined.join(", ")
-            ),
-            path,
-            scope_span.line,
-            scope_span.column,
-            scope_span.length,
-            &scope_span.text,
-        ));
-    }
     Ok(unjoined.into_iter().map(str::to_string).collect())
 }

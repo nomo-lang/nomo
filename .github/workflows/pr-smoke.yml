@@ -180,6 +180,26 @@ jobs:
               -or $structuredCancelPayload.counters.peak_live_timers -ne 1) {
             throw "unexpected structured scope-cancel counters"
           }
+          $structuredReturnCancelMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-return-cancel-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $structuredReturnCancelMetrics
+          cargo run --locked --bin nomo -- run examples/async_structured_return_cancel
+          $structuredReturnCancelPayload = Get-Content -Raw $structuredReturnCancelMetrics | ConvertFrom-Json
+          if ($structuredReturnCancelPayload.counters.poll_calls -ne 6 `
+              -or $structuredReturnCancelPayload.counters.frame_drops -ne 4 `
+              -or $structuredReturnCancelPayload.counters.peak_live_frames -ne 4 `
+              -or $structuredReturnCancelPayload.counters.ready_queue_enqueues -ne 3 `
+              -or $structuredReturnCancelPayload.counters.ready_queue_dequeues -ne 3 `
+              -or $structuredReturnCancelPayload.counters.task_spawns -ne 2 `
+              -or $structuredReturnCancelPayload.counters.task_joins -ne 1 `
+              -or $structuredReturnCancelPayload.counters.join_suspensions -ne 1 `
+              -or $structuredReturnCancelPayload.counters.task_cancellations -ne 1 `
+              -or $structuredReturnCancelPayload.counters.timer_registrations -ne 1 `
+              -or $structuredReturnCancelPayload.counters.timer_expirations -ne 0 `
+              -or $structuredReturnCancelPayload.counters.timer_cancellations -ne 1 `
+              -or $structuredReturnCancelPayload.counters.live_timers -ne 0 `
+              -or $structuredReturnCancelPayload.counters.peak_live_timers -ne 1) {
+            throw "unexpected structured scope-return-cancel counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -253,6 +273,10 @@ jobs:
           NOMO_ASYNC_METRICS_PATH="$structured_cancel_metrics" \
             cargo run --locked --bin nomo -- run examples/async_structured_cancel
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 3 and c["ready_queue_enqueues"] == 5 and c["ready_queue_dequeues"] == 3 and c["ready_queue_cancellations"] == 2 and c["task_spawns"] == 4 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 3 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_cancel_metrics"
+          structured_return_cancel_metrics="$RUNNER_TEMP/nomo-async-structured-return-cancel-metrics.json"
+          NOMO_ASYNC_METRICS_PATH="$structured_return_cancel_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_structured_return_cancel
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 6 and c["frame_drops"] == 4 and c["peak_live_frames"] == 4 and c["ready_queue_enqueues"] == 3 and c["ready_queue_dequeues"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 1 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_return_cancel_metrics"
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

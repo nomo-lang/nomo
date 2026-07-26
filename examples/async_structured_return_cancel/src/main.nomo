@@ -1,0 +1,34 @@
+package app.main
+
+import std.io
+import std.task
+import std.time
+
+suspend fn slow_child(value: string) -> void {
+    io.println(value, "before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println(value, "after")
+}
+
+suspend fn gate_child() -> void {
+    io.println("gate")
+}
+
+fn prepare(value: string) -> string {
+    io.println("return evaluated")
+    return value
+}
+
+suspend fn finish(value: string) -> string {
+    task.scope {
+        let slow = task.spawn slow_child(value)
+        let gate = task.spawn gate_child()
+        let joined_gate: Result<void, TaskError> = task.join(gate)
+        return prepare(value)
+    }
+}
+
+suspend fn main() -> void {
+    let result: string = finish("managed")
+    io.println(result)
+}

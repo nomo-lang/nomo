@@ -183,6 +183,14 @@ jobs:
           grep 'nomo_async_cancel_slow_child' "$cancel_dir/c/main.c"
           grep 'nomo_async_timer_disarm' "$cancel_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$cancel_dir/c/main.c"
+          target/release/nomo build examples/async_structured_return_cancel --target x86_64-apple-darwin
+          return_cancel_dir="examples/async_structured_return_cancel/build/x86_64-apple-darwin-none"
+          return_cancel_artifact="$return_cancel_dir/bin/async_structured_return_cancel"
+          test "$(lipo -archs "$return_cancel_artifact")" = "x86_64"
+          grep 'nomo_async_cancel_slow_child' "$return_cancel_dir/c/main.c"
+          grep 'frame->nomo_async_result = nomo___nomo_structured_return_value;' "$return_cancel_dir/c/main.c"
+          grep 'structured_waiter_frame = context->current_frame' "$return_cancel_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$return_cancel_dir/c/main.c"
           target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
           sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -205,6 +213,7 @@ jobs:
             examples/async_yield/build/x86_64-apple-darwin-none
             examples/async_structured_return/build/x86_64-apple-darwin-none
             examples/async_structured_cancel/build/x86_64-apple-darwin-none
+            examples/async_structured_return_cancel/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
@@ -286,6 +295,16 @@ jobs:
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$cancel_dir/c/main.c"
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$cancel_artifact" \
             | grep '^scope closed$'
+          target/release/nomo build examples/async_structured_return_cancel --target aarch64-unknown-linux-gnu
+          return_cancel_dir="examples/async_structured_return_cancel/build/aarch64-unknown-linux-gnu"
+          return_cancel_artifact="$return_cancel_dir/bin/async_structured_return_cancel"
+          readelf -h "$return_cancel_artifact" | grep 'Machine:.*AArch64'
+          grep 'nomo_async_cancel_slow_child' "$return_cancel_dir/c/main.c"
+          grep 'frame->nomo_async_result = nomo___nomo_structured_return_value;' "$return_cancel_dir/c/main.c"
+          grep 'structured_waiter_frame = context->current_frame' "$return_cancel_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$return_cancel_dir/c/main.c"
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$return_cancel_artifact" \
+            | grep '^managed$'
           target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
           sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -313,5 +332,6 @@ jobs:
             examples/async_yield/build/aarch64-unknown-linux-gnu
             examples/async_structured_return/build/aarch64-unknown-linux-gnu
             examples/async_structured_cancel/build/aarch64-unknown-linux-gnu
+            examples/async_structured_return_cancel/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

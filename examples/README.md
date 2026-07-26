@@ -37,6 +37,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_structured_results`: scope-owned `Task<T>` children whose managed results move exactly once into `Result<T, TaskError>` joins
 - `async_structured_return`: a nested suspend helper that joins its child before returning a typed value from `task.scope`
 - `async_structured_cancel`: normal scope exit cancels and cleans up an unjoined child with an armed timer
+- `async_structured_return_cancel`: a typed helper return that evaluates its result, then cancels an unjoined child with an armed timer
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

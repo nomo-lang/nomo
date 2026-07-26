@@ -119,6 +119,17 @@
       "note": "Validates normal-scope cancellation of one armed timer child and two never-polled ready children, including exact queue, task, timer, and frame counters."
     },
     {
+      "id": "structured_return_cancel_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/structured_return_cancel_probe",
+      "expected_stdout": "managed before\ngate\nreturn evaluated\nmanaged\n",
+      "snapshot": "snapshots/structured-return-cancel-probe.json",
+      "note": "Validates that a typed final scope return cancels and drops an unjoined armed-timer child before completing the helper and waking its root frame."
+    },
+    {
       "id": "idle_suspended_tasks",
       "kind": "required_async_workload",
       "available_phase": "P1",

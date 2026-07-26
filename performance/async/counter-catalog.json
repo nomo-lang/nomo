@@ -338,6 +338,36 @@
       "semantics": "Maximum simultaneously initialized reactor instances in the measured current-thread executor."
     },
     {
+      "name": "iocp_operations_started",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Windows overlapped operations reserved from the fixed owner-local IOCP table; zero on non-Windows backends."
+    },
+    {
+      "name": "iocp_operations_completed",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Windows overlapped completions drained from IOCP, including detached late completions after cancellation; zero on non-Windows backends."
+    },
+    {
+      "name": "iocp_operations_cancelled",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Submitted Windows overlapped operations for which owner cleanup requested cancellation; zero on non-Windows backends."
+    },
+    {
+      "name": "live_iocp_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Windows fixed-table overlapped slots awaiting submission cleanup or completion draining at the observation point."
+    },
+    {
+      "name": "peak_live_iocp_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous Windows fixed-table overlapped slots owned by the measured executor."
+    },
+    {
       "name": "io_connect_starts",
       "unit": "count",
       "available_phase": "P2",

@@ -558,7 +558,7 @@ fn main() -> void {
 }
 
 #[test]
-fn async_tcp_connect_windows_preview_is_explicitly_unsupported_without_socket_registration() {
+fn async_tcp_connect_windows_uses_bounded_owner_affine_iocp_for_numeric_addresses() {
     let source = r#"package app.main
 
 import std.net
@@ -575,14 +575,28 @@ suspend fn main() -> void {
         .unwrap();
     let c = codegen::emit_c_for_target(&program, &target);
 
-    assert!(c.contains("async TCP connect is not available on the Windows preview backend"));
+    for helper in [
+        "WSASocketW",
+        "WSAIoctl",
+        "ConnectEx",
+        "InetPtonA",
+        "CreateIoCompletionPort",
+        "GetQueuedCompletionStatus",
+        "CancelIoEx",
+        "SO_UPDATE_CONNECT_CONTEXT",
+        "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
+        "Windows hostname resolution remains a later P2-TCP-D slice",
+    ] {
+        assert!(c.contains(helper), "missing generated helper {helper}");
+    }
     assert!(c.contains("NOMO_ASYNC_REACTOR_WRITE"));
     assert!(c.contains("nomo_async_reactor_register"));
-    assert!(!c.contains("inet_pton("));
+    assert!(!c.contains("async TCP connect is not available on the Windows preview backend"));
     assert!(!c.contains("epoll_ctl("));
     assert!(!c.contains("kevent("));
     assert!(!c.contains("pthread_create"));
     assert!(!c.contains("nomo_async_resolver_submit"));
+    assert!(!c.contains("getaddrinfo("));
     assert!(!c.contains("nomo_string_literal(\"127.0.0.1\")"));
 }
 
@@ -658,7 +672,7 @@ fn main() -> void {
 }
 
 #[test]
-fn async_tcp_stream_io_windows_preview_is_explicitly_unsupported() {
+fn async_tcp_stream_io_windows_uses_overlapped_winsock_and_safe_late_completion_storage() {
     let source = r#"package app.main
 
 import std.net
@@ -679,10 +693,19 @@ fn main() -> void {
         .unwrap();
     let c = codegen::emit_c_for_target(&program, &target);
 
-    assert!(c.contains("async TCP read is not available on the Windows preview backend"));
-    assert!(c.contains("async TCP string write is not available on the Windows preview backend"));
-    assert!(!c.contains("recv("));
-    assert!(!c.contains("send("));
+    for helper in [
+        "WSARecv",
+        "WSASend",
+        "OVERLAPPED",
+        "CancelIoEx",
+        "nomo_async_reactor_detach_buffer",
+        "NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u",
+        "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
+    ] {
+        assert!(c.contains(helper), "missing generated helper {helper}");
+    }
+    assert!(!c.contains("async TCP read is not available on the Windows preview backend"));
+    assert!(!c.contains("async TCP string write is not available on the Windows preview backend"));
     assert!(!c.contains("nomo_string_literal(\"secret\")"));
 }
 

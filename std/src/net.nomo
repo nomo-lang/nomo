@@ -70,9 +70,10 @@ pub struct UdpDatagram {
 
 /// Opens an owner-affine TCP connection without blocking the async executor.
 ///
-/// Numeric addresses use the reactor directly. On supported native targets,
+/// Numeric addresses use the platform reactor directly. On Linux and macOS,
 /// hostnames use the toolchain's bounded resolver worker and return completion
-/// to the owner executor.
+/// to the owner executor; Windows hostname resolution remains a focused
+/// follow-up to its native numeric-address IOCP path.
 pub suspend fn connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError> {
     return net.connect(host, port, timeout_millis)
 }

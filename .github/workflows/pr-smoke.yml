@@ -159,7 +159,7 @@ jobs:
           $tcpMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-tcp-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $tcpMetrics
           $tcpOutput = cargo run --locked --bin nomo -- run examples/async_tcp_connect
-          if (($tcpOutput -join "`n") -notmatch "Windows preview backend") {
+          if (($tcpOutput -join "`n") -notmatch "Windows hostname resolution remains a later P2-TCP-D slice") {
             throw "unexpected Windows async TCP result"
           }
           $tcpPayload = Get-Content -Raw $tcpMetrics | ConvertFrom-Json
@@ -399,6 +399,11 @@ jobs:
               -or $selectPayload.counters.live_timers -ne 0) {
             throw "unexpected static-select counters"
           }
+      - name: Run owner-affine numeric TCP lifecycle through IOCP
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_tcp
+          --locked
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project

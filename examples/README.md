@@ -43,8 +43,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_structured_panic_cleanup`: a spawned child panic that preserves its managed message while the root cancels a sibling with an armed timer and drops every frame before terminating
 - `async_bounded_channel`: P3-B capacity-one FIFO backpressure with scope-owned producer/consumer tasks and an idempotent close
 - `async_static_select`: P3-C source-ordered static receive/timer selection with one owner-frame wake and eager loser cleanup
-- `async_tcp_connect`: P2-TCP-A/C owner-affine connect with a bounded hostname resolver and typed `Resolve` result
-- `async_tcp_io`: P2-TCP-B bounded incremental read and complete write against a local TCP echo fixture
+- `async_tcp_connect`: P2-TCP-A/C owner-affine connect with a bounded Unix hostname resolver and typed `Resolve` result; Windows hostnames remain a later P2-TCP-D sub-slice
+- `async_tcp_io`: P2-TCP-B/D bounded incremental read and complete write against a local TCP echo fixture, including numeric-address IOCP on Windows
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

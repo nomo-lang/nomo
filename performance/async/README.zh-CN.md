@@ -81,9 +81,14 @@ retained bytes、handle、operation 与清理 counter；每次 poll 最多写 64
 的 hostname resolver 与 nonblocking owner completion pipe。fixture 覆盖数值
 地址零线程 fast path、hostname 成功与不泄露 secret 的失败、零 timeout
 不初始化、queued cancellation、running cooperative cancellation、17 个请求
-的精确饱和边界，以及 shutdown 后 resolver live resource 全归零。IOCP socket
-completion、HTTP/SSE 与 process-pipe registration 仍等待各自的聚焦小切片。
-这是 correctness/lifecycle 证据，不是跨语言性能声明。
+的精确饱和边界，以及 shutdown 后 resolver live resource 全归零。聚焦的
+P2-TCP-D Windows 数值地址小切片增加 `ConnectEx`、`WSARecv` 与 `WSASend`，
+并使用 owner-local 64 槽固定 IOCP operation table；metrics 会分别记录
+submitted、completed、cancelled、live 与 peak operation，cancellation 会在
+frame drop 前转移 payload storage，shutdown 会 drain late completion。
+Windows hostname resolution 仍属于后续 P2-TCP-D 子切片。HTTP/SSE 与
+process-pipe registration 仍等待各自的聚焦小切片。这是 correctness/lifecycle
+证据，不是跨语言性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

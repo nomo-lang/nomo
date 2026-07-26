@@ -103,9 +103,14 @@ pipe.
 Fixtures prove the numeric zero-thread fast path, hostname success and
 secret-safe failure, zero-timeout no-initialization path, queued cancellation,
 cooperative running cancellation, exact 17-request saturation boundary, and
-zero live resolver resources at shutdown. The cross-language `tcp_echo`
-workload remains disabled until the dedicated benchmark slice defines a fair
-server and connection matrix. IOCP socket completion, HTTP/SSE, and
+zero live resolver resources at shutdown. The focused P2-TCP-D Windows
+numeric-address slice adds `ConnectEx`, `WSARecv`, and `WSASend` over a fixed
+64-slot owner-local IOCP operation table. Its metrics distinguish submitted,
+completed, cancelled, live, and peak IOCP operations; cancellation detaches
+payload storage before frame drop and shutdown drains late completions.
+Windows hostname resolution remains a later P2-TCP-D sub-slice. The
+cross-language `tcp_echo` workload remains disabled until the dedicated
+benchmark slice defines a fair server and connection matrix. HTTP/SSE and
 process-pipe registrations remain disabled until their focused slices land.
 This is correctness and lifecycle evidence, not a cross-language performance
 claim.

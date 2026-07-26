@@ -121,6 +121,16 @@ jobs:
           if ($payload.counters.timer_registrations -ne 0 -or $payload.counters.live_timers -ne 0) {
             throw "unexpected yield-only timer counters"
           }
+          if ($payload.counters.reactor_initializations -ne 0 `
+              -or $payload.counters.reactor_waits -ne 0 `
+              -or $payload.counters.reactor_timeouts -ne 0 `
+              -or $payload.counters.reactor_completions -ne 0 `
+              -or $payload.counters.reactor_errors -ne 0 `
+              -or $payload.counters.reactor_shutdowns -ne 0 `
+              -or $payload.counters.live_reactors -ne 0 `
+              -or $payload.counters.peak_live_reactors -ne 0) {
+            throw "unexpected yield-only reactor counters"
+          }
           $timerMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-timer-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $timerMetrics
           cargo run --locked --bin nomo -- run examples/async_timer
@@ -130,7 +140,15 @@ jobs:
               -or $timerPayload.counters.timer_expirations -ne 1 `
               -or $timerPayload.counters.timer_cancellations -ne 0 `
               -or $timerPayload.counters.live_timers -ne 0 `
-              -or $timerPayload.counters.peak_live_timers -ne 1) {
+              -or $timerPayload.counters.peak_live_timers -ne 1 `
+              -or $timerPayload.counters.reactor_initializations -ne 1 `
+              -or $timerPayload.counters.reactor_waits -ne 1 `
+              -or $timerPayload.counters.reactor_timeouts -ne 1 `
+              -or $timerPayload.counters.reactor_completions -ne 0 `
+              -or $timerPayload.counters.reactor_errors -ne 0 `
+              -or $timerPayload.counters.reactor_shutdowns -ne 1 `
+              -or $timerPayload.counters.live_reactors -ne 0 `
+              -or $timerPayload.counters.peak_live_reactors -ne 1) {
             throw "unexpected async timer counters"
           }
           $structuredMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-metrics.json"
@@ -407,11 +425,11 @@ jobs:
           metrics="$RUNNER_TEMP/nomo-async-metrics.json"
           NOMO_ASYNC_METRICS_PATH="$metrics" \
             cargo run --locked --bin nomo -- run examples/async_call_abi
-          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert c["poll_calls"] == 5 and c["cooperative_yields"] == 2 and c["frame_allocations"] == 0 and c["frame_drops"] == 2; assert c["timer_registrations"] == 0 and c["live_timers"] == 0' "$metrics"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert c["poll_calls"] == 5 and c["cooperative_yields"] == 2 and c["frame_allocations"] == 0 and c["frame_drops"] == 2; assert c["timer_registrations"] == 0 and c["live_timers"] == 0; assert c["reactor_initializations"] == 0 and c["reactor_waits"] == 0 and c["reactor_timeouts"] == 0 and c["reactor_completions"] == 0 and c["reactor_errors"] == 0 and c["reactor_shutdowns"] == 0 and c["live_reactors"] == 0 and c["peak_live_reactors"] == 0' "$metrics"
           timer_metrics="$RUNNER_TEMP/nomo-async-timer-metrics.json"
           NOMO_ASYNC_METRICS_PATH="$timer_metrics" \
             cargo run --locked --bin nomo -- run examples/async_timer
-          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 2 and c["timer_registrations"] == 1 and c["timer_expirations"] == 1 and c["timer_cancellations"] == 0 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$timer_metrics"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 2 and c["timer_registrations"] == 1 and c["timer_expirations"] == 1 and c["timer_cancellations"] == 0 and c["live_timers"] == 0 and c["peak_live_timers"] == 1; assert c["reactor_initializations"] == 1 and c["reactor_waits"] == 1 and c["reactor_timeouts"] == 1 and c["reactor_completions"] == 0 and c["reactor_errors"] == 0 and c["reactor_shutdowns"] == 1 and c["live_reactors"] == 0 and c["peak_live_reactors"] == 1' "$timer_metrics"
           static_select_metrics="$RUNNER_TEMP/nomo-async-static-select-metrics.json"
           static_select_output=$(NOMO_ASYNC_METRICS_PATH="$static_select_metrics" \
             cargo run --locked --bin nomo -- run examples/async_static_select)

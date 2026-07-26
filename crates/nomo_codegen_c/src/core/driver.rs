@@ -321,7 +321,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         && (main_returns_result || uses_task_runtime(program) || uses_sqlite_runtime(program));
 
     if !async_names.is_empty() {
-        emit_current_thread_executor(&mut out);
+        emit_current_thread_executor(&mut out, target);
         out.push('\n');
     }
     for element_type in &channel_element_types {
@@ -434,6 +434,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         if uses_sqlite_runtime(program) {
             out.push_str("    nomo_sqlite_shutdown();\n");
         }
+        out.push_str("    nomo_async_reactor_shutdown(&nomo__context.reactor);\n");
         out.push_str(
             "    int nomo__metrics_status = nomo_async_metrics_export(&nomo__context);\n\
              if (nomo__context.panicking != 0u) {\n\

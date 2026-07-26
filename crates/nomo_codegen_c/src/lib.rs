@@ -67,6 +67,8 @@ mod host_net_helpers;
 mod host_num_checked_helpers;
 #[path = "runtime/host_num_parse_helpers.rs"]
 mod host_num_parse_helpers;
+#[path = "runtime/host_reactor_helpers.rs"]
+mod host_reactor_helpers;
 #[path = "runtime/host_regex_helpers.rs"]
 mod host_regex_helpers;
 #[path = "runtime/host_sqlite_helpers.rs"]
@@ -144,6 +146,7 @@ use host_jsonrpc_helpers::*;
 use host_net_helpers::*;
 use host_num_checked_helpers::*;
 use host_num_parse_helpers::*;
+use host_reactor_helpers::*;
 use host_regex_helpers::*;
 use host_sqlite_helpers::*;
 use host_task_helpers::*;

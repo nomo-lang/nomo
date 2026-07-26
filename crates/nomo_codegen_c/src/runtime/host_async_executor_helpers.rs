@@ -2159,7 +2159,8 @@ fn emit_structured_cancel_join_result_materialize(
     out.push_str(" = 1u;\n");
 }
 
-pub(super) fn emit_current_thread_executor(out: &mut String) {
+pub(super) fn emit_current_thread_executor(out: &mut String, target: &nomo_target::TargetTriple) {
+    emit_async_reactor_helpers(out, target);
     let runtime = r#"typedef enum {
     NOMO_ASYNC_POLL_READY = 0,
     NOMO_ASYNC_POLL_PENDING = 1
@@ -2239,6 +2240,7 @@ typedef struct {
 } nomo_async_ready_slot;
 
 struct nomo_async_context {
+    nomo_async_reactor reactor;
     uint64_t poll_count;
     uint64_t yield_count;
     uint64_t frame_drops;
@@ -2738,7 +2740,13 @@ static int nomo_async_timer_wait_next(nomo_async_context *context) {
             break;
         }
         int64_t remaining = slot->deadline_millis - now;
-        nomo_time_sleep_millis(remaining > 60000 ? 60000 : remaining);
+        if (nomo_async_reactor_wait(
+                &context->reactor,
+                remaining > 60000 ? 60000 : remaining
+            ) != 0) {
+            context->runtime_failed = 1u;
+            return 1;
+        }
     }
     nomo_async_timer_registration *registration = slot->registration;
     void *frame = slot->frame;
@@ -2903,7 +2911,15 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"live_channel_receive_waiters\": %" PRIu64 ",\n"
         "    \"peak_live_channel_receive_waiters\": %" PRIu64 ",\n"
         "    \"live_timers\": %" PRIu64 ",\n"
-        "    \"peak_live_timers\": %" PRIu64 "\n"
+        "    \"peak_live_timers\": %" PRIu64 ",\n"
+        "    \"reactor_initializations\": %" PRIu64 ",\n"
+        "    \"reactor_waits\": %" PRIu64 ",\n"
+        "    \"reactor_timeouts\": %" PRIu64 ",\n"
+        "    \"reactor_completions\": %" PRIu64 ",\n"
+        "    \"reactor_errors\": %" PRIu64 ",\n"
+        "    \"reactor_shutdowns\": %" PRIu64 ",\n"
+        "    \"live_reactors\": %" PRIu64 ",\n"
+        "    \"peak_live_reactors\": %" PRIu64 "\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
@@ -2958,7 +2974,15 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->live_channel_receive_waiters,
         context->peak_live_channel_receive_waiters,
         context->live_timers,
-        context->peak_live_timers
+        context->peak_live_timers,
+        context->reactor.initializations,
+        context->reactor.waits,
+        context->reactor.timeouts,
+        context->reactor.completions,
+        context->reactor.errors,
+        context->reactor.shutdowns,
+        context->reactor.live,
+        context->reactor.peak_live
     );
     int close_status = fclose(output);
     return write_status < 0 || close_status != 0;

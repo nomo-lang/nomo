@@ -27,7 +27,10 @@ counter 探针不混入 measured sample；它们单独设置
 为 2、peak live frame 为 2、ready queue 往返为 2、poll 为 5、cooperative
 yield 为 2。timer 探针还要求
 零时长路径 inline ready，正时长恰好注册、到期和入队各一次，总计两次 poll，
-无取消，并在退出时保持 live timer 为 0。
+无取消，并在退出时保持 live timer 为 0；同时要求 platform reactor 惰性
+初始化、bounded wait、timeout 与 shutdown 各一次，退出时没有 reactor error
+或 live reactor。纯 yield 探针要求 reactor 初始化次数为 0，证明 ready 工作
+不承担 handle 成本。
 spawn/complete workload 在同一固定单核配置下运行 32 个 scope-owned Nomo
 `Task<void>` child 与 32 个 Go goroutine；它校验精确的 spawn/join/join
 suspension counter 及 frame/queue 清理，但在 runtime 仍是 current-thread-only
@@ -67,6 +70,11 @@ timer 注册到同一个 token，稍后的 direct handoff 获胜，两个 loser 
 owner frame 单次 wake 前被清理，最终 waiter/timer live counter 都回到零。
 该探针会校验精确 select counter 并禁止 thread/atomic symbol；它是正确性门禁，
 不是性能声明。
+第一个 P2 foundation 会在 Linux 生成 epoll、macOS 生成 kqueue、Windows
+生成 IOCP。既有正时长 timer 现在使用统一 reactor wait，不再调用 timer
+专用 sleep primitive。这只是 platform/lifecycle 证据，不是 async network 证据；
+TCP、HTTP/SSE 与 process-pipe registration 仍保持 disabled，等待各自的本地
+fixture 小切片。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

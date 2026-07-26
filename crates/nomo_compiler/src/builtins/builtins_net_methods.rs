@@ -49,11 +49,11 @@ pub(super) fn lower_tcp_stream_value_method(
                 },
             ))
         }
-        "read_to_string" => {
+        "read_to_string_blocking" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(
                     "E0407",
-                    "`TcpStream.read_to_string` does not accept arguments",
+                    "`TcpStream.read_to_string_blocking` does not accept arguments",
                     path,
                     span.line,
                     span.column,
@@ -68,11 +68,11 @@ pub(super) fn lower_tcp_stream_value_method(
                 },
             ))
         }
-        "write_string" => {
+        "write_string_blocking" => {
             let [content_arg] = args else {
                 return Err(Diagnostic::new(
                     "E0407",
-                    "`TcpStream.write_string` expects exactly one content string",
+                    "`TcpStream.write_string_blocking` expects exactly one content string",
                     path,
                     span.line,
                     span.column,
@@ -95,7 +95,7 @@ pub(super) fn lower_tcp_stream_value_method(
                 return Err(type_mismatch_expected_found(
                     path,
                     span,
-                    "`TcpStream.write_string` expects string content",
+                    "`TcpStream.write_string_blocking` expects string content",
                     &ValueType::String,
                     &content_type,
                 ));

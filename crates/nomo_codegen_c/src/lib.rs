@@ -203,6 +203,7 @@ const BUILTIN_HTTP_ACCEPT_EXPR: &str = "__nomo_http_accept";
 const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";
 const BUILTIN_HTTP_CLOSE_SERVER_EXPR: &str = "__nomo_http_close_server";
 const BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR: &str = "__nomo_http_close_exchange";
+const BUILTIN_NET_CONNECT_EXPR: &str = "__nomo_net_connect_async";
 const BUILTIN_TASK_SPAWN_EXPR: &str = "__nomo_task_spawn";
 const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";

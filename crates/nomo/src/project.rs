@@ -398,6 +398,30 @@ mod tests {
     use super::*;
 
     #[test]
+    fn windows_c_builds_link_the_system_winsock_library() {
+        let target = "x86_64-pc-windows-msvc"
+            .parse::<nomo_target::TargetTriple>()
+            .unwrap();
+        let mut command = std::process::Command::new("clang");
+
+        super::build::configure_c_compile_command(
+            &mut command,
+            Path::new("main.c"),
+            Path::new("main.exe"),
+            &FfiLinkMetadata::default(),
+            &target,
+            false,
+            false,
+        );
+
+        let args = command
+            .get_args()
+            .map(|arg| arg.to_string_lossy().into_owned())
+            .collect::<Vec<_>>();
+        assert!(args.iter().any(|arg| arg == "-lws2_32"));
+    }
+
+    #[test]
     fn parses_namespace_first_manifest() {
         let manifest = "[package]\nnamespace = \"fynn\"\nname = \"demo\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nstd = { package = \"nomo-lang/std\", version = \"0.1.0\" }\nutils = { package = \"fynn/utils\", path = \"../utils\" }\n";
         let parsed = parse_manifest_text(manifest, Path::new("demo")).unwrap();

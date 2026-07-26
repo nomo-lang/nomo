@@ -465,9 +465,9 @@ fn accepts_net_tcp_stream_builtins() {
 import std.net
 
 fn request(host: string, port: i64) -> Result<string, NetError> {
-    let stream: TcpStream = net.connect(host, port)?
-    stream.write_string("ping")?
-    let text: string = stream.read_to_string()?
+    let stream: TcpStream = net.connect_blocking(host, port)?
+    stream.write_string_blocking("ping")?
+    let text: string = stream.read_to_string_blocking()?
     stream.close()
     return Ok(text)
 }
@@ -517,14 +517,34 @@ fn main() -> void {
 }
 
 #[test]
-fn accepts_specific_net_connect_import() {
+fn rejects_legacy_unsuffixed_blocking_tcp_stream_methods() {
     let source = r#"package app.main
 
-import std.net.connect
+import std.net
+import std.result
+
+fn request(stream: TcpStream) -> Result<string, NetError> {
+    return stream.read_to_string()
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0305", "{error:?}");
+    assert!(error.message.contains("read_to_string"));
+}
+
+#[test]
+fn accepts_specific_net_connect_blocking_import() {
+    let source = r#"package app.main
+
+import std.net.connect_blocking
 import std.result
 
 fn request(host: string, port: i64) -> Result<TcpStream, NetError> {
-    return connect(host, port)
+    return connect_blocking(host, port)
 }
 
 fn main() -> void {
@@ -552,7 +572,7 @@ import std.net
 fn serve(host: string, port: i64) -> Result<void, NetError> {
     let listener: TcpListener = net.listen(host, port)?
     let stream: TcpStream = listener.accept()?
-    stream.write_string("pong")?
+    stream.write_string_blocking("pong")?
     stream.close()
     listener.close()
     return Ok(void)

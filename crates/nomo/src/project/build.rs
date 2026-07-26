@@ -187,6 +187,9 @@ pub(super) fn configure_c_compile_command(
     if target.operating_system().as_str() == "linux" {
         command.arg("-ldl");
     }
+    if target.operating_system().as_str() == "windows" {
+        command.arg("-lws2_32");
+    }
     if (uses_native_tasks || uses_bundled_sqlite) && target.operating_system().as_str() != "windows"
     {
         command.arg("-pthread");

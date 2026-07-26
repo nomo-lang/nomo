@@ -485,6 +485,179 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn async_tcp_connect_lowers_to_owner_affine_reactor_registration() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 0)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_async_tcp_connect_start"));
+    assert!(c.contains("nomo_async_tcp_connect_resume"));
+    assert!(c.contains("NOMO_ASYNC_PENDING_IO"));
+    assert!(c.contains("nomo_async_io_handle_close_callback"));
+    assert!(c.contains("NOMO_ASYNC_REACTOR_WRITE"));
+}
+
+#[test]
+fn rejects_question_propagation_directly_on_async_tcp_connect_in_the_first_slice() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn connect_once() -> Result<TcpStream, NetError> {
+    let stream: TcpStream = net.connect("127.0.0.1", 9, 100)?
+    return Ok(stream)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0876", "{error:?}");
+    assert!(
+        error
+            .message
+            .contains("`?` or panic in other expression positions"),
+        "{error:?}"
+    );
+}
+
+#[test]
+fn async_tcp_connect_windows_preview_is_explicitly_unsupported_without_socket_registration() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 100)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let target = "x86_64-pc-windows-msvc"
+        .parse::<nomo_target::TargetTriple>()
+        .unwrap();
+    let c = codegen::emit_c_for_target(&program, &target);
+
+    assert!(c.contains("async TCP connect is not available on the Windows preview backend"));
+    assert!(c.contains("NOMO_ASYNC_REACTOR_WRITE"));
+    assert!(c.contains("nomo_async_reactor_register"));
+    assert!(!c.contains("inet_pton("));
+    assert!(!c.contains("epoll_ctl("));
+    assert!(!c.contains("kevent("));
+}
+
+#[test]
+fn rejects_async_tcp_connect_from_synchronous_function() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 100)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0870");
+    assert!(error.message.contains("suspend function"));
+}
+
+#[test]
+fn rejects_blocking_tcp_connect_from_suspend_function() {
+    let source = r#"package app.main
+
+import std.net
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect_blocking("127.0.0.1", 9)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0891", "{error:?}");
+    assert!(error.message.contains("main -> net.connect_blocking"));
+}
+
+#[test]
+fn rejects_blocking_tcp_stream_method_from_suspend_function() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn read(stream: TcpStream) -> Result<string, NetError> {
+    return stream.read_to_string_blocking()
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0891", "{error:?}");
+    assert!(
+        error
+            .message
+            .contains("read -> TcpStream.read_to_string_blocking")
+    );
+}
+
+#[test]
+fn allows_user_method_named_like_blocking_tcp_method_without_std_net() {
+    let source = r#"package app.main
+
+struct Reader {
+    value: string
+}
+
+impl Reader {
+    fn read_to_string_blocking(self) -> string {
+        return self.value
+    }
+}
+
+suspend fn main() -> void {
+    let reader: Reader = Reader { value: "local" }
+    let text: string = reader.read_to_string_blocking()
+}
+"#;
+
+    parse_inline(source).unwrap();
+}
+
+#[test]
 fn rejects_specifically_imported_blocking_sleep_from_suspend_function() {
     let source = r#"package app.main
 

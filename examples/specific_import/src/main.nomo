@@ -1,9 +1,11 @@
 package app.main
 
+import std.env.temp_dir
 import std.fs.open
 import std.fs.read_to_string
 import std.fs.write_string
 import std.io.println
+import std.path.join
 
 fn close_and_label(file: File) -> string {
     file.close()
@@ -11,16 +13,17 @@ fn close_and_label(file: File) -> string {
 }
 
 fn main() -> void {
-    let write_result: Result<void, FsError> = write_string("/tmp/nomo-specific-import-example.txt", "ok")
+    let file_path: string = join(temp_dir(), "nomo-specific-import-example.txt")
+    let write_result: Result<void, FsError> = write_string(file_path, "ok")
     let read_result: Result<string, FsError> = match write_result {
-        Ok(value) => read_to_string("/tmp/nomo-specific-import-example.txt")
+        Ok(value) => read_to_string(file_path)
         Err(err) => Err(err)
     }
     let open_result: Result<File, FsError> = match read_result {
         Ok(text) => if text == "ok" {
-            open("/tmp/nomo-specific-import-example.txt")
+            open(file_path)
         } else {
-            open("/tmp/nomo-specific-import-missing.txt")
+            open(join(temp_dir(), "nomo-specific-import-missing.txt"))
         }
         Err(err) => Err(err)
     }

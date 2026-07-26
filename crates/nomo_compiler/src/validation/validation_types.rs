@@ -282,6 +282,7 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "TcpStream")?;
         reject_user_std_struct(path, structs, "UdpDatagram")?;
         reject_user_std_struct(path, structs, "UdpSocket")?;
+        reject_user_std_enum(path, enums, "NetErrorKind")?;
     }
     if needs.http {
         reject_user_std_struct(path, structs, "HttpExchange")?;

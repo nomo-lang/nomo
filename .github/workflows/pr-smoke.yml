@@ -38,6 +38,11 @@ jobs:
           -p nomo-wasm
           -p nomo-manifest
           --locked
+      - name: Run owner-affine async TCP connect through epoll
+        run: >-
+          cargo test -p nomo --test cli_project
+          owner_affine_async_tcp_connect
+          --locked
       - name: Build and verify browser WebAssembly runtime
         shell: bash
         run: |
@@ -150,6 +155,22 @@ jobs:
               -or $timerPayload.counters.live_reactors -ne 0 `
               -or $timerPayload.counters.peak_live_reactors -ne 1) {
             throw "unexpected async timer counters"
+          }
+          $tcpMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-tcp-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $tcpMetrics
+          $tcpOutput = cargo run --locked --bin nomo -- run examples/async_tcp_connect
+          if (($tcpOutput -join "`n") -notmatch "Windows preview backend") {
+            throw "unexpected Windows async TCP result"
+          }
+          $tcpPayload = Get-Content -Raw $tcpMetrics | ConvertFrom-Json
+          if ($tcpPayload.counters.io_connect_starts -ne 1 `
+              -or $tcpPayload.counters.io_ready_completions -ne 0 `
+              -or $tcpPayload.counters.reactor_registrations -ne 0 `
+              -or $tcpPayload.counters.reactor_deregistrations -ne 0 `
+              -or $tcpPayload.counters.live_reactor_registrations -ne 0 `
+              -or $tcpPayload.counters.live_io_handles -ne 0 `
+              -or $tcpPayload.counters.live_io_operations -ne 0) {
+            throw "unexpected Windows async TCP counters"
           }
           $structuredMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $structuredMetrics
@@ -479,6 +500,11 @@ jobs:
           printf '%s\n' "$structured_panic_output" | grep '^managed slow before$'
           printf '%s\n' "$structured_panic_output" | grep '^panic: panic from child$'
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 3 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0' "$structured_panic_metrics"
+      - name: Run owner-affine async TCP connect through kqueue
+        run: >-
+          cargo test -p nomo --test cli_project
+          owner_affine_async_tcp_connect
+          --locked
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project

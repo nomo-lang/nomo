@@ -126,6 +126,20 @@ pub(super) fn uses_net_connect(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_async_net_connect(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function.body.iter().any(|statement| {
+            statement_contains_expr(statement, |expr| {
+                matches!(
+                    expr,
+                    ValueExpr::Call { name, args }
+                        if name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3
+                )
+            })
+        })
+    })
+}
+
 pub(super) fn uses_net_listen(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function

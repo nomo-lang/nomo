@@ -11056,7 +11056,7 @@ suspend fn main() -> void {
 
     let generated = fs::read_to_string(project.join("build/c/main.c")).unwrap();
     assert!(generated.contains("nomo_channel_receive_cancel_string"));
-    assert!(generated.contains("nomo_async_timer_wait_next"));
+    assert!(generated.contains("nomo_async_wait_next"));
     let metrics: serde_json::Value =
         serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
     assert_eq!(metrics["counters"]["frame_allocations"], 0);
@@ -11488,7 +11488,7 @@ suspend fn main() -> void {
     let generated = fs::read_to_string(&generated_c).unwrap();
     assert!(generated.contains("NOMO_ASYNC_PENDING_TIMER"));
     assert!(generated.contains("nomo_async_timer_start"));
-    assert!(generated.contains("nomo_async_timer_wait_next"));
+    assert!(generated.contains("nomo_async_wait_next"));
     assert!(generated.contains("nomo_async_timer_disarm"));
     assert!(generated.contains("nomo_async_reactor_wait"));
     assert!(generated.contains("nomo_async_reactor_shutdown"));
@@ -11503,7 +11503,7 @@ suspend fn main() -> void {
         assert!(generated.contains("GetQueuedCompletionStatus"));
     }
     let timer_wait = generated
-        .split("static int nomo_async_timer_wait_next")
+        .split("static int nomo_async_wait_next")
         .nth(1)
         .unwrap()
         .split("static nomo_async_poll nomo_async_poll_task")
@@ -15653,9 +15653,9 @@ import std.io
 import std.net
 
 fn request() -> Result<string, NetError> {
-    let stream: TcpStream = net.connect("127.0.0.1", __PORT__)?
-    stream.write_string("ping")?
-    let text: string = stream.read_to_string()?
+    let stream: TcpStream = net.connect_blocking("127.0.0.1", __PORT__)?
+    stream.write_string_blocking("ping")?
+    let text: string = stream.read_to_string_blocking()?
     stream.close()
     return Ok(text)
 }
@@ -15699,6 +15699,398 @@ fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_owner_affine_async_tcp_connect() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        drop(stream);
+    });
+
+    let root = temp_test_root("async-tcp-connect");
+    reset_dir(&root);
+    let project = root.join("async_tcp_connect");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_connect\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+import std.result
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Ok(stream) => {
+            let stale_alias: TcpStream = stream
+            io.println("connected")
+            stream.close()
+            stale_alias.close()
+        }
+        Err(error) => {
+            io.println(error.message)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
+    report(result)
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-connect-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "connected\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("reactor_registrations", 1),
+        ("reactor_deregistrations", 1),
+        ("reactor_reregistrations", 0),
+        ("live_reactor_registrations", 0),
+        ("peak_live_reactor_registrations", 1),
+        ("timer_registrations", 1),
+        ("timer_expirations", 0),
+        ("timer_cancellations", 1),
+        ("live_timers", 0),
+        ("peak_live_timers", 1),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 0),
+        ("io_write_starts", 0),
+        ("io_ready_completions", 1),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+        ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_cancels_owner_affine_async_tcp_connect_before_reactor_wait() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let root = temp_test_root("async-tcp-connect-cancel");
+    reset_dir(&root);
+    let project = root.join("async_tcp_connect_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_connect_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+import std.result
+import std.task
+
+suspend fn connect_child(port: i64) -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", port, 10000)
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn connect_child(__PORT__)
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(child)
+        io.println("cancelled", result.is_ok(cancelled))
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-connect-cancel-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_initializations", 1u64),
+        ("reactor_waits", 0),
+        ("reactor_completions", 0),
+        ("reactor_errors", 0),
+        ("reactor_registrations", 1),
+        ("reactor_deregistrations", 1),
+        ("reactor_reregistrations", 0),
+        ("live_reactor_registrations", 0),
+        ("peak_live_reactor_registrations", 1),
+        ("timer_registrations", 1),
+        ("timer_expirations", 0),
+        ("timer_cancellations", 1),
+        ("live_timers", 0),
+        ("peak_live_timers", 1),
+        ("io_connect_starts", 1),
+        ("io_ready_completions", 0),
+        ("io_timeouts", 0),
+        ("io_cancellations", 1),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+        ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    drop(listener);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn nomo_run_owner_affine_async_tcp_connect_zero_timeout_is_allocation_free() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+
+    let root = temp_test_root("async-tcp-connect-zero-timeout");
+    reset_dir(&root);
+    let project = root.join("async_tcp_connect_zero_timeout");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_connect_zero_timeout\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package app.main
+
+import std.io
+import std.net
+import std.result
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Ok(stream) => {
+            stream.close()
+            io.println("connected")
+        }
+        Err(error) => {
+            if let NetErrorKind.Timeout = error.kind {
+                io.println("timed out")
+            } else {
+                io.println(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 0)
+    report(result)
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-connect-zero-timeout-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("poll_calls", 1u64),
+        ("frame_allocations", 0),
+        ("reactor_initializations", 0),
+        ("reactor_registrations", 0),
+        ("reactor_deregistrations", 0),
+        ("live_reactor_registrations", 0),
+        ("peak_live_reactor_registrations", 0),
+        ("timer_registrations", 0),
+        ("timer_expirations", 0),
+        ("timer_cancellations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_ready_completions", 0),
+        ("io_timeouts", 1),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 0),
+        ("retained_io_bytes", 0),
+        ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    drop(listener);
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn async_tcp_connect_hostname_is_an_allocation_free_unsupported_fast_path() {
+    let root = temp_test_root("async-tcp-connect-hostname");
+    reset_dir(&root);
+    let project = root.join("async_tcp_connect_hostname");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_connect_hostname\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.net
+import std.result
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Ok(stream) => {
+            stream.close()
+        }
+        Err(error) => {
+            if let NetErrorKind.Unsupported = error.kind {
+                io.println("unsupported")
+            } else {
+                io.println(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let result: Result<TcpStream, NetError> = net.connect("localhost", 80, 100)
+    report(result)
+}
+"#,
+    )
+    .unwrap();
+    let metrics = root.join("async-tcp-connect-hostname-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "unsupported\n");
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("poll_calls", 1u64),
+        ("frame_allocations", 0),
+        ("reactor_initializations", 0),
+        ("reactor_registrations", 0),
+        ("reactor_deregistrations", 0),
+        ("reactor_reregistrations", 0),
+        ("live_reactor_registrations", 0),
+        ("peak_live_reactor_registrations", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 0),
+        ("io_write_starts", 0),
+        ("io_ready_completions", 0),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 0),
+        ("retained_io_bytes", 0),
+        ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_run_executes_std_net_tcp_listener_helpers_without_std_dependency() {
     let probe = TcpListener::bind("127.0.0.1:0").unwrap();
     let port = probe.local_addr().unwrap().port();
@@ -15721,9 +16113,9 @@ import std.net
 fn serve() -> Result<void, NetError> {
     let listener: TcpListener = net.listen("127.0.0.1", __PORT__)?
     let stream: TcpStream = listener.accept()?
-    let text: string = stream.read_to_string()?
-    stream.write_string("pong:")?
-    stream.write_string(text)?
+    let text: string = stream.read_to_string_blocking()?
+    stream.write_string_blocking("pong:")?
+    stream.write_string_blocking(text)?
     stream.close()
     listener.close()
     return Ok(void)

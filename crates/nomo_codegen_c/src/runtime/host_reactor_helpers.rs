@@ -29,23 +29,63 @@ fn emit_common_reactor_types(out: &mut String, target: &TargetTriple) {
 
 typedef void (*nomo_async_reactor_wake_fn)(void *, uint32_t);
 
+typedef struct nomo_async_reactor_registration nomo_async_reactor_registration;
+"#,
+    );
+    if target.operating_system() == OperatingSystem::Windows {
+        out.push_str(
+            r#"
+#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u
+
 typedef struct {
+    OVERLAPPED overlapped;
+    nomo_async_reactor_registration *registration;
+    void *detached_buffer;
+    uint8_t active;
+    uint8_t submitted;
+} nomo_async_iocp_operation;
+
+"#,
+        );
+    }
+    out.push_str(
+        r#"struct nomo_async_reactor_registration {
     void *owner;
     nomo_async_reactor_wake_fn wake;
     nomo_socket handle;
     uint32_t interests;
     uint8_t active;
-} nomo_async_reactor_registration;
+"#,
+    );
+    if target.operating_system() == OperatingSystem::Windows {
+        out.push_str(
+            r#"    nomo_async_iocp_operation *operation;
+    DWORD transferred;
+    DWORD error;
+"#,
+        );
+    }
+    out.push_str(
+        r#"};
 
 typedef struct {
 "#,
     );
     match target.operating_system() {
         OperatingSystem::Linux | OperatingSystem::Darwin => out.push_str("    int handle;\n"),
-        OperatingSystem::Windows => out.push_str("    HANDLE handle;\n"),
+        OperatingSystem::Windows => out.push_str(
+            r#"    HANDLE handle;
+    nomo_async_iocp_operation operations[NOMO_ASYNC_IOCP_OPERATION_CAPACITY];
+"#,
+        ),
     }
     out.push_str(
-        r#"    uint64_t initializations;
+        r#"    uint64_t iocp_operations_started;
+    uint64_t iocp_operations_completed;
+    uint64_t iocp_operations_cancelled;
+    uint64_t live_iocp_operations;
+    uint64_t peak_live_iocp_operations;
+    uint64_t initializations;
     uint64_t waits;
     uint64_t timeouts;
     uint64_t completions;
@@ -442,20 +482,96 @@ fn emit_iocp_reactor(out: &mut String) {
     return 0;
 }
 
+static nomo_async_iocp_operation *nomo_async_iocp_reserve(
+    nomo_async_reactor *reactor,
+    nomo_async_reactor_registration *registration
+) {
+    for (uint32_t index = 0u;
+         index < NOMO_ASYNC_IOCP_OPERATION_CAPACITY;
+         index += 1u) {
+        nomo_async_iocp_operation *operation = &reactor->operations[index];
+        if (operation->active != 0u) {
+            continue;
+        }
+        memset(operation, 0, sizeof(*operation));
+        operation->active = 1u;
+        operation->registration = registration;
+        registration->operation = operation;
+        reactor->iocp_operations_started += 1u;
+        reactor->live_iocp_operations += 1u;
+        if (reactor->live_iocp_operations
+            > reactor->peak_live_iocp_operations) {
+            reactor->peak_live_iocp_operations =
+                reactor->live_iocp_operations;
+        }
+        return operation;
+    }
+    return NULL;
+}
+
+static void nomo_async_iocp_release(
+    nomo_async_reactor *reactor,
+    nomo_async_iocp_operation *operation
+) {
+    if (operation == NULL || operation->active == 0u) {
+        return;
+    }
+    if (operation->detached_buffer != NULL) {
+        free(operation->detached_buffer);
+    }
+    memset(operation, 0, sizeof(*operation));
+    if (reactor->live_iocp_operations > 0u) {
+        reactor->live_iocp_operations -= 1u;
+    }
+}
+
+static int nomo_async_reactor_associate_socket(
+    nomo_async_reactor *reactor,
+    nomo_socket handle
+) {
+    if (nomo_async_reactor_init(reactor) != 0) {
+        return 1;
+    }
+    HANDLE associated = CreateIoCompletionPort(
+        (HANDLE)handle,
+        reactor->handle,
+        0,
+        0
+    );
+    if (associated != reactor->handle) {
+        reactor->errors += 1u;
+        return 1;
+    }
+    return 0;
+}
+
 static int nomo_async_reactor_register(
     nomo_async_reactor *reactor,
     nomo_async_reactor_registration *registration,
     nomo_socket handle,
     uint32_t interests
 ) {
-    (void)registration;
-    (void)handle;
-    (void)interests;
-    if (nomo_async_reactor_init(reactor) != 0) {
+    if (registration->active != 0u
+        || nomo_async_reactor_init(reactor) != 0) {
+        reactor->errors += registration->active != 0u;
         return 1;
     }
-    reactor->errors += 1u;
-    return 1;
+    nomo_async_iocp_operation *operation =
+        nomo_async_iocp_reserve(reactor, registration);
+    if (operation == NULL) {
+        return 1;
+    }
+    registration->handle = handle;
+    registration->interests = interests;
+    registration->transferred = 0u;
+    registration->error = 0u;
+    registration->active = 1u;
+    reactor->registrations += 1u;
+    reactor->live_registrations += 1u;
+    if (reactor->live_registrations > reactor->peak_live_registrations) {
+        reactor->peak_live_registrations = reactor->live_registrations;
+    }
+    return 0;
 }
 
 static int nomo_async_reactor_reregister(
@@ -463,18 +579,123 @@ static int nomo_async_reactor_reregister(
     nomo_async_reactor_registration *registration,
     uint32_t interests
 ) {
-    (void)registration;
-    (void)interests;
-    reactor->errors += 1u;
-    return 1;
+    if (registration->active == 0u || registration->operation != NULL) {
+        return 1;
+    }
+    nomo_async_iocp_operation *operation =
+        nomo_async_iocp_reserve(reactor, registration);
+    if (operation == NULL) {
+        return 1;
+    }
+    registration->interests = interests;
+    registration->transferred = 0u;
+    registration->error = 0u;
+    reactor->reregistrations += 1u;
+    return 0;
+}
+
+static OVERLAPPED *nomo_async_reactor_overlapped(
+    nomo_async_reactor_registration *registration
+) {
+    return registration->operation == NULL
+        ? NULL
+        : &registration->operation->overlapped;
+}
+
+static void nomo_async_reactor_mark_submitted(
+    nomo_async_reactor_registration *registration
+) {
+    if (registration->operation != NULL) {
+        registration->operation->submitted = 1u;
+    }
+}
+
+static void nomo_async_reactor_detach_buffer(
+    nomo_async_reactor_registration *registration,
+    void *buffer
+) {
+    if (registration->operation != NULL) {
+        registration->operation->detached_buffer = buffer;
+    } else {
+        free(buffer);
+    }
 }
 
 static void nomo_async_reactor_deregister(
     nomo_async_reactor *reactor,
     nomo_async_reactor_registration *registration
 ) {
-    (void)reactor;
+    if (registration->active == 0u) {
+        return;
+    }
+    nomo_async_iocp_operation *operation = registration->operation;
+    if (operation != NULL) {
+        operation->registration = NULL;
+        registration->operation = NULL;
+        if (operation->submitted != 0u) {
+            BOOL cancelled = CancelIoEx(
+                (HANDLE)registration->handle,
+                &operation->overlapped
+            );
+            DWORD error = cancelled != FALSE ? ERROR_SUCCESS : GetLastError();
+            if (cancelled != FALSE || error == ERROR_NOT_FOUND) {
+                reactor->iocp_operations_cancelled += 1u;
+            } else {
+                reactor->errors += 1u;
+            }
+        } else {
+            nomo_async_iocp_release(reactor, operation);
+        }
+    }
     registration->active = 0u;
+    reactor->deregistrations += 1u;
+    if (reactor->live_registrations > 0u) {
+        reactor->live_registrations -= 1u;
+    }
+}
+
+static int nomo_async_iocp_dispatch(
+    nomo_async_reactor *reactor,
+    BOOL completed,
+    DWORD transferred,
+    LPOVERLAPPED overlapped,
+    DWORD error,
+    uint8_t *had_completion
+) {
+    if (overlapped == NULL) {
+        return 1;
+    }
+    nomo_async_iocp_operation *operation =
+        CONTAINING_RECORD(overlapped, nomo_async_iocp_operation, overlapped);
+    uintptr_t operation_address = (uintptr_t)operation;
+    uintptr_t operations_begin = (uintptr_t)&reactor->operations[0];
+    uintptr_t operations_end = (uintptr_t)
+        &reactor->operations[NOMO_ASYNC_IOCP_OPERATION_CAPACITY];
+    if (operation_address < operations_begin
+        || operation_address >= operations_end
+        || (operation_address - operations_begin) % sizeof(*operation) != 0u
+        || operation->active == 0u) {
+        reactor->errors += 1u;
+        return 1;
+    }
+    reactor->completions += 1u;
+    reactor->iocp_operations_completed += 1u;
+    *had_completion = 1u;
+    nomo_async_reactor_registration *registration = operation->registration;
+    if (registration != NULL
+        && registration->active != 0u
+        && registration->operation == operation) {
+        registration->operation = NULL;
+        registration->transferred = transferred;
+        registration->error = completed != FALSE ? ERROR_SUCCESS : error;
+        nomo_async_iocp_release(reactor, operation);
+        if (registration->wake != NULL) {
+            registration->wake(registration->owner, registration->interests);
+        }
+    } else {
+        nomo_async_iocp_release(reactor, operation);
+    }
+    return 0;
 }
 
 static int nomo_async_reactor_wait(
@@ -491,7 +712,7 @@ static int nomo_async_reactor_wait(
         ? INFINITE
         : (timeout_millis > MAXDWORD ? MAXDWORD : (DWORD)timeout_millis);
     DWORD transferred = 0;
-    ULONG_PTR completion_key = 0;
+    ULONG_PTR completion_key = 0u;
     LPOVERLAPPED overlapped = NULL;
     BOOL completed = GetQueuedCompletionStatus(
         reactor->handle,
@@ -500,17 +721,19 @@ static int nomo_async_reactor_wait(
         &overlapped,
         timeout
     );
-    if (completed != FALSE) {
-        reactor->completions += 1u;
-        *had_completion = 1u;
-        nomo_async_reactor_registration *registration =
-            (nomo_async_reactor_registration *)completion_key;
-        if (registration != NULL && registration->wake != NULL) {
-            registration->wake(registration->owner, registration->interests);
-        }
-        return 0;
+    (void)completion_key;
+    DWORD error = completed != FALSE ? ERROR_SUCCESS : GetLastError();
+    if (overlapped != NULL) {
+        return nomo_async_iocp_dispatch(
+            reactor,
+            completed,
+            transferred,
+            overlapped,
+            error,
+            had_completion
+        );
     }
-    if (GetLastError() == WAIT_TIMEOUT) {
+    if (error == WAIT_TIMEOUT) {
         reactor->timeouts += 1u;
         return 0;
     }
@@ -521,6 +744,30 @@ static int nomo_async_reactor_wait(
 static void nomo_async_reactor_shutdown(nomo_async_reactor *reactor) {
     if (reactor->initialized == 0u) {
         return;
+    }
+    for (uint32_t index = 0u;
+         index < NOMO_ASYNC_IOCP_OPERATION_CAPACITY;
+         index += 1u) {
+        nomo_async_iocp_operation *operation = &reactor->operations[index];
+        if (operation->active == 0u) {
+            continue;
+        }
+        if (operation->submitted == 0u) {
+            nomo_async_iocp_release(reactor, operation);
+            continue;
+        }
+        if (operation->registration != NULL) {
+            nomo_async_reactor_deregister(
+                reactor,
+                operation->registration
+            );
+        }
+    }
+    while (reactor->live_iocp_operations > 0u) {
+        uint8_t had_completion = 0u;
+        if (nomo_async_reactor_wait(reactor, -1, &had_completion) != 0) {
+            break;
+        }
     }
     if (CloseHandle(reactor->handle) == 0) {
         reactor->errors += 1u;
@@ -566,11 +813,15 @@ mod tests {
     }
 
     #[test]
-    fn emits_iocp_timer_wait_and_explicit_registration_stub_for_windows() {
+    fn emits_bounded_iocp_operation_lifecycle_for_windows() {
         let emitted = emit_for("x86_64-pc-windows-msvc");
         assert!(emitted.contains("CreateIoCompletionPort"));
         assert!(emitted.contains("GetQueuedCompletionStatus"));
+        assert!(emitted.contains("#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u"));
         assert!(emitted.contains("static int nomo_async_reactor_register"));
+        assert!(emitted.contains("CancelIoEx"));
+        assert!(emitted.contains("CONTAINING_RECORD"));
+        assert!(emitted.contains("while (reactor->live_iocp_operations > 0u)"));
         assert!(!emitted.contains("epoll_create(1)"));
         assert!(!emitted.contains("kqueue()"));
     }

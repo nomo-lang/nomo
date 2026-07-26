@@ -3458,6 +3458,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"peak_live_reactor_registrations\": %" PRIu64 ",\n"
         "    \"live_reactors\": %" PRIu64 ",\n"
         "    \"peak_live_reactors\": %" PRIu64 ",\n"
+        "    \"iocp_operations_started\": %" PRIu64 ",\n"
+        "    \"iocp_operations_completed\": %" PRIu64 ",\n"
+        "    \"iocp_operations_cancelled\": %" PRIu64 ",\n"
+        "    \"live_iocp_operations\": %" PRIu64 ",\n"
+        "    \"peak_live_iocp_operations\": %" PRIu64 ",\n"
         "    \"io_connect_starts\": %" PRIu64 ",\n"
         "    \"io_read_starts\": %" PRIu64 ",\n"
         "    \"io_write_starts\": %" PRIu64 ",\n"
@@ -3551,6 +3556,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->reactor.peak_live_registrations,
         context->reactor.live,
         context->reactor.peak_live,
+        context->reactor.iocp_operations_started,
+        context->reactor.iocp_operations_completed,
+        context->reactor.iocp_operations_cancelled,
+        context->reactor.live_iocp_operations,
+        context->reactor.peak_live_iocp_operations,
         context->io_connect_starts,
         context->io_read_starts,
         context->io_write_starts,

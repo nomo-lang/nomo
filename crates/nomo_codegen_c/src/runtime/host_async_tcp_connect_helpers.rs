@@ -2,7 +2,7 @@ use super::*;
 
 pub(super) fn emit_async_net_connect_helpers(out: &mut String, target: &nomo_target::TargetTriple) {
     if target.operating_system() == nomo_target::OperatingSystem::Windows {
-        emit_async_net_connect_windows_preview_helpers(out, target);
+        emit_async_net_connect_windows_helpers(out, target);
         return;
     }
 

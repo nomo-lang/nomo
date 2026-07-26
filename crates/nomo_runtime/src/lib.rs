@@ -6,7 +6,7 @@ use path::emit_path_runtime;
 
 pub fn emit_c_prelude(out: &mut String) {
     out.push_str(
-        "#define _POSIX_C_SOURCE 200809L\n#ifdef _WIN32\n#define _CRT_RAND_S\n#endif\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\ntypedef SOCKET nomo_socket;\n#define NOMO_INVALID_SOCKET INVALID_SOCKET\n#define NOMO_SOCKET_CLOSE closesocket\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <netdb.h>\n#include <regex.h>\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <sys/types.h>\n#include <sys/wait.h>\n#include <unistd.h>\ntypedef int nomo_socket;\n#define NOMO_INVALID_SOCKET (-1)\n#define NOMO_SOCKET_CLOSE close\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
+        "#define _POSIX_C_SOURCE 200809L\n#ifdef _WIN32\n#define _CRT_RAND_S\n#ifndef _WIN32_WINNT\n#define _WIN32_WINNT 0x0600\n#endif\n#endif\n#include <ctype.h>\n#include <errno.h>\n#include <inttypes.h>\n#include <limits.h>\n#include <math.h>\n#include <stdint.h>\n#include <stdio.h>\n#include <stdlib.h>\n#include <string.h>\n#include <sys/stat.h>\n#include <time.h>\n#ifdef _WIN32\n#include <direct.h>\n#include <winsock2.h>\n#include <ws2tcpip.h>\n#include <windows.h>\ntypedef SOCKET nomo_socket;\n#define NOMO_INVALID_SOCKET INVALID_SOCKET\n#define NOMO_SOCKET_CLOSE closesocket\n#define NOMO_GETCWD _getcwd\n#define NOMO_POPEN _popen\n#define NOMO_PCLOSE _pclose\n#else\n#include <dirent.h>\n#include <netdb.h>\n#include <regex.h>\n#include <sys/socket.h>\n#include <sys/time.h>\n#include <sys/types.h>\n#include <sys/wait.h>\n#include <unistd.h>\ntypedef int nomo_socket;\n#define NOMO_INVALID_SOCKET (-1)\n#define NOMO_SOCKET_CLOSE close\n#define NOMO_GETCWD getcwd\n#define NOMO_POPEN popen\n#define NOMO_PCLOSE pclose\n#endif\n#ifndef PATH_MAX\n#define PATH_MAX 4096\n#endif\n\n",
     );
     out.push_str("static void nomo_panic(const char *message) {\n");
     out.push_str("    fputs(\"panic: \", stderr);\n");
@@ -625,6 +625,7 @@ mod tests {
         emit_string_runtime(&mut emitted);
 
         assert!(emitted.contains("#define _POSIX_C_SOURCE 200809L"));
+        assert!(emitted.contains("#define _WIN32_WINNT 0x0600"));
         assert!(emitted.contains("static void nomo_panic"));
         assert!(emitted.contains("static nomo_string nomo_cstring_from_string"));
         assert!(emitted.contains("static nomo_string nomo_path_normalize"));

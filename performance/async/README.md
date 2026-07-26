@@ -94,13 +94,15 @@ epoll/kqueue registration for pending numeric-address connects, with exact
 registration, completion, handle, and cleanup counters in the native fixture.
 P2-TCP-B adds bounded incremental reads and complete writes with exact
 timeout, cancellation, readiness rearm, retained-byte, handle, operation, and
-cleanup counters. Native slow-reader, invalid UTF-8, timeout, structured
-cancellation, and AddressSanitizer fixtures are correctness gates; the
-cross-language `tcp_echo` workload remains disabled until the dedicated
-benchmark slice defines a fair server and connection matrix. Hostname
-resolution, IOCP socket completion, HTTP/SSE, and process-pipe registrations
-remain disabled until their focused slices land. This is correctness and
-lifecycle evidence, not a cross-language performance claim.
+cleanup counters. A 64 KiB per-poll write budget makes executor fairness and
+partial-write lifecycle coverage independent of host socket-buffer tuning.
+Native slow-reader, invalid UTF-8, timeout, structured cancellation, and
+AddressSanitizer fixtures are correctness gates; the cross-language `tcp_echo`
+workload remains disabled until the dedicated benchmark slice defines a fair
+server and connection matrix. Hostname resolution, IOCP socket completion,
+HTTP/SSE, and process-pipe registrations remain disabled until their focused
+slices land. This is correctness and lifecycle evidence, not a cross-language
+performance claim.
 
 ## Run
 

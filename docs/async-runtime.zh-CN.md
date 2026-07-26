@@ -78,8 +78,9 @@ Linux 与 macOS 会以 nonblocking socket 发起连接，并通过一个带 gene
 和一个 pending write；同方向冲突返回 `Busy`。`read` 返回一块
 `Array<u32>` 字节，`read_string` 校验一块 UTF-8，二者都不会隐式 read-to-EOF。
 每个 payload 最大 1 MiB。write 仅跨 one-shot readiness 保留未发送后缀，
-要么完整写入 payload，要么返回错误。timeout 与 structured cancellation
-会清除 registration 和 retained buffer；除非显式 close，stream 仍可复用。
+每次 executor poll 最多推进 64 KiB 以保证公平性，并且要么完整写入 payload，
+要么返回错误。timeout 与 structured cancellation 会清除 registration 和
+retained buffer；除非显式 close，stream 仍可复用。
 
 bounded resolver 落地前，hostname 返回 `NetErrorKind.Unsupported`。Windows
 当前可以编译，并在不求值 write payload 的情况下明确返回 `Unsupported`，

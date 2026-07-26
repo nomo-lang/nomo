@@ -93,6 +93,8 @@ pub(super) fn emit_async_tcp_io_helpers(out: &mut String, target: &nomo_target::
 #define NOMO_ASYNC_TCP_SEND_FLAGS 0
 #endif
 
+#define NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u
+
 "#,
     );
 
@@ -749,11 +751,24 @@ static int nomo_async_tcp_write_attempt(
         );
         return 0;
     }
+    size_t sent_this_poll = 0u;
     while (registration->write_offset < registration->write_length) {
+        if (sent_this_poll >= NOMO_ASYNC_TCP_WRITE_POLL_BUDGET) {
+            nomo_async_tcp_io_set_retained(
+                registration,
+                registration->write_length - registration->write_offset
+            );
+            return 1;
+        }
         unsigned char scratch[4096];
         size_t remaining =
             registration->write_length - registration->write_offset;
+        size_t poll_remaining =
+            NOMO_ASYNC_TCP_WRITE_POLL_BUDGET - sent_this_poll;
         size_t chunk = remaining < sizeof(scratch) ? remaining : sizeof(scratch);
+        if (chunk > poll_remaining) {
+            chunk = poll_remaining;
+        }
         for (size_t index = 0u; index < chunk; index += 1u) {
             scratch[index] = (unsigned char)registration->write_bytes.data[
                 registration->write_offset + index
@@ -767,6 +782,7 @@ static int nomo_async_tcp_write_attempt(
         );
         if (sent > 0) {
             registration->write_offset += (size_t)sent;
+            sent_this_poll += (size_t)sent;
             continue;
         }
         if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {
@@ -811,17 +827,29 @@ static int nomo_async_tcp_write_string_attempt(
         );
         return 0;
     }
+    size_t sent_this_poll = 0u;
     while (registration->write_offset < registration->write_length) {
+        if (sent_this_poll >= NOMO_ASYNC_TCP_WRITE_POLL_BUDGET) {
+            nomo_async_tcp_io_set_retained(
+                registration,
+                registration->write_length - registration->write_offset
+            );
+            return 1;
+        }
         size_t remaining =
             registration->write_length - registration->write_offset;
+        size_t poll_remaining =
+            NOMO_ASYNC_TCP_WRITE_POLL_BUDGET - sent_this_poll;
+        size_t chunk = remaining < poll_remaining ? remaining : poll_remaining;
         ssize_t sent = send(
             handle,
             registration->write_text.data + registration->write_offset,
-            remaining,
+            chunk,
             NOMO_ASYNC_TCP_SEND_FLAGS
         );
         if (sent > 0) {
             registration->write_offset += (size_t)sent;
+            sent_this_poll += (size_t)sent;
             continue;
         }
         if (sent < 0 && (errno == EAGAIN || errno == EWOULDBLOCK)) {

@@ -643,6 +643,7 @@ fn main() -> void {
         "nomo_async_io_handle_acquire",
         "nomo_async_tcp_io_cancel",
         "NOMO_ASYNC_TCP_SEND_FLAGS",
+        "NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u",
     ] {
         assert!(c.contains(helper), "missing generated helper {helper}");
     }

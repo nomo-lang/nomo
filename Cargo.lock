@@ -391,7 +391,6 @@ dependencies = [
 name = "nomo"
 version = "0.0.0-20260721120555"
 dependencies = [
- "libc",
  "nomo-codegen-c",
  "nomo-compiler",
  "nomo-diagnostics",

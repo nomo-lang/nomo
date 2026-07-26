@@ -788,9 +788,10 @@ rejects controlled process calls before evaluating their arguments. See
 `Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
 complete `write`/`write_string` use epoll on Linux and kqueue on macOS without
 blocking the current-thread executor. Reads and writes are limited to 1 MiB,
-timeouts to 15 minutes, and each stream direction to one pending operation.
-Windows returns explicit `Unsupported` without evaluating write payloads until
-the IOCP slice, and hostnames await the bounded resolver slice.
+timeouts to 15 minutes, each stream direction to one pending operation, and
+write progress to 64 KiB per executor poll for fairness. Windows returns
+explicit `Unsupported` without evaluating write payloads until the IOCP slice,
+and hostnames await the bounded resolver slice.
 
 The preview blocking client names are `net.connect_blocking`,
 `TcpStream.read_to_string_blocking`, and

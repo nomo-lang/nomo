@@ -889,9 +889,10 @@ One read/write payload is limited to 1,048,576 bytes and one timeout to
 900,000 milliseconds. Zero makes one immediate attempt with no I/O
 registration. A positive operation uses one owner-local timer and one
 epoll/kqueue one-shot registration only when it would block. Writes retain
-progress and the bounded unsent suffix across readiness events, suppress
-Unix `SIGPIPE`, and complete the whole input or fail. At most one operation
-per stream direction may be pending; a conflict returns `Busy`.
+progress and the bounded unsent suffix across readiness events, cap work at
+64 KiB per executor poll for fairness, suppress Unix `SIGPIPE`, and complete
+the whole input or fail. At most one operation per stream direction may be
+pending; a conflict returns `Busy`.
 
 Timeout and structured cancellation deregister readiness, disarm the timer,
 release the direction claim and retained payload exactly once, and leave the

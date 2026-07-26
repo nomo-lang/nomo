@@ -87,10 +87,10 @@ registration. Each stream permits one pending read and one pending write;
 another operation in the same direction returns `Busy`. `read` returns one
 `Array<u32>` byte chunk, `read_string` validates one UTF-8 chunk, and neither
 reads to EOF. Each payload is bounded to 1 MiB. Writes retain only their
-unsent suffix across one-shot readiness and either complete the whole payload
-or return an error. Timeout and structured cancellation remove the
-registration and retained buffer while leaving the stream reusable unless it
-is closed.
+unsent suffix across one-shot readiness, advance at most 64 KiB per executor
+poll for fairness, and either complete the whole payload or return an error.
+Timeout and structured cancellation remove the registration and retained
+buffer while leaving the stream reusable unless it is closed.
 
 Hostnames return `NetErrorKind.Unsupported` until the bounded resolver slice.
 Windows compiles and returns `Unsupported` without evaluating write payloads

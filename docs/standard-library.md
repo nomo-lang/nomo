@@ -872,12 +872,17 @@ net.udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError>
 
 `connect` is a direct-style suspend operation. P2-TCP-A accepts numeric IPv4
 and IPv6 addresses, uses epoll on Linux and kqueue on macOS, and bounds the
-timeout to 900,000 milliseconds. Hostnames return `NetErrorKind.Unsupported`
-until the bounded resolver slice; Windows returns the same category until its
-native IOCP connect slice. A zero timeout performs one immediate attempt and
-does not initialize or register with the reactor. The first stackless slice
-requires binding the complete `Result`; direct `?` propagation on
-these suspend I/O operations remains an E0876 limitation.
+timeout to 900,000 milliseconds. P2-TCP-C accepts a hostname of at most 253
+bytes and resolves it on one lazily started worker behind a fixed 16-job
+capacity. Resolver completion returns to the owner executor through the same
+platform reactor; at most 16 IPv4/IPv6 candidates are attempted in resolver
+order under one overall resolution-plus-connect deadline. Numeric addresses
+do not initialize the worker or its completion registration. Windows returns
+`NetErrorKind.Unsupported` until its native IOCP connect slice. A zero timeout
+performs one immediate numeric attempt, or returns hostname `Timeout`, without
+initializing the resolver pool or reactor. The first stackless slice requires
+binding the complete `Result`; direct `?` propagation on these suspend I/O
+operations remains an E0876 limitation.
 
 `read` returns after at least one byte, EOF, timeout, cancellation, or error;
 it never reads to EOF implicitly. `TcpChunk.data` uses the v0.1 byte
@@ -901,15 +906,24 @@ against stale copies. The runtime exports exact connect/read/write, readiness,
 timeout/cancellation/error, live-operation, live-handle, and retained-byte
 counters. See `examples/async_tcp_io`.
 
+Resolver saturation returns `NetErrorKind.Limit`; lookup failure returns
+`Resolve`. Error messages are fixed categories and never copy the hostname.
+Cancellation removes a queued lookup immediately. A lookup already executing
+inside the system resolver is cooperatively detached: its caller completes at
+the deadline or cancellation boundary, while the executor retains the
+completion registration and joins the worker after the system call returns.
+This focused resolver pool is not yet the general, dynamically sized blocking
+pool described by RFC 0032.
+
 `NetError.kind` is a portable `NetErrorKind`; applications must not parse
 platform details from `message`. `TcpStream` is Local/!Send and identifies its
 owner-table slot and generation rather than exposing a raw socket as
 authority. `close` is idempotent against stale generations.
 
-P2-TCP-B executes read/write natively on Linux and macOS. Windows returns
-`Unsupported` without evaluating write payloads until the IOCP slice; browser
-raw TCP remains a later host-driven capability. Hostname resolution remains
-P2-TCP-C. A dedicated `shutdown_write` half-close operation is not part of
+P2-TCP-B/C execute read/write and bounded hostname resolution natively on
+Linux and macOS. Windows returns `Unsupported` without evaluating write
+payloads until the IOCP slice; browser raw TCP remains a later host-driven
+capability. A dedicated `shutdown_write` half-close operation is not part of
 P2-TCP-B; callers must use `close` until that focused lifecycle slice lands.
 
 For the preview migration window, `connect_blocking`,

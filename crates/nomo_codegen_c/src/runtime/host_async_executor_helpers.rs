@@ -2632,8 +2632,21 @@ struct nomo_async_context {
     uint64_t peak_live_io_operations;
     uint64_t retained_io_bytes;
     uint64_t peak_retained_io_bytes;
+    uint64_t blocking_pool_initializations;
+    uint64_t blocking_threads_started;
+    uint64_t blocking_threads_retired;
+    uint64_t blocking_jobs_queued;
+    uint64_t blocking_jobs_started;
+    uint64_t blocking_jobs_completed;
+    uint64_t blocking_jobs_cancelled;
+    uint64_t blocking_queue_saturations;
+    uint64_t live_blocking_threads;
+    uint64_t peak_live_blocking_threads;
+    uint64_t live_blocking_jobs;
+    uint64_t peak_live_blocking_jobs;
     uint32_t next_timer_generation;
     uint32_t next_io_handle_generation;
+    void *blocking_pool;
     void *current_frame;
     nomo_async_poll_fn current_poll;
     nomo_async_pending_reason pending_reason;
@@ -3339,6 +3352,9 @@ static int nomo_async_executor_run_root(
             && nomo_async_wait_next(context) != 0) {
             return 1;
         }
+        if (context->ready_count == 0u) {
+            continue;
+        }
         void *ready_frame = NULL;
         nomo_async_poll_fn ready_poll = NULL;
         if (nomo_async_ready_dequeue(context, &ready_frame, &ready_poll) != 0) {
@@ -3454,7 +3470,19 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"live_io_operations\": %" PRIu64 ",\n"
         "    \"peak_live_io_operations\": %" PRIu64 ",\n"
         "    \"retained_io_bytes\": %" PRIu64 ",\n"
-        "    \"peak_retained_io_bytes\": %" PRIu64 "\n"
+        "    \"peak_retained_io_bytes\": %" PRIu64 ",\n"
+        "    \"blocking_pool_initializations\": %" PRIu64 ",\n"
+        "    \"blocking_threads_started\": %" PRIu64 ",\n"
+        "    \"blocking_threads_retired\": %" PRIu64 ",\n"
+        "    \"blocking_jobs_queued\": %" PRIu64 ",\n"
+        "    \"blocking_jobs_started\": %" PRIu64 ",\n"
+        "    \"blocking_jobs_completed\": %" PRIu64 ",\n"
+        "    \"blocking_jobs_cancelled\": %" PRIu64 ",\n"
+        "    \"blocking_queue_saturations\": %" PRIu64 ",\n"
+        "    \"live_blocking_threads\": %" PRIu64 ",\n"
+        "    \"peak_live_blocking_threads\": %" PRIu64 ",\n"
+        "    \"live_blocking_jobs\": %" PRIu64 ",\n"
+        "    \"peak_live_blocking_jobs\": %" PRIu64 "\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
@@ -3535,7 +3563,19 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->live_io_operations,
         context->peak_live_io_operations,
         context->retained_io_bytes,
-        context->peak_retained_io_bytes
+        context->peak_retained_io_bytes,
+        context->blocking_pool_initializations,
+        context->blocking_threads_started,
+        context->blocking_threads_retired,
+        context->blocking_jobs_queued,
+        context->blocking_jobs_started,
+        context->blocking_jobs_completed,
+        context->blocking_jobs_cancelled,
+        context->blocking_queue_saturations,
+        context->live_blocking_threads,
+        context->peak_live_blocking_threads,
+        context->live_blocking_jobs,
+        context->peak_live_blocking_jobs
     );
     int close_status = fclose(output);
     return write_status < 0 || close_status != 0;

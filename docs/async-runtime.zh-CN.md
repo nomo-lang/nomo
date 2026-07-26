@@ -52,7 +52,8 @@ current-thread backend。duration 只求值一次；非正时长 inline 完成�
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
 
-P2-TCP-A/B 还提供 direct-style 的数值地址 connect、有界增量读取与完整写入：
+P2-TCP-A/B/C 还提供 direct-style 的数值地址或 hostname connect、有界增量
+读取与完整写入：
 
 ```nomo
 import std.net
@@ -60,7 +61,7 @@ import std.result
 
 suspend fn main() -> void {
     let connected: Result<TcpStream, NetError> =
-        net.connect("127.0.0.1", 8080, 1000)
+        net.connect("localhost", 8080, 1000)
 }
 
 suspend fn exchange(stream: TcpStream) -> void {
@@ -71,18 +72,27 @@ suspend fn exchange(stream: TcpStream) -> void {
 }
 ```
 
-Linux 与 macOS 会以 nonblocking socket 发起连接，并通过一个带 generation
-校验的 epoll/kqueue registration 挂起。`TcpStream` 固定到 owner executor，
-属于 Local/!Send。正 timeout 使用 monotonic clock，最大 15 分钟；零 timeout
-只立即尝试一次，不注册 reactor。每条 stream 同时最多有一个 pending read
-和一个 pending write；同方向冲突返回 `Busy`。`read` 返回一块
-`Array<u32>` 字节，`read_string` 校验一块 UTF-8，二者都不会隐式 read-to-EOF。
-每个 payload 最大 1 MiB。write 仅跨 one-shot readiness 保留未发送后缀，
-每次 executor poll 最多推进 64 KiB 以保证公平性，并且要么完整写入 payload，
-要么返回错误。timeout 与 structured cancellation 会清除 registration 和
-retained buffer；除非显式 close，stream 仍可复用。
+Linux 与 macOS 会以 nonblocking socket 发起每次连接，并通过带 generation
+校验的 epoll/kqueue registration 挂起。数值地址不会启动 OS thread。最长
+253 字节的 hostname 会进入一个惰性启动的 resolver worker；该 worker 前有
+16 个 job 的固定容量，completion 通过 owner reactor 返回，最多按 resolver
+顺序尝试 16 个 IPv4/IPv6 candidate。解析与所有 candidate 共用一个最长
+15 分钟的 monotonic deadline。hostname 零 timeout 会 inline 返回，且不会
+初始化 pool 或 reactor。`TcpStream` 固定到 owner executor，属于 Local/!Send。
 
-bounded resolver 落地前，hostname 返回 `NetErrorKind.Unsupported`。Windows
+每条 stream 同时最多有一个 pending read 和一个 pending write；同方向冲突
+返回 `Busy`。`read` 返回一块 `Array<u32>` 字节，`read_string` 校验一块
+UTF-8，二者都不会隐式 read-to-EOF。每个 payload 最大 1 MiB。write 仅跨
+one-shot readiness 保留未发送后缀，每次 executor poll 最多推进 64 KiB 以
+保证公平性，并且要么完整写入 payload，要么返回错误。timeout 与 structured
+cancellation 会清除 registration 和 retained buffer；除非显式 close，
+stream 仍可复用。
+
+resolver 容量用尽返回 `Limit`，解析失败返回 `Resolve`；两者的诊断都不会
+复制 hostname。queued job 可立即取消；已经进入系统 resolver 的调用采用
+cooperative cancellation：调用者进入终态，但 executor shutdown 会等待
+lookup 返回，以便把 worker 与 owner registration 恰好清理一次。这是
+P2-TCP-C 的单 worker 聚焦切片，不是 RFC 0032 的通用 blocking pool。Windows
 当前可以编译，并在不求值 write payload 的情况下明确返回 `Unsupported`，
 不声称已经支持 IOCP socket completion。预览期的阻塞名称是
 `net.connect_blocking`、`read_to_string_blocking` 与
@@ -250,7 +260,7 @@ structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand
 `runtime_unavailable`，不会用顺序执行伪装 select。示例见
 [`examples/async_static_select`](../examples/async_static_select)。
 
-## 已实现的 P1、P2 Reactor/P2-TCP-A/B 与 P3-B/P3-C 小切片
+## 已实现的 P1、P2 Reactor/P2-TCP-A/B/C 与 P3-B/P3-C 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -267,8 +277,11 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   kqueue、Windows 使用 IOCP。正时长 timer 以有界 timeout 进入 reactor；
   ready-only 工作与非正时长 timer 不初始化它；
 - 64 槽有界 I/O owner table、slot generation 与 exclusive close；每个 pending
-  数值地址 TCP connect 在 epoll/kqueue 上只使用一个内嵌 registration 和一个
-  timeout timer；
+  TCP candidate 在 epoll/kqueue 上只使用一个内嵌 registration 和一个 timeout
+  timer；
+- 一个惰性 resolver worker、16 个固定 job slot、nonblocking owner wake pipe、
+  最多 16 个复制后的地址 candidate、一个总 deadline，以及精确的 queued/
+  running/cancelled/completed/live/peak 生命周期 counter；
 - 每个源码 read/write operation 使用一个内嵌 registration；每个 stream
   direction 最多一个 pending operation，并支持 one-shot readiness rearm、
   完整 partial-write progress、有界 retained-byte metric，以及 timeout/

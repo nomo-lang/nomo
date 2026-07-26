@@ -169,7 +169,12 @@ jobs:
               -or $tcpPayload.counters.reactor_deregistrations -ne 0 `
               -or $tcpPayload.counters.live_reactor_registrations -ne 0 `
               -or $tcpPayload.counters.live_io_handles -ne 0 `
-              -or $tcpPayload.counters.live_io_operations -ne 0) {
+              -or $tcpPayload.counters.live_io_operations -ne 0 `
+              -or $tcpPayload.counters.blocking_pool_initializations -ne 0 `
+              -or $tcpPayload.counters.blocking_threads_started -ne 0 `
+              -or $tcpPayload.counters.blocking_jobs_queued -ne 0 `
+              -or $tcpPayload.counters.live_blocking_threads -ne 0 `
+              -or $tcpPayload.counters.live_blocking_jobs -ne 0) {
             throw "unexpected Windows async TCP counters"
           }
           $structuredMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-metrics.json"

@@ -15790,6 +15790,18 @@ suspend fn main() -> void {
         ("peak_live_io_operations", 1),
         ("retained_io_bytes", 0),
         ("peak_retained_io_bytes", 0),
+        ("blocking_pool_initializations", 0),
+        ("blocking_threads_started", 0),
+        ("blocking_threads_retired", 0),
+        ("blocking_jobs_queued", 0),
+        ("blocking_jobs_started", 0),
+        ("blocking_jobs_completed", 0),
+        ("blocking_jobs_cancelled", 0),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("peak_live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("peak_live_blocking_jobs", 0),
     ] {
         assert_eq!(
             metrics["counters"][name], expected,
@@ -16477,6 +16489,7 @@ suspend fn main() -> void {
         .arg("-fno-omit-frame-pointer")
         .arg("-g")
         .arg(&generated_c)
+        .arg("-pthread")
         .arg("-o")
         .arg(&binary)
         .output()
@@ -16815,6 +16828,18 @@ suspend fn main() -> void {
         ("peak_live_io_operations", 0),
         ("retained_io_bytes", 0),
         ("peak_retained_io_bytes", 0),
+        ("blocking_pool_initializations", 0),
+        ("blocking_threads_started", 0),
+        ("blocking_threads_retired", 0),
+        ("blocking_jobs_queued", 0),
+        ("blocking_jobs_started", 0),
+        ("blocking_jobs_completed", 0),
+        ("blocking_jobs_cancelled", 0),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("peak_live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("peak_live_blocking_jobs", 0),
     ] {
         assert_eq!(
             metrics["counters"][name], expected,
@@ -16826,8 +16851,16 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
+#[cfg(unix)]
 #[test]
-fn async_tcp_connect_hostname_is_an_allocation_free_unsupported_fast_path() {
+fn async_tcp_connect_resolves_hostname_on_bounded_pool_and_returns_to_owner() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (stream, _) = listener.accept().unwrap();
+        drop(stream);
+    });
+
     let root = temp_test_root("async-tcp-connect-hostname");
     reset_dir(&root);
     let project = root.join("async_tcp_connect_hostname");
@@ -16837,9 +16870,7 @@ fn async_tcp_connect_hostname_is_an_allocation_free_unsupported_fast_path() {
         "[package]\nname = \"async_tcp_connect_hostname\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(
-        project.join("src/main.nomo"),
-        r#"package app.main
+    let source = r#"package app.main
 
 import std.io
 import std.net
@@ -16848,25 +16879,22 @@ import std.result
 fn report(result: Result<TcpStream, NetError>) -> void {
     match result {
         Ok(stream) => {
+            io.println("connected")
             stream.close()
         }
         Err(error) => {
-            if let NetErrorKind.Unsupported = error.kind {
-                io.println("unsupported")
-            } else {
-                io.println(error.message)
-            }
+            panic(error.message)
         }
     }
 }
 
 suspend fn main() -> void {
-    let result: Result<TcpStream, NetError> = net.connect("localhost", 80, 100)
+    let result: Result<TcpStream, NetError> = net.connect("localhost", __PORT__, 1000)
     report(result)
 }
-"#,
-    )
-    .unwrap();
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
     let metrics = root.join("async-tcp-connect-hostname-metrics.json");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -16882,30 +16910,699 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "unsupported\n");
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "connected\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
     let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
     for (name, expected) in [
-        ("poll_calls", 1u64),
         ("frame_allocations", 0),
-        ("reactor_initializations", 0),
-        ("reactor_registrations", 0),
-        ("reactor_deregistrations", 0),
-        ("reactor_reregistrations", 0),
+        ("reactor_initializations", 1),
+        ("reactor_errors", 0),
         ("live_reactor_registrations", 0),
-        ("peak_live_reactor_registrations", 0),
+        ("peak_live_reactor_registrations", 1),
         ("io_connect_starts", 1),
         ("io_read_starts", 0),
         ("io_write_starts", 0),
-        ("io_ready_completions", 0),
         ("io_timeouts", 0),
         ("io_cancellations", 0),
         ("io_errors", 0),
         ("live_io_handles", 0),
-        ("peak_live_io_handles", 0),
+        ("peak_live_io_handles", 1),
         ("live_io_operations", 0),
-        ("peak_live_io_operations", 0),
+        ("peak_live_io_operations", 1),
         ("retained_io_bytes", 0),
         ("peak_retained_io_bytes", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
+        ("blocking_jobs_queued", 1),
+        ("blocking_jobs_started", 1),
+        ("blocking_jobs_completed", 1),
+        ("blocking_jobs_cancelled", 0),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("peak_live_blocking_threads", 1),
+        ("live_blocking_jobs", 0),
+        ("peak_live_blocking_jobs", 1),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+    assert!(
+        metrics["counters"]["reactor_registrations"]
+            .as_u64()
+            .is_some_and(|value| value >= 2),
+        "resolver and socket did not both register with the reactor:\n{metrics}"
+    );
+    assert!(
+        metrics["counters"]["io_ready_completions"]
+            .as_u64()
+            .is_some_and(|value| value >= 2),
+        "resolver and socket did not both return to the owner executor:\n{metrics}"
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn async_tcp_hostname_zero_timeout_does_not_initialize_blocking_pool() {
+    let root = temp_test_root("async-tcp-hostname-zero-timeout");
+    reset_dir(&root);
+    let project = root.join("async_tcp_hostname_zero_timeout");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_hostname_zero_timeout\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_tcp_hostname_zero_timeout.main
+
+import std.io
+import std.net
+import std.result
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("hostname unexpectedly connected without suspension")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Timeout = error.kind {
+                io.println("timed out")
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("localhost", 80, 0)
+    report(connected)
+}
+"#,
+    )
+    .unwrap();
+    let metrics = root.join("async-tcp-hostname-zero-timeout-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("poll_calls", 1u64),
+        ("reactor_initializations", 0),
+        ("reactor_registrations", 0),
+        ("live_reactor_registrations", 0),
+        ("timer_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_ready_completions", 0),
+        ("io_timeouts", 1),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("blocking_pool_initializations", 0),
+        ("blocking_threads_started", 0),
+        ("blocking_jobs_queued", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn async_tcp_hostname_resolution_error_is_typed_bounded_and_secret_safe() {
+    let root = temp_test_root("async-tcp-hostname-resolve-error");
+    reset_dir(&root);
+    let project = root.join("async_tcp_hostname_resolve_error");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_hostname_resolve_error\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_tcp_hostname_resolve_error.main
+
+import std.io
+import std.net
+import std.result
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("invalid hostname unexpectedly connected")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Resolve = error.kind {
+                io.println("resolve")
+                io.println(error.message)
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("authorization-secret..invalid", 443, 1000)
+    report(connected)
+}
+"#,
+    )
+    .unwrap();
+    let metrics = root.join("async-tcp-hostname-resolve-error-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "resolve\nhostname resolution failed\n"
+    );
+    assert!(
+        !String::from_utf8_lossy(&output.stdout).contains("authorization-secret")
+            && !String::from_utf8_lossy(&output.stderr).contains("authorization-secret"),
+        "resolver error leaked the rejected hostname"
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_ready_completions", 1),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 1),
+        ("live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
+        ("blocking_jobs_queued", 1),
+        ("blocking_jobs_started", 1),
+        ("blocking_jobs_completed", 1),
+        ("blocking_jobs_cancelled", 0),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn async_tcp_resolver_cancels_queued_job_without_waking_dropped_frame() {
+    let root = temp_test_root("async-tcp-resolver-cancel");
+    reset_dir(&root);
+    let project = root.join("async_tcp_resolver_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_resolver_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_tcp_resolver_cancel.main
+
+import std.io
+import std.net
+import std.result
+import std.task
+
+fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
+    match connected {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("invalid hostname unexpectedly connected")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Resolve = error.kind {
+                io.println("resolved")
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn resolve_one() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("resolver-cancel..invalid", 443, 5000)
+    report_resolution(connected)
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let first = task.spawn resolve_one()
+        let second = task.spawn resolve_one()
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(second)
+        io.println("cancelled", result.is_ok(cancelled))
+        let joined: Result<void, TaskError> = task.join(first)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    let c_path = project.join("build/c/main.c");
+    let bin_path = root.join("resolver-cancel");
+    let asan = cc_supports_address_sanitizer(&root);
+    let mut cc = Command::new("cc");
+    cc.arg("-std=c99");
+    if asan {
+        cc.arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g");
+    }
+    let cc_output = cc
+        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=200")
+        .arg(&c_path)
+        .arg("-pthread")
+        .arg("-lm")
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+    let metrics = root.join("async-tcp-resolver-cancel-metrics.json");
+    let mut run = Command::new(&bin_path);
+    run.env("NOMO_ASYNC_METRICS_PATH", &metrics);
+    if asan {
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        run.env("ASAN_OPTIONS", asan_options);
+    }
+    let output = run.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "cancelled true\nresolved\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 2),
+        ("io_ready_completions", 1),
+        ("io_timeouts", 0),
+        ("io_cancellations", 1),
+        ("io_errors", 1),
+        ("live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
+        ("blocking_jobs_queued", 2),
+        ("blocking_jobs_started", 1),
+        ("blocking_jobs_completed", 1),
+        ("blocking_jobs_cancelled", 1),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("peak_live_blocking_jobs", 2),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn async_tcp_resolver_timeout_detaches_running_job_and_cleans_on_completion() {
+    let root = temp_test_root("async-tcp-resolver-timeout");
+    reset_dir(&root);
+    let project = root.join("async_tcp_resolver_timeout");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_resolver_timeout\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_tcp_resolver_timeout.main
+
+import std.io
+import std.net
+import std.result
+
+fn report_timeout(connected: Result<TcpStream, NetError>) -> void {
+    match connected {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("delayed hostname unexpectedly connected")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Timeout = error.kind {
+                io.println("timed out")
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("resolver-timeout..invalid", 443, 20)
+    report_timeout(connected)
+}
+"#,
+    )
+    .unwrap();
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    let c_path = project.join("build/c/main.c");
+    let bin_path = root.join("resolver-timeout");
+    let cc_output = Command::new("cc")
+        .arg("-std=c99")
+        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=200")
+        .arg(&c_path)
+        .arg("-pthread")
+        .arg("-lm")
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+    let metrics = root.join("async-tcp-resolver-timeout-metrics.json");
+    let output = Command::new(&bin_path)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("timer_registrations", 1),
+        ("timer_expirations", 1),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_ready_completions", 0),
+        ("io_timeouts", 1),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
+        ("blocking_jobs_queued", 1),
+        ("blocking_jobs_started", 1),
+        ("blocking_jobs_completed", 1),
+        ("blocking_jobs_cancelled", 1),
+        ("blocking_queue_saturations", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn async_tcp_resolver_queue_saturation_is_typed_and_bounded() {
+    const CHILDREN: usize = 17;
+
+    let root = temp_test_root("async-tcp-resolver-saturation");
+    reset_dir(&root);
+    let project = root.join("async_tcp_resolver_saturation");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_resolver_saturation\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let mut source = String::from(
+        r#"package async_tcp_resolver_saturation.main
+
+import std.io
+import std.net
+import std.result
+import std.task
+
+fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
+    match connected {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("invalid hostname unexpectedly connected")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Limit = error.kind {
+                io.println("limit")
+            } else {
+                if let NetErrorKind.Resolve = error.kind {
+                    io.println("resolve")
+                } else {
+                    panic(error.message)
+                }
+            }
+        }
+    }
+}
+
+suspend fn resolve_one() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("resolver-saturation..invalid", 443, 5000)
+    report_resolution(connected)
+}
+
+suspend fn main() -> void {
+    task.scope {
+"#,
+    );
+    for index in 0..CHILDREN {
+        source.push_str(&format!(
+            "        let child{index} = task.spawn resolve_one()\n"
+        ));
+    }
+    for index in 0..CHILDREN {
+        source.push_str(&format!(
+            "        let joined{index}: Result<void, TaskError> = task.join(child{index})\n"
+        ));
+    }
+    source.push_str("    }\n}\n");
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    let c_path = project.join("build/c/main.c");
+    let bin_path = root.join("resolver-saturation");
+    let cc_output = Command::new("cc")
+        .arg("-std=c99")
+        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=50")
+        .arg(&c_path)
+        .arg("-pthread")
+        .arg("-lm")
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+    let metrics = root.join("async-tcp-resolver-saturation-metrics.json");
+    let output = Command::new(&bin_path)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let lines = String::from_utf8_lossy(&output.stdout)
+        .lines()
+        .map(str::to_owned)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        lines.iter().filter(|line| line.as_str() == "limit").count(),
+        1,
+        "unexpected saturation output:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert_eq!(
+        lines
+            .iter()
+            .filter(|line| line.as_str() == "resolve")
+            .count(),
+        16,
+        "unexpected saturation output:\n{}",
+        String::from_utf8_lossy(&output.stdout)
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 17),
+        ("io_ready_completions", 16),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 16),
+        ("live_io_handles", 0),
+        ("live_io_operations", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
+        ("blocking_jobs_queued", 16),
+        ("blocking_jobs_started", 16),
+        ("blocking_jobs_completed", 16),
+        ("blocking_jobs_cancelled", 0),
+        ("blocking_queue_saturations", 1),
+        ("live_blocking_threads", 0),
+        ("peak_live_blocking_threads", 1),
+        ("live_blocking_jobs", 0),
+        ("peak_live_blocking_jobs", 16),
     ] {
         assert_eq!(
             metrics["counters"][name], expected,

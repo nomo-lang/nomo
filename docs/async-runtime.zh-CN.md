@@ -79,6 +79,34 @@ cancel-and-join：它请求取消，等待 child 完成终态清理，再消费�
 `queue_full` error。这个 overload 与旧的同步 `task.cancel(Task)` worker
 取消请求不同。
 
+第一个 deadline 小切片也是 compiler-recognized structured scope：
+
+```nomo
+import std.task
+import std.time
+
+suspend fn bounded_work() -> string {
+    task.deadline(time.duration_millis(50)) {
+        let waited: Result<void, TaskError> =
+            task.sleep(time.duration_millis(1000))
+        task.check_cancelled()
+    }
+    return "completed"
+}
+```
+
+duration 只求值一次。非正 duration 会在 body 执行前终止当前 suspend task，
+形成 `TaskError { code: "timeout", ... }`，且不注册 timer。正 duration 会注册
+一个 owner-local monotonic timer；normal fallthrough 会解除它。到期路径会先
+取消当前 frame 的 child subtree 及 pending timer/ready registration，再完成
+task。structured parent 通过 `task.join` 观察该错误，不会得到伪造的 child
+返回值。root timeout 只打印稳定 code，并以非零状态退出。
+
+`task.check_cancelled()` 不挂起、不分配也不入队，是显式 cooperative
+observation point；生成的状态机也会在 runtime suspension 边界前后检查。若
+ready operation 与 deadline 在同一 resume boundary 同时可观察，timeout
+优先。
+
 ## 已实现的 P1 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
@@ -101,6 +129,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - structured cancel-and-join 挂起边界：向 child subtree 传播取消、移除 ready
   queue/timer 注册、等待终态清理、返回 `Result<void, TaskError>`，再 drop
   已消费的 child frame；
+- 每个 suspend function 可有一个非嵌套 `task.deadline(Duration)` scope，
+  覆盖非正时长立即 timeout、饱和 monotonic deadline 计算、确定性的
+  ready/timeout 检查、typed child failure 与 child-first cancellation cleanup；
 - 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
   join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
   后语句或完成 return 前 drop frame；
@@ -114,7 +145,7 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
 frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
 frame drop/live frame、入队/出队/饱和/取消、
-structured spawn/join/join suspension/取消，以及 timer
+structured spawn/join/join suspension/取消、deadline 注册/到期/解除，以及 timer
 注册/到期/取消/live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
@@ -148,6 +179,8 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 `TaskError { code: "runtime_unavailable", ... }`。structured child body
 目前同样不会在 browser 中执行，其 join 和 structured cancel 返回同一稳定
 错误，并消费 inert browser handle。
+`task.deadline` 当前会在不求值 duration、也不执行 body 的前提下返回 sandbox
+capability error；host-driven browser deadline 属于后续 backend 小切片。
 
 ## 有意保留的限制
 
@@ -159,7 +192,15 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
 内部挂起、下述 structured binding 之外的 `?`、其他表达式内部的 panic、
-取消 token/deadline 和 reactor I/O 都属于后续小 PR。
+取消 token 和 reactor I/O 都属于后续小 PR。
+
+当前 deadline 小切片允许每个 suspend function 有一个非嵌套
+`task.deadline(Duration) { ... }`。body 遵循与 `task.scope` 相同的顶层
+structured spawn/join/cancel ownership 规则，并可使用当前已经支持的直接
+suspension 形态与 `task.check_cancelled()`。它不产生值，且必须 normal
+fallthrough。deadline body 内的嵌套 deadline/scope、控制流、`return`、`?`、
+panic、defer 或 unsafe，需要后续 general structured-exit 与 nested-deadline
+lowering。v0.1 不暴露 first-class cancellation token。
 
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
 handle 必须使用推导得到的不可变 binding 且不得离开 scope；若要观察结果，
@@ -184,8 +225,8 @@ entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics e
 最后打印并 release 原始消息，以状态 1 退出。`debug.panic` 走同一 statement
 路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
 body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
-其他位置的 `?`、其他表达式内部的 panic、取消 token、deadline、channel 与
-select 仍属于后续切片。
+其他位置的 `?`、其他表达式内部的 panic、取消 token、嵌套/通用 deadline
+exit、channel 与 select 仍属于后续切片。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
@@ -209,6 +250,9 @@ armed sibling timer、精确 frame/task/timer counter 与 browser-WASM 边界。
 显式 structured-cancel 测试覆盖 armed timer、精确 result/handle ownership
 转移、generated pending ABI、native/browser 行为、精确 counter 与
 AddressSanitizer 清理。
+deadline 测试还覆盖非正时长 body suppression、normal disarm、child frame
+持有 armed sleep 时 timeout、typed join failure、root secret-safe failure、
+精确 timer/deadline counter、browser 不求值与 AddressSanitizer cleanup。
 后续实现仍必须用测试和证据证明：
 
 - 其余 error、cancellation、timeout 和嵌套表达式或 runtime-originated panic

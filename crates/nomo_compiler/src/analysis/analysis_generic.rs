@@ -222,6 +222,17 @@ fn collect_stmt_generic_function_instances(
             }
             Ok(())
         }
+        Stmt::TaskDeadline { duration, body, .. } => {
+            collect_expr_generic_function_instances(
+                path, duration, imports, signatures, structs, enums, out,
+            )?;
+            for stmt in body {
+                collect_stmt_generic_function_instances(
+                    path, stmt, imports, signatures, structs, enums, out,
+                )?;
+            }
+            Ok(())
+        }
         Stmt::Postfix { .. } => Ok(()),
         Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
     }

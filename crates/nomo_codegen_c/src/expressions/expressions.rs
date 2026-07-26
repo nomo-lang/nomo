@@ -174,7 +174,11 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
         ValueExpr::Call { name, args } => {
             if matches!(
                 name.as_str(),
-                BUILTIN_TASK_YIELD_EXPR | BUILTIN_TASK_SLEEP_EXPR
+                BUILTIN_TASK_YIELD_EXPR
+                    | BUILTIN_TASK_SLEEP_EXPR
+                    | BUILTIN_TASK_CHECK_CANCELLED_EXPR
+                    | BUILTIN_TASK_DEADLINE_ENTER_EXPR
+                    | BUILTIN_TASK_DEADLINE_EXIT_EXPR
             ) {
                 unreachable!("async intrinsics are emitted by the stackless coroutine lowering")
             } else if name == BUILTIN_PRINTLN_EXPR {

@@ -187,6 +187,17 @@ pub(super) fn validate_stmt_type_imports(
             }
             Ok(())
         }
+        Stmt::TaskDeadline {
+            duration,
+            body,
+            span,
+        } => {
+            validate_expr_type_imports(path, imports, duration, span)?;
+            for stmt in body {
+                validate_stmt_type_imports(path, imports, stmt)?;
+            }
+            Ok(())
+        }
     }
 }
 

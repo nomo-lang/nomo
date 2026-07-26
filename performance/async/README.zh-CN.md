@@ -16,7 +16,7 @@ async runtime。P0 manifest 保留两个 control：
 `structured_cancel_probe`、`structured_return_cancel_probe` 与
 `structured_question_cancel_probe`，以及
 `structured_explicit_cancel_probe` 与
-`structured_panic_cleanup_probe`。
+`structured_deadline_probe`、`structured_panic_cleanup_probe`。
 counter 探针不混入 measured sample；它们单独设置
 `NOMO_ASYNC_METRICS_PATH`，再按 `counter-catalog.json` 校验
 版本化的 current-thread JSON 契约。panic 使用显式 expected-failure 契约，
@@ -48,6 +48,10 @@ timer sibling，drop 全部 frame，导出 counter，最后才以原始 panic �
 显式 cancel-and-join gate 会消费 scope-owned handle、disarm live timer，并且
 只在终态清理完成后返回类型化成功，同时保持 current-thread fast path 零分配。
 ARC primitive counter 仍明确标记 unavailable，而不是伪装成 0。
+deadline gate 会在同一个 owner-local table 上同时注册 deadline 与更长的 child
+sleep，要求 timeout 优先、取消 sleep registration、构造 typed join error，并
+验证三个 deadline 专用 counter，同时保持 frame allocation 与 atomic symbol
+为零。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

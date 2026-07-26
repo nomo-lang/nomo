@@ -614,6 +614,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::Continue { span, .. }
         | Stmt::Defer { span, .. }
         | Stmt::TaskScope { span, .. }
+        | Stmt::TaskDeadline { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

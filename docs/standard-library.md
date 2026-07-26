@@ -302,7 +302,9 @@ values:
 ```nomo
 task.yield_now() -> void // suspend-only
 task.sleep(duration: Duration) -> Result<void, TaskError> // suspend-only
+task.check_cancelled() -> void // suspend-only, non-suspending observation
 task.scope { ... } // suspend-only structured scope
+task.deadline(duration: Duration) { ... } // suspend-only structured deadline
 let child = task.spawn child_function(arguments) // scope-owned Task<T>
 task.join(child) -> Result<T, TaskError> // consumes structured child
 task.cancel(child) -> Result<void, TaskError> // suspend-capable, consumes structured child
@@ -335,6 +337,16 @@ treats yield as a bounded cooperative boundary; sleep returns
 `runtime_unavailable` without evaluating its duration. The host-driven event
 backend is not implemented yet.
 
+`task.deadline(duration) { ... }` evaluates its duration once. A non-positive
+duration terminates the current suspend task with stable code `timeout` before
+the body and without a timer registration. A positive duration uses one
+owner-local monotonic timer; normal fallthrough disarms it, while expiry
+cancels the current child subtree and pending registrations before task
+completion. A parent observes the typed failure through structured join.
+`task.check_cancelled()` is a non-suspending, allocation-free cooperative
+check. Browser WASM rejects deadlines without evaluating the duration or body
+until its host-driven backend lands.
+
 The structured forms create true owner-local concurrency without changing
 direct-style child calls. Each child target is currently a direct,
 unqualified, non-generic top-level `suspend fn` with immutable frame-safe
@@ -359,10 +371,13 @@ helpers may also use an immutable top-level
 `let value: T = expression?`: Err/None is stored in the helper frame before
 live children are cancelled and dropped, while a success payload follows the
 normal liveness plan. The operand may be non-suspending or a direct
-`task.join(handle)?`, and currently needs an explicit binding type. Nested
+`task.join(handle)?`, and currently needs an explicit binding type. The first
+deadline slice permits one non-nested, non-value-producing deadline block per
+suspend function. It must fall through; deadline-body control flow, return,
+`?`, panic, defer, unsafe, and nested scopes/deadlines remain E0876. Nested
 scopes, nested control flow, non-final scope return, `?` in other positions,
-panic nested in another expression, cancellation tokens, deadlines,
-channels, and select are not in this slice. A direct panic owns its
+panic nested in another expression, cancellation tokens, general deadline
+exits, channels, and select are not in this slice. A direct panic owns its
 non-suspending message, stops the executor, recursively cancels the root task
 tree, drops every frame, completes runtime shutdown and metrics export, then
 prints and releases the original message before process exit. Browser WASM

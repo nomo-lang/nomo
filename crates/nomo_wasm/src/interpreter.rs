@@ -414,6 +414,15 @@ impl<'a> Interpreter<'a> {
         if name == "__nomo_task_yield" {
             return Ok(Value::Void);
         }
+        if name == "__nomo_task_deadline_enter" {
+            return Err(RuntimeError::capability("task deadlines"));
+        }
+        if matches!(
+            name,
+            "__nomo_task_deadline_exit" | "__nomo_task_check_cancelled"
+        ) {
+            return Ok(Value::Void);
+        }
         if name == "__nomo_task_sleep" {
             return Ok(task_timer_runtime_unavailable_result());
         }

@@ -461,6 +461,14 @@ impl<'a> Formatter<'a> {
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
             }
+            Stmt::TaskDeadline { duration, body, .. } => {
+                let mut header = "task.deadline(".to_string();
+                header.push_str(&expr(duration, indent, 0));
+                header.push_str(") {");
+                self.line_at(indent, &header, stmt_line(stmt));
+                self.stmt_block(body, indent + 1);
+                self.line(indent, "}");
+            }
             Stmt::Unsafe { body, .. } => {
                 self.line_at(indent, "unsafe {", stmt_line(stmt));
                 self.stmt_block(body, indent + 1);
@@ -905,6 +913,21 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\nimport std.task\n\nsuspend fn worker(value: string) -> void {\n    task.yield_now()\n}\n\nsuspend fn main() -> void {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
+
+    #[test]
+    fn formats_structured_task_deadline_idempotently() {
+        let source = "package app.main\nimport std.task\nimport std.time\n\nsuspend fn main(){\ntask.deadline(time.duration_millis(5)){\ntask.check_cancelled()\n}\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main() -> void {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

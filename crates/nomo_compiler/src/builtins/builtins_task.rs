@@ -9,6 +9,7 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
                     name.as_str(),
                     "spawn"
                         | "is_cancelled"
+                        | "check_cancelled"
                         | "join"
                         | "cancel"
                         | "close"
@@ -44,7 +45,7 @@ pub(super) fn lower_task_builtin(
             if !current_function_has_task_scope(scope) {
                 return Err(Diagnostic::new(
                     "E0871",
-                    "structured task.spawn is only allowed inside task.scope",
+                    "structured task.spawn is only allowed inside task.scope or task.deadline",
                     path,
                     span.line,
                     span.column,
@@ -175,6 +176,35 @@ pub(super) fn lower_task_builtin(
                 },
             ))
         }
+        "check_cancelled" => {
+            if !args.is_empty() {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.check_cancelled",
+                    0,
+                    args.len(),
+                ));
+            }
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call `task.check_cancelled`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Void,
+                ValueExpr::Call {
+                    name: BUILTIN_TASK_CHECK_CANCELLED_EXPR.to_string(),
+                    args: Vec::new(),
+                },
+            ))
+        }
         "sleep" => {
             let [duration_arg] = args else {
                 return Err(task_arity_diagnostic(
@@ -292,7 +322,7 @@ pub(super) fn lower_task_builtin(
                 if !current_function_has_task_scope(scope) {
                     return Err(Diagnostic::new(
                         "E0871",
-                        "structured task.join is only allowed inside task.scope",
+                        "structured task.join is only allowed inside task.scope or task.deadline",
                         path,
                         span.line,
                         span.column,
@@ -395,7 +425,7 @@ pub(super) fn lower_task_builtin(
                 if !current_function_has_task_scope(scope) {
                     return Err(Diagnostic::new(
                         "E0871",
-                        "structured task.cancel is only allowed inside task.scope",
+                        "structured task.cancel is only allowed inside task.scope or task.deadline",
                         path,
                         span.line,
                         span.column,

@@ -19,7 +19,8 @@ The separate `manifest-p1.json` repeats both zero-cost controls and enables
 `structured_cancel_probe`, `structured_return_cancel_probe`, and
 `structured_question_cancel_probe`, plus
 `structured_explicit_cancel_probe` and
-`structured_panic_cleanup_probe`. Each counter probe executes outside measured
+`structured_deadline_probe` and `structured_panic_cleanup_probe`. Each counter
+probe executes outside measured
 samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the versioned
 current-thread JSON contract against `counter-catalog.json`. Panic is an
 explicit expected-failure contract with exact stderr and exit status; it is
@@ -59,6 +60,10 @@ reported as zero. Mutable/affine suspend parameters, non-final return, `?` in
 other positions, nested-expression or runtime-originated panic unwind,
 cancellation propagation, and the multi-task timer-wheel workload are not
 complete.
+The deadline gate arms a deadline and a longer child sleep on the same
+owner-local table, requires timeout to win, cancels the sleep registration,
+materializes a typed join error, and validates the three deadline-specific
+counters without adding frame allocation or atomic symbols.
 
 ## Run
 

@@ -108,6 +108,12 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
         Stmt::TaskScope { body, .. } | Stmt::Unsafe { body, .. } => body
             .iter()
             .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name)),
+        Stmt::TaskDeadline { duration, body, .. } => {
+            expr_uses_core_prelude_variant(duration, enum_name)
+                || body
+                    .iter()
+                    .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name))
+        }
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }

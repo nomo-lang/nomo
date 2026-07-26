@@ -152,6 +152,17 @@
       "note": "Validates consuming structured cancel-and-join of an armed-timer child, exact terminal cleanup and result ownership, and the allocation-free current-thread fast path."
     },
     {
+      "id": "structured_deadline_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/structured_deadline_probe",
+      "expected_stdout": "deadline elapsed true\n",
+      "snapshot": "snapshots/structured-deadline-probe.json",
+      "note": "Validates typed deadline failure while a child owns a longer sleep, deterministic timer cancellation, structured join propagation, and exact allocation-free current-thread counters."
+    },
+    {
       "id": "structured_panic_cleanup_probe",
       "kind": "runtime_counter_gate",
       "available_phase": "P1",

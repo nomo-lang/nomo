@@ -84,6 +84,39 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn parses_structured_task_deadline() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    task.deadline(time.duration_millis(25)) {
+        task.check_cancelled()
+    }
+}
+"#;
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let Stmt::TaskDeadline { duration, body, .. } = &ast.functions[0].body[0] else {
+        panic!("expected task.deadline statement");
+    };
+    assert!(matches!(
+        duration,
+        Expr::Call { callee, args, .. }
+            if callee == &["time", "duration_millis"] && args == &[Expr::Int(25)]
+    ));
+    assert!(matches!(
+        &body[0],
+        Stmt::Expr {
+            expr: Expr::Call { callee, args, .. },
+            ..
+        } if callee == &["task", "check_cancelled"] && args.is_empty()
+    ));
+}
+
+#[test]
 fn rejects_suspend_extern_functions() {
     let source = "package app.main\n\nextern \"C\" {\n    suspend fn wait() -> void\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

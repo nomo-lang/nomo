@@ -33,6 +33,15 @@ pub suspend fn yield_now() -> void {
     task.yield_now()
 }
 
+/// Cooperatively observes the current structured cancellation or deadline.
+///
+/// The call does not suspend. When cancellation is observed the compiler
+/// completes the current suspend task with a stable TaskError instead of
+/// returning to the source statement.
+pub suspend fn check_cancelled() -> void {
+    task.check_cancelled()
+}
+
 /// Suspends the current task until a monotonic duration has elapsed.
 ///
 /// A non-positive duration completes inline without registering or enqueueing.
@@ -58,6 +67,17 @@ pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
 /// task.cancel(child)` is the suspend-capable consuming cancel-and-join form:
 /// it completes child cleanup before returning and the handle cannot be used
 /// again. It is distinct from the legacy functions below.
+///
+/// task.deadline(duration) {
+///     // one flat, non-value-producing structured body in the first slice
+///     task.check_cancelled()
+/// }
+///
+/// A non-positive deadline fails before its body with stable code `timeout`.
+/// A positive deadline uses the owner-local monotonic timer and is disarmed on
+/// normal fallthrough. Timeout cancels children and is observed by structured
+/// join. Browser WASM currently rejects the scope without evaluating duration
+/// or body.
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
     return task.spawn(worker, input)

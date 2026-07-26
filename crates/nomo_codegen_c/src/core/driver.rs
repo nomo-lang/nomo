@@ -406,6 +406,14 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
                  );\n",
         );
         out.push_str(
+            "    if (nomo__frame.structured_failure != NOMO_ASYNC_TASK_FAILURE_NONE) {\n\
+                 fputs(\"error: async task failed: \", stderr);\n\
+                 fputs(nomo_async_task_failure_code(nomo__frame.structured_failure), stderr);\n\
+                 fputc('\\n', stderr);\n\
+                 nomo__status = 1;\n\
+             }\n",
+        );
+        out.push_str(
             "    if (nomo__context.panicking != 0u) {\n\
                  nomo_async_cancel_main(&nomo__frame, &nomo__context);\n\
              }\n",

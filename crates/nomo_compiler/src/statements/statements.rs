@@ -447,6 +447,9 @@ pub(super) fn lower_stmt(
         Stmt::TaskScope { .. } => {
             unreachable!("task.scope is lowered by lower_stmt_into")
         }
+        Stmt::TaskDeadline { .. } => {
+            unreachable!("task.deadline is lowered by lower_stmt_into")
+        }
         Stmt::Expr { expr, span } => {
             let (expr_type, lowered) = lower_value_expr_with_expected(
                 path,
@@ -495,6 +498,105 @@ pub(super) fn lower_stmt_into(
     loop_depth: usize,
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
+    if let Stmt::TaskDeadline {
+        duration,
+        body,
+        span,
+    } = stmt
+    {
+        require_import(path, imports, span, "std.task", "task.deadline")?;
+        if !current_function_is_suspend(scope) {
+            return Err(Diagnostic::new(
+                "E0870",
+                "synchronous function cannot enter `task.deadline`; mark the caller `suspend`",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        if current_function_has_task_scope(scope)
+            || out.iter().any(|statement| {
+                matches!(
+                    statement,
+                    Statement::Expr(ValueExpr::Call { name, args })
+                        if name == BUILTIN_TASK_DEADLINE_ENTER_EXPR && args.len() == 1
+                )
+            })
+        {
+            return Err(Diagnostic::new(
+                "E0876",
+                "the first deadline slice supports one non-nested task.deadline block per suspend function",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        validate_deadline_scope(path, body)?;
+        let StructuredScopeValidation {
+            unjoined,
+            question_cancellations,
+        } = validate_structured_scope(path, body)?;
+        debug_assert!(question_cancellations.is_empty());
+
+        let duration_type = ValueType::Struct("Duration".to_string(), Vec::new());
+        let (actual_duration_type, lowered_duration) = lower_value_expr_with_expected(
+            path,
+            duration,
+            scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            Some(&duration_type),
+            span,
+        )?;
+        if actual_duration_type != duration_type {
+            return Err(type_mismatch(
+                path,
+                span,
+                "task.deadline expects one Duration value",
+            ));
+        }
+
+        out.push(Statement::Expr(ValueExpr::Call {
+            name: BUILTIN_TASK_DEADLINE_ENTER_EXPR.to_string(),
+            args: vec![lowered_duration],
+        }));
+        let mut task_scope = scope.clone();
+        task_scope.insert(
+            TASK_SCOPE_BINDING.to_string(),
+            Binding {
+                value_type: ValueType::Void,
+                mutable: false,
+                source: BindingSource::TaskScope,
+            },
+        );
+        for statement in body {
+            lower_stmt_into(
+                path,
+                statement,
+                &mut task_scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                return_type,
+                false,
+                loop_depth,
+                out,
+            )?;
+        }
+        push_structured_cancellations(out, &unjoined);
+        out.push(Statement::Expr(ValueExpr::Call {
+            name: BUILTIN_TASK_DEADLINE_EXIT_EXPR.to_string(),
+            args: Vec::new(),
+        }));
+        return Ok(());
+    }
     if let Stmt::TaskScope { body, span } = stmt {
         require_import(path, imports, span, "std.task", "task.scope")?;
         if !current_function_is_suspend(scope) {
@@ -898,6 +1000,7 @@ fn validate_structured_scope(
                 }
             }
             Stmt::TaskScope { .. }
+            | Stmt::TaskDeadline { .. }
             | Stmt::LetElse { .. }
             | Stmt::IfLet { .. }
             | Stmt::Match { .. }
@@ -947,6 +1050,42 @@ fn validate_structured_scope(
         unjoined: unjoined_structured_handles(&handles),
         question_cancellations,
     })
+}
+
+fn validate_deadline_scope(path: &Path, body: &[Stmt]) -> Result<(), Diagnostic> {
+    for statement in body {
+        let span = statement_span(statement);
+        if matches!(statement, Stmt::Return { .. }) {
+            return Err(Diagnostic::new(
+                "E0876",
+                "return inside task.deadline requires the later general structured-exit slice",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        let mut contains_frame_exit = false;
+        visit_statement_expressions(statement, &mut |expression| {
+            if matches!(expression, AstExpr::Panic { .. } | AstExpr::Question { .. }) {
+                contains_frame_exit = true;
+            }
+            Ok(())
+        })?;
+        if contains_frame_exit {
+            return Err(Diagnostic::new(
+                "E0876",
+                "panic and `?` inside task.deadline require the later general structured-exit slice",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn call_targets_structured_handle(args: &[AstExpr], handles: &HashMap<String, bool>) -> bool {

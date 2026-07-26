@@ -37,6 +37,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_structured_question_cancel",
     "async_structured_panic_cleanup",
     "async_structured_explicit_cancel",
+    "async_structured_deadline",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -1305,6 +1306,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_structured_question_cancel" => "managed before\ngate\ntrue\n",
         "async_structured_panic_cleanup" => "managed slow before\n",
         "async_structured_explicit_cancel" => "managed before\ncancelled true\n",
+        "async_structured_deadline" => "deadline elapsed true\n",
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"

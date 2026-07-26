@@ -80,10 +80,28 @@
       "semantics": "Incomplete structured task frames transitioned exactly once to the cancelled terminal state."
     },
     {
+      "name": "deadline_registrations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Positive-duration structured task.deadline scopes successfully armed on the owner-local timer table."
+    },
+    {
+      "name": "deadline_expirations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Structured deadline scopes that completed their current suspend task with the stable timeout failure."
+    },
+    {
+      "name": "deadline_cancellations",
+      "unit": "count",
+      "available_phase": "P1",
+      "semantics": "Armed structured deadlines disarmed after normal fallthrough or task cancellation before expiry."
+    },
+    {
       "name": "timer_registrations",
       "unit": "count",
       "available_phase": "P1",
-      "semantics": "Positive-duration owner-local timers successfully registered with the current-thread executor."
+      "semantics": "Positive-duration sleep and deadline timers successfully registered with the current-thread executor."
     },
     {
       "name": "timer_expirations",
@@ -95,7 +113,7 @@
       "name": "timer_cancellations",
       "unit": "count",
       "available_phase": "P1",
-      "semantics": "Armed owner-local timers disarmed by idempotent coroutine-frame destruction before expiry."
+      "semantics": "Armed owner-local timers disarmed by normal deadline fallthrough or idempotent coroutine-frame destruction before expiry."
     },
     {
       "name": "peak_live_timers",

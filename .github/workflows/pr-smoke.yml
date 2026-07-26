@@ -246,6 +246,31 @@ jobs:
               -or $structuredExplicitCancelPayload.counters.peak_live_timers -ne 1) {
             throw "unexpected structured explicit-cancel counters"
           }
+          $structuredDeadlineMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-deadline-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $structuredDeadlineMetrics
+          $structuredDeadlineOutput = cargo run --locked --bin nomo -- run examples/async_structured_deadline
+          if (($structuredDeadlineOutput -join "`n") -notmatch "deadline elapsed true") {
+            throw "unexpected structured deadline output"
+          }
+          $structuredDeadlinePayload = Get-Content -Raw $structuredDeadlineMetrics | ConvertFrom-Json
+          if ($structuredDeadlinePayload.counters.poll_calls -ne 4 `
+              -or $structuredDeadlinePayload.counters.frame_drops -ne 2 `
+              -or $structuredDeadlinePayload.counters.peak_live_frames -ne 2 `
+              -or $structuredDeadlinePayload.counters.ready_queue_enqueues -ne 3 `
+              -or $structuredDeadlinePayload.counters.ready_queue_dequeues -ne 3 `
+              -or $structuredDeadlinePayload.counters.task_spawns -ne 1 `
+              -or $structuredDeadlinePayload.counters.task_joins -ne 1 `
+              -or $structuredDeadlinePayload.counters.join_suspensions -ne 1 `
+              -or $structuredDeadlinePayload.counters.deadline_registrations -ne 1 `
+              -or $structuredDeadlinePayload.counters.deadline_expirations -ne 1 `
+              -or $structuredDeadlinePayload.counters.deadline_cancellations -ne 0 `
+              -or $structuredDeadlinePayload.counters.timer_registrations -ne 2 `
+              -or $structuredDeadlinePayload.counters.timer_expirations -ne 1 `
+              -or $structuredDeadlinePayload.counters.timer_cancellations -ne 1 `
+              -or $structuredDeadlinePayload.counters.live_timers -ne 0 `
+              -or $structuredDeadlinePayload.counters.peak_live_timers -ne 2) {
+            throw "unexpected structured deadline counters"
+          }
           $structuredPanicMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-panic-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $structuredPanicMetrics
           $structuredPanicOutput = cargo run --locked --bin nomo -- run examples/async_structured_panic_cleanup 2>&1
@@ -359,6 +384,11 @@ jobs:
             cargo run --locked --bin nomo -- run examples/async_structured_explicit_cancel)
           test "$structured_explicit_cancel_output" = "$(printf 'managed before\ncancelled true')"
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 5 and c["cooperative_yields"] == 1 and c["frame_allocations"] == 0 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["ready_queue_enqueues"] == 4 and c["ready_queue_dequeues"] == 4 and c["ready_queue_cancellations"] == 0 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 1 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$structured_explicit_cancel_metrics"
+          structured_deadline_metrics="$RUNNER_TEMP/nomo-async-structured-deadline-metrics.json"
+          structured_deadline_output=$(NOMO_ASYNC_METRICS_PATH="$structured_deadline_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_structured_deadline)
+          test "$structured_deadline_output" = 'deadline elapsed true'
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 2 and c["peak_live_frames"] == 2 and c["ready_queue_enqueues"] == 3 and c["ready_queue_dequeues"] == 3 and c["task_spawns"] == 1 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["deadline_registrations"] == 1 and c["deadline_expirations"] == 1 and c["deadline_cancellations"] == 0 and c["timer_registrations"] == 2 and c["timer_expirations"] == 1 and c["timer_cancellations"] == 1 and c["live_timers"] == 0 and c["peak_live_timers"] == 2' "$structured_deadline_metrics"
           structured_panic_metrics="$RUNNER_TEMP/nomo-async-structured-panic-metrics.json"
           set +e
           structured_panic_output=$(NOMO_ASYNC_METRICS_PATH="$structured_panic_metrics" \

@@ -5,6 +5,8 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
         statement_contains_expr(statement, |expr| {
             expr_is_async_yield(expr)
                 || expr_is_async_sleep(expr)
+                || expr_is_async_check_cancelled(expr)
+                || expr_is_async_deadline_enter(expr)
                 || expr_is_structured_join(expr)
                 || expr_is_structured_cancel(expr)
         })
@@ -129,6 +131,22 @@ fn expr_is_async_sleep(expr: &ValueExpr) -> bool {
     )
 }
 
+fn expr_is_async_check_cancelled(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_CHECK_CANCELLED_EXPR && args.is_empty()
+    )
+}
+
+fn expr_is_async_deadline_enter(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_DEADLINE_ENTER_EXPR && args.len() == 1
+    )
+}
+
 fn expr_is_structured_join(expr: &ValueExpr) -> bool {
     matches!(
         expr,
@@ -159,6 +177,58 @@ fn statement_is_async_yield(statement: &Statement) -> bool {
         Statement::Expr(ValueExpr::Call { name, args })
             if name == BUILTIN_TASK_YIELD_EXPR && args.is_empty()
     )
+}
+
+fn statement_is_async_check_cancelled(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == BUILTIN_TASK_CHECK_CANCELLED_EXPR && args.is_empty()
+    )
+}
+
+fn statement_async_deadline_enter(statement: &Statement) -> Option<&ValueExpr> {
+    let Statement::Expr(ValueExpr::Call { name, args }) = statement else {
+        return None;
+    };
+    if name != BUILTIN_TASK_DEADLINE_ENTER_EXPR {
+        return None;
+    }
+    let [duration] = args.as_slice() else {
+        return None;
+    };
+    Some(duration)
+}
+
+fn statement_is_async_deadline_exit(statement: &Statement) -> bool {
+    matches!(
+        statement,
+        Statement::Expr(ValueExpr::Call { name, args })
+            if name == BUILTIN_TASK_DEADLINE_EXIT_EXPR && args.is_empty()
+    )
+}
+
+fn function_has_async_deadline(function: &Function) -> bool {
+    function
+        .body
+        .iter()
+        .any(|statement| statement_async_deadline_enter(statement).is_some())
+}
+
+fn statement_is_within_async_deadline(function: &Function, index: usize) -> bool {
+    let Some(enter) = function
+        .body
+        .iter()
+        .position(|statement| statement_async_deadline_enter(statement).is_some())
+    else {
+        return false;
+    };
+    let exit = function
+        .body
+        .iter()
+        .position(statement_is_async_deadline_exit)
+        .expect("validated deadline enter has one exit marker");
+    index > enter && index <= exit
 }
 
 fn statement_async_sleep(statement: &Statement) -> Option<(&str, &ValueType, &ValueExpr)> {
@@ -528,6 +598,14 @@ fn emit_async_frame_type(
              uint8_t cancelled;\n\
              uint8_t structured_completed;\n",
     );
+    out.push_str("    nomo_async_task_failure structured_failure;\n");
+    if function_has_async_deadline(function) {
+        out.push_str(
+            "    nomo_async_timer_registration nomo_async_deadline_timer;\n\
+             nomo_async_timer_outcome nomo_async_deadline_outcome;\n\
+             uint8_t nomo_async_deadline_active;\n",
+        );
+    }
     for parameter in &function.params {
         out.push_str("    ");
         out.push_str(&c_type(&parameter.value_type));
@@ -909,6 +987,158 @@ fn emit_structured_completion(out: &mut String, indent: usize) {
     out.push_str("}\n");
 }
 
+fn emit_async_deadline_failure(
+    out: &mut String,
+    function: &Function,
+    async_names: &BTreeSet<String>,
+    failure: &str,
+    indent: usize,
+) {
+    write_indent(out, indent);
+    out.push_str("frame->structured_failure = ");
+    out.push_str(failure);
+    out.push_str(";\n");
+    if failure == "NOMO_ASYNC_TASK_FAILURE_TIMEOUT" {
+        write_indent(out, indent);
+        out.push_str("context->deadline_expirations += 1u;\n");
+    }
+    write_indent(out, indent);
+    out.push_str("nomo_async_ready_cancel_frame(context, frame);\n");
+    if function_has_async_deadline(function) {
+        write_indent(out, indent);
+        out.push_str("nomo_async_timer_disarm(&frame->nomo_async_deadline_timer, context);\n");
+        write_indent(out, indent);
+        out.push_str("frame->nomo_async_deadline_active = 0u;\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_sleep(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_timer_disarm(&frame->");
+        out.push_str(&async_timer_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(spawn) = statement_structured_spawn(statement) else {
+            continue;
+        };
+        write_indent(out, indent);
+        out.push_str(&async_cancel_ident(spawn.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(call) = statement_async_call(statement, async_names) else {
+            continue;
+        };
+        write_indent(out, indent);
+        out.push_str(&async_cancel_ident(call.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    emit_structured_completion(out, indent);
+    write_indent(out, indent);
+    out.push_str("frame->state = UINT32_MAX;\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+}
+
+fn emit_async_deadline_due_check(
+    out: &mut String,
+    function: &Function,
+    async_names: &BTreeSet<String>,
+    indent: usize,
+) {
+    write_indent(out, indent);
+    out.push_str(
+        "if (frame->nomo_async_deadline_active != 0u\n\
+         ",
+    );
+    write_indent(out, indent + 1);
+    out.push_str(
+        "&& nomo_async_deadline_due(&frame->nomo_async_deadline_timer, context) != 0) {\n",
+    );
+    emit_async_deadline_failure(
+        out,
+        function,
+        async_names,
+        "NOMO_ASYNC_TASK_FAILURE_TIMEOUT",
+        indent + 1,
+    );
+    write_indent(out, indent);
+    out.push_str("}\n");
+}
+
+fn emit_async_child_failure_propagation(
+    out: &mut String,
+    function: &Function,
+    async_names: &BTreeSet<String>,
+    child_index: usize,
+    indent: usize,
+) {
+    write_indent(out, indent);
+    out.push_str("if (frame->");
+    out.push_str(&async_child_field(child_index));
+    out.push_str(".structured_failure != NOMO_ASYNC_TASK_FAILURE_NONE) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_failure = frame->");
+    out.push_str(&async_child_field(child_index));
+    out.push_str(".structured_failure;\n");
+    write_indent(out, indent + 1);
+    out.push_str("nomo_async_ready_cancel_frame(context, frame);\n");
+    if function_has_async_deadline(function) {
+        write_indent(out, indent + 1);
+        out.push_str("if (frame->nomo_async_deadline_active != 0u) {\n");
+        write_indent(out, indent + 2);
+        out.push_str("nomo_async_timer_disarm(&frame->nomo_async_deadline_timer, context);\n");
+        write_indent(out, indent + 2);
+        out.push_str("frame->nomo_async_deadline_active = 0u;\n");
+        write_indent(out, indent + 2);
+        out.push_str("context->deadline_cancellations += 1u;\n");
+        write_indent(out, indent + 1);
+        out.push_str("}\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_sleep(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent + 1);
+        out.push_str("nomo_async_timer_disarm(&frame->");
+        out.push_str(&async_timer_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(spawn) = statement_structured_spawn(statement) else {
+            continue;
+        };
+        write_indent(out, indent + 1);
+        out.push_str(&async_cancel_ident(spawn.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(call) = statement_async_call(statement, async_names) else {
+            continue;
+        };
+        write_indent(out, indent + 1);
+        out.push_str(&async_cancel_ident(call.callee));
+        out.push_str("(&frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(", context);\n");
+    }
+    emit_structured_completion(out, indent + 1);
+    write_indent(out, indent + 1);
+    out.push_str("frame->state = UINT32_MAX;\n");
+    write_indent(out, indent + 1);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+}
+
 fn emit_async_cancel_function(
     out: &mut String,
     function: &Function,
@@ -927,6 +1157,15 @@ fn emit_async_cancel_function(
              context->task_cancellations += 1u;\n\
              nomo_async_ready_cancel_frame(context, frame);\n",
     );
+    if function_has_async_deadline(function) {
+        out.push_str(
+            "    if (frame->nomo_async_deadline_active != 0u) {\n\
+                 nomo_async_timer_disarm(&frame->nomo_async_deadline_timer, context);\n\
+                 frame->nomo_async_deadline_active = 0u;\n\
+                 context->deadline_cancellations += 1u;\n\
+             }\n",
+        );
+    }
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1077,7 +1316,9 @@ fn emit_structured_join_result_materialize(
     write_indent(out, indent);
     out.push_str("if (frame->");
     out.push_str(&async_spawn_failed_field(spawn_index));
-    out.push_str(" == 0u) {\n");
+    out.push_str(" == 0u && frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure == NOMO_ASYNC_TASK_FAILURE_NONE) {\n");
     write_indent(out, indent + 1);
     out.push_str(&result);
     out.push_str(".tag = ");
@@ -1115,14 +1356,30 @@ fn emit_structured_join_result_materialize(
     out.push_str(&c_payload_ident("Err"));
     out.push('.');
     out.push_str(&c_member_ident("code"));
-    out.push_str(" = nomo_string_literal(\"queue_full\");\n");
+    out.push_str(" = frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" != 0u\n");
+    write_indent(out, indent + 2);
+    out.push_str("? nomo_string_literal(\"queue_full\")\n");
+    write_indent(out, indent + 2);
+    out.push_str(": nomo_string_literal(nomo_async_task_failure_code(frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure));\n");
     write_indent(out, indent + 1);
     out.push_str(&result);
     out.push_str(".payload.");
     out.push_str(&c_payload_ident("Err"));
     out.push('.');
     out.push_str(&c_member_ident("message"));
-    out.push_str(" = nomo_string_literal(\"owner executor ready queue is full\");\n");
+    out.push_str(" = frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" != 0u\n");
+    write_indent(out, indent + 2);
+    out.push_str("? nomo_string_literal(\"owner executor ready queue is full\")\n");
+    write_indent(out, indent + 2);
+    out.push_str(": nomo_string_literal(nomo_async_task_failure_message(frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure));\n");
     write_indent(out, indent);
     out.push_str("}\n");
     write_indent(out, indent);
@@ -1151,7 +1408,9 @@ fn emit_structured_cancel_join_result_materialize(
     write_indent(out, indent);
     out.push_str("if (frame->");
     out.push_str(&async_spawn_failed_field(spawn_index));
-    out.push_str(" == 0u) {\n");
+    out.push_str(" == 0u && frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure == NOMO_ASYNC_TASK_FAILURE_NONE) {\n");
     write_indent(out, indent + 1);
     out.push_str(&result);
     out.push_str(".tag = ");
@@ -1170,14 +1429,30 @@ fn emit_structured_cancel_join_result_materialize(
     out.push_str(&c_payload_ident("Err"));
     out.push('.');
     out.push_str(&c_member_ident("code"));
-    out.push_str(" = nomo_string_literal(\"queue_full\");\n");
+    out.push_str(" = frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" != 0u\n");
+    write_indent(out, indent + 2);
+    out.push_str("? nomo_string_literal(\"queue_full\")\n");
+    write_indent(out, indent + 2);
+    out.push_str(": nomo_string_literal(nomo_async_task_failure_code(frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure));\n");
     write_indent(out, indent + 1);
     out.push_str(&result);
     out.push_str(".payload.");
     out.push_str(&c_payload_ident("Err"));
     out.push('.');
     out.push_str(&c_member_ident("message"));
-    out.push_str(" = nomo_string_literal(\"owner executor ready queue is full\");\n");
+    out.push_str(" = frame->");
+    out.push_str(&async_spawn_failed_field(spawn_index));
+    out.push_str(" != 0u\n");
+    write_indent(out, indent + 2);
+    out.push_str("? nomo_string_literal(\"owner executor ready queue is full\")\n");
+    write_indent(out, indent + 2);
+    out.push_str(": nomo_string_literal(nomo_async_task_failure_message(frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(".structured_failure));\n");
     write_indent(out, indent);
     out.push_str("}\n");
     write_indent(out, indent);
@@ -1207,6 +1482,14 @@ typedef enum {
     NOMO_ASYNC_TIMER_OUTCOME_LIMIT = 2,
     NOMO_ASYNC_TIMER_OUTCOME_RUNTIME_ERROR = 3
 } nomo_async_timer_outcome;
+
+typedef enum {
+    NOMO_ASYNC_TASK_FAILURE_NONE = 0,
+    NOMO_ASYNC_TASK_FAILURE_CANCELLED = 1,
+    NOMO_ASYNC_TASK_FAILURE_TIMEOUT = 2,
+    NOMO_ASYNC_TASK_FAILURE_TIMER_LIMIT = 3,
+    NOMO_ASYNC_TASK_FAILURE_RUNTIME = 4
+} nomo_async_task_failure;
 
 typedef struct nomo_async_context nomo_async_context;
 typedef nomo_async_poll (*nomo_async_poll_fn)(void *, nomo_async_context *);
@@ -1250,6 +1533,9 @@ struct nomo_async_context {
     uint64_t task_joins;
     uint64_t join_suspensions;
     uint64_t task_cancellations;
+    uint64_t deadline_registrations;
+    uint64_t deadline_expirations;
+    uint64_t deadline_cancellations;
     uint64_t timer_registrations;
     uint64_t timer_expirations;
     uint64_t timer_cancellations;
@@ -1410,6 +1696,56 @@ static nomo_async_poll nomo_async_timer_resume(
     return NOMO_ASYNC_POLL_READY;
 }
 
+static nomo_async_timer_outcome nomo_async_deadline_arm(
+    nomo_async_timer_registration *registration,
+    int64_t duration_millis,
+    nomo_async_context *context
+) {
+    if (duration_millis <= 0) {
+        return NOMO_ASYNC_TIMER_OUTCOME_OK;
+    }
+    if (registration->armed != 0u || registration->expired != 0u) {
+        return NOMO_ASYNC_TIMER_OUTCOME_RUNTIME_ERROR;
+    }
+    uint32_t slot_index = NOMO_ASYNC_TIMER_CAPACITY;
+    for (uint32_t index = 0u; index < NOMO_ASYNC_TIMER_CAPACITY; index += 1u) {
+        if (context->timers[index].occupied == 0u) {
+            slot_index = index;
+            break;
+        }
+    }
+    if (slot_index == NOMO_ASYNC_TIMER_CAPACITY) {
+        return NOMO_ASYNC_TIMER_OUTCOME_LIMIT;
+    }
+    int64_t now = nomo_time_monotonic_millis();
+    int64_t deadline = duration_millis > INT64_MAX - now
+        ? INT64_MAX
+        : now + duration_millis;
+    context->next_timer_generation += 1u;
+    if (context->next_timer_generation == 0u) {
+        context->next_timer_generation = 1u;
+    }
+    registration->slot = slot_index;
+    registration->generation = context->next_timer_generation;
+    registration->deadline_millis = deadline;
+    registration->armed = 1u;
+    registration->expired = 0u;
+    nomo_async_timer_slot *slot = &context->timers[slot_index];
+    slot->registration = registration;
+    slot->frame = context->current_frame;
+    slot->poll = context->current_poll;
+    slot->deadline_millis = deadline;
+    slot->generation = registration->generation;
+    slot->occupied = 1u;
+    context->timer_registrations += 1u;
+    context->deadline_registrations += 1u;
+    context->live_timers += 1u;
+    if (context->live_timers > context->peak_live_timers) {
+        context->peak_live_timers = context->live_timers;
+    }
+    return NOMO_ASYNC_TIMER_OUTCOME_NONE;
+}
+
 static void nomo_async_timer_disarm(
     nomo_async_timer_registration *registration,
     nomo_async_context *context
@@ -1435,6 +1771,69 @@ static void nomo_async_timer_disarm(
     }
     registration->armed = 0u;
     registration->expired = 0u;
+}
+
+static int nomo_async_deadline_due(
+    nomo_async_timer_registration *registration,
+    nomo_async_context *context
+) {
+    if (registration->expired != 0u) {
+        return 1;
+    }
+    if (registration->armed == 0u
+        || nomo_time_monotonic_millis() < registration->deadline_millis) {
+        return 0;
+    }
+    if (registration->slot < NOMO_ASYNC_TIMER_CAPACITY) {
+        nomo_async_timer_slot *slot = &context->timers[registration->slot];
+        if (slot->occupied != 0u
+            && slot->generation == registration->generation
+            && slot->registration == registration) {
+            slot->occupied = 0u;
+            slot->registration = NULL;
+            slot->frame = NULL;
+            slot->poll = NULL;
+            if (context->live_timers > 0u) {
+                context->live_timers -= 1u;
+            }
+            context->timer_expirations += 1u;
+        }
+    }
+    registration->armed = 0u;
+    registration->expired = 1u;
+    return 1;
+}
+
+static const char *nomo_async_task_failure_code(nomo_async_task_failure failure) {
+    switch (failure) {
+        case NOMO_ASYNC_TASK_FAILURE_CANCELLED:
+            return "cancelled";
+        case NOMO_ASYNC_TASK_FAILURE_TIMEOUT:
+            return "timeout";
+        case NOMO_ASYNC_TASK_FAILURE_TIMER_LIMIT:
+            return "timer_limit";
+        case NOMO_ASYNC_TASK_FAILURE_RUNTIME:
+            return "runtime";
+        case NOMO_ASYNC_TASK_FAILURE_NONE:
+        default:
+            return "runtime";
+    }
+}
+
+static const char *nomo_async_task_failure_message(nomo_async_task_failure failure) {
+    switch (failure) {
+        case NOMO_ASYNC_TASK_FAILURE_CANCELLED:
+            return "structured task was cancelled";
+        case NOMO_ASYNC_TASK_FAILURE_TIMEOUT:
+            return "structured task deadline elapsed";
+        case NOMO_ASYNC_TASK_FAILURE_TIMER_LIMIT:
+            return "owner executor timer capacity is exhausted";
+        case NOMO_ASYNC_TASK_FAILURE_RUNTIME:
+            return "owner executor entered an invalid deadline state";
+        case NOMO_ASYNC_TASK_FAILURE_NONE:
+        default:
+            return "structured task failed";
+    }
 }
 
 static int nomo_async_timer_wait_next(nomo_async_context *context) {
@@ -1582,6 +1981,9 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"task_joins\": %" PRIu64 ",\n"
         "    \"join_suspensions\": %" PRIu64 ",\n"
         "    \"task_cancellations\": %" PRIu64 ",\n"
+        "    \"deadline_registrations\": %" PRIu64 ",\n"
+        "    \"deadline_expirations\": %" PRIu64 ",\n"
+        "    \"deadline_cancellations\": %" PRIu64 ",\n"
         "    \"timer_registrations\": %" PRIu64 ",\n"
         "    \"timer_expirations\": %" PRIu64 ",\n"
         "    \"timer_cancellations\": %" PRIu64 ",\n"
@@ -1605,6 +2007,9 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->task_joins,
         context->join_suspensions,
         context->task_cancellations,
+        context->deadline_registrations,
+        context->deadline_expirations,
+        context->deadline_cancellations,
         context->timer_registrations,
         context->timer_expirations,
         context->timer_cancellations,
@@ -1664,6 +2069,67 @@ pub(super) fn emit_async_function(
     let mut emitted_terminal_return = false;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
+        if statement_is_within_async_deadline(function, index) {
+            emit_async_deadline_due_check(out, function, async_names, 3);
+        }
+        if let Some(duration) = statement_async_deadline_enter(statement) {
+            out.push_str("            int64_t nomo_async_deadline_millis = (");
+            emit_expr(out, duration);
+            out.push_str(").nomo_member_millis;\n");
+            out.push_str("            if (nomo_async_deadline_millis <= 0) {\n");
+            emit_async_deadline_failure(
+                out,
+                function,
+                async_names,
+                "NOMO_ASYNC_TASK_FAILURE_TIMEOUT",
+                4,
+            );
+            out.push_str("            }\n");
+            out.push_str(
+                "            frame->nomo_async_deadline_outcome = nomo_async_deadline_arm(\n\
+                             &frame->nomo_async_deadline_timer,\n\
+                             nomo_async_deadline_millis,\n\
+                             context\n\
+                         );\n\
+                         if (frame->nomo_async_deadline_outcome == NOMO_ASYNC_TIMER_OUTCOME_LIMIT) {\n",
+            );
+            emit_async_deadline_failure(
+                out,
+                function,
+                async_names,
+                "NOMO_ASYNC_TASK_FAILURE_TIMER_LIMIT",
+                4,
+            );
+            out.push_str(
+                "            }\n\
+                         if (frame->nomo_async_deadline_outcome != NOMO_ASYNC_TIMER_OUTCOME_NONE) {\n",
+            );
+            emit_async_deadline_failure(
+                out,
+                function,
+                async_names,
+                "NOMO_ASYNC_TASK_FAILURE_RUNTIME",
+                4,
+            );
+            out.push_str(
+                "            }\n\
+                         frame->nomo_async_deadline_active = 1u;\n",
+            );
+            continue;
+        }
+        if statement_is_async_deadline_exit(statement) {
+            out.push_str(
+                "            if (frame->nomo_async_deadline_active != 0u) {\n\
+                             nomo_async_timer_disarm(&frame->nomo_async_deadline_timer, context);\n\
+                             frame->nomo_async_deadline_active = 0u;\n\
+                             context->deadline_cancellations += 1u;\n\
+                         }\n",
+            );
+            continue;
+        }
+        if statement_is_async_check_cancelled(statement) {
+            continue;
+        }
         if let Some(spawn) = statement_structured_spawn(statement) {
             let callee = functions
                 .get(spawn.callee)
@@ -1835,6 +2301,9 @@ pub(super) fn emit_async_function(
             out.push_str("        case ");
             out.push_str(&state.to_string());
             out.push_str("u: {\n");
+            if statement_is_within_async_deadline(function, index) {
+                emit_async_deadline_due_check(out, function, async_names, 3);
+            }
             if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_resume(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -1925,6 +2394,7 @@ pub(super) fn emit_async_function(
                              }\n\
                              ",
                 );
+                emit_async_child_failure_propagation(out, function, async_names, index, 3);
                 if callee.return_type != ValueType::Void {
                     let (binding, value_type) = call
                         .binding
@@ -2307,6 +2777,15 @@ pub(super) fn emit_async_function(
             &async_cancel_join_result_owned_field(index),
             &async_cancel_join_result_field(index),
             1,
+        );
+    }
+    if function_has_async_deadline(function) {
+        out.push_str(
+            "    if (frame->context != NULL && frame->nomo_async_deadline_active != 0u) {\n\
+                 nomo_async_timer_disarm(&frame->nomo_async_deadline_timer, frame->context);\n\
+                 frame->nomo_async_deadline_active = 0u;\n\
+                 frame->context->deadline_cancellations += 1u;\n\
+             }\n",
         );
     }
     for (index, statement) in function.body.iter().enumerate().rev() {

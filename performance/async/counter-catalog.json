@@ -128,6 +128,108 @@
       "semantics": "Maximum simultaneously armed owner-local timer registrations."
     },
     {
+      "name": "channel_constructions",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Successfully constructed channels when they first bind to the measured owner executor."
+    },
+    {
+      "name": "channel_sends",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Successful measured sends, whether buffered or delivered by direct handoff."
+    },
+    {
+      "name": "channel_receives",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Values delivered to measured receives, whether buffered or handed off directly."
+    },
+    {
+      "name": "channel_buffered_sends",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Successful sends that publish a value into a bounded ring slot."
+    },
+    {
+      "name": "channel_buffered_receives",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Successful receives that remove a value from a bounded ring slot."
+    },
+    {
+      "name": "channel_direct_handoffs",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Successful sends transferred directly to the oldest linked receiver without occupying a ring slot."
+    },
+    {
+      "name": "channel_send_suspensions",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Send operations linked to a full channel waiter FIFO and returned pending."
+    },
+    {
+      "name": "channel_receive_suspensions",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Receive operations linked to an empty open channel waiter FIFO and returned pending."
+    },
+    {
+      "name": "channel_wakeups",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Linked channel waiters successfully enqueued on their owner ready queue."
+    },
+    {
+      "name": "channel_closes",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "First open-to-closed transitions observed by the measured owner executor; repeated close calls do not count."
+    },
+    {
+      "name": "channel_cancellations",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Active send or receive registrations cancelled and cleaned before normal resume completion."
+    },
+    {
+      "name": "live_channel_buffered_elements",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Ring-buffer elements currently owned by channels bound to the measured executor."
+    },
+    {
+      "name": "peak_live_channel_buffered_elements",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Maximum simultaneous ring-buffer elements owned by channels bound to the measured executor."
+    },
+    {
+      "name": "live_channel_send_waiters",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Send registrations currently linked to measured channel waiter FIFOs."
+    },
+    {
+      "name": "peak_live_channel_send_waiters",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Maximum simultaneous linked send registrations in the measured executor."
+    },
+    {
+      "name": "live_channel_receive_waiters",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Receive registrations currently linked to measured channel waiter FIFOs."
+    },
+    {
+      "name": "peak_live_channel_receive_waiters",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Maximum simultaneous linked receive registrations in the measured executor."
+    },
+    {
       "name": "reactor_registrations",
       "unit": "count",
       "available_phase": "P2"

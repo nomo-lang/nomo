@@ -1,0 +1,70 @@
+{
+  "schema": 1,
+  "gate": "p3-current-thread-bounded-channel",
+  "required_absent_generated_c_patterns": [
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static int nomo_async_metrics_export": 1,
+    "nomo_async_metrics_export(&nomo__context)": 1,
+    "static nomo_async_poll nomo_channel_send_start_u64(": 1,
+    "static nomo_async_poll nomo_channel_receive_start_u64(": 1,
+    "static nomo_enum_Result_struct_Channel_u64_struct_ChannelError nomo_channel_new_u64(": 1,
+    "static void nomo_channel_close_u64(": 1,
+    "context->channel_send_suspensions += 1u;": 1,
+    "context->channel_receive_suspensions += 1u;": 1
+  },
+  "runtime_counters": {
+    "available": true,
+    "schema": 1,
+    "counters": {
+      "poll_calls": 11,
+      "cooperative_yields": 1,
+      "frame_allocations": 0,
+      "frame_drops": 3,
+      "peak_live_frames": 3,
+      "ready_queue_enqueues": 10,
+      "ready_queue_dequeues": 10,
+      "ready_queue_saturations": 0,
+      "ready_queue_cancellations": 0,
+      "task_spawns": 2,
+      "publication_moves": 0,
+      "task_joins": 2,
+      "join_suspensions": 1,
+      "task_cancellations": 0,
+      "channel_constructions": 1,
+      "channel_sends": 32,
+      "channel_receives": 32,
+      "channel_buffered_sends": 29,
+      "channel_buffered_receives": 29,
+      "channel_direct_handoffs": 3,
+      "channel_send_suspensions": 3,
+      "channel_receive_suspensions": 3,
+      "channel_wakeups": 6,
+      "channel_closes": 1,
+      "channel_cancellations": 0,
+      "live_channel_buffered_elements": 0,
+      "peak_live_channel_buffered_elements": 8,
+      "live_channel_send_waiters": 0,
+      "peak_live_channel_send_waiters": 1,
+      "live_channel_receive_waiters": 0,
+      "peak_live_channel_receive_waiters": 1,
+      "live_timers": 0,
+      "peak_live_timers": 0
+    },
+    "unavailable": [
+      "local_retain",
+      "local_release",
+      "atomic_retain",
+      "atomic_release",
+      "cow_detach_count",
+      "cow_detach_bytes",
+      "publish_copy_count",
+      "publish_copy_bytes"
+    ]
+  }
+}

@@ -175,6 +175,36 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
             if name == BUILTIN_TASK_PUBLICATION_MOVE_EXPR {
                 debug_assert_eq!(args.len(), 1);
                 emit_expr(out, &args[0]);
+            } else if let Some(suffix) = name.strip_prefix(BUILTIN_TASK_CHANNEL_PREFIX) {
+                debug_assert_eq!(args.len(), 1);
+                out.push_str("nomo_channel_new_");
+                out.push_str(suffix);
+                out.push('(');
+                emit_expr(out, &args[0]);
+                out.push(')');
+            } else if let Some(suffix) = name.strip_prefix(BUILTIN_TASK_TRY_SEND_PREFIX) {
+                debug_assert_eq!(args.len(), 2);
+                out.push_str("nomo_channel_try_send_");
+                out.push_str(suffix);
+                out.push('(');
+                emit_expr(out, &args[0]);
+                out.push_str(", ");
+                emit_expr(out, &args[1]);
+                out.push(')');
+            } else if let Some(suffix) = name.strip_prefix(BUILTIN_TASK_TRY_RECEIVE_PREFIX) {
+                debug_assert_eq!(args.len(), 1);
+                out.push_str("nomo_channel_try_receive_");
+                out.push_str(suffix);
+                out.push('(');
+                emit_expr(out, &args[0]);
+                out.push(')');
+            } else if let Some(suffix) = name.strip_prefix(BUILTIN_TASK_CLOSE_CHANNEL_PREFIX) {
+                debug_assert_eq!(args.len(), 1);
+                out.push_str("nomo_channel_close_");
+                out.push_str(suffix);
+                out.push('(');
+                emit_expr(out, &args[0]);
+                out.push(')');
             } else if matches!(
                 name.as_str(),
                 BUILTIN_TASK_YIELD_EXPR
@@ -182,7 +212,9 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
                     | BUILTIN_TASK_CHECK_CANCELLED_EXPR
                     | BUILTIN_TASK_DEADLINE_ENTER_EXPR
                     | BUILTIN_TASK_DEADLINE_EXIT_EXPR
-            ) {
+            ) || name.starts_with(BUILTIN_TASK_SEND_PREFIX)
+                || name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX)
+            {
                 unreachable!("async intrinsics are emitted by the stackless coroutine lowering")
             } else if name == BUILTIN_PRINTLN_EXPR {
                 out.push_str("(puts(");

@@ -2,6 +2,7 @@
 package std.task
 
 import std.result
+import std.option
 import std.task
 import std.time
 
@@ -19,6 +20,41 @@ pub struct TaskContext {
 pub struct TaskError {
     pub code: string
     pub message: string
+}
+
+/// A bounded FIFO publication channel owned by the async runtime.
+///
+/// Copies of the handle refer to the same queue. Values crossing the channel
+/// must satisfy the compiler-known Send contract.
+pub struct Channel<T> {
+    handle: u64
+}
+
+/// Stable, secret-safe channel construction or runtime error.
+pub struct ChannelError {
+    pub code: string
+    pub message: string
+}
+
+/// A failed send returns exactly one owner of the unsent value.
+pub struct ChannelSendError<T> {
+    pub error: ChannelError
+    pub value: T
+}
+
+/// Immediate result of a non-suspending send attempt.
+pub enum ChannelTrySend<T> {
+    Sent
+    Full(T)
+    Closed(T)
+    Failed(ChannelSendError<T>)
+}
+
+/// Immediate result of a non-suspending receive attempt.
+pub enum ChannelTryReceive<T> {
+    Value(T)
+    Empty
+    Closed
 }
 
 /// Terminal or polling outcome returned by `join`.
@@ -49,6 +85,38 @@ pub suspend fn check_cancelled() -> void {
 /// returns `runtime_unavailable` without evaluating the duration.
 pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
     return task.sleep(duration)
+}
+
+/// Creates a bounded FIFO channel.
+///
+/// Capacity must be in 1..=65536 and the slot buffer must not exceed 64 MiB.
+pub fn channel<T>(capacity: u64) -> Result<Channel<T>, ChannelError> {
+    return task.channel<T>(capacity)
+}
+
+/// Sends one value, suspending with FIFO backpressure while the queue is full.
+///
+/// The value is consumed. A closed or failed send returns it through
+/// ChannelSendError<T>.
+pub suspend fn send<T>(channel_value: Channel<T>, value: T) -> Result<void, ChannelSendError<T>> {
+    return task.send(channel_value, value)
+}
+
+/// Receives the oldest value, suspending while an open queue is empty.
+///
+/// A closed and drained queue returns None.
+pub suspend fn receive<T>(channel_value: Channel<T>) -> Option<T> {
+    return task.receive(channel_value)
+}
+
+/// Attempts to send without suspending and always preserves one value owner.
+pub fn try_send<T>(channel_value: Channel<T>, value: T) -> ChannelTrySend<T> {
+    return task.try_send(channel_value, value)
+}
+
+/// Attempts to receive without suspending.
+pub fn try_receive<T>(channel_value: Channel<T>) -> ChannelTryReceive<T> {
+    return task.try_receive(channel_value)
 }
 
 /// Structured children use source forms recognized by the compiler:
@@ -106,7 +174,11 @@ pub fn cancel(task_value: Task) -> Result<void, TaskError> {
     return task.cancel(task_value)
 }
 
-/// Releases a finished task handle.
+/// Releases a finished legacy task handle.
+///
+/// The compiler also recognizes `task.close(Channel<T>) -> void` as the
+/// idempotent bounded-channel overload. It wakes blocked operations and keeps
+/// buffered values available until drained.
 pub fn close(task_value: Task) -> Result<void, TaskError> {
     return task.close(task_value)
 }

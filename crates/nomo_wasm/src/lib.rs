@@ -397,6 +397,93 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn returns_channel_constructor_runtime_unavailable_without_evaluating_capacity() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+
+fn capacity() -> u64 {
+    panic("browser-channel-capacity-secret")
+}
+
+fn created_code(result: Result<Channel<string>, ChannelError>) -> string {
+    return match result {
+        Result.Ok(channel_value) => "unexpected channel"
+        Result.Err(error) => error.code
+    }
+}
+
+fn main() -> void {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(capacity())
+    io.println(created_code(created))
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "runtime_unavailable\n");
+        assert!(!response.stderr.contains("browser-channel-capacity-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
+    fn rejects_unsupported_channel_operations_without_evaluating_consumed_operands() {
+        for statement in [
+            "let sent: Result<void, ChannelSendError<string>> = task.send(unavailable_channel(), outgoing())",
+            "let received: Option<string> = task.receive(unavailable_channel())",
+            "let tried: ChannelTrySend<string> = task.try_send(unavailable_channel(), outgoing())",
+            "let polled: ChannelTryReceive<string> = task.try_receive(unavailable_channel())",
+            "task.close(unavailable_channel())",
+        ] {
+            let source = format!(
+                r#"package app.main
+
+import std.task
+
+fn unavailable_channel() -> Channel<string> {{
+    panic("browser-channel-handle-secret")
+}}
+
+fn outgoing() -> string {{
+    panic("browser-channel-value-secret")
+}}
+
+suspend fn main() -> void {{
+    {statement}
+}}
+"#
+            );
+            let response = run_source(&source, ExecutionLimits::default());
+
+            assert_eq!(
+                response.status, "runtime_error",
+                "{statement}\n{response:#?}"
+            );
+            let error = response
+                .runtime_error
+                .as_ref()
+                .expect("unsupported channel operation should return a capability error");
+            assert_eq!(error.code, "NOMO-WASM-003", "{statement}\n{error:#?}");
+            assert!(
+                error.message.contains("channels"),
+                "{statement}\n{error:#?}"
+            );
+            assert!(
+                !error.message.contains("browser-channel-handle-secret"),
+                "{statement}\n{error:#?}"
+            );
+            assert!(
+                !error.message.contains("browser-channel-value-secret"),
+                "{statement}\n{error:#?}"
+            );
+            assert!(response.stdout.is_empty(), "{statement}\n{response:#?}");
+            assert!(response.stderr.is_empty(), "{statement}\n{response:#?}");
+            assert!(response.diagnostic.is_none(), "{statement}\n{response:#?}");
+        }
+    }
+
+    #[test]
     fn rejects_task_deadline_without_evaluating_duration_or_body() {
         let source = r#"package app.main
 

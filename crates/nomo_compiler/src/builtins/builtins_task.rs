@@ -15,6 +15,11 @@ pub(super) fn is_task_builtin_call(callee: &[String]) -> bool {
                         | "close"
                         | "yield_now"
                         | "sleep"
+                        | "channel"
+                        | "send"
+                        | "receive"
+                        | "try_send"
+                        | "try_receive"
                 ) || name == TASK_STRUCTURED_SPAWN_AST_NAME)
     )
 }
@@ -23,11 +28,13 @@ pub(super) fn lower_task_builtin(
     path: &Path,
     callee: &[String],
     args: &[AstExpr],
+    type_args: &[AstTypeRef],
     scope: &HashMap<String, Binding>,
     imports: &[String],
     signatures: &HashMap<String, FunctionSignature>,
     structs: &HashMap<String, StructType>,
     enums: &HashMap<String, EnumType>,
+    _expected: Option<&ValueType>,
     span: &Span,
 ) -> Result<(ValueType, ValueExpr), Diagnostic> {
     let [module, name] = callee else {
@@ -39,6 +46,7 @@ pub(super) fn lower_task_builtin(
     let context_type = ValueType::Struct("TaskContext".to_string(), Vec::new());
     let error_type = ValueType::Struct("TaskError".to_string(), Vec::new());
     let join_type = ValueType::Enum("TaskJoin".to_string(), Vec::new());
+    let channel_error_type = ValueType::Struct("ChannelError".to_string(), Vec::new());
 
     match name.as_str() {
         TASK_STRUCTURED_SPAWN_AST_NAME => {
@@ -321,6 +329,232 @@ pub(super) fn lower_task_builtin(
                 },
             ))
         }
+        "channel" => {
+            let [type_arg] = type_args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    format!(
+                        "task.channel expects 1 explicit type argument, got {}",
+                        type_args.len()
+                    ),
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let element_type = parse_non_void_type(type_arg, structs, enums).ok_or_else(|| {
+                unsupported_type_diagnostic_from_maps(
+                    path,
+                    span,
+                    type_arg,
+                    "unsupported task.channel element type",
+                    structs,
+                    enums,
+                )
+            })?;
+            validate_publication_type(
+                path,
+                span,
+                "task.channel element",
+                &element_type,
+                structs,
+                enums,
+            )?;
+            let [capacity_arg] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    "task.channel",
+                    1,
+                    args.len(),
+                ));
+            };
+            let (actual_capacity, capacity) = lower_value_expr_with_expected(
+                path,
+                capacity_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            require_task_type(
+                path,
+                span,
+                "task.channel capacity",
+                &ValueType::U64,
+                &actual_capacity,
+            )?;
+            let channel_type = ValueType::Struct("Channel".to_string(), vec![element_type.clone()]);
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![channel_type, channel_error_type]),
+                ValueExpr::Call {
+                    name: format!(
+                        "{BUILTIN_TASK_CHANNEL_PREFIX}{}",
+                        value_type_key_part(&element_type)
+                    ),
+                    args: vec![capacity],
+                },
+            ))
+        }
+        "send" | "try_send" => {
+            if !type_args.is_empty() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("task.{name} infers its element type from Channel<T>"),
+                ));
+            }
+            let [channel_arg, value_arg] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    &format!("task.{name}"),
+                    2,
+                    args.len(),
+                ));
+            };
+            if name == "send" && !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call suspend function `task.send`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let (channel_actual, channel_value) = lower_value_expr(
+                path,
+                channel_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            let element_type = task_channel_element_type(path, span, &channel_actual)?;
+            let (actual_value, mut value) = lower_value_expr_with_expected(
+                path,
+                value_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&element_type),
+                span,
+            )?;
+            require_task_type(
+                path,
+                span,
+                &format!("task.{name} value"),
+                &element_type,
+                &actual_value,
+            )?;
+            let transfer = validate_publication_type(
+                path,
+                span,
+                &format!("task.{name} value"),
+                &element_type,
+                structs,
+                enums,
+            )?;
+            if transfer != PublicationTransfer::Copy {
+                value = lower_channel_publication_move(
+                    path,
+                    span,
+                    value_arg,
+                    value,
+                    scope,
+                    &format!("task.{name}"),
+                )?;
+            }
+            let suffix = value_type_key_part(&element_type);
+            if name == "send" {
+                let send_error =
+                    ValueType::Struct("ChannelSendError".to_string(), vec![element_type.clone()]);
+                Ok((
+                    ValueType::Enum("Result".to_string(), vec![ValueType::Void, send_error]),
+                    ValueExpr::Call {
+                        name: format!("{BUILTIN_TASK_SEND_PREFIX}{suffix}"),
+                        args: vec![channel_value, value],
+                    },
+                ))
+            } else {
+                Ok((
+                    ValueType::Enum("ChannelTrySend".to_string(), vec![element_type]),
+                    ValueExpr::Call {
+                        name: format!("{BUILTIN_TASK_TRY_SEND_PREFIX}{suffix}"),
+                        args: vec![channel_value, value],
+                    },
+                ))
+            }
+        }
+        "receive" | "try_receive" => {
+            if !type_args.is_empty() {
+                return Err(type_mismatch(
+                    path,
+                    span,
+                    format!("task.{name} infers its element type from Channel<T>"),
+                ));
+            }
+            let [channel_arg] = args else {
+                return Err(task_arity_diagnostic(
+                    path,
+                    span,
+                    &format!("task.{name}"),
+                    1,
+                    args.len(),
+                ));
+            };
+            if name == "receive" && !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call suspend function `task.receive`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let (channel_actual, channel_value) = lower_value_expr(
+                path,
+                channel_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                span,
+            )?;
+            let element_type = task_channel_element_type(path, span, &channel_actual)?;
+            let suffix = value_type_key_part(&element_type);
+            if name == "receive" {
+                Ok((
+                    ValueType::Enum("Option".to_string(), vec![element_type]),
+                    ValueExpr::Call {
+                        name: format!("{BUILTIN_TASK_RECEIVE_PREFIX}{suffix}"),
+                        args: vec![channel_value],
+                    },
+                ))
+            } else {
+                Ok((
+                    ValueType::Enum("ChannelTryReceive".to_string(), vec![element_type]),
+                    ValueExpr::Call {
+                        name: format!("{BUILTIN_TASK_TRY_RECEIVE_PREFIX}{suffix}"),
+                        args: vec![channel_value],
+                    },
+                ))
+            }
+        }
         "spawn" => {
             let [worker_arg, input_arg] = args else {
                 return Err(task_arity_diagnostic(
@@ -534,6 +768,21 @@ pub(super) fn lower_task_builtin(
             let (actual, task_value) = lower_value_expr(
                 path, task_arg, scope, imports, signatures, structs, enums, span,
             )?;
+            if let ValueType::Struct(channel_name, channel_args) = &actual
+                && channel_name == "Channel"
+                && let [element_type] = channel_args.as_slice()
+            {
+                return Ok((
+                    ValueType::Void,
+                    ValueExpr::Call {
+                        name: format!(
+                            "{BUILTIN_TASK_CLOSE_CHANNEL_PREFIX}{}",
+                            value_type_key_part(element_type)
+                        ),
+                        args: vec![task_value],
+                    },
+                ));
+            }
             require_task_type(path, span, "task.close task", &task_type, &actual)?;
             Ok((
                 ValueType::Enum("Result".to_string(), vec![ValueType::Void, error_type]),
@@ -545,6 +794,90 @@ pub(super) fn lower_task_builtin(
         }
         _ => unreachable!("task builtin matcher and lowering must stay aligned"),
     }
+}
+
+fn task_channel_element_type(
+    path: &Path,
+    span: &Span,
+    actual: &ValueType,
+) -> Result<ValueType, Diagnostic> {
+    let ValueType::Struct(name, args) = actual else {
+        return Err(type_mismatch(path, span, "expected a Channel<T> value"));
+    };
+    let [element_type] = args.as_slice() else {
+        return Err(type_mismatch(path, span, "expected a Channel<T> value"));
+    };
+    if name != "Channel" {
+        return Err(type_mismatch(path, span, "expected a Channel<T> value"));
+    }
+    Ok(element_type.clone())
+}
+
+fn lower_channel_publication_move(
+    path: &Path,
+    span: &Span,
+    source: &AstExpr,
+    lowered: ValueExpr,
+    scope: &HashMap<String, Binding>,
+    boundary: &str,
+) -> Result<ValueExpr, Diagnostic> {
+    let AstExpr::Name(argument_path) = source else {
+        return Ok(ValueExpr::Call {
+            name: BUILTIN_TASK_PUBLICATION_MOVE_EXPR.to_string(),
+            args: vec![lowered],
+        });
+    };
+    let Some(root) = argument_path.first() else {
+        unreachable!("name expressions have at least one path segment")
+    };
+    let Some(binding) = scope.get(root) else {
+        return Ok(ValueExpr::Call {
+            name: BUILTIN_TASK_PUBLICATION_MOVE_EXPR.to_string(),
+            args: vec![lowered],
+        });
+    };
+    if argument_path.len() != 1 {
+        return Err(Diagnostic::new(
+            "E0883",
+            format!(
+                "{boundary} cannot move only `{}` from non-Copy binding `{root}`; send the whole binding or construct a temporary value",
+                argument_path.join(".")
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    match binding.source {
+        BindingSource::Local | BindingSource::Param => {
+            ensure_publication_binding_available(path, span, scope, root)?;
+        }
+        BindingSource::EnumPayload { .. } => {
+            return Err(Diagnostic::new(
+                "E0883",
+                format!(
+                    "{boundary} cannot move enum payload binding `{root}` in the current P3-B slice; construct an owned temporary first"
+                ),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        BindingSource::Const => return Ok(lowered),
+        BindingSource::FunctionEffect { .. }
+        | BindingSource::TaskScope
+        | BindingSource::PublicationMove { .. } => {
+            unreachable!("internal bindings cannot be publication operands")
+        }
+    }
+    Ok(ValueExpr::Call {
+        name: BUILTIN_TASK_PUBLICATION_MOVE_EXPR.to_string(),
+        args: vec![lowered],
+    })
 }
 
 fn lower_task_worker(

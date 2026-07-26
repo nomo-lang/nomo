@@ -18,7 +18,7 @@ pub(super) fn lower_single_segment_call_value_expr(
         if qualified == ["Array", "new"] {
             return lower_array_new(path, type_args, args, structs, enums, span);
         }
-        if !type_args.is_empty() {
+        if !type_args.is_empty() && qualified.as_slice() != ["task", "channel"] {
             return Err(type_mismatch(
                 path,
                 span,
@@ -110,7 +110,8 @@ pub(super) fn lower_single_segment_call_value_expr(
         }
         if qualified[0] == "task" {
             return lower_task_builtin(
-                path, &qualified, args, scope, imports, signatures, structs, enums, span,
+                path, &qualified, args, type_args, scope, imports, signatures, structs, enums,
+                expected, span,
             );
         }
         if qualified[0] == "sqlite" {

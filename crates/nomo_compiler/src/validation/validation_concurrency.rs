@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum PublicationTransfer {
     Copy,
     Move,
+    Shared,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -268,6 +269,23 @@ fn check_send_type(
             Ok(PublicationTransfer::Move)
         }
         ValueType::Struct(name, args) => {
+            if name == "Channel" {
+                let [element_type] = args.as_slice() else {
+                    return Err(local_failure(
+                        path,
+                        value_type,
+                        "Channel must have exactly one element type",
+                    ));
+                };
+                check_nested_send_type(
+                    element_type,
+                    structs,
+                    enums,
+                    &format!("{path}.value"),
+                    visiting,
+                )?;
+                return Ok(PublicationTransfer::Shared);
+            }
             let Some(struct_type) = structs.get(name) else {
                 return Err(local_failure(
                     path,

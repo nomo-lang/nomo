@@ -339,13 +339,23 @@ const TASK_ITEMS: &[&str] = &[
     "TaskContext",
     "TaskError",
     "TaskJoin",
+    "Channel",
+    "ChannelError",
+    "ChannelSendError",
+    "ChannelTryReceive",
+    "ChannelTrySend",
     "cancel",
+    "channel",
     "check_cancelled",
     "close",
     "is_cancelled",
     "join",
+    "receive",
+    "send",
     "sleep",
     "spawn",
+    "try_receive",
+    "try_send",
     "yield_now",
 ];
 const TIME_ITEMS: &[&str] = &[
@@ -1372,7 +1382,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 312);
+        assert_eq!(imports.len(), 322);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
@@ -1383,6 +1393,11 @@ mod tests {
         assert!(is_supported_import("std.task.yield_now"));
         assert!(is_supported_import("std.task.sleep"));
         assert!(is_supported_import("std.task.check_cancelled"));
+        assert!(is_supported_import("std.task.Channel"));
+        assert!(is_supported_import("std.task.ChannelTrySend"));
+        assert!(is_supported_import("std.task.channel"));
+        assert!(is_supported_import("std.task.send"));
+        assert!(is_supported_import("std.task.try_receive"));
         assert!(!is_supported_import("std.io.flush"));
     }
 

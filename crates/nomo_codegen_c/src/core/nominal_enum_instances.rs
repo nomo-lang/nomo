@@ -81,6 +81,31 @@ pub(super) fn collect_enum_instances(program: &Program) -> Vec<(String, Vec<Valu
             push_enum_instance(&mut seen, &mut out, "Result", &[ok, error.clone()]);
         }
     }
+    for element in collect_channel_element_types(program) {
+        let channel = ValueType::Struct("Channel".to_string(), vec![element.clone()]);
+        let channel_error = ValueType::Struct("ChannelError".to_string(), Vec::new());
+        let send_error = ValueType::Struct("ChannelSendError".to_string(), vec![element.clone()]);
+        push_enum_instance(&mut seen, &mut out, "Result", &[channel, channel_error]);
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "Result",
+            &[ValueType::Void, send_error],
+        );
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "ChannelTrySend",
+            std::slice::from_ref(&element),
+        );
+        push_enum_instance(
+            &mut seen,
+            &mut out,
+            "ChannelTryReceive",
+            std::slice::from_ref(&element),
+        );
+        push_enum_instance(&mut seen, &mut out, "Option", &[element]);
+    }
     out
 }
 

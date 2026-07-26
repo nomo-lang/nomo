@@ -6,7 +6,8 @@
     "CreateThread",
     "__atomic_",
     "Interlocked",
-    "stdatomic.h"
+    "stdatomic.h",
+    "nomo_channel_"
   ],
   "required_generated_c_pattern_counts": {
     "static int nomo_async_metrics_export": 1,

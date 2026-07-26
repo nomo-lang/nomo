@@ -39,6 +39,8 @@ mod expressions;
 // Runtime and host helper emission.
 #[path = "runtime/host_async_executor_helpers.rs"]
 mod host_async_executor_helpers;
+#[path = "runtime/host_channel_helpers.rs"]
+mod host_channel_helpers;
 #[path = "runtime/host_cron_helpers.rs"]
 mod host_cron_helpers;
 #[path = "runtime/host_env_process_helpers.rs"]
@@ -128,6 +130,7 @@ use expression_std_misc::*;
 use expression_string_char::*;
 use expressions::*;
 use host_async_executor_helpers::*;
+use host_channel_helpers::*;
 use host_cron_helpers::*;
 use host_env_process_helpers::*;
 use host_file_helpers::*;
@@ -212,6 +215,12 @@ const BUILTIN_TASK_PUBLICATION_MOVE_EXPR: &str = "__nomo_task_publication_move";
 const BUILTIN_TASK_STRUCTURED_JOIN_EXPR: &str = "__nomo_structured_task_join";
 const BUILTIN_TASK_STRUCTURED_CANCEL_EXPR: &str = "__nomo_structured_task_cancel";
 const BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR: &str = "__nomo_structured_task_cancel_join";
+const BUILTIN_TASK_CHANNEL_PREFIX: &str = "__nomo_task_channel::";
+const BUILTIN_TASK_SEND_PREFIX: &str = "__nomo_task_send::";
+const BUILTIN_TASK_RECEIVE_PREFIX: &str = "__nomo_task_receive::";
+const BUILTIN_TASK_TRY_SEND_PREFIX: &str = "__nomo_task_try_send::";
+const BUILTIN_TASK_TRY_RECEIVE_PREFIX: &str = "__nomo_task_try_receive::";
+const BUILTIN_TASK_CLOSE_CHANNEL_PREFIX: &str = "__nomo_task_close_channel::";
 const BUILTIN_SQLITE_OPEN_EXPR: &str = "__nomo_sqlite_open";
 const BUILTIN_SQLITE_OPEN_MEMORY_EXPR: &str = "__nomo_sqlite_open_memory";
 const BUILTIN_SQLITE_EXECUTE_EXPR: &str = "__nomo_sqlite_execute";

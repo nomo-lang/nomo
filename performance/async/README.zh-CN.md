@@ -56,6 +56,12 @@ sleep，要求 timeout 优先、取消 sleep registration、构造 typed join er
 publication-move gate 会把一个带嵌套 COW storage 的 managed aggregate
 transfer 到 structured child，要求 `publication_moves` 恰好为 1，并拒绝
 generated retain、thread、atomic 与 heap-frame 证据。
+`manifest-p3.json` 增加 current-thread bounded-channel 门禁：容量 8 的 Nomo
+ring 与固定 `GOMAXPROCS=1` 的 Go channel 都传递 32 个 `u64` 值。Nomo probe
+要求 buffered/direct-handoff、suspension、wakeup、close 以及 buffer/waiter
+live/peak counter 全部精确匹配。它还重复运行 `sync_unused` 与 async yield
+probe，并禁止出现 `nomo_channel_`，证明未构造 channel 的代码没有 channel
+storage 或 metadata。Nomo/Go sample 仅作为证据，不构成性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。
@@ -75,6 +81,11 @@ python3 scripts/async_benchmark.py \
   --manifest performance/async/manifest-p1.json \
   --require-clean \
   --output performance/results/async-p1.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
+  --manifest performance/async/manifest-p3.json \
+  --require-clean \
+  --output performance/results/async-p3.json
 ```
 
 Go patch 不匹配、少于五次 measured run、两侧输出 byte 不同、出现 stderr、
@@ -84,7 +95,7 @@ harness 都会失败。每份结果记录 manifest、harness、counter catalog�
 Nomo/Go/C toolchain 与产物 binary 的 SHA-256。请求的 metrics path 无法打开时，
 程序只返回不包含路径的通用错误。
 
-CI 上传原始 P0 与 P1 JSON，不把 hosted runner timing 当成稳定 baseline。
+CI 上传原始 P0、P1 与 P3 JSON，不把 hosted runner timing 当成稳定 baseline。
 后续在受控机器采集 release evidence 时还要设置 `NOMO_BENCH_POWER_MODE` 并
 强制 process affinity。当前记录每个 process 的 wall time、CPU time 与 POSIX
 `wait4` peak RSS，但还不记录 steady RSS。这些 sample 只验证 harness 与

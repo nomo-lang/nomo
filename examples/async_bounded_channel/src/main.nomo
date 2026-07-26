@@ -1,0 +1,38 @@
+package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn producer(channel_value: Channel<string>) -> void {
+    let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
+    let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
+}
+
+suspend fn consumer(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    let first: Option<string> = task.receive(channel_value)
+    let second: Option<string> = task.receive(channel_value)
+    io.println(option.unwrap_or(first, "missing"))
+    io.println(option.unwrap_or(second, "missing"))
+    task.close(channel_value)
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let producer_task = task.spawn producer(channel_value)
+        let consumer_task = task.spawn consumer(channel_value)
+        let producer_result: Result<void, TaskError> = task.join(producer_task)
+        let consumer_result: Result<void, TaskError> = task.join(consumer_task)
+    }
+}

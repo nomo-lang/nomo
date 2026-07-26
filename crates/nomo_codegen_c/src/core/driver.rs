@@ -53,6 +53,11 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     emit_struct_and_enum_types(&mut out, program);
+    let channel_element_types = collect_channel_element_types(program);
+    if !channel_element_types.is_empty() {
+        emit_channel_base_helpers(&mut out);
+        out.push('\n');
+    }
     emit_nominal_lifecycle_helpers(&mut out, program);
     if uses_hash_builtin(program) {
         emit_hash_helpers(&mut out);
@@ -317,6 +322,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
 
     if !async_names.is_empty() {
         emit_current_thread_executor(&mut out);
+        out.push('\n');
+    }
+    for element_type in &channel_element_types {
+        emit_channel_instance_helpers(&mut out, element_type, !async_names.is_empty());
         out.push('\n');
     }
 

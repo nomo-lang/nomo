@@ -305,6 +305,12 @@ task.sleep(duration: Duration) -> Result<void, TaskError> // suspend-only
 task.check_cancelled() -> void // suspend-only, non-suspending observation
 task.scope { ... } // suspend-only structured scope
 task.deadline(duration: Duration) { ... } // suspend-only structured deadline
+task.channel<T>(capacity: u64) -> Result<Channel<T>, ChannelError>
+task.send(channel: Channel<T>, value: T) -> Result<void, ChannelSendError<T>> // suspend-only
+task.receive(channel: Channel<T>) -> Option<T> // suspend-only
+task.try_send(channel: Channel<T>, value: T) -> ChannelTrySend<T>
+task.try_receive(channel: Channel<T>) -> ChannelTryReceive<T>
+task.close(channel: Channel<T>) -> void
 let child = task.spawn child_function(arguments) // scope-owned Task<T>
 task.join(child) -> Result<T, TaskError> // consumes structured child
 task.cancel(child) -> Result<void, TaskError> // suspend-capable, consumes structured child
@@ -347,6 +353,23 @@ completion. A parent observes the typed failure through structured join.
 check. Browser WASM rejects deadlines without evaluating the duration or body
 until its host-driven backend lands.
 
+P3-B adds a current-thread `Channel<T>` when `T` satisfies compiler-known
+structural Send. Capacity is 1 through 65,536 elements and checked slot storage
+is capped at 64 MiB. Sends consume their value; full/closed immediate attempts
+and failed suspended sends return exactly one owner through
+`ChannelTrySend<T>` or `ChannelSendError<T>`. Receives are FIFO, direct handoff
+prefers the oldest blocked receiver, and a full queue resumes blocked senders
+in FIFO order as slots become available. `close` is idempotent, wakes waiters,
+and drains existing buffered values before `receive` returns `None`. Copies of
+the handle share one owner-local control block; ordinary collections do not
+gain locks or atomic reference counts.
+
+Browser WASM construction returns `runtime_unavailable` without evaluating
+capacity. Until its host-driven backend lands, other channel operations report
+a capability error before evaluating operands that would be consumed. Native
+examples and the exact counter/Go evidence gate are documented in
+`examples/async_bounded_channel` and `performance/async/manifest-p3.json`.
+
 The structured forms create true owner-local concurrency without changing
 direct-style child calls. Each child target is currently a direct,
 unqualified, non-generic top-level `suspend fn` with immutable frame-safe
@@ -382,7 +405,7 @@ suspend function. It must fall through; deadline-body control flow, return,
 `?`, panic, defer, unsafe, and nested scopes/deadlines remain E0876. Nested
 scopes, nested control flow, non-final scope return, `?` in other positions,
 panic nested in another expression, cancellation tokens, general deadline
-exits, channels, and select are not in this slice. A direct panic owns its
+exits, cross-shard channels, and static select are not in this slice. A direct panic owns its
 non-suspending message, stops the executor, recursively cancels the root task
 tree, drops every frame, completes runtime shutdown and metrics export, then
 prints and releases the original message before process exit. Browser WASM
@@ -414,8 +437,8 @@ finishes, then joins the native thread and releases the handle. Closed handles
 return the stable `closed` error.
 
 See the [async runtime implementation guide](async-runtime.md),
-`examples/async_yield`, and `examples/async_timer` for the current suspend-task
-boundary.
+`examples/async_yield`, `examples/async_timer`, and
+`examples/async_bounded_channel` for the current suspend-task boundary.
 
 #### Task safety
 

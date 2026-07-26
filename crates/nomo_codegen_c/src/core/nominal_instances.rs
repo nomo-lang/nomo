@@ -17,6 +17,20 @@ pub(super) fn collect_struct_instances(program: &Program) -> Vec<(String, Vec<Va
             collect_stmt_struct(statement, &mut seen, &mut out);
         }
     }
+    let channel_elements = out
+        .iter()
+        .filter_map(|(name, args)| {
+            if name == "Channel" {
+                args.first().cloned()
+            } else {
+                None
+            }
+        })
+        .collect::<Vec<_>>();
+    for element in channel_elements {
+        push_struct_instance(&mut seen, &mut out, "ChannelError", &[]);
+        push_struct_instance(&mut seen, &mut out, "ChannelSendError", &[element]);
+    }
     out
 }
 

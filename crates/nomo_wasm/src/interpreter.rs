@@ -386,6 +386,12 @@ impl<'a> Interpreter<'a> {
         if name.starts_with("__nomo_process_") {
             return Err(RuntimeError::capability("process"));
         }
+        if name == "__nomo_task_publication_move" {
+            return args
+                .first()
+                .ok_or_else(|| RuntimeError::runtime("task publication move requires one value"))
+                .and_then(|value| self.eval_expr(value));
+        }
         if name == "__nomo_task_spawn" {
             return Ok(task_runtime_unavailable_result());
         }
@@ -425,6 +431,17 @@ impl<'a> Interpreter<'a> {
         }
         if name == "__nomo_task_sleep" {
             return Ok(task_timer_runtime_unavailable_result());
+        }
+        if name.starts_with("__nomo_task_channel::") {
+            return Ok(channel_runtime_unavailable_result());
+        }
+        if name.starts_with("__nomo_task_send::")
+            || name.starts_with("__nomo_task_receive::")
+            || name.starts_with("__nomo_task_try_send::")
+            || name.starts_with("__nomo_task_try_receive::")
+            || name.starts_with("__nomo_task_close_channel::")
+        {
+            return Err(RuntimeError::capability("channels"));
         }
         if name.starts_with("__nomo_sqlite_") {
             let unavailable = matches!(name, "__nomo_sqlite_open" | "__nomo_sqlite_open_memory");
@@ -1648,6 +1665,27 @@ fn task_timer_runtime_unavailable_result() -> Value {
                 ),
             ]),
         })),
+    }
+}
+
+fn channel_error_value(code: &str, message: &str) -> Value {
+    Value::Struct {
+        name: "ChannelError".to_string(),
+        fields: HashMap::from([
+            ("code".to_string(), Value::String(code.to_string())),
+            ("message".to_string(), Value::String(message.to_string())),
+        ]),
+    }
+}
+
+fn channel_runtime_unavailable_result() -> Value {
+    Value::Enum {
+        name: "Result".to_string(),
+        variant: "Err".to_string(),
+        payload: Some(Box::new(channel_error_value(
+            "runtime_unavailable",
+            "channels are unavailable in the browser sandbox",
+        ))),
     }
 }
 

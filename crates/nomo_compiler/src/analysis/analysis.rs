@@ -127,6 +127,9 @@ pub(super) fn standard_struct_names(
         names.push(("Task".to_string(), 0));
         names.push(("TaskContext".to_string(), 0));
         names.push(("TaskError".to_string(), 0));
+        names.push(("Channel".to_string(), 1));
+        names.push(("ChannelError".to_string(), 0));
+        names.push(("ChannelSendError".to_string(), 1));
     }
     if needs.net {
         names.push(("NetError".to_string(), 0));
@@ -198,6 +201,8 @@ pub(super) fn standard_enum_names(
     }
     if needs.task {
         names.push(("TaskJoin".to_string(), 0));
+        names.push(("ChannelTrySend".to_string(), 1));
+        names.push(("ChannelTryReceive".to_string(), 1));
     }
     if needs.json {
         names.push(("JsonKind".to_string(), 0));
@@ -236,6 +241,7 @@ pub(super) fn standard_enum_names(
         || needs.jsonrpc
         || needs.sqlite
         || needs.regex
+        || needs.task
     {
         names.push(("Option".to_string(), 1));
     }
@@ -719,6 +725,51 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.task && !structs.iter().any(|item| item.name == "Channel") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "Channel".to_string(),
+            type_params: vec!["T".to_string()],
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.task && !structs.iter().any(|item| item.name == "ChannelError") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "ChannelError".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "code".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
+        });
+    }
+    if needs.task && !structs.iter().any(|item| item.name == "ChannelSendError") {
+        structs.push(StructType {
+            package: "std.task".to_string(),
+            name: "ChannelSendError".to_string(),
+            type_params: vec!["T".to_string()],
+            fields: vec![
+                StructField {
+                    name: "error".to_string(),
+                    value_type: ValueType::Struct("ChannelError".to_string(), Vec::new()),
+                },
+                StructField {
+                    name: "value".to_string(),
+                    value_type: ValueType::TypeParam("T".to_string()),
+                },
+            ],
+        });
+    }
     if needs.hash && !structs.iter().any(|item| item.name == "HashState") {
         structs.push(StructType {
             package: "std.hash".to_string(),
@@ -1099,6 +1150,55 @@ pub(super) fn inject_standard_types(
             ],
         });
     }
+    if needs.task && !enums.iter().any(|item| item.name == "ChannelTrySend") {
+        enums.push(EnumType {
+            package: "std.task".to_string(),
+            name: "ChannelTrySend".to_string(),
+            type_params: vec!["T".to_string()],
+            variants: vec![
+                EnumVariantType {
+                    name: "Sent".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Full".to_string(),
+                    payload: Some(ValueType::TypeParam("T".to_string())),
+                },
+                EnumVariantType {
+                    name: "Closed".to_string(),
+                    payload: Some(ValueType::TypeParam("T".to_string())),
+                },
+                EnumVariantType {
+                    name: "Failed".to_string(),
+                    payload: Some(ValueType::Struct(
+                        "ChannelSendError".to_string(),
+                        vec![ValueType::TypeParam("T".to_string())],
+                    )),
+                },
+            ],
+        });
+    }
+    if needs.task && !enums.iter().any(|item| item.name == "ChannelTryReceive") {
+        enums.push(EnumType {
+            package: "std.task".to_string(),
+            name: "ChannelTryReceive".to_string(),
+            type_params: vec!["T".to_string()],
+            variants: vec![
+                EnumVariantType {
+                    name: "Value".to_string(),
+                    payload: Some(ValueType::TypeParam("T".to_string())),
+                },
+                EnumVariantType {
+                    name: "Empty".to_string(),
+                    payload: None,
+                },
+                EnumVariantType {
+                    name: "Closed".to_string(),
+                    payload: None,
+                },
+            ],
+        });
+    }
     if needs.json && !enums.iter().any(|item| item.name == "JsonKind") {
         enums.push(EnumType {
             package: "std.json".to_string(),
@@ -1246,7 +1346,8 @@ pub(super) fn inject_standard_types(
         || needs.json
         || needs.jsonrpc
         || needs.sqlite
-        || needs.regex)
+        || needs.regex
+        || needs.task)
         && !enums.iter().any(|item| item.name == "Option")
     {
         enums.push(EnumType {

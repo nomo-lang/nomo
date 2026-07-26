@@ -69,6 +69,8 @@ pub(super) fn emit_body(out: &mut String, function: &Function) {
         if let Statement::Defer { call } = statement {
             deferred.push(call.clone());
         } else {
+            let moved = statement_publication_move_bindings(statement);
+            active_arrays.retain(|local| !moved.contains(&local.name.as_str()));
             emit_stmt(
                 out,
                 statement,

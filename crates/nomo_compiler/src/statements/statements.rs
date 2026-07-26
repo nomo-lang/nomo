@@ -737,28 +737,42 @@ pub(super) fn lower_stmt_into(
         is_tail,
         loop_depth,
     )?;
-    record_structured_spawn_publication_moves(path, stmt, &lowered, scope, loop_depth)?;
+    record_publication_moves(path, stmt, &lowered, scope, loop_depth)?;
     out.push(lowered);
     Ok(())
 }
 
-fn record_structured_spawn_publication_moves(
+fn record_publication_moves(
     path: &Path,
     source: &Stmt,
     lowered: &Statement,
     scope: &mut HashMap<String, Binding>,
     loop_depth: usize,
 ) -> Result<(), Diagnostic> {
-    let Statement::Let {
-        initializer: ValueExpr::Call { name, args },
-        ..
-    } = lowered
-    else {
+    let call = match lowered {
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        }
+        | Statement::Expr(ValueExpr::Call { name, args })
+        | Statement::QuestionLet {
+            result_expr: ValueExpr::Call { name, args },
+            ..
+        } => Some((name, args)),
+        _ => None,
+    };
+    let Some((name, args)) = call else {
         return Ok(());
     };
-    if !name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX) {
+    let boundary = if name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX) {
+        "structured task.spawn"
+    } else if name.starts_with(BUILTIN_TASK_SEND_PREFIX) {
+        "task.send"
+    } else if name.starts_with(BUILTIN_TASK_TRY_SEND_PREFIX) {
+        "task.try_send"
+    } else {
         return Ok(());
-    }
+    };
     let span = statement_span(source);
     for argument in args {
         let ValueExpr::Call {
@@ -772,7 +786,7 @@ fn record_structured_spawn_publication_moves(
             continue;
         }
         let [ValueExpr::Variable(binding)] = move_args.as_slice() else {
-            unreachable!("publication-move IR always wraps one variable")
+            continue;
         };
         if loop_depth > 0 {
             return Err(Diagnostic::new(
@@ -787,7 +801,7 @@ fn record_structured_spawn_publication_moves(
                 &span.text,
             ));
         }
-        mark_publication_move(scope, binding, span.line, "structured task.spawn");
+        mark_publication_move(scope, binding, span.line, boundary);
     }
     Ok(())
 }

@@ -523,6 +523,12 @@ suspend fn main() -> void {
     assert!(c.contains("NOMO_ASYNC_PENDING_IO"));
     assert!(c.contains("nomo_async_io_handle_close_callback"));
     assert!(c.contains("NOMO_ASYNC_REACTOR_WRITE"));
+    assert!(c.contains("#define NOMO_ASYNC_BLOCKING_POOL_QUEUE_CAPACITY 16u"));
+    assert!(c.contains("#define NOMO_ASYNC_RESOLVER_MAX_ADDRESSES 16u"));
+    assert!(c.contains("nomo_async_resolver_submit"));
+    assert!(c.contains("nomo_async_tcp_resolver_complete"));
+    assert!(c.contains("pthread_create"));
+    assert!(c.contains("nomo_async_blocking_pool_shutdown"));
 }
 
 #[test]
@@ -575,6 +581,8 @@ suspend fn main() -> void {
     assert!(!c.contains("inet_pton("));
     assert!(!c.contains("epoll_ctl("));
     assert!(!c.contains("kevent("));
+    assert!(!c.contains("pthread_create"));
+    assert!(!c.contains("nomo_async_resolver_submit"));
     assert!(!c.contains("nomo_string_literal(\"127.0.0.1\")"));
 }
 

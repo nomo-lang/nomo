@@ -784,14 +784,17 @@ rejects controlled process calls before evaluating their arguments. See
 `examples/process_controlled`.
 
 `std.net` now provides owner-affine direct-style suspend TCP client operations.
-`net.connect` accepts a numeric IPv4/IPv6 address and returns
+`net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
 `Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
 complete `write`/`write_string` use epoll on Linux and kqueue on macOS without
-blocking the current-thread executor. Reads and writes are limited to 1 MiB,
-timeouts to 15 minutes, each stream direction to one pending operation, and
-write progress to 64 KiB per executor poll for fairness. Windows returns
-explicit `Unsupported` without evaluating write payloads until the IOCP slice,
-and hostnames await the bounded resolver slice.
+blocking the current-thread executor. Numeric addresses retain a zero-thread
+fast path. Hostnames use one lazy resolver worker behind a 16-live-job bounded
+capacity, return completion through the owner reactor, try at most 16 resolved
+addresses in resolver order, and share one overall timeout with those connect
+attempts. Reads and writes are limited to 1 MiB, timeouts to 15 minutes, each
+stream direction to one pending operation, and write progress to 64 KiB per
+executor poll for fairness. Windows returns explicit `Unsupported` without
+evaluating write payloads until the IOCP slice.
 
 The preview blocking client names are `net.connect_blocking`,
 `TcpStream.read_to_string_blocking`, and

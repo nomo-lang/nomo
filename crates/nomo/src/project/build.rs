@@ -202,6 +202,7 @@ pub(super) fn configure_c_compile_command(
 
 pub(super) fn generated_c_uses_native_tasks(source: &str) -> bool {
     source.contains("#define NOMO_TASK_MAX_LIVE")
+        || source.contains("#define NOMO_ASYNC_BLOCKING_POOL_MAX_THREADS")
 }
 
 pub(super) fn generated_c_uses_bundled_sqlite(source: &str) -> bool {

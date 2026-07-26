@@ -97,12 +97,18 @@ timeout, cancellation, readiness rearm, retained-byte, handle, operation, and
 cleanup counters. A 64 KiB per-poll write budget makes executor fairness and
 partial-write lifecycle coverage independent of host socket-buffer tuning.
 Native slow-reader, invalid UTF-8, timeout, structured cancellation, and
-AddressSanitizer fixtures are correctness gates; the cross-language `tcp_echo`
+AddressSanitizer fixtures are correctness gates. P2-TCP-C adds a fixed
+16-live-job, one-worker hostname resolver and a nonblocking owner completion
+pipe.
+Fixtures prove the numeric zero-thread fast path, hostname success and
+secret-safe failure, zero-timeout no-initialization path, queued cancellation,
+cooperative running cancellation, exact 17-request saturation boundary, and
+zero live resolver resources at shutdown. The cross-language `tcp_echo`
 workload remains disabled until the dedicated benchmark slice defines a fair
-server and connection matrix. Hostname resolution, IOCP socket completion,
-HTTP/SSE, and process-pipe registrations remain disabled until their focused
-slices land. This is correctness and lifecycle evidence, not a cross-language
-performance claim.
+server and connection matrix. IOCP socket completion, HTTP/SSE, and
+process-pipe registrations remain disabled until their focused slices land.
+This is correctness and lifecycle evidence, not a cross-language performance
+claim.
 
 ## Run
 

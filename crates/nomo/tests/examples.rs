@@ -1353,9 +1353,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_yield" => "before yield\nframe-owned message\n3\n",
         "async_call_abi" => "argument\n7\nframe result\n",
         "async_timer" => "before timer\ntrue\ntrue\nafter timer\n",
-        "async_tcp_connect" => {
-            "hostnames require the bounded resolver slice; use a numeric address\n"
-        }
+        "async_tcp_connect" => "hostname resolution failed\n",
         "async_tcp_io" => "hello from Nomo\n",
         "async_structured_void" => {
             "left before\nright before\nleft after\nright after\ntrue true\n"

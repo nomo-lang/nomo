@@ -37,8 +37,12 @@ mod expression_string_char;
 #[path = "expressions/expressions.rs"]
 mod expressions;
 // Runtime and host helper emission.
+#[path = "runtime/host_async_blocking_pool_helpers.rs"]
+mod host_async_blocking_pool_helpers;
 #[path = "runtime/host_async_executor_helpers.rs"]
 mod host_async_executor_helpers;
+#[path = "runtime/host_async_tcp_connect_helpers.rs"]
+mod host_async_tcp_connect_helpers;
 #[path = "runtime/host_async_tcp_io_helpers.rs"]
 mod host_async_tcp_io_helpers;
 #[path = "runtime/host_channel_helpers.rs"]
@@ -133,7 +137,9 @@ use expression_result_option::*;
 use expression_std_misc::*;
 use expression_string_char::*;
 use expressions::*;
+use host_async_blocking_pool_helpers::*;
 use host_async_executor_helpers::*;
+use host_async_tcp_connect_helpers::*;
 use host_async_tcp_io_helpers::*;
 use host_channel_helpers::*;
 use host_cron_helpers::*;

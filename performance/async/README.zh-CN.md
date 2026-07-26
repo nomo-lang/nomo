@@ -74,10 +74,16 @@ owner frame 单次 wake 前被清理，最终 waiter/timer live counter 都回�
 生成 IOCP。既有正时长 timer 现在使用统一 reactor wait，不再调用 timer
 专用 sleep primitive。P2-TCP-A 为 pending 数值地址 connect 增加一个带
 generation 校验的 epoll/kqueue registration，并由 native fixture 精确验证
-registration、completion、handle 与清理 counter。hostname resolution、
-async read/write、IOCP socket completion、HTTP/SSE 与 process-pipe registration
-仍保持 disabled，等待各自的聚焦小切片。这是 correctness/lifecycle 证据，
-不是跨语言性能声明。
+registration、completion、handle 与清理 counter。P2-TCP-B 增加有界增量
+read 与完整 write，并精确验证 timeout、cancellation、readiness rearm、
+retained bytes、handle、operation 与清理 counter；每次 poll 最多写 64 KiB，
+使公平性不依赖宿主 socket buffer。P2-TCP-C 增加 16 个 live job、单 worker
+的 hostname resolver 与 nonblocking owner completion pipe。fixture 覆盖数值
+地址零线程 fast path、hostname 成功与不泄露 secret 的失败、零 timeout
+不初始化、queued cancellation、running cooperative cancellation、17 个请求
+的精确饱和边界，以及 shutdown 后 resolver live resource 全归零。IOCP socket
+completion、HTTP/SSE 与 process-pipe registration 仍等待各自的聚焦小切片。
+这是 correctness/lifecycle 证据，不是跨语言性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

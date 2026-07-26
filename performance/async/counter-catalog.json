@@ -464,9 +464,76 @@
       "semantics": "Current armed owner-local timer registrations at the observation point."
     },
     {
+      "name": "blocking_pool_initializations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Lazy owner-runtime blocking-pool initializations."
+    },
+    {
+      "name": "blocking_threads_started",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Native workers started by the bounded blocking pool."
+    },
+    {
+      "name": "blocking_threads_retired",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Native blocking-pool workers joined during runtime shutdown."
+    },
+    {
       "name": "blocking_jobs_queued",
       "unit": "count",
-      "available_phase": "P2"
+      "available_phase": "P2",
+      "semantics": "Blocking jobs admitted to a bounded pool queue."
+    },
+    {
+      "name": "blocking_jobs_started",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Admitted blocking jobs observed as started by the owner executor."
+    },
+    {
+      "name": "blocking_jobs_completed",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Started blocking jobs whose completion returned to the owner executor."
+    },
+    {
+      "name": "blocking_jobs_cancelled",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Queued or running blocking jobs detached by cancellation or timeout."
+    },
+    {
+      "name": "blocking_queue_saturations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Blocking jobs rejected because the bounded queue or job table was full."
+    },
+    {
+      "name": "live_blocking_threads",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Native blocking-pool workers alive at the observation point."
+    },
+    {
+      "name": "peak_live_blocking_threads",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous native blocking-pool workers."
+    },
+    {
+      "name": "live_blocking_jobs",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Blocking jobs queued, running, or awaiting owner-side materialization."
+    },
+    {
+      "name": "peak_live_blocking_jobs",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous live blocking jobs."
     }
   ]
 }

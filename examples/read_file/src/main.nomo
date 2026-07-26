@@ -1,7 +1,9 @@
 package app.main
 
+import std.env
 import std.fs
 import std.io
+import std.path
 
 fn load(path: string) -> Result<string, FsError> {
     let text: string = fs.read_to_string(path)?
@@ -9,9 +11,10 @@ fn load(path: string) -> Result<string, FsError> {
 }
 
 fn main() -> void {
-    let write_result: Result<void, FsError> = fs.write_string("/tmp/nomo-read-file-example.txt", "file ok")
+    let file_path: string = path.join(env.temp_dir(), "nomo-read-file-example.txt")
+    let write_result: Result<void, FsError> = fs.write_string(file_path, "file ok")
     let read_result: Result<string, FsError> = match write_result {
-        Ok(ignored) => load("/tmp/nomo-read-file-example.txt")
+        Ok(ignored) => load(file_path)
         Err(err) => Err(err)
     }
     let message: string = match read_result {

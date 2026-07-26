@@ -203,6 +203,17 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
         "}, \"invalid TCP host, port, or timeout\");\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
     );
     out.push_str(
+        r#"    if (!nomo_net_init()) {
+"#,
+    );
+    out.push_str("        nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&connect);
+    out.push_str(
+        "}, \"Windows network initialization failed\");\n        context->io_errors += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
+    );
+    out.push_str(
         r#"    memset(registration, 0, sizeof(*registration));
     registration->context = context;
     registration->frame = context->current_frame;
@@ -235,17 +246,6 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     out.push_str(&unsupported);
     out.push_str(
         "}, \"Windows hostname resolution remains a later P2-TCP-D slice\");\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
-    );
-    out.push_str(
-        r#"    if (!nomo_net_init()) {
-"#,
-    );
-    out.push_str("        nomo_async_tcp_connect_error(result, (");
-    out.push_str(&net_error_kind);
-    out.push_str("){.tag = ");
-    out.push_str(&connect);
-    out.push_str(
-        "}, \"Windows network initialization failed\");\n        context->io_errors += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
     );
     out.push_str(
         r#"    nomo_socket handle = WSASocketW(

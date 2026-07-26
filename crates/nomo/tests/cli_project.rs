@@ -15758,7 +15758,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "connected\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "connected\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -15935,7 +15938,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "112\nong\ntrue\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "112\nong\ntrue\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16091,7 +16097,7 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "positive timeout\nzero timeout\ninvalid utf8\n"
     );
     assert!(
@@ -16644,7 +16650,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "cancelled true\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16753,7 +16762,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "cancelled true\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16867,7 +16879,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "timed out\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",

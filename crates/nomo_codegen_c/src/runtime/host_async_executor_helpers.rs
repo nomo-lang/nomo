@@ -3599,7 +3599,7 @@ pub(super) fn emit_async_function(
     function: &Function,
     async_names: &BTreeSet<String>,
     functions: &HashMap<&str, &Function>,
-    target: &nomo_target::TargetTriple,
+    _target: &nomo_target::TargetTriple,
 ) {
     debug_assert!(function.params.iter().all(|parameter| !parameter.mutable));
     debug_assert!(async_names.contains(&function.name));
@@ -3811,9 +3811,7 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            let windows_unsupported_tcp =
-                target.operating_system() == nomo_target::OperatingSystem::Windows;
-            if let Some(connect) = tcp_connect.filter(|_| !windows_unsupported_tcp) {
+            if let Some(connect) = tcp_connect {
                 let host_temp = async_tcp_connect_host_temp(index);
                 out.push_str("            nomo_string ");
                 out.push_str(&host_temp);
@@ -3828,7 +3826,7 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            if let Some(operation) = tcp_io.filter(|_| !windows_unsupported_tcp) {
+            if let Some(operation) = tcp_io {
                 if let Some(payload_type) = operation.kind.payload_type() {
                     let payload_temp = async_tcp_io_payload_temp(index);
                     out.push_str("            ");
@@ -3883,29 +3881,15 @@ pub(super) fn emit_async_function(
                 out.push_str(" = nomo_async_tcp_connect_start(&frame->");
                 out.push_str(&async_tcp_connect_registration_field(index));
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("nomo_string_literal(\"\")");
-                } else {
-                    out.push_str(&host_temp);
-                }
+                out.push_str(&host_temp);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push('0');
-                } else {
-                    emit_expr(out, connect.port);
-                }
+                emit_expr(out, connect.port);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("0u");
-                } else {
-                    emit_expr(out, connect.timeout_millis);
-                }
+                emit_expr(out, connect.timeout_millis);
                 out.push_str(", context, &frame->");
                 out.push_str(&async_tcp_connect_result_field(index));
                 out.push_str(");\n");
-                if !windows_unsupported_tcp {
-                    emit_value_release_in_place(out, &ValueType::String, &host_temp, 3);
-                }
+                emit_value_release_in_place(out, &ValueType::String, &host_temp, 3);
                 out.push_str("            if (nomo_async_tcp_connect_start_status_");
                 out.push_str(&index.to_string());
                 out.push_str(
@@ -3928,37 +3912,19 @@ pub(super) fn emit_async_function(
                 out.push_str("(&frame->");
                 out.push_str(&async_tcp_io_registration_field(index));
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("(nomo_async_tcp_stream){0}");
-                } else {
-                    emit_expr(out, operation.stream);
-                }
+                emit_expr(out, operation.stream);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    match operation.kind {
-                        AsyncTcpIoKind::Read | AsyncTcpIoKind::ReadString => out.push_str("1u"),
-                        AsyncTcpIoKind::Write => out.push_str("nomo_array_u32_new()"),
-                        AsyncTcpIoKind::WriteString => out.push_str("nomo_string_literal(\"\")"),
-                    }
-                } else if operation.kind.payload_type().is_some() {
+                if operation.kind.payload_type().is_some() {
                     out.push_str(&async_tcp_io_payload_temp(index));
                 } else {
                     emit_expr(out, operation.value);
                 }
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("0u");
-                } else {
-                    emit_expr(out, operation.timeout_millis);
-                }
+                emit_expr(out, operation.timeout_millis);
                 out.push_str(", context, &frame->");
                 out.push_str(&async_tcp_io_result_field(index));
                 out.push_str(");\n");
-                if let Some(payload_type) = operation
-                    .kind
-                    .payload_type()
-                    .filter(|_| !windows_unsupported_tcp)
-                {
+                if let Some(payload_type) = operation.kind.payload_type() {
                     emit_value_release_in_place(
                         out,
                         &payload_type,

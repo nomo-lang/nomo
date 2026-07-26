@@ -107,6 +107,11 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Verify the native C driver
         run: clang --version
+      - name: Run owner-affine numeric TCP lifecycle through IOCP
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_tcp
+          --locked
       - name: Run current-thread async call ABI and timer counter probes
         shell: pwsh
         run: |
@@ -159,8 +164,10 @@ jobs:
           $tcpMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-tcp-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $tcpMetrics
           $tcpOutput = cargo run --locked --bin nomo -- run examples/async_tcp_connect
-          if (($tcpOutput -join "`n") -notmatch "^unsupported$") {
-            throw "unexpected Windows async TCP result"
+          $tcpExit = $LASTEXITCODE
+          $tcpText = $tcpOutput -join "`n"
+          if ($tcpExit -ne 0 -or $tcpText -notmatch "^unsupported$") {
+            throw "unexpected Windows async TCP result: exit=$tcpExit output=[$tcpText]"
           }
           $tcpPayload = Get-Content -Raw $tcpMetrics | ConvertFrom-Json
           if ($tcpPayload.counters.io_connect_starts -ne 1 `
@@ -399,11 +406,6 @@ jobs:
               -or $selectPayload.counters.live_timers -ne 0) {
             throw "unexpected static-select counters"
           }
-      - name: Run owner-affine numeric TCP lifecycle through IOCP
-        run: >-
-          cargo test -p nomo --test cli_project
-          async_tcp
-          --locked
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project

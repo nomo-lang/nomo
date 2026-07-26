@@ -146,6 +146,7 @@ pub(super) fn extract_question_exprs(
                 result_type,
                 return_type: return_type.clone(),
                 result_expr,
+                early_exit_actions: Vec::new(),
             });
             Ok((AstExpr::Name(vec![temp]), true))
         }

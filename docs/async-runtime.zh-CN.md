@@ -94,6 +94,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
   join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
   后语句或完成 return 前 drop frame；
+- 直接 structured `?` binding 的 owned Err/None 传播，并在 helper 完成与
+  parent wakeup 前清理 live sibling；
 - 每个 yield 或 child call 上精确的顶层局部变量 liveness；
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
@@ -139,7 +141,8 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
-内部挂起、`?`、显式 panic、显式取消传播和 reactor I/O 都属于后续小 PR。
+内部挂起、下述 structured binding 之外的 `?`、显式 panic、显式取消传播和
+reactor I/O 都属于后续小 PR。
 
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
 handle 必须使用推导得到的不可变 binding 且不得离开 scope；若要观察结果，
@@ -149,10 +152,15 @@ handle 必须使用推导得到的不可变 binding 且不得离开 scope；若�
 `Result<T, TaskError>`。最终 `return` 会先把表达式求值到私有 owned
 temporary，再由编译器取消并 drop 所有未 join child，然后把 temporary move
 到 helper frame，最后完成 helper 并唤醒 root frame。normal fallthrough
-也会在执行下一条语句前做同样清理；取消后不会继续执行 child body。嵌套
-scope、scope 内嵌套控制流、非最终 scope return、
-defer/unsafe、`?`、panic、显式取消、deadline、channel 与 select 仍属于后续
-切片。E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
+也会在执行下一条语句前做同样清理。scope 顶层不可变
+`let value: T = expression?` 只求值一次；Err/None 路径先把传播 carrier 保存为
+owned frame state，再取消并 drop 该语句处所有 live child，最后完成 helper
+并唤醒 parent。成功 payload 可以通过既有 frame liveness 方案跨越后续
+suspension。当前 `expression` 可以是非挂起表达式或直接
+`task.join(handle)?`，且仍要求显式类型标注。取消后不会继续执行 child body。
+嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、其他位置
+的 `?`、panic、显式取消、deadline、channel 与 select 仍属于后续切片。
+E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
 constructor，而且当前仍是一 worker 一 native thread。RFC 0032 要求后续将它
@@ -168,12 +176,12 @@ queue saturation、browser 不执行 child，以及幂等 child cleanup。
 managed typed result 还会用 AddressSanitizer 覆盖 child 到 join 的 ownership
 transfer、嵌套 helper 唤醒 root frame、post-join scope return 和 parent 重复
 drop。scope cancellation 还会在 AddressSanitizer 下覆盖 armed timer、从未
-poll 的 ready child，以及在 root-frame wakeup 前取消的 typed helper return，
-包括 managed 参数与结果 release。
+poll 的 ready child，以及在 root-frame wakeup 前取消的 typed helper return
+和 typed `?` error propagation，包括 managed 参数、传播 error 与结果 release。
 后续实现仍必须用测试和证据证明：
 
-- error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW 值
-  release 一次；
+- 其余 error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW
+  值 release 一次；
 - 不允许不安全 mutable borrow 或 guard 跨 suspension point；
 - 未使用 suspension 的程序没有 runtime、thread、coroutine metadata 或普通
   collection atomic 成本；
@@ -189,4 +197,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_structured_results`](../examples/async_structured_results)，以及
 [`examples/async_structured_return`](../examples/async_structured_return) 与
 [`examples/async_structured_cancel`](../examples/async_structured_cancel)，以及
-[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel)。
+[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel) 与
+[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel)。

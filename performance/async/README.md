@@ -16,8 +16,8 @@ manifest keeps these controls:
 
 The separate `manifest-p1.json` repeats both zero-cost controls and enables
 `yield_counter_probe`, `timer_counter_probe`, `task_spawn_complete`,
-`structured_cancel_probe`, and `structured_return_cancel_probe`. Each counter
-probe executes outside
+`structured_cancel_probe`, `structured_return_cancel_probe`, and
+`structured_question_cancel_probe`. Each counter probe executes outside
 measured samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the
 versioned current-thread JSON contract against `counter-catalog.json`. The
 two-frame, two-yield chain transfers one managed argument and result, then
@@ -43,11 +43,12 @@ by `ready_queue_cancellations` and `task_cancellations`. Structured `Task<T>`
 results now have generated-C, native, WASM-boundary,
 post-join nested-scope return, and AddressSanitizer correctness coverage.
 Scope cancellation additionally covers armed-timer and ready-queue cleanup,
-plus a typed final helper return that cancels before root-frame wakeup, through
-enabled runtime-counter gates. ARC primitive counters remain explicitly
-unavailable rather than being reported as zero. Mutable/affine suspend
-parameters, non-final/`?`/panic unwind paths, cancellation propagation, and the
-multi-task timer-wheel workload are not complete.
+plus typed final-return and `?` error-propagation paths that cancel before
+root-frame wakeup, through enabled runtime-counter gates. ARC primitive
+counters remain explicitly unavailable rather than being reported as zero.
+Mutable/affine suspend parameters, non-final return, `?` in other positions,
+panic unwind, cancellation propagation, and the multi-task timer-wheel
+workload are not complete.
 
 ## Run
 

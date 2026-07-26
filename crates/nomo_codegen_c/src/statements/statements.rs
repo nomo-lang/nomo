@@ -143,18 +143,25 @@ pub(super) fn emit_stmt(
             result_type,
             return_type,
             result_expr,
-        } => emit_question_let(
-            out,
-            *carrier,
-            name,
-            value_type,
-            result_type,
-            return_type,
-            result_expr,
-            indent,
-            deferred,
-            active_arrays,
-        ),
+            early_exit_actions,
+        } => {
+            assert!(
+                early_exit_actions.is_empty(),
+                "structured question cleanup is emitted by the async C99 lowering"
+            );
+            emit_question_let(
+                out,
+                *carrier,
+                name,
+                value_type,
+                result_type,
+                return_type,
+                result_expr,
+                indent,
+                deferred,
+                active_arrays,
+            );
+        }
         Statement::QuestionReturn {
             carrier,
             ok_type,

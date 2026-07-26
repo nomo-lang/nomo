@@ -345,10 +345,16 @@ scope fallthrough automatically cancels and drops unjoined children, including
 ready-queue and timer cleanup. A nested helper may also use a final scope
 `return`; its expression evaluates first, then unjoined children are cancelled
 and dropped before the owned temporary moves and wakes the root frame. Nested
-scopes, nested control flow, non-final scope return, `?`, panic, explicit
-cancellation, deadlines, channels, and select are not in this slice. Browser
-WASM does not execute structured children; join returns `runtime_unavailable`
-and scope cleanup is inert.
+helpers may also use an immutable top-level
+`let value: T = expression?`: Err/None is stored in the helper frame before
+live children are cancelled and dropped, while a success payload follows the
+normal liveness plan. The operand may be non-suspending or a direct
+`task.join(handle)?`, and currently needs an explicit binding type. Nested
+scopes, nested control flow, non-final scope return, `?` in other positions,
+panic, explicit cancellation, deadlines, channels, and select are not in this
+slice. Browser WASM does not execute structured children; join returns
+`runtime_unavailable`, while non-suspending `?` preserves the same early-exit
+result and inert cleanup boundary.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is

@@ -138,11 +138,19 @@ fn expr_is_structured_join(expr: &ValueExpr) -> bool {
 }
 
 fn expr_is_structured_cancel(expr: &ValueExpr) -> bool {
-    matches!(
-        expr,
-        ValueExpr::Call { name, args }
-            if name == BUILTIN_TASK_STRUCTURED_CANCEL_EXPR && args.len() == 1
-    )
+    structured_cancel_handle(expr).is_some()
+}
+
+fn structured_cancel_handle(expr: &ValueExpr) -> Option<&str> {
+    match expr {
+        ValueExpr::Call { name, args } if name == BUILTIN_TASK_STRUCTURED_CANCEL_EXPR => {
+            let [ValueExpr::Variable(handle)] = args.as_slice() else {
+                return None;
+            };
+            Some(handle)
+        }
+        _ => None,
+    }
 }
 
 fn statement_is_async_yield(statement: &Statement) -> bool {
@@ -247,6 +255,28 @@ fn statement_structured_cancel(statement: &Statement) -> Option<StructuredCancel
     Some(StructuredCancel { handle })
 }
 
+fn emit_async_structured_cancel(
+    out: &mut String,
+    function: &Function,
+    handle: &str,
+    indent: usize,
+) {
+    let spawn_index = structured_spawn_index(function, handle)
+        .expect("validated structured cancellation handle has a spawn");
+    let spawn = statement_structured_spawn(&function.body[spawn_index])
+        .expect("structured cancellation spawn exists");
+    write_indent(out, indent);
+    out.push_str(&async_cancel_ident(spawn.callee));
+    out.push_str("(&frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(", context);\n");
+    write_indent(out, indent);
+    out.push_str(&async_drop_ident(spawn.callee));
+    out.push_str("(&frame->");
+    out.push_str(&async_child_field(spawn_index));
+    out.push_str(");\n");
+}
+
 fn structured_spawn_index(function: &Function, handle: &str) -> Option<usize> {
     function
         .body
@@ -311,11 +341,14 @@ fn collect_async_frame_locals(
             if statement_structured_spawn(statement).is_some() {
                 return None;
             }
-            let Statement::Let {
-                name, value_type, ..
-            } = statement
-            else {
-                return None;
+            let (name, value_type) = match statement {
+                Statement::Let {
+                    name, value_type, ..
+                }
+                | Statement::QuestionLet {
+                    name, value_type, ..
+                } => (name, value_type),
+                _ => return None,
             };
             let last_use_index = function
                 .body
@@ -655,6 +688,110 @@ fn emit_async_child_init(
     out.push_str("frame->");
     out.push_str(&child);
     out.push_str(".initialized = 1u;\n");
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_async_question_let(
+    out: &mut String,
+    function: &Function,
+    statement_index: usize,
+    carrier: QuestionCarrier,
+    name: &str,
+    value_type: &ValueType,
+    result_type: &ValueType,
+    return_type: &ValueType,
+    result_expr: &ValueExpr,
+    early_exit_actions: &[ValueExpr],
+    local_owned: &[LocalArray],
+    indent: usize,
+) {
+    let ValueType::Enum(result_name, result_args) = result_type else {
+        unreachable!("question result must be an enum carrier");
+    };
+    let ValueType::Enum(return_name, return_args) = return_type else {
+        unreachable!("question propagation requires an enum return type");
+    };
+    let (early_variant, payload_variant) = match carrier {
+        QuestionCarrier::Result => ("Err", "Ok"),
+        QuestionCarrier::Option => ("None", "Some"),
+    };
+    let temporary = format!("nomo_async_question_result_{statement_index}");
+    write_indent(out, indent);
+    out.push_str(&c_type(result_type));
+    out.push(' ');
+    out.push_str(&temporary);
+    out.push_str(" = ");
+    emit_expr(out, result_expr);
+    out.push_str(";\n");
+    write_indent(out, indent);
+    out.push_str("if (");
+    out.push_str(&temporary);
+    out.push_str(".tag == ");
+    out.push_str(&c_enum_variant_ident(
+        result_name,
+        result_args,
+        early_variant,
+    ));
+    out.push_str(") {\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->");
+    out.push_str(async_result_field());
+    out.push_str(" = (");
+    out.push_str(&c_enum_ident(return_name, return_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident(
+        return_name,
+        return_args,
+        early_variant,
+    ));
+    if carrier == QuestionCarrier::Result {
+        out.push_str(", .payload.");
+        out.push_str(&c_payload_ident("Err"));
+        out.push_str(" = ");
+        out.push_str(&temporary);
+        out.push_str(".payload.");
+        out.push_str(&c_payload_ident("Err"));
+    }
+    out.push_str("};\n");
+    if expr_may_share_array_storage(result_expr) && value_type_needs_release(return_type) {
+        emit_value_retain_in_place(
+            out,
+            return_type,
+            &format!("frame->{}", async_result_field()),
+            indent + 1,
+        );
+    }
+    if value_type_needs_release(return_type) {
+        write_indent(out, indent + 1);
+        out.push_str("frame->");
+        out.push_str(async_result_owned_field());
+        out.push_str(" = 1u;\n");
+    }
+    for action in early_exit_actions {
+        let handle = structured_cancel_handle(action)
+            .expect("structured question early-exit actions are validated cancellations");
+        emit_async_structured_cancel(out, function, handle, indent + 1);
+    }
+    emit_async_local_releases(out, local_owned, &[], indent + 1);
+    emit_structured_completion(out, indent + 1);
+    write_indent(out, indent + 1);
+    out.push_str("frame->state = UINT32_MAX;\n");
+    write_indent(out, indent + 1);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str(&c_payload_type(value_type));
+    out.push(' ');
+    out.push_str(&c_var_ident(name));
+    out.push_str(" = ");
+    out.push_str(&temporary);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident(payload_variant));
+    out.push_str(";\n");
+    if expr_may_share_array_storage(result_expr) && value_type_needs_release(value_type) {
+        emit_value_retain_in_place(out, value_type, &c_var_ident(name), indent);
+    }
 }
 
 fn emit_async_return_value(
@@ -1440,19 +1577,7 @@ pub(super) fn emit_async_function(
             continue;
         }
         if let Some(cancel) = statement_structured_cancel(statement) {
-            let spawn_index = structured_spawn_index(function, cancel.handle)
-                .expect("validated structured cancellation handle has a spawn");
-            let spawn = statement_structured_spawn(&function.body[spawn_index])
-                .expect("structured cancellation spawn exists");
-            out.push_str("            ");
-            out.push_str(&async_cancel_ident(spawn.callee));
-            out.push_str("(&frame->");
-            out.push_str(&async_child_field(spawn_index));
-            out.push_str(", context);\n            ");
-            out.push_str(&async_drop_ident(spawn.callee));
-            out.push_str("(&frame->");
-            out.push_str(&async_child_field(spawn_index));
-            out.push_str(");\n");
+            emit_async_structured_cancel(out, function, cancel.handle, 3);
             continue;
         }
         if statement_is_async_suspend(statement, async_names) {
@@ -1775,6 +1900,35 @@ pub(super) fn emit_async_function(
                 out.push_str("(&frame->");
                 out.push_str(&async_child_field(spawn_index));
                 out.push_str(");\n");
+            }
+            continue;
+        }
+        if let Statement::QuestionLet {
+            carrier,
+            name,
+            value_type,
+            result_type,
+            return_type,
+            result_expr,
+            early_exit_actions,
+        } = statement
+        {
+            emit_async_question_let(
+                out,
+                function,
+                index,
+                *carrier,
+                name,
+                value_type,
+                result_type,
+                return_type,
+                result_expr,
+                early_exit_actions,
+                &local_owned,
+                3,
+            );
+            if let Some(local) = local_array(name, value_type) {
+                local_owned.push(local);
             }
             continue;
         }

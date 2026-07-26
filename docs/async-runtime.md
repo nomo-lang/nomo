@@ -105,6 +105,8 @@ On the native C99 backend, a suspend call chain that reaches
   cancels unjoined children, removes their ready-queue entries, disarms owned
   timers, and drops their frames before the next statement or return
   completion;
+- owned Err/None propagation from a direct structured `?` binding, with live
+  sibling cleanup before helper completion and parent wakeup;
 - exact top-level local liveness across each yield or child call;
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
@@ -159,7 +161,8 @@ cross-suspension locals must be immutable frame-safe scalar, string, struct,
 enum, Result, or supported array values. Async `main` still returns `void`.
 Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
-expressions or argument expressions, `?`, explicit panic, explicit
+expressions or argument expressions, `?` outside the direct structured binding
+described below, explicit panic, explicit
 cancellation propagation, and reactor-backed I/O are later slices.
 
 Structured spawn/join is available only in a top-level `task.scope` body. Each
@@ -172,11 +175,17 @@ A final `return` first evaluates its expression into a private owned temporary,
 then performs compiler-inserted cancellation and drop of every unjoined child.
 The temporary moves into the helper frame before that helper completes and
 wakes its root frame. Normal fallthrough uses the same cleanup before the next
-statement. A cancelled child body does not resume. Nested scopes, nested scope
-control flow, non-final scope return,
-defer/unsafe blocks, `?`, panic, explicit cancellation, deadlines, channels,
-and select remain later slices. E0871, E0872, E0875, and E0876 reject
-unsupported cases before code generation.
+statement. An immutable top-level `let value: T = expression?` evaluates its
+operand once. On Err/None, the propagated carrier is stored as owned frame
+state, every child live at that statement is cancelled and dropped, and the
+helper completes and wakes its parent. On success, the payload may cross a
+later suspension through the normal frame liveness plan. `expression` may be
+non-suspending or the direct `task.join(handle)?` form; an explicit type
+annotation remains required in this slice. A cancelled child body does not
+resume. Nested scopes, nested scope control flow, non-final scope return,
+defer/unsafe blocks, `?` in other positions, panic, explicit cancellation,
+deadlines, channels, and select remain later slices. E0871, E0872, E0875, and
+E0876 reject unsupported cases before code generation.
 
 The existing `task.spawn` API remains the legacy isolated native-worker API.
 It is not an async task constructor and still maps one worker to one native
@@ -193,12 +202,13 @@ wakeup, typed queue saturation, browser non-execution, and idempotent child
 cleanup. Managed typed results additionally test child-to-join ownership
 transfer, root-frame wakeup from a nested helper, post-join scope return, and
 repeated parent drop under AddressSanitizer. Scope cancellation tests cover an
-armed timer, never-polled ready children, and a typed helper return that
-cancels before root-frame wakeup, including managed parameter and result
-release under AddressSanitizer.
+armed timer, never-polled ready children, a typed helper return, and typed `?`
+error propagation that cancel before root-frame wakeup, including managed
+parameter, propagated error, and result release under AddressSanitizer.
 Later slices must still prove, rather than assume:
 
-- exactly-once ARC/COW release on error, cancellation, timeout, and panic paths;
+- exactly-once ARC/COW release on the remaining error, cancellation, timeout,
+  and panic paths;
 - no unsafe mutable borrow or guard crossing a suspension point;
 - no runtime, thread, coroutine metadata, or atomic collection cost for
   programs that do not use suspension;
@@ -217,4 +227,6 @@ The P0/P1 controls and raw evidence format live in
 plus
 [`examples/async_structured_return`](../examples/async_structured_return) and
 [`examples/async_structured_cancel`](../examples/async_structured_cancel), plus
-[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel).
+[`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel)
+and
+[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel).

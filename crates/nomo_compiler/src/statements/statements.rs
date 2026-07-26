@@ -102,6 +102,7 @@ pub(super) fn lower_stmt(
                     result_type,
                     return_type: return_type.clone(),
                     result_expr,
+                    early_exit_actions: Vec::new(),
                 });
             }
 
@@ -512,7 +513,10 @@ pub(super) fn lower_stmt_into(
                 &span.text,
             ));
         }
-        let unjoined = validate_structured_scope(path, body)?;
+        let StructuredScopeValidation {
+            unjoined,
+            question_cancellations,
+        } = validate_structured_scope(path, body)?;
         let exits_with_return = body
             .last()
             .is_some_and(|statement| matches!(statement, Stmt::Return { .. }));
@@ -526,6 +530,22 @@ pub(super) fn lower_stmt_into(
             },
         );
         for (index, statement) in body.iter().enumerate() {
+            if let Some(cancellations) = question_cancellations.get(&index) {
+                lower_structured_question_let_into(
+                    path,
+                    statement,
+                    &mut task_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    loop_depth,
+                    cancellations,
+                    out,
+                )?;
+                continue;
+            }
             if exits_with_return && index + 1 == body.len() && !unjoined.is_empty() {
                 let mut lowered_return = Vec::new();
                 lower_stmt_into(
@@ -616,17 +636,96 @@ fn structured_return_temporary(scope: &HashMap<String, Binding>) -> String {
     name
 }
 
-fn push_structured_cancellations(out: &mut Vec<Statement>, handles: &[String]) {
-    for handle in handles {
-        out.push(Statement::Expr(ValueExpr::Call {
+#[allow(clippy::too_many_arguments)]
+fn lower_structured_question_let_into(
+    path: &Path,
+    statement: &Stmt,
+    task_scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    loop_depth: usize,
+    cancellations: &[String],
+    out: &mut Vec<Statement>,
+) -> Result<(), Diagnostic> {
+    let mut lowered = lower_stmt(
+        path,
+        statement,
+        task_scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        false,
+        loop_depth,
+    )?;
+    let Statement::QuestionLet {
+        result_type,
+        result_expr,
+        early_exit_actions,
+        ..
+    } = &mut lowered
+    else {
+        unreachable!("validated structured question binding lowers to QuestionLet");
+    };
+    *early_exit_actions = structured_cancellation_actions(cancellations);
+    if matches!(
+        result_expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1
+    ) {
+        let temporary = fresh_internal_binding(task_scope, "structured_question_result");
+        let temporary_type = result_type.clone();
+        let initializer = result_expr.clone();
+        task_scope.insert(
+            temporary.clone(),
+            Binding {
+                value_type: temporary_type.clone(),
+                mutable: false,
+                source: BindingSource::Local,
+            },
+        );
+        out.push(Statement::Let {
+            name: temporary.clone(),
+            value_type: temporary_type,
+            initializer,
+        });
+        *result_expr = ValueExpr::Variable(temporary);
+    }
+    out.push(lowered);
+    Ok(())
+}
+
+fn structured_cancellation_actions(handles: &[String]) -> Vec<ValueExpr> {
+    handles
+        .iter()
+        .map(|handle| ValueExpr::Call {
             name: BUILTIN_TASK_STRUCTURED_CANCEL_EXPR.to_string(),
             args: vec![ValueExpr::Variable(handle.clone())],
-        }));
+        })
+        .collect()
+}
+
+fn push_structured_cancellations(out: &mut Vec<Statement>, handles: &[String]) {
+    for action in structured_cancellation_actions(handles) {
+        out.push(Statement::Expr(action));
     }
 }
 
-fn validate_structured_scope(path: &Path, body: &[Stmt]) -> Result<Vec<String>, Diagnostic> {
+struct StructuredScopeValidation {
+    unjoined: Vec<String>,
+    question_cancellations: HashMap<usize, Vec<String>>,
+}
+
+fn validate_structured_scope(
+    path: &Path,
+    body: &[Stmt],
+) -> Result<StructuredScopeValidation, Diagnostic> {
     let mut handles = HashMap::<String, bool>::new();
+    let mut question_cancellations = HashMap::new();
     for (index, statement) in body.iter().enumerate() {
         let span = statement_span(statement);
         match statement {
@@ -668,6 +767,59 @@ fn validate_structured_scope(path: &Path, body: &[Stmt]) -> Result<Vec<String>, 
             }
             Stmt::Let {
                 mutable,
+                value: AstExpr::Question { expr },
+                ..
+            } => {
+                if *mutable {
+                    return Err(Diagnostic::new(
+                        "E0876",
+                        "structured question results must use immutable bindings",
+                        path,
+                        span.line,
+                        span.column,
+                        span.length,
+                        &span.text,
+                    ));
+                }
+                if let AstExpr::Call {
+                    callee,
+                    args,
+                    type_args,
+                } = expr.as_ref()
+                    && callee == &["task", "join"]
+                    && type_args.is_empty()
+                    && args.len() == 1
+                {
+                    consume_structured_join_handle(path, span, args, &mut handles)?;
+                } else {
+                    let mut escaped = None;
+                    visit_statement_expressions(statement, &mut |expression| {
+                        if let AstExpr::Name(name) = expression
+                            && let [name] = name.as_slice()
+                            && handles.contains_key(name)
+                        {
+                            escaped = Some(name.clone());
+                        }
+                        Ok(())
+                    })?;
+                    if let Some(handle) = escaped {
+                        return Err(Diagnostic::new(
+                            "E0872",
+                            format!(
+                                "task handle `{handle}` may only be consumed by task.join inside its scope"
+                            ),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                }
+                question_cancellations.insert(index, unjoined_structured_handles(&handles));
+            }
+            Stmt::Let {
+                mutable,
                 value: AstExpr::Call { callee, args, .. },
                 ..
             } if callee == &["task", "join"] && args.len() == 1 => {
@@ -682,51 +834,7 @@ fn validate_structured_scope(path: &Path, body: &[Stmt]) -> Result<Vec<String>, 
                         &span.text,
                     ));
                 }
-                let [AstExpr::Name(handle_path)] = args.as_slice() else {
-                    return Err(Diagnostic::new(
-                        "E0872",
-                        "task.join expects one scope-owned task handle",
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    ));
-                };
-                let [handle] = handle_path.as_slice() else {
-                    return Err(Diagnostic::new(
-                        "E0872",
-                        "task.join expects an unqualified scope-owned task handle",
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    ));
-                };
-                let Some(joined) = handles.get_mut(handle) else {
-                    return Err(Diagnostic::new(
-                        "E0872",
-                        format!("`{handle}` is not a task handle owned by this scope"),
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    ));
-                };
-                if *joined {
-                    return Err(Diagnostic::new(
-                        "E0872",
-                        format!("task handle `{handle}` is joined more than once"),
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
-                    ));
-                }
-                *joined = true;
+                consume_structured_join_handle(path, span, args, &mut handles)?;
             }
             Stmt::Return { .. } => {
                 if index + 1 != body.len() {
@@ -808,10 +916,71 @@ fn validate_structured_scope(path: &Path, body: &[Stmt]) -> Result<Vec<String>, 
             }
         }
     }
+    Ok(StructuredScopeValidation {
+        unjoined: unjoined_structured_handles(&handles),
+        question_cancellations,
+    })
+}
+
+fn consume_structured_join_handle(
+    path: &Path,
+    span: &Span,
+    args: &[AstExpr],
+    handles: &mut HashMap<String, bool>,
+) -> Result<(), Diagnostic> {
+    let [AstExpr::Name(handle_path)] = args else {
+        return Err(Diagnostic::new(
+            "E0872",
+            "task.join expects one scope-owned task handle",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let [handle] = handle_path.as_slice() else {
+        return Err(Diagnostic::new(
+            "E0872",
+            "task.join expects an unqualified scope-owned task handle",
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    let Some(joined) = handles.get_mut(handle) else {
+        return Err(Diagnostic::new(
+            "E0872",
+            format!("`{handle}` is not a task handle owned by this scope"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    };
+    if *joined {
+        return Err(Diagnostic::new(
+            "E0872",
+            format!("task handle `{handle}` is joined more than once"),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
+    *joined = true;
+    Ok(())
+}
+
+fn unjoined_structured_handles(handles: &HashMap<String, bool>) -> Vec<String> {
     let mut unjoined = handles
         .iter()
         .filter_map(|(name, joined)| (!joined).then_some(name.as_str()))
         .collect::<Vec<_>>();
     unjoined.sort_unstable();
-    Ok(unjoined.into_iter().map(str::to_string).collect())
+    unjoined.into_iter().map(str::to_string).collect()
 }

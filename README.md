@@ -519,18 +519,23 @@ once when its result is observed. Normal scope fallthrough and a final scope
 `return` cancel unjoined children, remove their ready/timer registrations, and
 drop their frames before code after the scope or return completion runs. A
 return expression evaluates into an owned temporary before that cleanup.
+An immutable top-level `let value: T = expression?` inside the scope stores an
+owned propagated Err/None, cancels and drops the children that are live at
+that statement, and only then completes the helper. The operand may be a
+non-suspending expression or the direct `task.join(handle)?` form.
 E0871, E0872, E0875, and E0876 reject invalid boundaries, ownership, targets,
 and unsupported shapes. Mutable
 parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
-expressions, `?`, explicit panic, non-final scope return, explicit
-cancellation propagation, channels/select, the multi-task timer wheel, and the
-async test runner land in later reviewable slices. See
+expressions, `?` in other positions, explicit panic, non-final scope return,
+explicit cancellation propagation, channels/select, the multi-task timer
+wheel, and the async test runner land in later reviewable slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
 `examples/async_timer`, `examples/async_structured_void`,
 `examples/async_structured_results`, `examples/async_structured_return`,
 `examples/async_structured_cancel`,
-`examples/async_structured_return_cancel`, the
+`examples/async_structured_return_cancel`,
+`examples/async_structured_question_cancel`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1 async benchmark gates](performance/async/README.md).
 

@@ -260,6 +260,13 @@ pub(super) fn resolve_specific_value_builtin(
         "connect" if imports.iter().any(|item| item == "std.net.connect") => {
             vec!["net".to_string(), "connect".to_string()]
         }
+        "connect_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.net.connect_blocking") =>
+        {
+            vec!["net".to_string(), "connect_blocking".to_string()]
+        }
         "listen" if imports.iter().any(|item| item == "std.net.listen") => {
             vec!["net".to_string(), "listen".to_string()]
         }

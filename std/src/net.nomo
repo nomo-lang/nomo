@@ -1,15 +1,33 @@
-//! Blocking TCP and UDP helpers.
+//! Owner-affine async TCP client and blocking network compatibility helpers.
 package std.net
 
 import std.net
 
+/// Portable category for a network failure.
+pub enum NetErrorKind {
+    InvalidInput
+    Unsupported
+    Timeout
+    Cancelled
+    Closed
+    Busy
+    Limit
+    Resolve
+    Connect
+    Read
+    Write
+    Reactor
+}
+
 /// Error returned when a network operation fails.
 pub struct NetError {
+    /// Portable failure category.
+    pub kind: NetErrorKind
     /// Human-readable error description.
     pub message: string
 }
 
-/// An opaque blocking TCP stream.
+/// An opaque owner-affine TCP stream.
 pub struct TcpStream {
     handle: u64
 }
@@ -34,9 +52,14 @@ pub struct UdpDatagram {
     pub port: i64
 }
 
-/// Opens a blocking TCP connection.
-pub fn connect(host: string, port: i64) -> Result<TcpStream, NetError> {
-    return net.connect(host, port)
+/// Opens an owner-affine TCP connection without blocking the async executor.
+pub suspend fn connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError> {
+    return net.connect(host, port, timeout_millis)
+}
+
+/// Opens a blocking TCP connection for preview compatibility.
+pub fn connect_blocking(host: string, port: i64) -> Result<TcpStream, NetError> {
+    return net.connect_blocking(host, port)
 }
 
 /// Binds a blocking TCP listener.
@@ -51,13 +74,13 @@ pub fn udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError> {
 
 impl TcpStream {
     /// Reads until the peer closes its write side.
-    pub fn read_to_string(self) -> Result<string, NetError> {
-        return self.read_to_string()
+    pub fn read_to_string_blocking(self) -> Result<string, NetError> {
+        return self.read_to_string_blocking()
     }
 
-    /// Writes a string to the stream.
-    pub fn write_string(self, content: string) -> Result<void, NetError> {
-        return self.write_string(content)
+    /// Writes a string to the stream on the calling OS thread.
+    pub fn write_string_blocking(self, content: string) -> Result<void, NetError> {
+        return self.write_string_blocking(content)
     }
 
     /// Closes the stream.

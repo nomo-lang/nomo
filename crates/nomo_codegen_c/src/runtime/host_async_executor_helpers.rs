@@ -6,6 +6,7 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
             || statement_contains_expr(statement, |expr| {
                 expr_is_async_yield(expr)
                     || expr_is_async_sleep(expr)
+                    || expr_is_async_tcp_connect(expr)
                     || expr_is_async_channel_send(expr)
                     || expr_is_async_channel_receive(expr)
                     || expr_is_async_check_cancelled(expr)
@@ -131,6 +132,14 @@ fn expr_is_async_sleep(expr: &ValueExpr) -> bool {
         expr,
         ValueExpr::Call { name, args }
             if name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1
+    )
+}
+
+fn expr_is_async_tcp_connect(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3
     )
 }
 
@@ -264,6 +273,39 @@ fn statement_async_sleep(statement: &Statement) -> Option<(&str, &ValueType, &Va
         }
         _ => None,
     }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncTcpConnect<'a> {
+    host: &'a ValueExpr,
+    port: &'a ValueExpr,
+    timeout_millis: &'a ValueExpr,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_async_tcp_connect(statement: &Statement) -> Option<AsyncTcpConnect<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    if name != BUILTIN_NET_CONNECT_EXPR {
+        return None;
+    }
+    let [host, port, timeout_millis] = args.as_slice() else {
+        return None;
+    };
+    Some(AsyncTcpConnect {
+        host,
+        port,
+        timeout_millis,
+        binding,
+        value_type,
+    })
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -502,6 +544,7 @@ fn statement_async_call<'a>(
 fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<String>) -> bool {
     statement_is_async_yield(statement)
         || statement_async_sleep(statement).is_some()
+        || statement_async_tcp_connect(statement).is_some()
         || statement_async_channel_send(statement).is_some()
         || statement_async_channel_receive(statement).is_some()
         || statement_task_select(statement).is_some()
@@ -648,6 +691,18 @@ fn async_timer_outcome_field(index: usize) -> String {
 
 fn async_timer_result_owned_field(index: usize) -> String {
     format!("nomo_async_timer_result_owned_{index}")
+}
+
+fn async_tcp_connect_registration_field(index: usize) -> String {
+    format!("nomo_async_tcp_connect_registration_{index}")
+}
+
+fn async_tcp_connect_result_field(index: usize) -> String {
+    format!("nomo_async_tcp_connect_result_{index}")
+}
+
+fn async_tcp_connect_result_owned_field(index: usize) -> String {
+    format!("nomo_async_tcp_connect_result_owned_{index}")
 }
 
 fn async_join_result_field(index: usize) -> String {
@@ -850,6 +905,17 @@ fn emit_async_frame_type(
             out.push_str(&async_timer_result_field(index));
             out.push_str(";\n    uint8_t ");
             out.push_str(&async_timer_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if let Some(connect) = statement_async_tcp_connect(statement) {
+            out.push_str("    nomo_async_tcp_connect_registration ");
+            out.push_str(&async_tcp_connect_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(connect.value_type));
+            out.push(' ');
+            out.push_str(&async_tcp_connect_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_tcp_connect_result_owned_field(index));
             out.push_str(";\n");
         }
         if statement_structured_join(statement).is_some() {
@@ -1142,6 +1208,69 @@ fn emit_async_channel_result_binding(
     }
 }
 
+fn emit_async_tcp_connect_result_binding(
+    out: &mut String,
+    index: usize,
+    connect: AsyncTcpConnect<'_>,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    if let Some(frame_local) = frame_locals
+        .iter()
+        .find(|local| local.declaration_index == index)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_value_field(connect.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_tcp_connect_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(connect.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_frame_owned_field(connect.binding));
+            out.push_str(" = frame->");
+            out.push_str(&async_tcp_connect_result_owned_field(index));
+            out.push_str(";\n");
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_tcp_connect_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        emit_async_frame_alias(out, frame_local, indent);
+    } else {
+        write_indent(out, indent);
+        out.push_str(&c_type(connect.value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(connect.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_tcp_connect_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(connect.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_tcp_connect_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        if let Some(local) = local_array(connect.binding, connect.value_type) {
+            local_owned.push(local);
+        }
+    }
+}
+
+fn emit_async_tcp_connect_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_tcp_connect(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_tcp_connect_cancel(&frame->");
+        out.push_str(&async_tcp_connect_registration_field(index));
+        out.push_str(", context);\n");
+    }
+}
+
 fn emit_async_channel_cancellations(out: &mut String, function: &Function, indent: usize) {
     for (index, statement) in function.body.iter().enumerate().rev() {
         if let Some(send) = statement_async_channel_send(statement) {
@@ -1379,6 +1508,7 @@ fn emit_async_deadline_failure(
     }
     emit_async_select_cancellations(out, function, indent);
     emit_async_channel_cancellations(out, function, indent);
+    emit_async_tcp_connect_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1472,6 +1602,7 @@ fn emit_async_child_failure_propagation(
     }
     emit_async_select_cancellations(out, function, indent + 1);
     emit_async_channel_cancellations(out, function, indent + 1);
+    emit_async_tcp_connect_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1558,6 +1689,7 @@ fn emit_async_cancel_function(
     }
     emit_async_select_cancellations(out, function, 1);
     emit_async_channel_cancellations(out, function, 1);
+    emit_async_tcp_connect_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
@@ -2174,7 +2306,8 @@ typedef enum {
     NOMO_ASYNC_PENDING_PANIC = 4,
     NOMO_ASYNC_PENDING_CANCEL = 5,
     NOMO_ASYNC_PENDING_CHANNEL = 6,
-    NOMO_ASYNC_PENDING_SELECT = 7
+    NOMO_ASYNC_PENDING_SELECT = 7,
+    NOMO_ASYNC_PENDING_IO = 8
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -2199,6 +2332,7 @@ typedef void (*nomo_async_select_cancel_fn)(void *, nomo_async_context *);
 
 #define NOMO_ASYNC_READY_CAPACITY 64u
 #define NOMO_ASYNC_TIMER_CAPACITY 64u
+#define NOMO_ASYNC_IO_HANDLE_CAPACITY 64u
 #define NOMO_ASYNC_SELECT_MAX_ARMS 8u
 #define NOMO_ASYNC_SELECT_PENDING UINT32_MAX
 
@@ -2238,6 +2372,12 @@ typedef struct {
     void *frame;
     nomo_async_poll_fn poll;
 } nomo_async_ready_slot;
+
+typedef struct {
+    nomo_socket handle;
+    uint32_t generation;
+    uint8_t occupied;
+} nomo_async_io_handle_slot;
 
 struct nomo_async_context {
     nomo_async_reactor reactor;
@@ -2285,12 +2425,23 @@ struct nomo_async_context {
     uint64_t peak_live_channel_receive_waiters;
     uint64_t live_timers;
     uint64_t peak_live_timers;
+    uint64_t io_connect_starts;
+    uint64_t io_ready_completions;
+    uint64_t io_timeouts;
+    uint64_t io_cancellations;
+    uint64_t io_errors;
+    uint64_t live_io_handles;
+    uint64_t peak_live_io_handles;
+    uint64_t live_io_operations;
+    uint64_t peak_live_io_operations;
     uint32_t next_timer_generation;
+    uint32_t next_io_handle_generation;
     void *current_frame;
     nomo_async_poll_fn current_poll;
     nomo_async_pending_reason pending_reason;
     nomo_async_ready_slot ready[NOMO_ASYNC_READY_CAPACITY];
     nomo_async_timer_slot timers[NOMO_ASYNC_TIMER_CAPACITY];
+    nomo_async_io_handle_slot io_handles[NOMO_ASYNC_IO_HANDLE_CAPACITY];
     uint32_t ready_head;
     uint32_t ready_tail;
     uint32_t ready_count;
@@ -2299,6 +2450,100 @@ struct nomo_async_context {
     uint8_t panic_message_owned;
     nomo_string panic_message;
 };
+
+static int nomo_async_io_handle_insert(
+    nomo_async_context *context,
+    nomo_socket handle,
+    uint32_t *slot_out,
+    uint32_t *generation_out
+) {
+    uint32_t selected = NOMO_ASYNC_IO_HANDLE_CAPACITY;
+    for (uint32_t index = 0u; index < NOMO_ASYNC_IO_HANDLE_CAPACITY; index += 1u) {
+        if (context->io_handles[index].occupied == 0u) {
+            selected = index;
+            break;
+        }
+    }
+    if (selected == NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return 1;
+    }
+    context->next_io_handle_generation += 1u;
+    if (context->next_io_handle_generation == 0u) {
+        context->next_io_handle_generation = 1u;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[selected];
+    slot->handle = handle;
+    slot->generation = context->next_io_handle_generation;
+    slot->occupied = 1u;
+    *slot_out = selected;
+    *generation_out = slot->generation;
+    context->live_io_handles += 1u;
+    if (context->live_io_handles > context->peak_live_io_handles) {
+        context->peak_live_io_handles = context->live_io_handles;
+    }
+    return 0;
+}
+
+static nomo_socket nomo_async_io_handle_get(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return NOMO_INVALID_SOCKET;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return NOMO_INVALID_SOCKET;
+    }
+    return slot->handle;
+}
+
+static void nomo_async_io_handle_close(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return;
+    }
+    NOMO_SOCKET_CLOSE(slot->handle);
+    slot->handle = NOMO_INVALID_SOCKET;
+    slot->occupied = 0u;
+    slot->generation += 1u;
+    if (slot->generation == 0u) {
+        slot->generation = 1u;
+    }
+    if (context->live_io_handles > 0u) {
+        context->live_io_handles -= 1u;
+    }
+}
+
+static void nomo_async_io_handle_close_callback(
+    void *raw_context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    nomo_async_io_handle_close(
+        (nomo_async_context *)raw_context,
+        slot_index,
+        generation
+    );
+}
+
+static void nomo_async_io_handle_shutdown(nomo_async_context *context) {
+    for (uint32_t index = 0u; index < NOMO_ASYNC_IO_HANDLE_CAPACITY; index += 1u) {
+        nomo_async_io_handle_slot *slot = &context->io_handles[index];
+        if (slot->occupied == 0u) {
+            continue;
+        }
+        nomo_async_io_handle_close(context, index, slot->generation);
+    }
+}
 
 static int nomo_async_ready_enqueue(
     nomo_async_context *context,
@@ -2716,7 +2961,7 @@ static const char *nomo_async_task_failure_message(nomo_async_task_failure failu
     }
 }
 
-static int nomo_async_timer_wait_next(nomo_async_context *context) {
+static int nomo_async_wait_next(nomo_async_context *context) {
     uint32_t selected = NOMO_ASYNC_TIMER_CAPACITY;
     for (uint32_t index = 0u; index < NOMO_ASYNC_TIMER_CAPACITY; index += 1u) {
         nomo_async_timer_slot *candidate = &context->timers[index];
@@ -2730,22 +2975,43 @@ static int nomo_async_timer_wait_next(nomo_async_context *context) {
             selected = index;
         }
     }
-    if (selected == NOMO_ASYNC_TIMER_CAPACITY) {
+    if (selected == NOMO_ASYNC_TIMER_CAPACITY
+        && context->reactor.live_registrations == 0u) {
         return 1;
     }
-    nomo_async_timer_slot *slot = &context->timers[selected];
+    nomo_async_timer_slot *slot = selected == NOMO_ASYNC_TIMER_CAPACITY
+        ? NULL
+        : &context->timers[selected];
     while (1) {
-        int64_t now = nomo_time_monotonic_millis();
-        if (now >= slot->deadline_millis) {
-            break;
+        int64_t remaining = -1;
+        if (slot != NULL) {
+            int64_t now = nomo_time_monotonic_millis();
+            if (now >= slot->deadline_millis) {
+                break;
+            }
+            remaining = slot->deadline_millis - now;
+            if (remaining > 60000) {
+                remaining = 60000;
+            }
         }
-        int64_t remaining = slot->deadline_millis - now;
+        uint8_t had_completion = 0u;
         if (nomo_async_reactor_wait(
                 &context->reactor,
-                remaining > 60000 ? 60000 : remaining
+                remaining,
+                &had_completion
             ) != 0) {
             context->runtime_failed = 1u;
             return 1;
+        }
+        if (had_completion != 0u) {
+            return context->runtime_failed != 0u;
+        }
+        if (slot == NULL) {
+            context->runtime_failed = 1u;
+            return 1;
+        }
+        if (nomo_time_monotonic_millis() >= slot->deadline_millis) {
+            break;
         }
     }
     nomo_async_timer_registration *registration = slot->registration;
@@ -2815,12 +3081,15 @@ static int nomo_async_executor_run_root(
     } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
         && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
         && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL
-        && context->pending_reason != NOMO_ASYNC_PENDING_SELECT) {
+        && context->pending_reason != NOMO_ASYNC_PENDING_SELECT
+        && context->pending_reason != NOMO_ASYNC_PENDING_IO) {
         return 1;
     }
-    while (context->ready_count != 0u || context->live_timers != 0u) {
+    while (context->ready_count != 0u
+        || context->live_timers != 0u
+        || context->reactor.live_registrations != 0u) {
         if (context->ready_count == 0u
-            && nomo_async_timer_wait_next(context) != 0) {
+            && nomo_async_wait_next(context) != 0) {
             return 1;
         }
         void *ready_frame = NULL;
@@ -2843,7 +3112,8 @@ static int nomo_async_executor_run_root(
             } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
                 && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
                 && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL
-                && context->pending_reason != NOMO_ASYNC_PENDING_SELECT) {
+                && context->pending_reason != NOMO_ASYNC_PENDING_SELECT
+                && context->pending_reason != NOMO_ASYNC_PENDING_IO) {
                 return 1;
             }
         }
@@ -2918,8 +3188,26 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"reactor_completions\": %" PRIu64 ",\n"
         "    \"reactor_errors\": %" PRIu64 ",\n"
         "    \"reactor_shutdowns\": %" PRIu64 ",\n"
+        "    \"reactor_registrations\": %" PRIu64 ",\n"
+        "    \"reactor_deregistrations\": %" PRIu64 ",\n"
+        "    \"reactor_reregistrations\": %" PRIu64 ",\n"
+        "    \"live_reactor_registrations\": %" PRIu64 ",\n"
+        "    \"peak_live_reactor_registrations\": %" PRIu64 ",\n"
         "    \"live_reactors\": %" PRIu64 ",\n"
-        "    \"peak_live_reactors\": %" PRIu64 "\n"
+        "    \"peak_live_reactors\": %" PRIu64 ",\n"
+        "    \"io_connect_starts\": %" PRIu64 ",\n"
+        "    \"io_read_starts\": 0,\n"
+        "    \"io_write_starts\": 0,\n"
+        "    \"io_ready_completions\": %" PRIu64 ",\n"
+        "    \"io_timeouts\": %" PRIu64 ",\n"
+        "    \"io_cancellations\": %" PRIu64 ",\n"
+        "    \"io_errors\": %" PRIu64 ",\n"
+        "    \"live_io_handles\": %" PRIu64 ",\n"
+        "    \"peak_live_io_handles\": %" PRIu64 ",\n"
+        "    \"live_io_operations\": %" PRIu64 ",\n"
+        "    \"peak_live_io_operations\": %" PRIu64 ",\n"
+        "    \"retained_io_bytes\": 0,\n"
+        "    \"peak_retained_io_bytes\": 0\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
@@ -2981,8 +3269,22 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->reactor.completions,
         context->reactor.errors,
         context->reactor.shutdowns,
+        context->reactor.registrations,
+        context->reactor.deregistrations,
+        context->reactor.reregistrations,
+        context->reactor.live_registrations,
+        context->reactor.peak_live_registrations,
         context->reactor.live,
-        context->reactor.peak_live
+        context->reactor.peak_live,
+        context->io_connect_starts,
+        context->io_ready_completions,
+        context->io_timeouts,
+        context->io_cancellations,
+        context->io_errors,
+        context->live_io_handles,
+        context->peak_live_io_handles,
+        context->live_io_operations,
+        context->peak_live_io_operations
     );
     int close_status = fclose(output);
     return write_status < 0 || close_status != 0;
@@ -3158,6 +3460,7 @@ pub(super) fn emit_async_function(
                 emit_async_frame_alias(out, local, 3);
             }
             let sleep = statement_async_sleep(statement);
+            let tcp_connect = statement_async_tcp_connect(statement);
             let channel_send = statement_async_channel_send(statement);
             let channel_receive = statement_async_channel_receive(statement);
             let select = statement_task_select(statement);
@@ -3234,6 +3537,28 @@ pub(super) fn emit_async_function(
                 out.push_str("            context->yield_count += 1u;\n");
                 out.push_str("            context->pending_reason = NOMO_ASYNC_PENDING_YIELD;\n");
                 out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
+            } else if let Some(connect) = tcp_connect {
+                out.push_str("            if (nomo_async_tcp_connect_start(&frame->");
+                out.push_str(&async_tcp_connect_registration_field(index));
+                out.push_str(", ");
+                emit_expr(out, connect.host);
+                out.push_str(", ");
+                emit_expr(out, connect.port);
+                out.push_str(", ");
+                emit_expr(out, connect.timeout_millis);
+                out.push_str(", context, &frame->");
+                out.push_str(&async_tcp_connect_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_tcp_connect_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
             } else if let Some(send) = channel_send {
                 out.push_str("            if (nomo_channel_send_start_");
                 out.push_str(send.suffix);
@@ -3371,6 +3696,20 @@ pub(super) fn emit_async_function(
             if statement_is_within_async_deadline(function, index) {
                 emit_async_deadline_due_check(out, function, async_names, 3);
             }
+            if tcp_connect.is_some() {
+                out.push_str("            if (nomo_async_tcp_connect_resume(&frame->");
+                out.push_str(&async_tcp_connect_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_tcp_connect_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_tcp_connect_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
             if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_resume(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -3461,6 +3800,7 @@ pub(super) fn emit_async_function(
                 );
             }
             if sleep.is_some()
+                || tcp_connect.is_some()
                 || channel_send.is_some()
                 || channel_receive.is_some()
                 || call.is_some()
@@ -3561,6 +3901,16 @@ pub(super) fn emit_async_function(
                 out.push_str("(&frame->");
                 out.push_str(&async_child_field(index));
                 out.push_str(");\n");
+            }
+            if let Some(connect) = tcp_connect {
+                emit_async_tcp_connect_result_binding(
+                    out,
+                    index,
+                    connect,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
             }
             if let Some(send) = channel_send {
                 emit_async_channel_result_binding(
@@ -3889,6 +4239,15 @@ pub(super) fn emit_async_function(
     emit_async_select_cancellations(out, function, 1);
     emit_async_channel_cancellations(out, function, 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_tcp_connect(statement).is_none() {
+            continue;
+        }
+        out.push_str("    if (frame->context != NULL) {\n");
+        out.push_str("        nomo_async_tcp_connect_cancel(&frame->");
+        out.push_str(&async_tcp_connect_registration_field(index));
+        out.push_str(", frame->context);\n    }\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(arms) = statement_task_select(statement) else {
             continue;
         };
@@ -3901,6 +4260,18 @@ pub(super) fn emit_async_function(
                 1,
             );
         }
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(connect) = statement_async_tcp_connect(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            connect.value_type,
+            &async_tcp_connect_result_owned_field(index),
+            &async_tcp_connect_result_field(index),
+            1,
+        );
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
         let channel_value_type = statement_async_channel_send(statement)

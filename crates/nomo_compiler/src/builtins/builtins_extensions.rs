@@ -41,7 +41,11 @@ pub(super) fn is_net_builtin_call(callee: &[String]) -> bool {
     matches!(
         callee,
         [module, name]
-            if module == "net" && matches!(name.as_str(), "connect" | "listen" | "udp_bind")
+            if module == "net"
+                && matches!(
+                    name.as_str(),
+                    "connect" | "connect_blocking" | "listen" | "udp_bind"
+                )
     )
 }
 
@@ -473,7 +477,104 @@ pub(super) fn lower_net_builtin(
     debug_assert_eq!(module, "net");
     let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
     match name.as_str() {
-        "connect" | "listen" | "udp_bind" => {
+        "connect" => {
+            if !current_function_is_suspend(scope) {
+                return Err(Diagnostic::new(
+                    "E0870",
+                    "synchronous function cannot call suspend function `net.connect`; mark the caller `suspend`",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            let [host_arg, port_arg, timeout_arg] = args else {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`net.connect` expects host, port, and timeout_millis arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            };
+            let (host_type, host) = lower_value_expr_with_expected(
+                path,
+                host_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::String),
+                span,
+            )?;
+            if host_type != ValueType::String {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`net.connect` expects a string host",
+                    &ValueType::String,
+                    &host_type,
+                ));
+            }
+            let (port_type, port) = lower_value_expr_with_expected(
+                path,
+                port_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::Int),
+                span,
+            )?;
+            if port_type != ValueType::Int {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`net.connect` expects an i64 port",
+                    &ValueType::Int,
+                    &port_type,
+                ));
+            }
+            let (timeout_type, timeout) = lower_value_expr_with_expected(
+                path,
+                timeout_arg,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                Some(&ValueType::U64),
+                span,
+            )?;
+            if timeout_type != ValueType::U64 {
+                return Err(type_mismatch_expected_found(
+                    path,
+                    span,
+                    "`net.connect` expects a u64 timeout_millis",
+                    &ValueType::U64,
+                    &timeout_type,
+                ));
+            }
+            Ok((
+                ValueType::Enum(
+                    "Result".to_string(),
+                    vec![
+                        ValueType::Struct("TcpStream".to_string(), Vec::new()),
+                        net_error,
+                    ],
+                ),
+                ValueExpr::Call {
+                    name: BUILTIN_NET_CONNECT_EXPR.to_string(),
+                    args: vec![host, port, timeout],
+                },
+            ))
+        }
+        "connect_blocking" | "listen" | "udp_bind" => {
             let [host_arg, port_arg] = args else {
                 return Err(Diagnostic::new(
                     "E0407",
@@ -525,7 +626,7 @@ pub(super) fn lower_net_builtin(
                     &port_type,
                 ));
             }
-            let ok_type = if name == "connect" {
+            let ok_type = if name == "connect_blocking" {
                 ValueType::Struct("TcpStream".to_string(), Vec::new())
             } else if name == "listen" {
                 ValueType::Struct("TcpListener".to_string(), Vec::new())
@@ -533,7 +634,7 @@ pub(super) fn lower_net_builtin(
                 ValueType::Struct("UdpSocket".to_string(), Vec::new())
             };
             let result_type = ValueType::Enum("Result".to_string(), vec![ok_type, net_error]);
-            let expr = if name == "connect" {
+            let expr = if name == "connect_blocking" {
                 ValueExpr::NetConnect {
                     host: Box::new(host),
                     port: Box::new(port),

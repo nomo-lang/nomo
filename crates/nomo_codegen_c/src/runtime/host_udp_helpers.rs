@@ -1,4 +1,14 @@
 use super::*;
+
+fn emit_blocking_net_error_kind(out: &mut String, variant: &str) {
+    out.push_str(&c_member_ident("kind"));
+    out.push_str(" = (");
+    out.push_str(&c_enum_ident("NetErrorKind", &[]));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident("NetErrorKind", &[], variant));
+    out.push_str("}, .");
+}
+
 pub(super) fn emit_net_udp_bind_helper(out: &mut String) {
     let udp_socket = c_struct_ident("UdpSocket", &[]);
     let net_error = c_struct_ident("NetError", &[]);
@@ -38,6 +48,7 @@ pub(super) fn emit_net_udp_bind_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Unsupported");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"network initialization failed\")}};\n");
     out.push_str("    }\n");
@@ -51,6 +62,7 @@ pub(super) fn emit_net_udp_bind_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "InvalidInput");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"invalid port\")}};\n");
     out.push_str("    }\n");
@@ -73,6 +85,7 @@ pub(super) fn emit_net_udp_bind_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Resolve");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
     out.push_str("    }\n");
@@ -105,6 +118,7 @@ pub(super) fn emit_net_udp_bind_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Connect");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_net_error_message()}};\n");
     out.push_str("    }\n");
@@ -166,6 +180,7 @@ pub(super) fn emit_udp_socket_recv_from_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Closed");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"socket is closed\")}};\n");
     out.push_str("    }\n");
@@ -179,6 +194,7 @@ pub(super) fn emit_udp_socket_recv_from_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "InvalidInput");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"invalid max byte count\")}};\n");
     out.push_str("    }\n");
@@ -205,6 +221,7 @@ pub(super) fn emit_udp_socket_recv_from_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Read");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = message}};\n");
     out.push_str("    }\n");
@@ -223,6 +240,7 @@ pub(super) fn emit_udp_socket_recv_from_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Resolve");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
     out.push_str("    }\n");
@@ -287,6 +305,7 @@ pub(super) fn emit_udp_socket_send_to_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Closed");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"socket is closed\")}};\n");
     out.push_str("    }\n");
@@ -300,6 +319,7 @@ pub(super) fn emit_udp_socket_send_to_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "InvalidInput");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(\"invalid port\")}};\n");
     out.push_str("    }\n");
@@ -321,6 +341,7 @@ pub(super) fn emit_udp_socket_send_to_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Resolve");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_string_from_cstr(gai_strerror(rc))}};\n");
     out.push_str("    }\n");
@@ -343,6 +364,7 @@ pub(super) fn emit_udp_socket_send_to_string_helper(out: &mut String) {
     out.push_str(" = (");
     out.push_str(&net_error);
     out.push_str("){.");
+    emit_blocking_net_error_kind(out, "Write");
     out.push_str(&c_member_ident("message"));
     out.push_str(" = nomo_net_error_message()}};\n");
     out.push_str("    }\n");

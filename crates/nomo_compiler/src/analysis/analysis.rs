@@ -196,6 +196,9 @@ pub(super) fn standard_enum_names(
     needs: StandardTypeNeeds,
 ) -> impl Iterator<Item = (String, usize)> {
     let mut names = Vec::new();
+    if needs.net {
+        names.push(("NetErrorKind".to_string(), 0));
+    }
     if needs.process {
         names.push(("ProcessEvent".to_string(), 0));
     }
@@ -309,10 +312,16 @@ pub(super) fn inject_standard_types(
             package: "std.net".to_string(),
             name: "NetError".to_string(),
             type_params: Vec::new(),
-            fields: vec![StructField {
-                name: "message".to_string(),
-                value_type: ValueType::String,
-            }],
+            fields: vec![
+                StructField {
+                    name: "kind".to_string(),
+                    value_type: ValueType::Enum("NetErrorKind".to_string(), Vec::new()),
+                },
+                StructField {
+                    name: "message".to_string(),
+                    value_type: ValueType::String,
+                },
+            ],
         });
     }
     if needs.net && !structs.iter().any(|item| item.name == "TcpStream") {
@@ -1102,6 +1111,33 @@ pub(super) fn inject_standard_types(
                 name: "millis".to_string(),
                 value_type: ValueType::Int,
             }],
+        });
+    }
+    if needs.net && !enums.iter().any(|item| item.name == "NetErrorKind") {
+        enums.push(EnumType {
+            package: "std.net".to_string(),
+            name: "NetErrorKind".to_string(),
+            type_params: Vec::new(),
+            variants: [
+                "InvalidInput",
+                "Unsupported",
+                "Timeout",
+                "Cancelled",
+                "Closed",
+                "Busy",
+                "Limit",
+                "Resolve",
+                "Connect",
+                "Read",
+                "Write",
+                "Reactor",
+            ]
+            .into_iter()
+            .map(|name| EnumVariantType {
+                name: name.to_string(),
+                payload: None,
+            })
+            .collect(),
         });
     }
     if needs.process && !enums.iter().any(|item| item.name == "ProcessEvent") {

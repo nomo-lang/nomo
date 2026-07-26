@@ -314,6 +314,18 @@ fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[V
         out.push_str("    nomo_socket ");
         out.push_str(&c_member_ident("handle"));
         out.push_str(";\n");
+        out.push_str("    void *");
+        out.push_str(&c_member_ident("owner"));
+        out.push_str(";\n");
+        out.push_str("    void (*");
+        out.push_str(&c_member_ident("close_fn"));
+        out.push_str(")(void *, uint32_t, uint32_t);\n");
+        out.push_str("    uint32_t ");
+        out.push_str(&c_member_ident("slot"));
+        out.push_str(";\n");
+        out.push_str("    uint32_t ");
+        out.push_str(&c_member_ident("generation"));
+        out.push_str(";\n");
         out.push_str("};\n");
         return;
     }

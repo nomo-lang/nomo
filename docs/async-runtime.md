@@ -19,6 +19,8 @@ acceptance gate has passed.
 - [RFC 0036](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0036-bounded-channels-publication-moves-and-static-select.md)
   defines bounded channels, consuming publication, and the later static-select
   surface.
+- [RFC 0037](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0037-owner-affine-async-tcp-client-and-blocking-migration.md)
+  defines the bounded owner-affine async TCP client and blocking migration.
 
 [中文版本](async-runtime.zh-CN.md)
 
@@ -56,6 +58,31 @@ on the native C99 current-thread backend. Its duration is evaluated once, a
 non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
+
+The P2-TCP-A slice also provides a direct-style numeric-address connect:
+
+```nomo
+import std.net
+import std.result
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> =
+        net.connect("127.0.0.1", 8080, 1000)
+}
+```
+
+Linux and macOS attempt the socket in nonblocking mode and suspend through one
+generation-checked epoll/kqueue registration. `TcpStream` remains bound to its
+owner executor and is Local/!Send. A positive timeout is monotonic and bounded
+to 15 minutes; zero makes one immediate attempt without a reactor
+registration. Hostnames return `NetErrorKind.Unsupported` until the bounded
+resolver slice. Windows compiles and returns `Unsupported` without claiming
+IOCP socket completion support. The preview blocking names are
+`net.connect_blocking`, `read_to_string_blocking`, and
+`write_string_blocking`; reaching them from a suspend call graph reports
+E0891. This first stackless slice binds the complete `Result` as shown above;
+placing `?` directly on `net.connect(...)` remains an E0876 limitation until
+the general suspend-question lowering slice lands.
 
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:
@@ -229,7 +256,7 @@ slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
 operand rather than approximating select sequentially. See
 [`examples/async_static_select`](../examples/async_static_select).
 
-## Implemented P1, P2 Reactor Foundation, and P3-B/P3-C Slices
+## Implemented P1, P2 Reactor/P2-TCP-A, and P3-B/P3-C Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -246,6 +273,9 @@ On the native C99 backend, a suspend call chain that reaches
 - a lazily initialized owner-local platform reactor: epoll on Linux, kqueue on
   macOS, and IOCP on Windows. Positive timers enter that reactor with a bounded
   timeout; ready-only work and non-positive timers do not initialize it;
+- a bounded 64-slot I/O owner table with slot generations and exclusive close,
+  plus one embedded connect registration and timer for each pending
+  numeric-address TCP connect on epoll/kqueue;
 - embedded structured child frames enqueued onto the same bounded FIFO, plus a
   single owner-local waiter edge that re-enqueues the parent when its child
   completes;

@@ -72,9 +72,12 @@ owner frame 单次 wake 前被清理，最终 waiter/timer live counter 都回�
 不是性能声明。
 第一个 P2 foundation 会在 Linux 生成 epoll、macOS 生成 kqueue、Windows
 生成 IOCP。既有正时长 timer 现在使用统一 reactor wait，不再调用 timer
-专用 sleep primitive。这只是 platform/lifecycle 证据，不是 async network 证据；
-TCP、HTTP/SSE 与 process-pipe registration 仍保持 disabled，等待各自的本地
-fixture 小切片。
+专用 sleep primitive。P2-TCP-A 为 pending 数值地址 connect 增加一个带
+generation 校验的 epoll/kqueue registration，并由 native fixture 精确验证
+registration、completion、handle 与清理 counter。hostname resolution、
+async read/write、IOCP socket completion、HTTP/SSE 与 process-pipe registration
+仍保持 disabled，等待各自的聚焦小切片。这是 correctness/lifecycle 证据，
+不是跨语言性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

@@ -1,5 +1,33 @@
 use super::*;
 
+fn net_error_kind_type() -> EnumType {
+    EnumType {
+        package: "std.net".to_string(),
+        name: "NetErrorKind".to_string(),
+        type_params: Vec::new(),
+        variants: [
+            "InvalidInput",
+            "Unsupported",
+            "Timeout",
+            "Cancelled",
+            "Closed",
+            "Busy",
+            "Limit",
+            "Resolve",
+            "Connect",
+            "Read",
+            "Write",
+            "Reactor",
+        ]
+        .into_iter()
+        .map(|name| EnumVariantType {
+            name: name.to_string(),
+            payload: None,
+        })
+        .collect(),
+    }
+}
+
 #[test]
 fn emits_net_tcp_stream_helpers() {
     let net_error = ValueType::Struct("NetError".to_string(), Vec::new());
@@ -28,10 +56,16 @@ fn emits_net_tcp_stream_helpers() {
                 package: "std.net".to_string(),
                 name: "NetError".to_string(),
                 type_params: Vec::new(),
-                fields: vec![StructField {
-                    name: "message".to_string(),
-                    value_type: ValueType::String,
-                }],
+                fields: vec![
+                    StructField {
+                        name: "kind".to_string(),
+                        value_type: ValueType::Enum("NetErrorKind".to_string(), Vec::new()),
+                    },
+                    StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    },
+                ],
             },
             StructType {
                 package: "std.net".to_string(),
@@ -46,21 +80,24 @@ fn emits_net_tcp_stream_helpers() {
                 fields: Vec::new(),
             },
         ],
-        enums: vec![EnumType {
-            package: "std.result".to_string(),
-            name: "Result".to_string(),
-            type_params: vec!["T".to_string(), "E".to_string()],
-            variants: vec![
-                EnumVariantType {
-                    name: "Ok".to_string(),
-                    payload: Some(ValueType::TypeParam("T".to_string())),
-                },
-                EnumVariantType {
-                    name: "Err".to_string(),
-                    payload: Some(ValueType::TypeParam("E".to_string())),
-                },
-            ],
-        }],
+        enums: vec![
+            net_error_kind_type(),
+            EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            },
+        ],
         functions: vec![
             Function {
                 is_suspend: false,
@@ -152,6 +189,15 @@ fn emits_net_tcp_stream_helpers() {
     assert!(c.contains("nomo_net_connect(nomo_string host, int64_t port)"));
     assert!(c.contains("nomo_net_listen(nomo_string host, int64_t port)"));
     assert!(c.contains("nomo_tcp_listener_accept(nomo_struct_TcpListener listener)"));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Resolve}"
+    ));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Read}"
+    ));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Write}"
+    ));
     assert!(c.contains("static void nomo_tcp_listener_close(nomo_struct_TcpListener listener)"));
     assert!(c.contains("nomo_tcp_stream_read_to_string(nomo_struct_TcpStream stream)"));
     assert!(c.contains(
@@ -194,10 +240,16 @@ fn emits_net_udp_socket_helpers() {
                 package: "std.net".to_string(),
                 name: "NetError".to_string(),
                 type_params: Vec::new(),
-                fields: vec![StructField {
-                    name: "message".to_string(),
-                    value_type: ValueType::String,
-                }],
+                fields: vec![
+                    StructField {
+                        name: "kind".to_string(),
+                        value_type: ValueType::Enum("NetErrorKind".to_string(), Vec::new()),
+                    },
+                    StructField {
+                        name: "message".to_string(),
+                        value_type: ValueType::String,
+                    },
+                ],
             },
             StructType {
                 package: "std.net".to_string(),
@@ -225,21 +277,24 @@ fn emits_net_udp_socket_helpers() {
                 fields: Vec::new(),
             },
         ],
-        enums: vec![EnumType {
-            package: "std.result".to_string(),
-            name: "Result".to_string(),
-            type_params: vec!["T".to_string(), "E".to_string()],
-            variants: vec![
-                EnumVariantType {
-                    name: "Ok".to_string(),
-                    payload: Some(ValueType::TypeParam("T".to_string())),
-                },
-                EnumVariantType {
-                    name: "Err".to_string(),
-                    payload: Some(ValueType::TypeParam("E".to_string())),
-                },
-            ],
-        }],
+        enums: vec![
+            net_error_kind_type(),
+            EnumType {
+                package: "std.result".to_string(),
+                name: "Result".to_string(),
+                type_params: vec!["T".to_string(), "E".to_string()],
+                variants: vec![
+                    EnumVariantType {
+                        name: "Ok".to_string(),
+                        payload: Some(ValueType::TypeParam("T".to_string())),
+                    },
+                    EnumVariantType {
+                        name: "Err".to_string(),
+                        payload: Some(ValueType::TypeParam("E".to_string())),
+                    },
+                ],
+            },
+        ],
         functions: vec![
             Function {
                 is_suspend: false,
@@ -305,6 +360,15 @@ fn emits_net_udp_socket_helpers() {
             "nomo_udp_socket_send_to_string(nomo_struct_UdpSocket socket, nomo_string content, nomo_string host, int64_t port)"
         ));
     assert!(c.contains("static void nomo_udp_socket_close(nomo_struct_UdpSocket socket)"));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Resolve}"
+    ));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Read}"
+    ));
+    assert!(c.contains(
+        "nomo_member_kind = (nomo_enum_NetErrorKind){.tag = nomo_enum_NetErrorKind_Write}"
+    ));
     assert!(c.contains("nomo_net_udp_bind(nomo_string_literal(\"127.0.0.1\"), 7)"));
     assert!(c.contains("nomo_udp_socket_recv_from_string(nomo_socket, 1024)"));
     assert!(c.contains(

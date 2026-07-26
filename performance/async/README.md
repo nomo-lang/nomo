@@ -89,9 +89,13 @@ claim.
 
 The first P2 foundation emits epoll for Linux, kqueue for macOS, and IOCP for
 Windows. Existing positive timers now use the normalized reactor wait instead
-of a timer-specific sleep primitive. This is platform/lifecycle evidence, not
-async network evidence: TCP, HTTP/SSE, and process-pipe registrations remain
-disabled until their own fixture-backed slices land.
+of a timer-specific sleep primitive. P2-TCP-A adds one generation-checked
+epoll/kqueue registration for pending numeric-address connects, with exact
+registration, completion, handle, and cleanup counters in the native fixture.
+Hostname resolution, async read/write, IOCP socket completion, HTTP/SSE, and
+process-pipe registrations remain disabled until their focused slices land.
+This is correctness and lifecycle evidence, not a cross-language performance
+claim.
 
 ## Run
 

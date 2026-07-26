@@ -823,7 +823,7 @@ mod tests {
         assert_eq!(connect.source, "std/src/net.nomo");
         assert_eq!(
             connect.signature,
-            "pub fn connect(host: string, port: i64) -> Result<TcpStream, NetError>"
+            "pub suspend fn connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError>"
         );
 
         let http = package

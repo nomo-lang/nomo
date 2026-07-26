@@ -854,18 +854,34 @@ controlled API before argument evaluation.
 See `examples/process_controlled` for two queued stdin messages and
 multiplexed output/exit handling.
 
-`std.net` provides blocking TCP and UDP helpers:
+`std.net` provides the first owner-affine async TCP client slice plus explicit
+blocking compatibility helpers:
 
 ```nomo
-net.connect(host: string, port: i64) -> Result<TcpStream, NetError>
+net.connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError>
+net.connect_blocking(host: string, port: i64) -> Result<TcpStream, NetError>
 net.listen(host: string, port: i64) -> Result<TcpListener, NetError>
 net.udp_bind(host: string, port: i64) -> Result<UdpSocket, NetError>
 ```
 
-`TcpListener`, `TcpStream`, and `UdpSocket` expose `accept`, `read_to_string`,
-`write_string`, `recv_from_string`, `send_to_string`, and `close` methods as
-appropriate. v0.1 uses blocking handles; listener address inspection, backlog
-configuration, and nonblocking handles are out of scope.
+`connect` is a direct-style suspend operation. P2-TCP-A accepts numeric IPv4
+and IPv6 addresses, uses epoll on Linux and kqueue on macOS, and bounds the
+timeout to 900,000 milliseconds. Hostnames return `NetErrorKind.Unsupported`
+until the bounded resolver slice; Windows returns the same category until its
+native IOCP connect slice. A zero timeout performs one immediate attempt and
+does not initialize or register with the reactor. The first stackless slice
+requires binding the complete `Result`; direct `?` propagation on
+`net.connect(...)` remains an E0876 limitation.
+
+`NetError.kind` is a portable `NetErrorKind`; applications must not parse
+platform details from `message`. `TcpStream` is Local/!Send and identifies its
+owner-table slot and generation rather than exposing a raw socket as
+authority. `close` is idempotent against stale generations.
+
+For the preview migration window, `connect_blocking`,
+`read_to_string_blocking`, and `write_string_blocking` retain the old blocking
+behavior. A suspend call graph reaching one of them reports E0891. Listener
+accept and UDP remain blocking pending focused follow-up slices.
 
 `std.http` provides a bounded blocking HTTP/HTTPS client and basic plain-HTTP
 server helpers:

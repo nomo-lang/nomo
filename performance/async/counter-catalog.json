@@ -262,12 +262,32 @@
     {
       "name": "reactor_registrations",
       "unit": "count",
-      "available_phase": "P2"
+      "available_phase": "P2",
+      "semantics": "Owner-local I/O readiness registrations successfully added to the platform reactor."
     },
     {
       "name": "reactor_deregistrations",
       "unit": "count",
-      "available_phase": "P2"
+      "available_phase": "P2",
+      "semantics": "Active readiness registrations removed exactly once after completion, cancellation, timeout, or close."
+    },
+    {
+      "name": "reactor_reregistrations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "One-shot readiness registrations rearmed after an operation made partial progress."
+    },
+    {
+      "name": "live_reactor_registrations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Readiness registrations still active in the owner-local reactor at the observation point."
+    },
+    {
+      "name": "peak_live_reactor_registrations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous active readiness registrations in the measured owner executor."
     },
     {
       "name": "reactor_initializations",
@@ -318,6 +338,84 @@
       "semantics": "Maximum simultaneously initialized reactor instances in the measured current-thread executor."
     },
     {
+      "name": "io_connect_starts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Validated async TCP connect operations started, including immediate completion and portable validation errors."
+    },
+    {
+      "name": "io_read_starts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Validated bounded async stream reads started; zero until the P2-TCP-B slice."
+    },
+    {
+      "name": "io_write_starts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Validated bounded async stream writes started; zero until the P2-TCP-B slice."
+    },
+    {
+      "name": "io_ready_completions",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Async I/O operations woken by normalized platform readiness or completion events."
+    },
+    {
+      "name": "io_timeouts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Async I/O operations completed with the portable Timeout category."
+    },
+    {
+      "name": "io_cancellations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Pending async I/O operations synchronously deregistered and cleaned by structured cancellation."
+    },
+    {
+      "name": "io_errors",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Async I/O operations completed with a non-validation, non-timeout runtime or network error."
+    },
+    {
+      "name": "live_io_handles",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Generation-checked owner-table I/O handles still open at the observation point."
+    },
+    {
+      "name": "peak_live_io_handles",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous open owner-table I/O handles."
+    },
+    {
+      "name": "live_io_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Async I/O operations currently holding a reactor registration."
+    },
+    {
+      "name": "peak_live_io_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous registered async I/O operations."
+    },
+    {
+      "name": "retained_io_bytes",
+      "unit": "bytes",
+      "available_phase": "P2",
+      "semantics": "Application payload bytes retained by pending I/O operations; zero in the connect-only slice."
+    },
+    {
+      "name": "peak_retained_io_bytes",
+      "unit": "bytes",
+      "available_phase": "P2",
+      "semantics": "Maximum application payload bytes retained by pending I/O operations."
+    },
+    {
       "name": "local_retain",
       "unit": "count",
       "available_phase": "P1",
@@ -358,11 +456,6 @@
       "name": "publish_copy_bytes",
       "unit": "bytes",
       "available_phase": "P3"
-    },
-    {
-      "name": "live_io_handles",
-      "unit": "count",
-      "available_phase": "P2"
     },
     {
       "name": "live_timers",

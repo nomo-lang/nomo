@@ -46,14 +46,14 @@ fn validate_suspend_blocking_function<'a>(
             let AstExpr::Call { callee, .. } = expression else {
                 return Ok(());
             };
-            if let Some(operation) = blocking_sleep_operation(callee.as_slice(), imports) {
+            if let Some(operation) = blocking_suspend_operation(callee.as_slice(), imports) {
                 let mut call_path = visiting.join(" -> ");
                 call_path.push_str(" -> ");
                 call_path.push_str(operation);
                 return Err(Diagnostic::new(
                     "E0891",
                     format!(
-                        "suspend function reaches a blocking operation via {call_path}; use nonblocking `task.sleep` and handle its result, or move the whole operation to the bounded blocking pool"
+                        "suspend function reaches a blocking operation via {call_path}; use the nonblocking suspend equivalent and handle its result, or move the whole operation to the bounded blocking pool"
                     ),
                     path,
                     span.line,
@@ -75,7 +75,7 @@ fn validate_suspend_blocking_function<'a>(
     Ok(())
 }
 
-fn blocking_sleep_operation(callee: &[String], imports: &[String]) -> Option<&'static str> {
+fn blocking_suspend_operation(callee: &[String], imports: &[String]) -> Option<&'static str> {
     let resolved = if let [name] = callee
         && let Some(qualified) = resolve_specific_value_builtin(name, imports)
     {
@@ -84,6 +84,32 @@ fn blocking_sleep_operation(callee: &[String], imports: &[String]) -> Option<&'s
         callee.to_vec()
     };
     match resolved.as_slice() {
+        [_, operation]
+            if operation == "read_to_string_blocking"
+                && imports.iter().any(|item| item == "std.net") =>
+        {
+            Some("TcpStream.read_to_string_blocking")
+        }
+        [_, operation]
+            if operation == "write_string_blocking"
+                && imports.iter().any(|item| item == "std.net") =>
+        {
+            Some("TcpStream.write_string_blocking")
+        }
+        [module, operation]
+            if module == "net"
+                && operation == "connect_blocking"
+                && imports
+                    .iter()
+                    .any(|item| item == "std.net" || item == "std.net.connect_blocking") =>
+        {
+            Some("net.connect_blocking")
+        }
+        [root, module, operation]
+            if root == "std" && module == "net" && operation == "connect_blocking" =>
+        {
+            Some("net.connect_blocking")
+        }
         [module, operation]
             if module == "time"
                 && matches!(operation.as_str(), "sleep" | "sleep_millis")
@@ -809,7 +835,7 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
         || matches!(
             (struct_type.package.as_str(), struct_type.name.as_str()),
             ("std.fs", "File")
-                | ("std.net", "TcpStream" | "TcpListener" | "UdpSocket")
+                | ("std.net", "TcpListener" | "UdpSocket")
                 | ("std.http", "HttpServer" | "HttpExchange" | "HttpStream")
                 | ("std.process", "ProcessChild")
                 | ("std.task", "Task" | "TaskContext")
@@ -827,6 +853,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
     ast_statement_any_expr(statement, |candidate| {
         ast_expr_is_direct_yield(candidate, imports)
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
+            || ast_expr_is_direct_net_connect(candidate, imports)
             || ast_expr_is_direct_channel_suspend(candidate, imports)
             || ast_expr_is_check_cancelled(candidate, imports)
             || ast_expr_is_structured_join(candidate)
@@ -1003,6 +1030,9 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_sleep(expr, imports, suspending_functions) {
         return true;
     }
+    if ast_expr_is_direct_net_connect(expr, imports) {
+        return true;
+    }
     if ast_expr_is_direct_channel_suspend(expr, imports) {
         return true;
     }
@@ -1022,6 +1052,28 @@ fn ast_expr_is_direct_suspension(
         && callee
             .last()
             .is_some_and(|name| suspending_functions.contains(name))
+}
+
+fn ast_expr_is_direct_net_connect(expr: &AstExpr, imports: &[String]) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    let direct = callee.as_slice() == ["net", "connect"]
+        || callee.as_slice() == ["std", "net", "connect"]
+        || (callee.as_slice() == ["connect"]
+            && imports.iter().any(|item| item == "std.net.connect"));
+    direct
+        && type_args.is_empty()
+        && args.len() == 3
+        && args.iter().all(|argument| {
+            !ast_expr_contains_suspension(argument, imports, &HashSet::new())
+                && !ast_expr_contains_frame_exit(argument)
+        })
 }
 
 fn ast_expr_is_direct_channel_suspend(expr: &AstExpr, imports: &[String]) -> bool {
@@ -1238,6 +1290,7 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             }
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
+                || (name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3)
                 || (name.starts_with(BUILTIN_TASK_SEND_PREFIX) && args.len() == 2)
                 || (name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX) && args.len() == 1)
                 || (name == BUILTIN_TASK_CHECK_CANCELLED_EXPR && args.is_empty())

@@ -145,6 +145,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     if uses_net_connect(program)
+        || uses_async_net_connect(program)
         || uses_net_listen(program)
         || uses_net_udp_bind(program)
         || uses_http_server(program)
@@ -324,6 +325,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_current_thread_executor(&mut out, target);
         out.push('\n');
     }
+    if uses_async_net_connect(program) {
+        emit_async_net_connect_helpers(&mut out, target);
+        out.push('\n');
+    }
     for element_type in &channel_element_types {
         emit_channel_instance_helpers(&mut out, element_type, !async_names.is_empty());
         out.push('\n');
@@ -434,6 +439,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         if uses_sqlite_runtime(program) {
             out.push_str("    nomo_sqlite_shutdown();\n");
         }
+        out.push_str("    nomo_async_io_handle_shutdown(&nomo__context);\n");
         out.push_str("    nomo_async_reactor_shutdown(&nomo__context.reactor);\n");
         out.push_str(
             "    int nomo__metrics_status = nomo_async_metrics_export(&nomo__context);\n\

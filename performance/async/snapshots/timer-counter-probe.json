@@ -16,6 +16,7 @@
     "nomo_async_timer_start(&frame->": 2,
     "nomo_async_timer_resume(&frame->": 2,
     "nomo_async_timer_disarm(&frame->": 4,
+    "static int nomo_async_wait_next": 1,
     "nomo_async_reactor_wait(": 2,
     "nomo_async_reactor_shutdown(": 2,
     "context->timer_registrations += 1u;": 2,

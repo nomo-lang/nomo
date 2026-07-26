@@ -29,6 +29,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_yield",
     "async_call_abi",
     "async_timer",
+    "async_tcp_connect",
     "async_publication_move",
     "async_bounded_channel",
     "async_static_select",
@@ -1297,6 +1298,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_yield" => "before yield\nframe-owned message\n3\n",
         "async_call_abi" => "argument\n7\nframe result\n",
         "async_timer" => "before timer\ntrue\ntrue\nafter timer\n",
+        "async_tcp_connect" => {
+            "hostnames require the bounded resolver slice; use a numeric address\n"
+        }
         "async_structured_void" => {
             "left before\nright before\nleft after\nright after\ntrue true\n"
         }

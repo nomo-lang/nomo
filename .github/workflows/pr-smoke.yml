@@ -159,7 +159,7 @@ jobs:
           $tcpMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-tcp-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $tcpMetrics
           $tcpOutput = cargo run --locked --bin nomo -- run examples/async_tcp_connect
-          if (($tcpOutput -join "`n") -notmatch "Windows hostname resolution remains a later P2-TCP-D slice") {
+          if (($tcpOutput -join "`n") -notmatch "^unsupported$") {
             throw "unexpected Windows async TCP result"
           }
           $tcpPayload = Get-Content -Raw $tcpMetrics | ConvertFrom-Json

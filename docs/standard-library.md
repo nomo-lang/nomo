@@ -326,8 +326,10 @@ fields use ownership bits so child-first normal completion and explicit early
 root drop are idempotent. Immutable frame-safe parameters evaluate once and
 managed results move before child drop. Mutable parameters/locals, resource
 handles or wrappers containing them, recursive suspension, suspending argument
-expressions, `?`, and explicit panic remain E0876 until their cleanup paths
-land. Browser WASM
+expressions, `?` outside the structured form below, and panic nested in another
+expression remain E0876 until their cleanup paths land. A direct top-level
+language `panic(message)` or `debug.panic(message)` statement uses the
+structured panic path described below. Browser WASM
 treats yield as a bounded cooperative boundary; sleep returns
 `runtime_unavailable` without evaluating its duration. The host-driven event
 backend is not implemented yet.
@@ -351,10 +353,15 @@ live children are cancelled and dropped, while a success payload follows the
 normal liveness plan. The operand may be non-suspending or a direct
 `task.join(handle)?`, and currently needs an explicit binding type. Nested
 scopes, nested control flow, non-final scope return, `?` in other positions,
-panic, explicit cancellation, deadlines, channels, and select are not in this
-slice. Browser WASM does not execute structured children; join returns
+panic nested in another expression, explicit cancellation, deadlines,
+channels, and select are not in this slice. A direct panic owns its
+non-suspending message, stops the executor, recursively cancels the root task
+tree, drops every frame, completes runtime shutdown and metrics export, then
+prints and releases the original message before process exit. Browser WASM
+does not execute structured children; join returns
 `runtime_unavailable`, while non-suspending `?` preserves the same early-exit
-result and inert cleanup boundary.
+result and inert cleanup boundary, and a direct panic becomes the same
+deterministic runtime error without executing a child.
 
 The remaining functions above are the legacy blocking/native isolation
 surface, not aliases for the new suspend task model. A suspend function is

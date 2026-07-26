@@ -647,7 +647,7 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn async_frame_slice_rejects_mutable_locals_and_explicit_panic_cleanup() {
+fn async_frame_slice_rejects_mutable_locals_and_supports_explicit_panic_cleanup() {
     let mutable_source = r#"package app.main
 
 import std.io
@@ -665,16 +665,33 @@ suspend fn main() -> void {
 
     let panic_source = r#"package app.main
 
+import std.debug
 import std.task
 
-suspend fn main() -> void {
+suspend fn fail(message: string) -> void {
     task.yield_now()
-    panic("cleanup is not implemented yet")
+    debug.panic(message)
+}
+
+suspend fn main() -> void {
+    fail("cleanup is implemented")
 }
 "#;
-    let panic_error = parse_inline(panic_source).unwrap_err();
-    assert_eq!(panic_error.code, "E0876");
-    assert!(panic_error.message.contains("explicit panic"));
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        panic_source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("NOMO_ASYNC_PENDING_PANIC"));
+    assert!(c.contains("context->panic_message_owned = 1u;"));
+    assert!(
+        c.contains("nomo_async_panic_message_1 = nomo_string_retain(nomo_async_panic_message_1);")
+    );
+    assert!(c.contains("nomo_async_cancel_main(&nomo__frame, &nomo__context);"));
+    assert!(c.contains("nomo_panic_string(nomo__panic_message);"));
 
     let handle_source = r#"package app.main
 
@@ -717,7 +734,11 @@ suspend fn main() -> void {
 "#;
     let question_error = parse_inline(question_outside_scope).unwrap_err();
     assert_eq!(question_error.code, "E0876");
-    assert!(question_error.message.contains("`?` in other positions"));
+    assert!(
+        question_error
+            .message
+            .contains("`?` or panic in other expression positions")
+    );
 }
 
 #[test]
@@ -1223,7 +1244,7 @@ suspend fn main() -> void {
 import std.task
 
 suspend fn worker() -> void {
-    panic("structured child panic cleanup is not implemented")
+    panic("structured child panic cleanup")
 }
 
 suspend fn main() -> void {
@@ -1233,9 +1254,18 @@ suspend fn main() -> void {
     }
 }
 "#;
-    let error = parse_inline(panicking_target).unwrap_err();
-    assert_eq!(error.code, "E0876");
-    assert!(error.message.contains("explicit panic"));
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        panicking_target,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("context->pending_reason = NOMO_ASYNC_PENDING_PANIC;"));
+    assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_0, context);"));
+    assert!(c.contains("nomo_async_cancel_main(&nomo__frame, &nomo__context);"));
+    assert!(c.contains("nomo_async_drop_main(&nomo__frame);"));
 
     let double_join = r#"package app.main
 

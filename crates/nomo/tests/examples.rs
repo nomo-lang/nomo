@@ -35,6 +35,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_structured_cancel",
     "async_structured_return_cancel",
     "async_structured_question_cancel",
+    "async_structured_panic_cleanup",
     "mcp_stdio",
     "nomo_test_basic",
     "nomo_doc_basic",
@@ -81,9 +82,10 @@ fn examples_check_and_run() {
         let bin = build_project(&project, false)
             .unwrap_or_else(|err| panic!("failed to build {}: {err}", example.display()));
         let output = run_built_example(&project.root, &bin, &example);
-        assert!(
-            output.status.success(),
-            "example exited unsuccessfully: {}\nstdout:\n{}\nstderr:\n{}",
+        assert_eq!(
+            output.status.code(),
+            Some(expected_exit_code(&example)),
+            "example exit status mismatch: {}\nstdout:\n{}\nstderr:\n{}",
             example.display(),
             String::from_utf8_lossy(&output.stdout),
             String::from_utf8_lossy(&output.stderr)
@@ -290,12 +292,22 @@ fn assert_cli_run(example: &Path) {
             .output()
             .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display())),
     };
+    if example_name(example) == "async_structured_panic_cleanup" {
+        assert_eq!(output.status.code(), Some(1));
+        assert_eq!(
+            String::from_utf8_lossy(&output.stdout),
+            "managed slow before\n"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&output.stderr),
+            "panic: panic from child\nprogram exited with status 1\n"
+        );
+        return;
+    }
     assert!(
         output.status.success(),
-        "nomo run failed for {}\nstdout:\n{}\nstderr:\n{}",
-        example.display(),
-        String::from_utf8_lossy(&output.stdout),
-        String::from_utf8_lossy(&output.stderr)
+        "nomo run failed for {}",
+        example.display()
     );
     assert_example_output(example, &output.stdout, &output.stderr);
 }
@@ -1290,6 +1302,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_structured_cancel" => "slow before\ngate\nscope closed\n",
         "async_structured_return_cancel" => "managed before\ngate\nreturn evaluated\nmanaged\n",
         "async_structured_question_cancel" => "managed before\ngate\ntrue\n",
+        "async_structured_panic_cleanup" => "managed slow before\n",
         "sqlite_agent_memory" => "usage: sqlite_agent_memory <write|read> <database-path>\n",
         "sqlite_memory" => {
             "inserted 1 1\nbusy-close busy_handle\nvalue hello from Nomo SQLite\nquery-done\nsqlite-ok\n"
@@ -1356,8 +1369,16 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
 
 fn expected_stderr(example: &str) -> &'static str {
     match example {
+        "async_structured_panic_cleanup" => "panic: panic from child\n",
         "io_print" => "stderr ok\n",
         "io_stderr" => "stderr ok\n",
         _ => "",
+    }
+}
+
+fn expected_exit_code(example: &Path) -> i32 {
+    match example_name(example) {
+        "async_structured_panic_cleanup" => 1,
+        _ => 0,
     }
 }

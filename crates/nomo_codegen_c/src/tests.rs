@@ -45,5 +45,8 @@ fn fputs_stdout_literal(value: &str) -> String {
 }
 
 fn panic_literal(value: &str) -> String {
-    format!("nomo_panic(({}).data);", string_literal(value))
+    format!(
+        "nomo_string nomo__panic_message = {};",
+        string_literal(value)
+    )
 }

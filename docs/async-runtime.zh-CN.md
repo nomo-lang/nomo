@@ -141,8 +141,8 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
-内部挂起、下述 structured binding 之外的 `?`、显式 panic、显式取消传播和
-reactor I/O 都属于后续小 PR。
+内部挂起、下述 structured binding 之外的 `?`、其他表达式内部的 panic、
+显式取消传播和 reactor I/O 都属于后续小 PR。
 
 structured spawn/join 当前只允许出现在顶层 `task.scope` body。每个 spawn
 handle 必须使用推导得到的不可变 binding 且不得离开 scope；若要观察结果，
@@ -158,8 +158,14 @@ owned frame state，再取消并 drop 该语句处所有 live child，最后完�
 并唤醒 parent。成功 payload 可以通过既有 frame liveness 方案跨越后续
 suspension。当前 `expression` 可以是非挂起表达式或直接
 `task.join(handle)?`，且仍要求显式类型标注。取消后不会继续执行 child body。
-嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、其他位置
-的 `?`、panic、显式取消、deadline、channel 与 select 仍属于后续切片。
+顶层直接 `panic(message)` 会先求值并拥有不可挂起的 message，再传播 panic。
+child panic 会停止 executor；root 随后递归取消全部未完成 child、移除 ready
+entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics export，
+最后打印并 release 原始消息，以状态 1 退出。`debug.panic` 走同一 statement
+路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
+body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
+其他位置的 `?`、其他表达式内部的 panic、显式取消、deadline、channel 与
+select 仍属于后续切片。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
@@ -178,10 +184,12 @@ transfer、嵌套 helper 唤醒 root frame、post-join scope return 和 parent �
 drop。scope cancellation 还会在 AddressSanitizer 下覆盖 armed timer、从未
 poll 的 ready child，以及在 root-frame wakeup 前取消的 typed helper return
 和 typed `?` error propagation，包括 managed 参数、传播 error 与结果 release。
+panic 测试还覆盖 managed 同步消息、spawn child panic、root 递归取消、
+armed sibling timer、精确 frame/task/timer counter 与 browser-WASM 边界。
 后续实现仍必须用测试和证据证明：
 
-- 其余 error、cancellation、timeout 和 panic 路径仅对 frame 中的 ARC/COW
-  值 release 一次；
+- 其余 error、cancellation、timeout 和嵌套表达式或 runtime-originated panic
+  路径仅对 frame 中的 ARC/COW 值 release 一次；
 - 不允许不安全 mutable borrow 或 guard 跨 suspension point；
 - 未使用 suspension 的程序没有 runtime、thread、coroutine metadata 或普通
   collection atomic 成本；
@@ -198,4 +206,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_structured_return`](../examples/async_structured_return) 与
 [`examples/async_structured_cancel`](../examples/async_structured_cancel)，以及
 [`examples/async_structured_return_cancel`](../examples/async_structured_return_cancel) 与
-[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel)。
+[`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel)，以及
+[`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup)。

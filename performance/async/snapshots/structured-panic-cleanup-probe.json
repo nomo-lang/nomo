@@ -1,0 +1,56 @@
+{
+  "schema": 1,
+  "gate": "p1-structured-scope-panic-cleanup",
+  "required_absent_generated_c_patterns": [
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static int nomo_async_metrics_export": 1,
+    "nomo_async_metrics_export(&nomo__context)": 1,
+    "context->task_cancellations += 1u;": 3,
+    "context->ready_queue_cancellations += 1u;": 1,
+    "if (frame->initialized == 0u || frame->cancelled != 0u": 3,
+    "nomo_async_ready_cancel_frame(context, frame);": 3,
+    "nomo_async_timer_disarm(&frame->": 2,
+    "nomo_async_cancel_slow_child(&frame->": 2,
+    "nomo_async_cancel_panicking_child(&frame->": 1,
+    "nomo_async_cancel_main(&nomo__frame, &nomo__context);": 1,
+    "context->pending_reason = NOMO_ASYNC_PENDING_PANIC;": 1,
+    "context->panic_message = nomo_async_panic_message_2;": 1,
+    "nomo_async_panic_message_2 = nomo_string_retain(nomo_async_panic_message_2);": 1,
+    "nomo_string_release(nomo_message);": 1,
+    "nomo_panic_string(nomo__panic_message);": 1
+  },
+  "runtime_counters": {
+    "available": true,
+    "schema": 1,
+    "counters": {
+      "poll_calls": 4,
+      "cooperative_yields": 1,
+      "frame_allocations": 0,
+      "frame_drops": 3,
+      "peak_live_frames": 3,
+      "ready_queue_enqueues": 3,
+      "ready_queue_dequeues": 3,
+      "ready_queue_saturations": 0,
+      "ready_queue_cancellations": 0,
+      "task_spawns": 2,
+      "task_joins": 1,
+      "join_suspensions": 1,
+      "task_cancellations": 3,
+      "timer_registrations": 1,
+      "timer_expirations": 0,
+      "timer_cancellations": 1,
+      "live_timers": 0,
+      "peak_live_timers": 1
+    },
+    "unavailable": [
+      "local_retain",
+      "local_release"
+    ]
+  }
+}

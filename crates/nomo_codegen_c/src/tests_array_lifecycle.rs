@@ -663,11 +663,11 @@ fn let_else_releases_owned_enum_temp_after_retaining_payload_binding() {
 
     let c = emit_c(&program);
     let else_release = "nomo_enum_Option_array_i32_release(nomo__let_else_nomo_values);";
-    let else_panic = panic_literal("missing");
+    let else_panic = "nomo_panic_string(nomo__panic_message);";
     let binding_retain = "nomo_values = nomo_array_i32_retain(nomo_values);";
     let binding_release = "nomo_enum_Option_array_i32_release(nomo__let_else_nomo_values);";
     let else_index = c.find(else_release).unwrap();
-    let panic_index = c[else_index..].find(&else_panic).unwrap() + else_index;
+    let panic_index = c[else_index..].find(else_panic).unwrap() + else_index;
     assert!(else_index < panic_index);
     let retain_index = c.rfind(binding_retain).unwrap();
     let release_index = c[retain_index..].find(binding_release).unwrap() + retain_index;

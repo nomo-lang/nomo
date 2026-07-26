@@ -40,8 +40,10 @@ fn emits_defer_before_panic_statement() {
     };
 
     let c = emit_c(&program);
+    let message = c.find(&panic_literal("boom")).unwrap();
     let cleanup = c.find("nomo_fn_cleanup();").unwrap();
-    let panic = c.find(&panic_literal("boom")).unwrap();
+    let panic = c.find("nomo_panic_string(nomo__panic_message);").unwrap();
+    assert!(message < cleanup);
     assert!(cleanup < panic);
     assert_eq!(c.matches("nomo_fn_cleanup();").count(), 1);
 }

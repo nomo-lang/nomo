@@ -324,6 +324,13 @@ pub fn emit_string_runtime(out: &mut String) {
     out.push_str("    free((char *)value.data);\n");
     out.push_str("    free(value.refcount);\n");
     out.push_str("}\n\n");
+    out.push_str("static void nomo_panic_string(nomo_string message) {\n");
+    out.push_str("    fputs(\"panic: \", stderr);\n");
+    out.push_str("    fputs(message.data, stderr);\n");
+    out.push_str("    fputc('\\n', stderr);\n");
+    out.push_str("    nomo_string_release(message);\n");
+    out.push_str("    exit(1);\n");
+    out.push_str("}\n\n");
     out.push_str("static nomo_string nomo_string_concat(nomo_string left, nomo_string right) {\n");
     out.push_str("    size_t left_len = strlen(left.data);\n");
     out.push_str("    size_t right_len = strlen(right.data);\n");

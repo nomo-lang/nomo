@@ -141,6 +141,19 @@
       "note": "Validates that typed question propagation preserves the owned error, cancels and drops an unjoined armed-timer child, then completes the helper and wakes its root frame."
     },
     {
+      "id": "structured_panic_cleanup_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/structured_panic_cleanup_probe",
+      "expected_stdout": "managed slow before\n",
+      "expected_stderr": "panic: panic from child\n",
+      "expected_exit_code": 1,
+      "snapshot": "snapshots/structured-panic-cleanup-probe.json",
+      "note": "Validates that a spawned child panic preserves its managed message, recursively cancels the root and an armed-timer sibling, drops every frame, exports counters, then terminates with the original panic."
+    },
+    {
       "id": "idle_suspended_tasks",
       "kind": "required_async_workload",
       "available_phase": "P1",

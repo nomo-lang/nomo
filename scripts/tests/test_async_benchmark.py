@@ -81,6 +81,32 @@ class AsyncBenchmarkTests(unittest.TestCase):
         ):
             benchmark.validate_manifest(manifest)
 
+    def test_manifest_rejects_invalid_expected_exit_code(self) -> None:
+        manifest = copy.deepcopy(self.p1_manifest)
+        manifest["workloads"][0]["expected_exit_code"] = -1
+
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "invalid expected exit code",
+        ):
+            benchmark.validate_manifest(manifest)
+
+    def test_timed_run_accepts_an_expected_failure_contract(self) -> None:
+        sample, stdout = benchmark.timed_run(
+            [
+                sys.executable,
+                "-c",
+                "import sys; print('out'); print('err', file=sys.stderr); raise SystemExit(7)",
+            ],
+            b"out\n",
+            b"err\n",
+            7,
+            5.0,
+        )
+
+        self.assertEqual(stdout, b"out\n")
+        self.assertGreater(sample["wall_ns"], 0)
+
     def test_counter_catalog_rejects_duplicate_names(self) -> None:
         catalog = {
             "schema": 1,

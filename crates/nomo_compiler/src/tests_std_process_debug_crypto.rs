@@ -340,10 +340,7 @@ fn main() -> void {
         .iter()
         .find(|f| f.name == "crash")
         .unwrap();
-    assert!(matches!(
-        crash.body[0],
-        Statement::Expr(ValueExpr::Panic { .. })
-    ));
+    assert!(matches!(crash.body[0], Statement::Panic(_)));
     let main = program.functions.iter().find(|f| f.name == "main").unwrap();
     assert!(matches!(
         main.body[0],

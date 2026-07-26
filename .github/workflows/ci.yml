@@ -199,6 +199,14 @@ jobs:
           grep 'nomo_async_cancel_slow_child' "$question_cancel_dir/c/main.c"
           grep 'frame->nomo_async_result_owned = 1u;' "$question_cancel_dir/c/main.c"
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$question_cancel_dir/c/main.c"
+          target/release/nomo build examples/async_structured_panic_cleanup --target x86_64-apple-darwin
+          panic_dir="examples/async_structured_panic_cleanup/build/x86_64-apple-darwin-none"
+          panic_artifact="$panic_dir/bin/async_structured_panic_cleanup"
+          test "$(lipo -archs "$panic_artifact")" = "x86_64"
+          grep 'NOMO_ASYNC_PENDING_PANIC' "$panic_dir/c/main.c"
+          grep 'nomo_async_cancel_main' "$panic_dir/c/main.c"
+          grep 'nomo_panic_string' "$panic_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$panic_dir/c/main.c"
           target/release/nomo build examples/sqlite_agent_memory --target x86_64-apple-darwin
           sqlite_dir="examples/sqlite_agent_memory/build/x86_64-apple-darwin-none"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -223,6 +231,7 @@ jobs:
             examples/async_structured_cancel/build/x86_64-apple-darwin-none
             examples/async_structured_return_cancel/build/x86_64-apple-darwin-none
             examples/async_structured_question_cancel/build/x86_64-apple-darwin-none
+            examples/async_structured_panic_cleanup/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
           if-no-files-found: error
 
@@ -324,6 +333,21 @@ jobs:
           ! grep -E 'pthread_create|__atomic_|Interlocked' "$question_cancel_dir/c/main.c"
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$question_cancel_artifact" \
             | grep '^true$'
+          target/release/nomo build examples/async_structured_panic_cleanup --target aarch64-unknown-linux-gnu
+          panic_dir="examples/async_structured_panic_cleanup/build/aarch64-unknown-linux-gnu"
+          panic_artifact="$panic_dir/bin/async_structured_panic_cleanup"
+          readelf -h "$panic_artifact" | grep 'Machine:.*AArch64'
+          grep 'NOMO_ASYNC_PENDING_PANIC' "$panic_dir/c/main.c"
+          grep 'nomo_async_cancel_main' "$panic_dir/c/main.c"
+          grep 'nomo_panic_string' "$panic_dir/c/main.c"
+          ! grep -E 'pthread_create|__atomic_|Interlocked' "$panic_dir/c/main.c"
+          set +e
+          panic_output=$(qemu-aarch64 -L /usr/aarch64-linux-gnu "$panic_artifact" 2>&1)
+          panic_status=$?
+          set -e
+          test "$panic_status" -eq 1
+          printf '%s\n' "$panic_output" | grep '^managed slow before$'
+          printf '%s\n' "$panic_output" | grep '^panic: panic from child$'
           target/release/nomo build examples/sqlite_agent_memory --target aarch64-unknown-linux-gnu
           sqlite_dir="examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu"
           sqlite_artifact="$sqlite_dir/bin/sqlite_agent_memory"
@@ -353,5 +377,6 @@ jobs:
             examples/async_structured_cancel/build/aarch64-unknown-linux-gnu
             examples/async_structured_return_cancel/build/aarch64-unknown-linux-gnu
             examples/async_structured_question_cancel/build/aarch64-unknown-linux-gnu
+            examples/async_structured_panic_cleanup/build/aarch64-unknown-linux-gnu
             examples/sqlite_agent_memory/build/aarch64-unknown-linux-gnu
           if-no-files-found: error

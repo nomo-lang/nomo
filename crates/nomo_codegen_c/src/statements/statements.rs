@@ -197,12 +197,26 @@ pub(super) fn emit_stmt(
         Statement::Eprintln(arg) => emit_io_output(out, arg, true, true, indent),
         Statement::Eprint(arg) => emit_io_output(out, arg, true, false, indent),
         Statement::Panic(message) => {
+            write_indent(out, indent);
+            out.push_str("{\n");
+            write_indent(out, indent + 1);
+            out.push_str("nomo_string nomo__panic_message = ");
+            emit_expr(out, message);
+            out.push_str(";\n");
+            if expr_may_share_array_storage(message) {
+                emit_value_retain_in_place(
+                    out,
+                    &ValueType::String,
+                    "nomo__panic_message",
+                    indent + 1,
+                );
+            }
             emit_deferred(out, indent, deferred);
             emit_array_releases(out, indent, active_arrays);
+            write_indent(out, indent + 1);
+            out.push_str("nomo_panic_string(nomo__panic_message);\n");
             write_indent(out, indent);
-            out.push_str("nomo_panic(");
-            emit_string_data_expr(out, message);
-            out.push_str(");\n");
+            out.push_str("}\n");
         }
         Statement::Return(Some(value)) => emit_return_value(
             out,

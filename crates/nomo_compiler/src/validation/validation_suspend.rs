@@ -152,6 +152,13 @@ fn validate_p1_suspend_function_shape(
             .iter()
             .enumerate()
             .all(|(index, statement)| match statement {
+                Stmt::Expr {
+                    expr: AstExpr::Panic { message },
+                    ..
+                } => {
+                    !ast_expr_contains_suspension(message, imports, suspending_functions)
+                        && !ast_expr_contains_frame_exit(message)
+                }
                 Stmt::Expr { expr, .. } => {
                     ((ast_expr_is_direct_suspension(expr, imports, suspending_functions)
                         && !ast_expr_is_direct_sleep(expr, imports, suspending_functions))
@@ -202,6 +209,16 @@ fn validate_p1_suspend_function_shape(
                                             && !ast_expr_contains_frame_exit(value)
                                     }
                                 }
+                                Stmt::Expr {
+                                    expr: AstExpr::Panic { message },
+                                    ..
+                                } => {
+                                    !ast_expr_contains_suspension(
+                                        message,
+                                        imports,
+                                        suspending_functions,
+                                    ) && !ast_expr_contains_frame_exit(message)
+                                }
                                 Stmt::Expr { expr, .. } => {
                                     !ast_expr_contains_suspension(
                                         expr,
@@ -231,7 +248,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, direct immutable `?` bindings inside task.scope, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` in other positions, explicit panic, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, and non-final early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,

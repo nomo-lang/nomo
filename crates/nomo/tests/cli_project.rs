@@ -10478,7 +10478,6 @@ fn bounded_channel_try_operations_validate_capacity_wrap_and_close_drain_order()
 
 import std.io
 import std.result
-import std.string
 import std.task
 
 fn channel_error_code(result: Result<Channel<string>, ChannelError>) -> string {
@@ -10496,12 +10495,20 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-fn send_text(result: ChannelTrySend<string>) -> string {
-    return match result {
-        ChannelTrySend.Sent => "sent"
-        ChannelTrySend.Full(value) => string.concat("full ", value)
-        ChannelTrySend.Closed(value) => string.concat("closed ", value)
-        ChannelTrySend.Failed(failure) => string.concat("failed ", failure.value)
+fn print_send(result: ChannelTrySend<string>) -> void {
+    match result {
+        ChannelTrySend.Sent => {
+            io.println("sent")
+        }
+        ChannelTrySend.Full(value) => {
+            io.println("full", value)
+        }
+        ChannelTrySend.Closed(value) => {
+            io.println("closed", value)
+        }
+        ChannelTrySend.Failed(failure) => {
+            io.println("failed", failure.value)
+        }
     }
 }
 
@@ -10518,17 +10525,17 @@ fn main() -> void {
     io.println(channel_error_code(task.channel<string>(65537)))
     let channel_value: Channel<string> = make_channel()
     io.println(receive_text(task.try_receive(channel_value)))
-    io.println(send_text(task.try_send(channel_value, "first")))
-    io.println(send_text(task.try_send(channel_value, "second")))
-    io.println(send_text(task.try_send(channel_value, "third")))
+    print_send(task.try_send(channel_value, "first"))
+    print_send(task.try_send(channel_value, "second"))
+    print_send(task.try_send(channel_value, "third"))
     io.println(receive_text(task.try_receive(channel_value)))
-    io.println(send_text(task.try_send(channel_value, "third")))
+    print_send(task.try_send(channel_value, "third"))
     task.close(channel_value)
     task.close(channel_value)
     io.println(receive_text(task.try_receive(channel_value)))
     io.println(receive_text(task.try_receive(channel_value)))
     io.println(receive_text(task.try_receive(channel_value)))
-    io.println(send_text(task.try_send(channel_value, "fourth")))
+    print_send(task.try_send(channel_value, "fourth"))
 }
 "#,
     )

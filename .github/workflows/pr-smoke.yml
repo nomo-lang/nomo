@@ -223,8 +223,10 @@ jobs:
           $structuredPanicMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-structured-panic-metrics.json"
           $env:NOMO_ASYNC_METRICS_PATH = $structuredPanicMetrics
           $structuredPanicOutput = cargo run --locked --bin nomo -- run examples/async_structured_panic_cleanup 2>&1
-          if ($LASTEXITCODE -ne 1) {
-            throw "structured panic example returned unexpected status $LASTEXITCODE"
+          $structuredPanicStatus = $LASTEXITCODE
+          $LASTEXITCODE = 0
+          if ($structuredPanicStatus -ne 1) {
+            throw "structured panic example returned unexpected status $structuredPanicStatus"
           }
           $structuredPanicText = $structuredPanicOutput -join "`n"
           if ($structuredPanicText -notmatch "managed slow before" `

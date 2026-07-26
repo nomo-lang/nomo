@@ -552,6 +552,15 @@ timer table; normal fallthrough disarms the timer, while timeout cancels the
 current child subtree and becomes a typed structured-join error or a
 secret-safe nonzero root failure. Browser WASM rejects the deadline without
 evaluating its duration or body.
+P3-B adds `Channel<T>` for compiler-known Send element types. Native C99 uses
+a checked bounded ring plus FIFO sender/receiver registrations on the
+current-thread executor. `task.send` and `task.receive` suspend directly;
+`try_send`/`try_receive` are immediate, and idempotent close wakes waiters while
+preserving buffered drain order. Consuming sends either transfer exactly one
+owner or return it through `ChannelSendError<T>`/`ChannelTrySend<T>`. The
+browser sandbox reports `runtime_unavailable` before evaluating unsupported
+consuming operands. Channel code adds no OS thread or atomic shim, and programs
+that never construct a channel emit no channel metadata.
 E0871, E0872, E0875, E0876, E0880, E0881, and E0883 reject invalid
 boundaries, ownership, targets, publication moves, and unsupported shapes.
 Mutable
@@ -559,7 +568,7 @@ parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
 non-final scope return, cancellation tokens, nested/general deadline exits,
-channels/select,
+cross-shard channels/static select,
 the multi-task timer wheel, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
@@ -571,9 +580,10 @@ slices. See
 `examples/async_structured_question_cancel`,
 `examples/async_structured_explicit_cancel`,
 `examples/async_structured_deadline`,
-`examples/async_structured_panic_cleanup`, the
+`examples/async_structured_panic_cleanup`,
+`examples/async_bounded_channel`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
-[P0/P1 async benchmark gates](performance/async/README.md).
+[P0/P1/P3 async benchmark gates](performance/async/README.md).
 
 `std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
 primitive scalar or a struct implementing `fmt.Display`;

@@ -69,6 +69,21 @@ jobs:
           path: performance/results/async-p1.json
           if-no-files-found: error
 
+      - name: Run P3 bounded-channel and no-cost gates
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --manifest performance/async/manifest-p3.json
+          --require-clean
+          --output performance/results/async-p3.json
+
+      - name: Upload P3 bounded-channel evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p3
+          path: performance/results/async-p3.json
+          if-no-files-found: error
+
       - name: Build browser WebAssembly runtime
         run: >-
           cargo build --locked --release

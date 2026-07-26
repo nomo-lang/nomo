@@ -401,6 +401,21 @@ pub(super) fn resolve_specific_value_builtin(
         "sleep" if imports.iter().any(|item| item == "std.task.sleep") => {
             vec!["task".to_string(), "sleep".to_string()]
         }
+        "channel" if imports.iter().any(|item| item == "std.task.channel") => {
+            vec!["task".to_string(), "channel".to_string()]
+        }
+        "send" if imports.iter().any(|item| item == "std.task.send") => {
+            vec!["task".to_string(), "send".to_string()]
+        }
+        "receive" if imports.iter().any(|item| item == "std.task.receive") => {
+            vec!["task".to_string(), "receive".to_string()]
+        }
+        "try_send" if imports.iter().any(|item| item == "std.task.try_send") => {
+            vec!["task".to_string(), "try_send".to_string()]
+        }
+        "try_receive" if imports.iter().any(|item| item == "std.task.try_receive") => {
+            vec!["task".to_string(), "try_receive".to_string()]
+        }
         "join" if imports.iter().any(|item| item == "std.task.join") => {
             vec!["task".to_string(), "join".to_string()]
         }

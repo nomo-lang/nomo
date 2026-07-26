@@ -13,7 +13,8 @@
     "CreateThread",
     "__atomic_",
     "Interlocked",
-    "stdatomic.h"
+    "stdatomic.h",
+    "nomo_channel_"
   ],
   "runtime_counters": {
     "available": false,

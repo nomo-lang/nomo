@@ -477,6 +477,30 @@ fn emit_struct_lifecycle_helpers(
 ) {
     let value_type = ValueType::Struct(struct_type.name.clone(), struct_args.to_vec());
     let c_type_name = c_type(&value_type);
+    if struct_type.name == "Channel" && struct_args.len() == 1 {
+        out.push_str("static ");
+        out.push_str(&c_type_name);
+        out.push(' ');
+        out.push_str(&c_retain_ident(&value_type));
+        out.push('(');
+        out.push_str(&c_type_name);
+        out.push_str(
+            " value) {\n\
+                 nomo_channel_retain_handle(value.nomo_member_handle);\n\
+                 return value;\n\
+             }\n\n",
+        );
+        out.push_str("static void ");
+        out.push_str(&c_release_ident(&value_type));
+        out.push('(');
+        out.push_str(&c_type_name);
+        out.push_str(
+            " value) {\n\
+                 nomo_channel_release_handle(value.nomo_member_handle);\n\
+             }\n",
+        );
+        return;
+    }
     out.push_str("static ");
     out.push_str(&c_type_name);
     out.push(' ');

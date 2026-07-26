@@ -13,6 +13,8 @@ RFC acceptance gate 已经通过。
   定义正确性、可移植性、内存和性能门禁。
 - [RFC 0035](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0035-monotonic-suspend-timers-and-blocking-sleep-migration.md)
   定义 owner-local timer 与阻塞 sleep 边界。
+- [RFC 0036](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0036-bounded-channels-publication-moves-and-static-select.md)
+  定义有界 channel、消费式 publication 与后续 static select 表面。
 
 [English](async-runtime.md)
 
@@ -139,7 +141,43 @@ observation point；生成的状态机也会在 runtime suspension 边界前后�
 ready operation 与 deadline 在同一 resume boundary 同时可观察，timeout
 优先。
 
-## 已实现的 P1 小切片
+### 有界 Channel
+
+P3-B current-thread 小切片增加 typed bounded FIFO：
+
+```nomo
+let created: Result<Channel<string>, ChannelError> =
+    task.channel<string>(8)
+let sent: Result<void, ChannelSendError<string>> =
+    task.send(channel_value, message)
+let received: Option<string> = task.receive(channel_value)
+```
+
+`task.channel<T>(capacity)` 接受 1 到 65,536 个 element，且经过 checked
+arithmetic 后的 slot storage 不得超过 64 MiB。失败使用稳定的
+`invalid_capacity`、`capacity_limit` 或 `allocation` code，且不格式化用户值。
+`task.send` 与 `task.receive` 是 direct-style suspension point；
+`task.try_send`、`task.try_receive` 永不挂起。`task.close` 幂等，会唤醒 blocked
+operation、拒绝新 send，并让已缓冲值继续按 FIFO drain。
+
+命名的非 Copy send 值会被 publication-move。成功路径把唯一 owner 转移给
+receiver 或 ring slot；full、closed 与 runtime failure 通过
+`ChannelTrySend<T>` 或 `ChannelSendError<T>` 恰好返还一个 owner。Channel
+handle 的 copy 共享 current-thread control block；普通 array、map 与 string
+仍使用 task-local 非原子 ARC/COW。本切片没有 atomic shim 或跨 shard 共享。
+
+Native C99 使用 owner-local ring 和 FIFO sender/receiver registration。已有
+receiver 时直接 handoff，否则 ring 满会挂起 sender。cancel、timeout、close、
+wake 后尚未 resume、frame drop 与 normal completion 都会移除 registration，
+并恰好一次 release 或返还 staged value。示例见
+[`examples/async_bounded_channel`](../examples/async_bounded_channel)。
+
+Browser WASM 尚未提供 host-driven channel backend。constructor 会在不求值
+capacity 的情况下返回 `runtime_unavailable`；其他 channel operation 会在
+求值可能被消费的 channel operand 或 send value 前报告 sandbox capability
+error。
+
+## 已实现的 P1 与 P3-B 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -182,6 +220,8 @@ frame drop/live frame、入队/出队/饱和/取消、
 structured spawn/publication move/join/join suspension/取消、deadline
 注册/到期/解除，以及 timer
 注册/到期/取消/live/peak 计数。
+P3-B channel 还记录 construction binding、buffered/direct delivery、
+suspension、wakeup、close/cancel 与 buffer/waiter 的 live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
 会在 measured run 之后单独执行探针。ARC primitive counter 仍明确标记为
@@ -217,7 +257,8 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 目前同样不会在 browser 中执行，其 join 和 structured cancel 返回同一稳定
 错误，并消费 inert browser handle。
 `task.deadline` 当前会在不求值 duration、也不执行 body 的前提下返回 sandbox
-capability error；host-driven browser deadline 属于后续 backend 小切片。
+capability error。Channel operation 遵循上面的 capability 行为；
+host-driven browser deadline 与 channel 属于后续 backend 小切片。
 
 ## 有意保留的限制
 
@@ -263,7 +304,7 @@ entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics e
 路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
 body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
 其他位置的 `?`、其他表达式内部的 panic、取消 token、嵌套/通用 deadline
-exit、channel 与 select 仍属于后续切片。
+exit、跨 shard channel 与 static select 仍属于后续切片。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
@@ -290,6 +331,13 @@ AddressSanitizer 清理。
 deadline 测试还覆盖非正时长 body suppression、normal disarm、child frame
 持有 armed sleep 时 timeout、typed join failure、root secret-safe failure、
 精确 timer/deadline counter、browser 不求值与 AddressSanitizer cleanup。
+有界 channel 测试还覆盖 element/byte limit、FIFO wraparound、direct handoff、
+full/empty try operation、buffered close、blocked sender/receiver wakeup、
+repeated close、timeout cancellation、typed value recovery、跨 suspension
+handle liveness、精确 counter、native C99/browser capability 行为与
+AddressSanitizer/UndefinedBehaviorSanitizer cleanup。P3 manifest 会把同一个
+容量 8、32 个值的 exchange 与固定单核 Go 对照执行，但结果仍不具备
+performance claim 资格。
 后续实现仍必须用测试和证据证明：
 
 - 其余 error、cancellation、timeout 和嵌套表达式或 runtime-originated panic
@@ -301,7 +349,7 @@ deadline 测试还覆盖非正时长 body suppression、normal disarm、child fr
 - 兼容 C99 与 browser WASM，并继续覆盖 Linux、macOS/BSD 和 Windows reactor；
 - 固定版本、公平 workload 的 Nomo 与 Go 对比，不能通过削弱对照来达标。
 
-P0/P1 控制组与原始证据格式位于
+P0/P1/P3 控制组与原始证据格式位于
 [`performance/async`](../performance/async/README.zh-CN.md)，当前小切片的可运行
 示例位于 [`examples/async_yield`](../examples/async_yield) 与
 [`examples/async_timer`](../examples/async_timer)，以及
@@ -313,3 +361,5 @@ P0/P1 控制组与原始证据格式位于
 [`examples/async_structured_question_cancel`](../examples/async_structured_question_cancel)，以及
 [`examples/async_structured_explicit_cancel`](../examples/async_structured_explicit_cancel)，以及
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup)。
+有界 FIFO 示例位于
+[`examples/async_bounded_channel`](../examples/async_bounded_channel)。

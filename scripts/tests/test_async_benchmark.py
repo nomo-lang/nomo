@@ -26,6 +26,11 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 REPOSITORY_ROOT / "performance" / "async" / "manifest-p1.json"
             ).read_text(encoding="utf-8")
         )
+        self.p3_manifest = json.loads(
+            (
+                REPOSITORY_ROOT / "performance" / "async" / "manifest-p3.json"
+            ).read_text(encoding="utf-8")
+        )
         self.catalog = json.loads(
             (
                 REPOSITORY_ROOT
@@ -39,7 +44,16 @@ class AsyncBenchmarkTests(unittest.TestCase):
         benchmark.validate_manifest(self.manifest)
         benchmark.validate_counter_catalog(self.catalog)
         benchmark.validate_manifest(self.p1_manifest)
+        benchmark.validate_manifest(self.p3_manifest)
         self.assertEqual(self.p1_manifest["phase"], "P1")
+        self.assertEqual(self.p3_manifest["phase"], "P3")
+        bounded_channel = next(
+            workload
+            for workload in self.p3_manifest["workloads"]
+            if workload["id"] == "bounded_channel"
+        )
+        self.assertTrue(bounded_channel["enabled"])
+        self.assertIn("go_project", bounded_channel)
         self.assertEqual(
             self.manifest["toolchains"]["go"]["version"],
             "go1.25.12",

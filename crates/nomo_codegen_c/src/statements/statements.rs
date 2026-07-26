@@ -412,6 +412,8 @@ pub(super) fn emit_block(
         }
         let mut active_deferred = deferred.to_vec();
         active_deferred.extend(block_deferred.iter().cloned());
+        let moved = statement_publication_move_bindings(statement);
+        scope_arrays.retain(|local| !moved.contains(&local.name.as_str()));
         emit_stmt(
             out,
             statement,

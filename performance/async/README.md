@@ -69,6 +69,14 @@ The publication-move gate transfers one managed aggregate with nested COW
 storage into a structured child, requires exactly one `publication_moves`
 event, and rejects generated retain, thread, atomic, and heap-frame evidence.
 
+`manifest-p3.json` adds the current-thread bounded-channel gate. A capacity-eight
+Nomo ring and a pinned `GOMAXPROCS=1` Go channel each transfer 32 `u64` values.
+The Nomo probe requires exact buffered/direct-handoff, suspension, wakeup,
+close, and live/peak buffer/waiter counters. It also repeats `sync_unused` and
+the async yield probe with `nomo_channel_` forbidden, proving that code which
+does not construct a channel carries no channel storage or metadata. The
+Nomo/Go samples are evidence only and do not authorize a performance claim.
+
 ## Run
 
 Build the Nomo CLI, use the exact Go patch named in `manifest.json`, and run:
@@ -84,6 +92,11 @@ python3 scripts/async_benchmark.py \
   --manifest performance/async/manifest-p1.json \
   --require-clean \
   --output performance/results/async-p1.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
+  --manifest performance/async/manifest-p3.json \
+  --require-clean \
+  --output performance/results/async-p3.json
 ```
 
 The harness rejects a mismatched Go patch, fewer than five measured runs,
@@ -94,7 +107,7 @@ records SHA-256 identities for the manifest, harness, counter catalog, sources,
 Nomo/Go/C toolchains, and produced binaries. A requested metrics path that
 cannot be opened fails with a generic message and never prints the path.
 
-CI uploads raw P0 and P1 JSON instead of treating hosted-runner timing as a
+CI uploads raw P0, P1, and P3 JSON instead of treating hosted-runner timing as a
 stable baseline. Controlled-host evidence must also set
 `NOMO_BENCH_POWER_MODE` and enforce process affinity once that control lands.
 The current samples record per-process wall time, CPU time, and POSIX `wait4`

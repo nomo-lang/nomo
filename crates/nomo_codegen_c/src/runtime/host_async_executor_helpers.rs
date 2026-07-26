@@ -5,6 +5,8 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
         statement_contains_expr(statement, |expr| {
             expr_is_async_yield(expr)
                 || expr_is_async_sleep(expr)
+                || expr_is_async_channel_send(expr)
+                || expr_is_async_channel_receive(expr)
                 || expr_is_async_check_cancelled(expr)
                 || expr_is_async_deadline_enter(expr)
                 || expr_is_structured_join(expr)
@@ -128,6 +130,22 @@ fn expr_is_async_sleep(expr: &ValueExpr) -> bool {
         expr,
         ValueExpr::Call { name, args }
             if name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1
+    )
+}
+
+fn expr_is_async_channel_send(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name.starts_with(BUILTIN_TASK_SEND_PREFIX) && args.len() == 2
+    )
+}
+
+fn expr_is_async_channel_receive(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX) && args.len() == 1
     )
 }
 
@@ -280,6 +298,66 @@ struct StructuredCancelJoin<'a> {
     value_type: &'a ValueType,
 }
 
+#[derive(Debug, Clone, Copy)]
+struct AsyncChannelSend<'a> {
+    suffix: &'a str,
+    channel: &'a ValueExpr,
+    value: &'a ValueExpr,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncChannelReceive<'a> {
+    suffix: &'a str,
+    channel: &'a ValueExpr,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_async_channel_send(statement: &Statement) -> Option<AsyncChannelSend<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    let suffix = name.strip_prefix(BUILTIN_TASK_SEND_PREFIX)?;
+    let [channel, value] = args.as_slice() else {
+        return None;
+    };
+    Some(AsyncChannelSend {
+        suffix,
+        channel,
+        value,
+        binding,
+        value_type,
+    })
+}
+
+fn statement_async_channel_receive(statement: &Statement) -> Option<AsyncChannelReceive<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    let suffix = name.strip_prefix(BUILTIN_TASK_RECEIVE_PREFIX)?;
+    let [channel] = args.as_slice() else {
+        return None;
+    };
+    Some(AsyncChannelReceive {
+        suffix,
+        channel,
+        binding,
+        value_type,
+    })
+}
+
 fn statement_structured_spawn(statement: &Statement) -> Option<StructuredSpawn<'_>> {
     let Statement::Let {
         name: handle,
@@ -416,6 +494,8 @@ fn statement_async_call<'a>(
 fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<String>) -> bool {
     statement_is_async_yield(statement)
         || statement_async_sleep(statement).is_some()
+        || statement_async_channel_send(statement).is_some()
+        || statement_async_channel_receive(statement).is_some()
         || statement_async_call(statement, async_names).is_some()
         || statement_structured_join(statement).is_some()
         || statement_structured_cancel_join(statement).is_some()
@@ -570,6 +650,22 @@ fn async_spawn_failed_field(index: usize) -> String {
     format!("nomo_async_spawn_failed_{index}")
 }
 
+fn async_channel_send_registration_field(index: usize) -> String {
+    format!("nomo_async_channel_send_registration_{index}")
+}
+
+fn async_channel_receive_registration_field(index: usize) -> String {
+    format!("nomo_async_channel_receive_registration_{index}")
+}
+
+fn async_channel_result_field(index: usize) -> String {
+    format!("nomo_async_channel_result_{index}")
+}
+
+fn async_channel_result_owned_field(index: usize) -> String {
+    format!("nomo_async_channel_result_owned_{index}")
+}
+
 fn async_sleep_result_type() -> ValueType {
     ValueType::Enum(
         "Result".to_string(),
@@ -643,6 +739,32 @@ fn emit_async_frame_type(
         }
     }
     for (index, statement) in function.body.iter().enumerate() {
+        if let Some(send) = statement_async_channel_send(statement) {
+            out.push_str("    nomo_channel_send_registration_");
+            out.push_str(send.suffix);
+            out.push(' ');
+            out.push_str(&async_channel_send_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(send.value_type));
+            out.push(' ');
+            out.push_str(&async_channel_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_channel_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if let Some(receive) = statement_async_channel_receive(statement) {
+            out.push_str("    nomo_channel_receive_registration_");
+            out.push_str(receive.suffix);
+            out.push(' ');
+            out.push_str(&async_channel_receive_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(receive.value_type));
+            out.push(' ');
+            out.push_str(&async_channel_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_channel_result_owned_field(index));
+            out.push_str(";\n");
+        }
         if statement_async_sleep(statement).is_some() {
             out.push_str("    nomo_async_timer_registration ");
             out.push_str(&async_timer_field(index));
@@ -859,6 +981,114 @@ fn publication_move_binding(argument: &ValueExpr) -> Option<&str> {
     }
 }
 
+fn emit_async_publication_move_transfer(
+    out: &mut String,
+    argument: &ValueExpr,
+    function: &Function,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    let Some(binding) = publication_move_binding(argument) else {
+        return;
+    };
+    if function
+        .params
+        .iter()
+        .any(|candidate| candidate.name == binding)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_parameter_owned_field(binding));
+        out.push_str(" = 0u;\n");
+    } else if frame_locals
+        .iter()
+        .any(|candidate| candidate.name == binding)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_owned_field(binding));
+        out.push_str(" = 0u;\n");
+    } else {
+        local_owned.retain(|candidate| candidate.name != binding);
+    }
+    write_indent(out, indent);
+    out.push_str("context->publication_moves += 1u;\n");
+}
+
+fn emit_async_channel_result_binding(
+    out: &mut String,
+    index: usize,
+    binding: &str,
+    value_type: &ValueType,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    if let Some(frame_local) = frame_locals
+        .iter()
+        .find(|local| local.declaration_index == index)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_value_field(binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_channel_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_frame_owned_field(binding));
+            out.push_str(" = frame->");
+            out.push_str(&async_channel_result_owned_field(index));
+            out.push_str(";\n");
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_channel_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        emit_async_frame_alias(out, frame_local, indent);
+    } else {
+        write_indent(out, indent);
+        out.push_str(&c_type(value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_channel_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_channel_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        if let Some(local) = local_array(binding, value_type) {
+            local_owned.push(local);
+        }
+    }
+}
+
+fn emit_async_channel_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if let Some(send) = statement_async_channel_send(statement) {
+            write_indent(out, indent);
+            out.push_str("nomo_channel_send_cancel_");
+            out.push_str(send.suffix);
+            out.push_str("(&frame->");
+            out.push_str(&async_channel_send_registration_field(index));
+            out.push_str(");\n");
+        }
+        if let Some(receive) = statement_async_channel_receive(statement) {
+            write_indent(out, indent);
+            out.push_str("nomo_channel_receive_cancel_");
+            out.push_str(receive.suffix);
+            out.push_str("(&frame->");
+            out.push_str(&async_channel_receive_registration_field(index));
+            out.push_str(");\n");
+        }
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_async_question_let(
     out: &mut String,
@@ -1061,6 +1291,7 @@ fn emit_async_deadline_failure(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_channel_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1152,6 +1383,7 @@ fn emit_async_child_failure_propagation(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_channel_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1236,6 +1468,7 @@ fn emit_async_cancel_function(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_channel_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
@@ -1515,7 +1748,8 @@ typedef enum {
     NOMO_ASYNC_PENDING_TIMER = 2,
     NOMO_ASYNC_PENDING_JOIN = 3,
     NOMO_ASYNC_PENDING_PANIC = 4,
-    NOMO_ASYNC_PENDING_CANCEL = 5
+    NOMO_ASYNC_PENDING_CANCEL = 5,
+    NOMO_ASYNC_PENDING_CHANNEL = 6
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -1582,6 +1816,23 @@ struct nomo_async_context {
     uint64_t timer_registrations;
     uint64_t timer_expirations;
     uint64_t timer_cancellations;
+    uint64_t channel_constructions;
+    uint64_t channel_sends;
+    uint64_t channel_receives;
+    uint64_t channel_buffered_sends;
+    uint64_t channel_buffered_receives;
+    uint64_t channel_direct_handoffs;
+    uint64_t channel_send_suspensions;
+    uint64_t channel_receive_suspensions;
+    uint64_t channel_wakeups;
+    uint64_t channel_closes;
+    uint64_t channel_cancellations;
+    uint64_t live_channel_buffered_elements;
+    uint64_t peak_live_channel_buffered_elements;
+    uint64_t live_channel_send_waiters;
+    uint64_t peak_live_channel_send_waiters;
+    uint64_t live_channel_receive_waiters;
+    uint64_t peak_live_channel_receive_waiters;
     uint64_t live_timers;
     uint64_t peak_live_timers;
     uint32_t next_timer_generation;
@@ -1960,7 +2211,8 @@ static int nomo_async_executor_run_root(
             return 1;
         }
     } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
-        && context->pending_reason != NOMO_ASYNC_PENDING_JOIN) {
+        && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
+        && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL) {
         return 1;
     }
     while (context->ready_count != 0u || context->live_timers != 0u) {
@@ -1986,7 +2238,8 @@ static int nomo_async_executor_run_root(
                     return 1;
                 }
             } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
-                && context->pending_reason != NOMO_ASYNC_PENDING_JOIN) {
+                && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
+                && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL) {
                 return 1;
             }
         }
@@ -2031,12 +2284,35 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"timer_registrations\": %" PRIu64 ",\n"
         "    \"timer_expirations\": %" PRIu64 ",\n"
         "    \"timer_cancellations\": %" PRIu64 ",\n"
+        "    \"channel_constructions\": %" PRIu64 ",\n"
+        "    \"channel_sends\": %" PRIu64 ",\n"
+        "    \"channel_receives\": %" PRIu64 ",\n"
+        "    \"channel_buffered_sends\": %" PRIu64 ",\n"
+        "    \"channel_buffered_receives\": %" PRIu64 ",\n"
+        "    \"channel_direct_handoffs\": %" PRIu64 ",\n"
+        "    \"channel_send_suspensions\": %" PRIu64 ",\n"
+        "    \"channel_receive_suspensions\": %" PRIu64 ",\n"
+        "    \"channel_wakeups\": %" PRIu64 ",\n"
+        "    \"channel_closes\": %" PRIu64 ",\n"
+        "    \"channel_cancellations\": %" PRIu64 ",\n"
+        "    \"live_channel_buffered_elements\": %" PRIu64 ",\n"
+        "    \"peak_live_channel_buffered_elements\": %" PRIu64 ",\n"
+        "    \"live_channel_send_waiters\": %" PRIu64 ",\n"
+        "    \"peak_live_channel_send_waiters\": %" PRIu64 ",\n"
+        "    \"live_channel_receive_waiters\": %" PRIu64 ",\n"
+        "    \"peak_live_channel_receive_waiters\": %" PRIu64 ",\n"
         "    \"live_timers\": %" PRIu64 ",\n"
         "    \"peak_live_timers\": %" PRIu64 "\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
-        "    \"local_release\": \"ARC primitive instrumentation is not implemented in this P1 slice\"\n"
+        "    \"local_release\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
+        "    \"atomic_retain\": \"cross-shard shared ARC is not implemented in the current-thread channel slice\",\n"
+        "    \"atomic_release\": \"cross-shard shared ARC is not implemented in the current-thread channel slice\",\n"
+        "    \"cow_detach_count\": \"cross-shard COW detach instrumentation is not implemented in the current-thread channel slice\",\n"
+        "    \"cow_detach_bytes\": \"cross-shard COW detach instrumentation is not implemented in the current-thread channel slice\",\n"
+        "    \"publish_copy_count\": \"cross-shard publication copying is not implemented in the current-thread channel slice\",\n"
+        "    \"publish_copy_bytes\": \"cross-shard publication copying is not implemented in the current-thread channel slice\"\n"
         "  }\n"
         "}\n",
         context->poll_count,
@@ -2058,6 +2334,23 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->timer_registrations,
         context->timer_expirations,
         context->timer_cancellations,
+        context->channel_constructions,
+        context->channel_sends,
+        context->channel_receives,
+        context->channel_buffered_sends,
+        context->channel_buffered_receives,
+        context->channel_direct_handoffs,
+        context->channel_send_suspensions,
+        context->channel_receive_suspensions,
+        context->channel_wakeups,
+        context->channel_closes,
+        context->channel_cancellations,
+        context->live_channel_buffered_elements,
+        context->peak_live_channel_buffered_elements,
+        context->live_channel_send_waiters,
+        context->peak_live_channel_send_waiters,
+        context->live_channel_receive_waiters,
+        context->peak_live_channel_receive_waiters,
         context->live_timers,
         context->peak_live_timers
     );
@@ -2210,7 +2503,31 @@ pub(super) fn emit_async_function(
             continue;
         }
         if statement_is_async_suspend(statement, async_names) {
+            // A frame local can be used for the first time in a segment by the
+            // suspension itself (for example, a Channel handle passed to
+            // receive immediately after a structured join). The normal resume
+            // alias pass only scans statements before the next suspension, so
+            // materialize the missing alias here. A value produced by the
+            // immediately preceding suspension already has an alias emitted by
+            // its result-binding path.
+            for local in frame_locals
+                .iter()
+                .filter(|local| local.declaration_index < segment_start)
+                .filter(|local| local.declaration_index + 1 != segment_start)
+                .filter(|local| statement_uses_binding(statement, &local.name))
+                .filter(|local| {
+                    !function.body[segment_start..index]
+                        .iter()
+                        .any(|segment_statement| {
+                            statement_uses_binding(segment_statement, &local.name)
+                        })
+                })
+            {
+                emit_async_frame_alias(out, local, 3);
+            }
             let sleep = statement_async_sleep(statement);
+            let channel_send = statement_async_channel_send(statement);
+            let channel_receive = statement_async_channel_receive(statement);
             let join = statement_structured_join(statement);
             let cancel_join = statement_structured_cancel_join(statement);
             if join.is_some() {
@@ -2237,6 +2554,16 @@ pub(super) fn emit_async_function(
                     function,
                     &frame_locals,
                     &mut local_owned,
+                );
+            }
+            if let Some(send) = channel_send {
+                emit_async_publication_move_transfer(
+                    out,
+                    send.value,
+                    function,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
                 );
             }
             let moved_to_frame = frame_locals
@@ -2266,6 +2593,48 @@ pub(super) fn emit_async_function(
                 out.push_str("            context->yield_count += 1u;\n");
                 out.push_str("            context->pending_reason = NOMO_ASYNC_PENDING_YIELD;\n");
                 out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
+            } else if let Some(send) = channel_send {
+                out.push_str("            if (nomo_channel_send_start_");
+                out.push_str(send.suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_channel_send_registration_field(index));
+                out.push_str(", ");
+                emit_expr(out, send.channel);
+                out.push_str(", ");
+                emit_expr(out, send.value);
+                out.push_str(", context, &frame->");
+                out.push_str(&async_channel_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_channel_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+            } else if let Some(receive) = channel_receive {
+                out.push_str("            if (nomo_channel_receive_start_");
+                out.push_str(receive.suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_channel_receive_registration_field(index));
+                out.push_str(", ");
+                emit_expr(out, receive.channel);
+                out.push_str(", context, &frame->");
+                out.push_str(&async_channel_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_channel_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
             } else if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_start(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -2373,6 +2742,38 @@ pub(super) fn emit_async_function(
                 );
                 emit_async_timer_result_materialize(out, index, 3);
             }
+            if let Some(send) = channel_send {
+                out.push_str("            if (nomo_channel_send_resume_");
+                out.push_str(send.suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_channel_send_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_channel_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_channel_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
+            if let Some(receive) = channel_receive {
+                out.push_str("            if (nomo_channel_receive_resume_");
+                out.push_str(receive.suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_channel_receive_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_channel_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_channel_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
             if let Some(join) = join {
                 let spawn_index = structured_spawn_index(function, join.handle)
                     .expect("validated structured join handle has a spawn");
@@ -2418,7 +2819,13 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            if sleep.is_some() || call.is_some() || join.is_some() || cancel_join.is_some() {
+            if sleep.is_some()
+                || channel_send.is_some()
+                || channel_receive.is_some()
+                || call.is_some()
+                || join.is_some()
+                || cancel_join.is_some()
+            {
                 out.push_str("nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(":\n            ;\n");
@@ -2509,6 +2916,28 @@ pub(super) fn emit_async_function(
                 out.push_str("(&frame->");
                 out.push_str(&async_child_field(index));
                 out.push_str(");\n");
+            }
+            if let Some(send) = channel_send {
+                emit_async_channel_result_binding(
+                    out,
+                    index,
+                    send.binding,
+                    send.value_type,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
+            }
+            if let Some(receive) = channel_receive {
+                emit_async_channel_result_binding(
+                    out,
+                    index,
+                    receive.binding,
+                    receive.value_type,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
             }
             if let Some((name, value_type, _)) = sleep {
                 if let Some(frame_local) = frame_locals
@@ -2811,6 +3240,24 @@ pub(super) fn emit_async_function(
         out.push_str("(&frame->");
         out.push_str(&async_child_field(index));
         out.push_str(");\n");
+    }
+    emit_async_channel_cancellations(out, function, 1);
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let channel_value_type = statement_async_channel_send(statement)
+            .map(|send| send.value_type)
+            .or_else(|| {
+                statement_async_channel_receive(statement).map(|receive| receive.value_type)
+            });
+        let Some(value_type) = channel_value_type else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            value_type,
+            &async_channel_result_owned_field(index),
+            &async_channel_result_field(index),
+            1,
+        );
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(join) = statement_structured_join(statement) else {

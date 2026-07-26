@@ -1,0 +1,3 @@
+[package]
+name = "async_bounded_channel"
+version = "0.1.0"

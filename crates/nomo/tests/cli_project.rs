@@ -10141,6 +10141,1019 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn bounded_channel_applies_fifo_backpressure_with_exact_counters_and_asan_cleanup() {
+    let root = temp_test_root("async-bounded-channel-runtime");
+    reset_dir(&root);
+    let project = root.join("async_bounded_channel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_bounded_channel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn producer(channel_value: Channel<string>) -> void {
+    let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
+    let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
+}
+
+suspend fn consumer(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    let first: Option<string> = task.receive(channel_value)
+    let second: Option<string> = task.receive(channel_value)
+    io.println(option.unwrap_or(first, "missing"))
+    io.println(option.unwrap_or(second, "missing"))
+    task.close(channel_value)
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let producer_task = task.spawn producer(channel_value)
+        let consumer_task = task.spawn consumer(channel_value)
+        let producer_result: Result<void, TaskError> = task.join(producer_task)
+        let consumer_result: Result<void, TaskError> = task.join(consumer_task)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "first\nsecond\n");
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_channel_control_string"));
+    assert!(generated.contains("nomo_channel_send_start_string"));
+    assert!(generated.contains("nomo_channel_receive_start_string"));
+    assert!(generated.contains("nomo_channel_send_registration_string"));
+    assert!(generated.contains("NOMO_ASYNC_PENDING_CHANNEL"));
+    assert!(!generated.contains("pthread_create"));
+    assert!(!generated.contains("CreateThread"));
+    assert!(!generated.contains("__atomic_"));
+    assert!(!generated.contains("Interlocked"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["schema"], 1);
+    assert_eq!(metrics["runtime"], "nomo-c99-current-thread");
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 2);
+    assert_eq!(metrics["counters"]["channel_receives"], 2);
+    assert_eq!(metrics["counters"]["channel_buffered_sends"], 2);
+    assert_eq!(metrics["counters"]["channel_buffered_receives"], 2);
+    assert_eq!(metrics["counters"]["channel_direct_handoffs"], 0);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_receive_suspensions"], 0);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 1);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_channel_buffered_elements"], 0);
+    assert_eq!(
+        metrics["counters"]["peak_live_channel_buffered_elements"],
+        1
+    );
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_send_waiters"], 1);
+    assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_receive_waiters"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-async-bounded-channel.exe"
+        } else {
+            "asan-async-bounded-channel"
+        });
+        let asan_metrics_path = root.join("asan-channel-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "first\nsecond\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_close_wakes_sender_and_returns_the_single_unsent_owner() {
+    let root = temp_test_root("async-bounded-channel-close");
+    reset_dir(&root);
+    let project = root.join("async_bounded_channel_close");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_bounded_channel_close\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn recover(result: Result<void, ChannelSendError<string>>) -> string {
+    return match result {
+        Result.Ok(value) => "unexpected"
+        Result.Err(failure) => failure.value
+    }
+}
+
+suspend fn sender(channel_value: Channel<string>) -> void {
+    let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
+    let pending_value: string = "second"
+    let second: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
+    io.println(recover(second))
+}
+
+suspend fn closer(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    task.close(channel_value)
+    task.close(channel_value)
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let sender_task = task.spawn sender(channel_value)
+        let closer_task = task.spawn closer(channel_value)
+        let sender_result: Result<void, TaskError> = task.join(sender_task)
+        let closer_result: Result<void, TaskError> = task.join(closer_task)
+    }
+    let buffered: Option<string> = task.receive(channel_value)
+    let drained: Option<string> = task.receive(channel_value)
+    io.println(option.unwrap_or(buffered, "missing"))
+    io.println(option.is_none(drained))
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-close-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "second\nfirst\ntrue\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["publication_moves"], 1);
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 1);
+    assert_eq!(metrics["counters"]["channel_receives"], 1);
+    assert_eq!(metrics["counters"]["channel_buffered_sends"], 1);
+    assert_eq!(metrics["counters"]["channel_buffered_receives"], 1);
+    assert_eq!(metrics["counters"]["channel_direct_handoffs"], 0);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_receive_suspensions"], 0);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 1);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_channel_buffered_elements"], 0);
+    assert_eq!(
+        metrics["counters"]["peak_live_channel_buffered_elements"],
+        1
+    );
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_send_waiters"], 1);
+
+    if cc_supports_address_sanitizer(&root) {
+        let generated_c = project.join("build/c/main.c");
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-async-bounded-channel-close.exe"
+        } else {
+            "asan-async-bounded-channel-close"
+        });
+        let asan_metrics_path = root.join("asan-channel-close-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "second\nfirst\ntrue\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_try_operations_validate_capacity_wrap_and_close_drain_order() {
+    let root = temp_test_root("bounded-channel-try-operations");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_try_operations");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_try_operations\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.string
+import std.task
+
+fn channel_error_code(result: Result<Channel<string>, ChannelError>) -> string {
+    return match result {
+        Result.Ok(channel_value) => "unexpected"
+        Result.Err(error) => error.code
+    }
+}
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(2)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn send_text(result: ChannelTrySend<string>) -> string {
+    return match result {
+        ChannelTrySend.Sent => "sent"
+        ChannelTrySend.Full(value) => string.concat("full ", value)
+        ChannelTrySend.Closed(value) => string.concat("closed ", value)
+        ChannelTrySend.Failed(failure) => string.concat("failed ", failure.value)
+    }
+}
+
+fn receive_text(result: ChannelTryReceive<string>) -> string {
+    return match result {
+        ChannelTryReceive.Value(value) => value
+        ChannelTryReceive.Empty => "empty"
+        ChannelTryReceive.Closed => "closed"
+    }
+}
+
+fn main() -> void {
+    io.println(channel_error_code(task.channel<string>(0)))
+    io.println(channel_error_code(task.channel<string>(65537)))
+    let channel_value: Channel<string> = make_channel()
+    io.println(receive_text(task.try_receive(channel_value)))
+    io.println(send_text(task.try_send(channel_value, "first")))
+    io.println(send_text(task.try_send(channel_value, "second")))
+    io.println(send_text(task.try_send(channel_value, "third")))
+    io.println(receive_text(task.try_receive(channel_value)))
+    io.println(send_text(task.try_send(channel_value, "third")))
+    task.close(channel_value)
+    task.close(channel_value)
+    io.println(receive_text(task.try_receive(channel_value)))
+    io.println(receive_text(task.try_receive(channel_value)))
+    io.println(receive_text(task.try_receive(channel_value)))
+    io.println(send_text(task.try_send(channel_value, "fourth")))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        concat!(
+            "invalid_capacity\n",
+            "capacity_limit\n",
+            "empty\n",
+            "sent\n",
+            "sent\n",
+            "full third\n",
+            "first\n",
+            "sent\n",
+            "second\n",
+            "third\n",
+            "closed\n",
+            "closed fourth\n"
+        )
+    );
+    assert!(output.stderr.is_empty());
+
+    if cc_supports_address_sanitizer(&root) {
+        let generated_c = project.join("build/c/main.c");
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-bounded-channel-try-operations.exe"
+        } else {
+            "asan-bounded-channel-try-operations"
+        });
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(asan_output.stdout, output.stdout);
+        assert!(asan_output.stderr.is_empty());
+    }
+    if cc_supports_undefined_sanitizer(&root) {
+        let generated_c = project.join("build/c/main.c");
+        let bin_path = root.join(if cfg!(windows) {
+            "ubsan-bounded-channel-try-operations.exe"
+        } else {
+            "ubsan-bounded-channel-try-operations"
+        });
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=undefined")
+            .arg("-fno-sanitize-recover=undefined")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let ubsan_output = Command::new(&bin_path)
+            .env("UBSAN_OPTIONS", "halt_on_error=1:print_stacktrace=1")
+            .output()
+            .unwrap();
+        assert!(
+            ubsan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&ubsan_output.stdout),
+            String::from_utf8_lossy(&ubsan_output.stderr)
+        );
+        assert_eq!(ubsan_output.stdout, output.stdout);
+        assert!(ubsan_output.stderr.is_empty());
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_accepts_exact_element_and_byte_limits_and_rejects_one_field_over() {
+    let root = temp_test_root("bounded-channel-capacity-boundaries");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_capacity_boundaries");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_capacity_boundaries\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+
+    let mut source = String::from(
+        "package app.main\n\nimport std.io\nimport std.result\nimport std.task\n\nstruct AtByteLimit {\n",
+    );
+    for index in 0..128 {
+        source.push_str(&format!("    field_{index}: u64\n"));
+    }
+    source.push_str("}\n\nstruct AboveByteLimit {\n");
+    for index in 0..129 {
+        source.push_str(&format!("    field_{index}: u64\n"));
+    }
+    source.push_str(
+        r#"}
+
+fn above_limit_code(created: Result<Channel<AboveByteLimit>, ChannelError>) -> string {
+    return match created {
+        Result.Ok(channel_value) => "unexpected"
+        Result.Err(error) => error.code
+    }
+}
+
+fn main() -> void {
+    io.println(result.is_ok(task.channel<u64>(65536)))
+    io.println(result.is_ok(task.channel<AtByteLimit>(65536)))
+    io.println(above_limit_code(task.channel<AboveByteLimit>(65536)))
+}
+"#,
+    );
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "true\ntrue\ncapacity_limit\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_deadline_cancels_one_waiter_without_leaking_registration() {
+    let root = temp_test_root("bounded-channel-deadline-cancel");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_deadline_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_deadline_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn wait_for_value(channel_value: Channel<string>) -> void {
+    task.deadline(time.duration_millis(5)) {
+        let received: Option<string> = task.receive(channel_value)
+        io.println(option.unwrap_or(received, "unexpected"))
+    }
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let waiter = task.spawn wait_for_value(channel_value)
+        let joined: Result<void, TaskError> = task.join(waiter)
+        io.println(result.is_err(joined))
+    }
+    task.close(channel_value)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-cancel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "true\n");
+    assert!(output.stderr.is_empty());
+
+    let generated = fs::read_to_string(project.join("build/c/main.c")).unwrap();
+    assert!(generated.contains("nomo_channel_receive_cancel_string"));
+    assert!(generated.contains("nomo_async_timer_wait_next"));
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 0);
+    assert_eq!(metrics["counters"]["channel_receives"], 0);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 0);
+    assert_eq!(metrics["counters"]["channel_receive_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 0);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_receive_waiters"], 1);
+    assert_eq!(metrics["counters"]["deadline_registrations"], 1);
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_hands_values_to_blocked_receivers_in_waiter_fifo_order() {
+    let root = temp_test_root("bounded-channel-direct-handoff");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_direct_handoff");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_direct_handoff\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn receiver(channel_value: Channel<string>) -> void {
+    let received: Option<string> = task.receive(channel_value)
+    io.println(option.unwrap_or(received, "missing"))
+}
+
+suspend fn sender(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
+    let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let first_receiver = task.spawn receiver(channel_value)
+        let second_receiver = task.spawn receiver(channel_value)
+        let sender_task = task.spawn sender(channel_value)
+        let first_joined: Result<void, TaskError> = task.join(first_receiver)
+        let second_joined: Result<void, TaskError> = task.join(second_receiver)
+        let sender_joined: Result<void, TaskError> = task.join(sender_task)
+    }
+    task.close(channel_value)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-handoff-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "first\nsecond\n");
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 2);
+    assert_eq!(metrics["counters"]["channel_receives"], 2);
+    assert_eq!(metrics["counters"]["channel_buffered_sends"], 0);
+    assert_eq!(metrics["counters"]["channel_buffered_receives"], 0);
+    assert_eq!(metrics["counters"]["channel_direct_handoffs"], 2);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 0);
+    assert_eq!(metrics["counters"]["channel_receive_suspensions"], 2);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 2);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_receive_waiters"], 2);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_deadline_cancels_blocked_sender_and_drops_published_value_once() {
+    let root = temp_test_root("bounded-channel-sender-cancel");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_sender_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_sender_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn blocked_sender(channel_value: Channel<string>) -> void {
+    task.deadline(time.duration_millis(5)) {
+        let pending_value: string = "cancelled-value"
+        let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
+    }
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    let primed: ChannelTrySend<string> = task.try_send(channel_value, "buffered")
+    task.scope {
+        let sender = task.spawn blocked_sender(channel_value)
+        let joined: Result<void, TaskError> = task.join(sender)
+        io.println(result.is_err(joined))
+    }
+    let buffered: Option<string> = task.receive(channel_value)
+    io.println(option.unwrap_or(buffered, "missing"))
+    task.close(channel_value)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-sender-cancel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "true\nbuffered\n");
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["publication_moves"], 1);
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 0);
+    assert_eq!(metrics["counters"]["channel_receives"], 1);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_receive_suspensions"], 0);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 0);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_channel_buffered_elements"], 0);
+    assert_eq!(
+        metrics["counters"]["peak_live_channel_buffered_elements"],
+        1
+    );
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_send_waiters"], 1);
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let generated_c = project.join("build/c/main.c");
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-bounded-channel-sender-cancel.exe"
+        } else {
+            "asan-bounded-channel-sender-cancel"
+        });
+        let asan_metrics_path = root.join("asan-channel-sender-cancel-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "true\nbuffered\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn bounded_channel_root_panic_drops_buffer_and_linked_sender_once_under_asan() {
+    let root = temp_test_root("bounded-channel-panic-cleanup");
+    reset_dir(&root);
+    let project = root.join("bounded_channel_panic_cleanup");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"bounded_channel_panic_cleanup\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.result
+import std.task
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn blocked_sender(channel_value: Channel<string>) -> void {
+    let buffered: Result<void, ChannelSendError<string>> = task.send(channel_value, "buffered")
+    let pending_value: string = "linked"
+    let pending: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
+}
+
+suspend fn panicking_child(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    task.close(channel_value)
+    panic("channel panic")
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let sender = task.spawn blocked_sender(channel_value)
+        let failure = task.spawn panicking_child(channel_value)
+        let joined: Result<void, TaskError> = task.join(failure)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("channel-panic-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert_eq!(
+        String::from_utf8_lossy(&output.stderr),
+        "panic: channel panic\nprogram exited with status 1\n"
+    );
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["channel_constructions"], 1);
+    assert_eq!(metrics["counters"]["channel_sends"], 1);
+    assert_eq!(metrics["counters"]["channel_buffered_sends"], 1);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_wakeups"], 1);
+    assert_eq!(metrics["counters"]["channel_closes"], 1);
+    assert_eq!(metrics["counters"]["channel_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_channel_buffered_elements"], 0);
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
+    assert_eq!(metrics["counters"]["peak_live_channel_send_waiters"], 1);
+
+    if cc_supports_address_sanitizer(&root) {
+        let generated_c = project.join("build/c/main.c");
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-bounded-channel-panic-cleanup.exe"
+        } else {
+            "asan-bounded-channel-panic-cleanup"
+        });
+        let asan_metrics_path = root.join("asan-channel-panic-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(!asan_output.status.success());
+        assert!(asan_output.stdout.is_empty());
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stderr),
+            "panic: channel panic\n"
+        );
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn async_timer_uses_monotonic_owner_local_waiting_and_exact_counters() {
     let root = temp_test_root("async-timer-runtime");
     reset_dir(&root);
@@ -16584,6 +17597,34 @@ fn cc_supports_address_sanitizer(root: &Path) -> bool {
 
     let Ok(output) = Command::new(&bin)
         .env("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=1")
+        .output()
+    else {
+        return false;
+    };
+    output.status.success()
+}
+
+fn cc_supports_undefined_sanitizer(root: &Path) -> bool {
+    let source = root.join("ubsan-probe.c");
+    let bin = root.join("ubsan-probe");
+    fs::write(&source, "int main(void) { return 0; }\n").unwrap();
+
+    let Ok(output) = Command::new("cc")
+        .arg("-fsanitize=undefined")
+        .arg("-fno-sanitize-recover=undefined")
+        .arg(&source)
+        .arg("-o")
+        .arg(&bin)
+        .output()
+    else {
+        return false;
+    };
+    if !output.status.success() {
+        return false;
+    }
+
+    let Ok(output) = Command::new(&bin)
+        .env("UBSAN_OPTIONS", "halt_on_error=1")
         .output()
     else {
         return false;

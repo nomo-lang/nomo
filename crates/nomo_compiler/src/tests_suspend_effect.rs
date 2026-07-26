@@ -2093,3 +2093,149 @@ suspend fn main() -> void {
     assert!(c.contains("frame->nomo_async_join_result_owned_1 = 1u;"));
     assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0);"));
 }
+
+#[test]
+fn bounded_channel_builtins_lower_with_inferred_element_types() {
+    let source = r#"package app.main
+
+import std.task
+import std.option
+
+suspend fn exchange(channel_value: Channel<string>, value: string) -> void {
+    let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, value)
+    let received: Option<string> = task.receive(channel_value)
+    let immediate: ChannelTryReceive<string> = task.try_receive(channel_value)
+    task.close(channel_value)
+}
+
+suspend fn main() -> void {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(2)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let exchange = program
+        .functions
+        .iter()
+        .find(|function| function.name == "exchange")
+        .unwrap();
+
+    assert!(matches!(
+        &exchange.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == "__nomo_task_send::string"
+            && matches!(
+                args.as_slice(),
+                [
+                    ValueExpr::Variable(channel),
+                    ValueExpr::Call { name: moved, args: moved_args }
+                ] if channel == "channel_value"
+                    && moved == BUILTIN_TASK_PUBLICATION_MOVE_EXPR
+                    && matches!(moved_args.as_slice(), [ValueExpr::Variable(value)] if value == "value")
+            )
+    ));
+    assert!(matches!(
+        &exchange.body[1],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, .. },
+            ..
+        } if name == "__nomo_task_receive::string"
+    ));
+    assert!(matches!(
+        &exchange.body[2],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, .. },
+            ..
+        } if name == "__nomo_task_try_receive::string"
+    ));
+    assert!(matches!(
+        &exchange.body[3],
+        Statement::Expr(ValueExpr::Call { name, .. })
+            if name == "__nomo_task_close_channel::string"
+    ));
+}
+
+#[test]
+fn bounded_channel_requires_send_elements() {
+    let source = r#"package app.main
+
+import std.net
+import std.task
+
+suspend fn main() -> void {
+    let created: Result<Channel<TcpStream>, ChannelError> = task.channel<TcpStream>(1)
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0880");
+    assert!(error.message.contains("task.channel element"));
+    assert!(error.message.contains("TcpStream"));
+    assert!(error.message.contains("Local/!Send"));
+}
+
+#[test]
+fn channel_send_consumes_a_named_non_copy_value() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(channel_value: Channel<string>, value: string) -> void {
+    let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, value)
+    let invalid: string = value
+}
+
+suspend fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0881");
+    assert!(error.message.contains("task.send"));
+    assert!(error.message.contains("binding `value`"));
+}
+
+#[test]
+fn channel_handles_are_shared_across_structured_spawn() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn child(channel_value: Channel<string>) -> void {
+    task.yield_now()
+}
+
+suspend fn parent(channel_value: Channel<string>) -> void {
+    task.scope {
+        let child_task = task.spawn child(channel_value)
+        let still_available: Channel<string> = channel_value
+        let joined: Result<void, TaskError> = task.join(child_task)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let parent = program
+        .functions
+        .iter()
+        .find(|function| function.name == "parent")
+        .unwrap();
+    let Statement::Let {
+        initializer: ValueExpr::Call { args, .. },
+        ..
+    } = &parent.body[0]
+    else {
+        panic!("expected structured spawn")
+    };
+    assert!(matches!(
+        args.as_slice(),
+        [ValueExpr::Variable(name)] if name == "channel_value"
+    ));
+}

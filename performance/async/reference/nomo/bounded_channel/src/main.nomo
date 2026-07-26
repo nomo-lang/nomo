@@ -1,0 +1,96 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+
+fn make_channel() -> Channel<u64> {
+    let created: Result<Channel<u64>, ChannelError> = task.channel<u64>(8)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn producer(channel_value: Channel<u64>) -> void {
+    let sent_00: Result<void, ChannelSendError<u64>> = task.send(channel_value, 0)
+    let sent_01: Result<void, ChannelSendError<u64>> = task.send(channel_value, 1)
+    let sent_02: Result<void, ChannelSendError<u64>> = task.send(channel_value, 2)
+    let sent_03: Result<void, ChannelSendError<u64>> = task.send(channel_value, 3)
+    let sent_04: Result<void, ChannelSendError<u64>> = task.send(channel_value, 4)
+    let sent_05: Result<void, ChannelSendError<u64>> = task.send(channel_value, 5)
+    let sent_06: Result<void, ChannelSendError<u64>> = task.send(channel_value, 6)
+    let sent_07: Result<void, ChannelSendError<u64>> = task.send(channel_value, 7)
+    let sent_08: Result<void, ChannelSendError<u64>> = task.send(channel_value, 8)
+    let sent_09: Result<void, ChannelSendError<u64>> = task.send(channel_value, 9)
+    let sent_10: Result<void, ChannelSendError<u64>> = task.send(channel_value, 10)
+    let sent_11: Result<void, ChannelSendError<u64>> = task.send(channel_value, 11)
+    let sent_12: Result<void, ChannelSendError<u64>> = task.send(channel_value, 12)
+    let sent_13: Result<void, ChannelSendError<u64>> = task.send(channel_value, 13)
+    let sent_14: Result<void, ChannelSendError<u64>> = task.send(channel_value, 14)
+    let sent_15: Result<void, ChannelSendError<u64>> = task.send(channel_value, 15)
+    let sent_16: Result<void, ChannelSendError<u64>> = task.send(channel_value, 16)
+    let sent_17: Result<void, ChannelSendError<u64>> = task.send(channel_value, 17)
+    let sent_18: Result<void, ChannelSendError<u64>> = task.send(channel_value, 18)
+    let sent_19: Result<void, ChannelSendError<u64>> = task.send(channel_value, 19)
+    let sent_20: Result<void, ChannelSendError<u64>> = task.send(channel_value, 20)
+    let sent_21: Result<void, ChannelSendError<u64>> = task.send(channel_value, 21)
+    let sent_22: Result<void, ChannelSendError<u64>> = task.send(channel_value, 22)
+    let sent_23: Result<void, ChannelSendError<u64>> = task.send(channel_value, 23)
+    let sent_24: Result<void, ChannelSendError<u64>> = task.send(channel_value, 24)
+    let sent_25: Result<void, ChannelSendError<u64>> = task.send(channel_value, 25)
+    let sent_26: Result<void, ChannelSendError<u64>> = task.send(channel_value, 26)
+    let sent_27: Result<void, ChannelSendError<u64>> = task.send(channel_value, 27)
+    let sent_28: Result<void, ChannelSendError<u64>> = task.send(channel_value, 28)
+    let sent_29: Result<void, ChannelSendError<u64>> = task.send(channel_value, 29)
+    let sent_30: Result<void, ChannelSendError<u64>> = task.send(channel_value, 30)
+    let sent_31: Result<void, ChannelSendError<u64>> = task.send(channel_value, 31)
+}
+
+suspend fn consumer(channel_value: Channel<u64>) -> void {
+    task.yield_now()
+    let value_00: Option<u64> = task.receive(channel_value)
+    let value_01: Option<u64> = task.receive(channel_value)
+    let value_02: Option<u64> = task.receive(channel_value)
+    let value_03: Option<u64> = task.receive(channel_value)
+    let value_04: Option<u64> = task.receive(channel_value)
+    let value_05: Option<u64> = task.receive(channel_value)
+    let value_06: Option<u64> = task.receive(channel_value)
+    let value_07: Option<u64> = task.receive(channel_value)
+    let value_08: Option<u64> = task.receive(channel_value)
+    let value_09: Option<u64> = task.receive(channel_value)
+    let value_10: Option<u64> = task.receive(channel_value)
+    let value_11: Option<u64> = task.receive(channel_value)
+    let value_12: Option<u64> = task.receive(channel_value)
+    let value_13: Option<u64> = task.receive(channel_value)
+    let value_14: Option<u64> = task.receive(channel_value)
+    let value_15: Option<u64> = task.receive(channel_value)
+    let value_16: Option<u64> = task.receive(channel_value)
+    let value_17: Option<u64> = task.receive(channel_value)
+    let value_18: Option<u64> = task.receive(channel_value)
+    let value_19: Option<u64> = task.receive(channel_value)
+    let value_20: Option<u64> = task.receive(channel_value)
+    let value_21: Option<u64> = task.receive(channel_value)
+    let value_22: Option<u64> = task.receive(channel_value)
+    let value_23: Option<u64> = task.receive(channel_value)
+    let value_24: Option<u64> = task.receive(channel_value)
+    let value_25: Option<u64> = task.receive(channel_value)
+    let value_26: Option<u64> = task.receive(channel_value)
+    let value_27: Option<u64> = task.receive(channel_value)
+    let value_28: Option<u64> = task.receive(channel_value)
+    let value_29: Option<u64> = task.receive(channel_value)
+    let value_30: Option<u64> = task.receive(channel_value)
+    let value_31: Option<u64> = task.receive(channel_value)
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<u64> = make_channel()
+    task.scope {
+        let producer_task = task.spawn producer(channel_value)
+        let consumer_task = task.spawn consumer(channel_value)
+        let producer_result: Result<void, TaskError> = task.join(producer_task)
+        let consumer_result: Result<void, TaskError> = task.join(consumer_task)
+    }
+    task.close(channel_value)
+    io.println("bounded-channel 32")
+}

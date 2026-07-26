@@ -41,6 +41,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_structured_question_cancel`: typed `?` propagation that cancels an unjoined child with an armed timer before returning the error
 - `async_structured_explicit_cancel`: consuming `task.cancel(Task<T>)` that completes armed-timer cleanup and returns a typed result before handle drop
 - `async_structured_panic_cleanup`: a spawned child panic that preserves its managed message while the root cancels a sibling with an armed timer and drops every frame before terminating
+- `async_bounded_channel`: P3-B capacity-one FIFO backpressure with scope-owned producer/consumer tasks and an idempotent close
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

@@ -16,6 +16,9 @@ acceptance gate has passed.
   defines correctness, portability, memory, and performance gates.
 - [RFC 0035](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0035-monotonic-suspend-timers-and-blocking-sleep-migration.md)
   defines owner-local timers and the blocking-sleep boundary.
+- [RFC 0036](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0036-bounded-channels-publication-moves-and-static-select.md)
+  defines bounded channels, consuming publication, and the later static-select
+  surface.
 
 [中文版本](async-runtime.zh-CN.md)
 
@@ -155,7 +158,46 @@ also checks immediately before and after runtime suspension boundaries.
 Timeout wins if a ready operation and its deadline are both observable at a
 resume boundary.
 
-## Implemented P1 Slice
+### Bounded channels
+
+The P3-B current-thread slice adds a typed bounded FIFO:
+
+```nomo
+let created: Result<Channel<string>, ChannelError> =
+    task.channel<string>(8)
+let sent: Result<void, ChannelSendError<string>> =
+    task.send(channel_value, message)
+let received: Option<string> = task.receive(channel_value)
+```
+
+`task.channel<T>(capacity)` accepts 1 through 65,536 elements and at most
+64 MiB of checked slot storage. It returns stable `invalid_capacity`,
+`capacity_limit`, or `allocation` errors without formatting user values.
+`task.send` and `task.receive` are direct-style suspension points;
+`task.try_send` and `task.try_receive` never suspend. `task.close` is
+idempotent, wakes blocked operations, rejects new sends, and preserves buffered
+FIFO values until drained.
+
+A named non-Copy send value is publication-moved. Success transfers its single
+owner to a receiver or ring slot. Full, closed, and runtime failures return
+exactly one owner through `ChannelTrySend<T>` or `ChannelSendError<T>`.
+Channel-handle copies share one current-thread control block; ordinary arrays,
+maps, and strings keep non-atomic task-local ARC/COW storage. This slice adds
+no atomic shim or cross-shard sharing.
+
+Native C99 uses an owner-local ring plus FIFO sender and receiver
+registrations. A waiting receiver receives a value directly; otherwise a full
+ring suspends the sender. Cancellation, timeout, close, wake-before-resume,
+frame drop, and normal completion unlink each registration and release or
+return a staged value exactly once. See
+[`examples/async_bounded_channel`](../examples/async_bounded_channel).
+
+Browser WASM does not yet provide the host-driven channel backend. Construction
+returns `runtime_unavailable` without evaluating capacity. Other channel
+operations report a sandbox capability error before evaluating a channel
+operand or send value that would be consumed.
+
+## Implemented P1 and P3-B Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -204,6 +246,9 @@ enqueue/dequeue/saturation/cancellation, structured
 spawn/publication-move/join/join-suspension/cancellation, deadline
 registration/expiry/disarm, and timer
 registration/expiry/cancellation/live/peak counters.
+The P3-B channel slice also records construction binding, buffered/direct
+delivery, suspension, wakeup, close/cancellation, and live/peak buffer and
+waiter counts.
 Native programs export the versioned
 `nomo-c99-current-thread` JSON payload only when
 `NOMO_ASYNC_METRICS_PATH` is set; ordinary runs perform no metrics I/O.
@@ -247,7 +292,8 @@ block or evaluate its duration in the browser sandbox; it returns
 also not evaluated there yet; their join and structured cancel return the same
 stable error and consume the inert browser handle. `task.deadline` currently
 returns a sandbox capability error without evaluating either its duration or
-body; host-driven browser deadlines remain a later backend slice.
+body. Channel operations use the capability behavior described above;
+host-driven browser deadlines and channels remain later backend slices.
 
 ## Deliberate Restrictions
 
@@ -305,7 +351,8 @@ then prints and releases the original message before exiting with status 1.
 runtime error while keeping structured child bodies inert. Nested scopes,
 nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
 other positions, panic nested in another expression, cancellation tokens,
-nested/general deadline exits, channels, and select remain later slices.
+nested/general deadline exits, cross-shard channels, and static select remain
+later slices.
 E0871, E0872, E0875, and E0876 reject unsupported cases before code
 generation.
 
@@ -336,6 +383,13 @@ Deadline tests additionally cover non-positive body suppression, normal
 disarm, timeout while a child frame owns an armed sleep, typed join failure,
 root secret-safe failure, exact timer/deadline counters, browser
 non-evaluation, and AddressSanitizer cleanup.
+Bounded-channel tests cover element and byte limits, FIFO wraparound, direct
+handoff, full/empty try operations, buffered close, blocked sender/receiver
+wakeup, repeated close, timeout cancellation, typed value recovery,
+cross-suspension handle liveness, exact counters, native C99 and browser
+capability behavior, and AddressSanitizer/UndefinedBehaviorSanitizer cleanup.
+The P3 manifest runs the same capacity-eight 32-value exchange against pinned
+single-core Go while keeping the result ineligible for a performance claim.
 Later slices must still prove, rather than assume:
 
 - exactly-once ARC/COW release on the remaining error, cancellation, timeout,
@@ -349,7 +403,7 @@ Later slices must still prove, rather than assume:
 - fair, version-pinned Nomo-versus-Go measurements without weakening either
   workload.
 
-The P0/P1 controls and raw evidence format live in
+The P0/P1/P3 controls and raw evidence format live in
 [`performance/async`](../performance/async/README.md). Runnable examples are
 [`examples/async_yield`](../examples/async_yield) and
 [`examples/async_timer`](../examples/async_timer), plus
@@ -365,3 +419,5 @@ plus
 [`examples/async_structured_explicit_cancel`](../examples/async_structured_explicit_cancel),
 plus
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup).
+The bounded FIFO example is
+[`examples/async_bounded_channel`](../examples/async_bounded_channel).

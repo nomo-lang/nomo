@@ -339,7 +339,7 @@ pub(super) fn lower_call_value_expr(
             }
             if is_task_builtin_call(callee) {
                 require_import(path, imports, span, "std.task", &callee.join("."))?;
-                if !type_args.is_empty() {
+                if !type_args.is_empty() && callee != ["task", "channel"] {
                     return Err(type_mismatch(
                         path,
                         span,
@@ -347,7 +347,8 @@ pub(super) fn lower_call_value_expr(
                     ));
                 }
                 return lower_task_builtin(
-                    path, callee, args, scope, imports, signatures, structs, enums, span,
+                    path, callee, args, type_args, scope, imports, signatures, structs, enums,
+                    expected, span,
                 );
             }
             if is_sqlite_builtin_call(callee) {

@@ -109,6 +109,42 @@ pub(super) fn local_c_value(c_value: &str, value_type: &ValueType) -> Option<Loc
     }
 }
 
+pub(super) fn statement_publication_move_bindings(statement: &Statement) -> Vec<&str> {
+    let expression = match statement {
+        Statement::Let { initializer, .. }
+        | Statement::Expr(initializer)
+        | Statement::QuestionLet {
+            result_expr: initializer,
+            ..
+        } => Some(initializer),
+        _ => None,
+    };
+    let Some(ValueExpr::Call { name, args }) = expression else {
+        return Vec::new();
+    };
+    if !name.starts_with(BUILTIN_TASK_TRY_SEND_PREFIX)
+        && !name.starts_with(BUILTIN_TASK_SEND_PREFIX)
+    {
+        return Vec::new();
+    }
+    args.iter()
+        .filter_map(publication_move_binding_from_expr)
+        .collect()
+}
+
+fn publication_move_binding_from_expr(expression: &ValueExpr) -> Option<&str> {
+    let ValueExpr::Call { name, args } = expression else {
+        return None;
+    };
+    if name != BUILTIN_TASK_PUBLICATION_MOVE_EXPR {
+        return None;
+    }
+    let [ValueExpr::Variable(binding)] = args.as_slice() else {
+        return None;
+    };
+    Some(binding)
+}
+
 pub(super) fn emit_array_releases(out: &mut String, indent: usize, active_arrays: &[LocalArray]) {
     for local in active_arrays.iter().rev() {
         if let Some(c_value) = &local.c_value {

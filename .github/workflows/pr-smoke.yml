@@ -78,6 +78,21 @@ jobs:
           path: performance/results/async-p1.json
           if-no-files-found: error
 
+      - name: Run P3 bounded-channel and no-cost gates
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --manifest performance/async/manifest-p3.json
+          --require-clean
+          --output performance/results/async-p3.json
+
+      - name: Upload P3 bounded-channel evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p3
+          path: performance/results/async-p3.json
+          if-no-files-found: error
+
   windows-host-runtime:
     name: Run native host runtimes on Windows
     runs-on: windows-2022
@@ -297,6 +312,30 @@ jobs:
               -or $structuredPanicPayload.counters.timer_cancellations -ne 1 `
               -or $structuredPanicPayload.counters.live_timers -ne 0) {
             throw "unexpected structured panic counters"
+          }
+          $channelMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-bounded-channel-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $channelMetrics
+          $channelOutput = cargo run --locked --bin nomo -- run examples/async_bounded_channel
+          if (($channelOutput -join "`n") -notmatch "^first`nsecond$") {
+            throw "unexpected bounded-channel output"
+          }
+          $channelPayload = Get-Content -Raw $channelMetrics | ConvertFrom-Json
+          if ($channelPayload.schema -ne 1 `
+              -or $channelPayload.runtime -ne "nomo-c99-current-thread" `
+              -or $channelPayload.counters.channel_constructions -ne 1 `
+              -or $channelPayload.counters.channel_sends -ne 2 `
+              -or $channelPayload.counters.channel_receives -ne 2 `
+              -or $channelPayload.counters.channel_buffered_sends -ne 2 `
+              -or $channelPayload.counters.channel_buffered_receives -ne 2 `
+              -or $channelPayload.counters.channel_send_suspensions -ne 1 `
+              -or $channelPayload.counters.channel_receive_suspensions -ne 0 `
+              -or $channelPayload.counters.channel_wakeups -ne 1 `
+              -or $channelPayload.counters.channel_closes -ne 1 `
+              -or $channelPayload.counters.channel_cancellations -ne 0 `
+              -or $channelPayload.counters.live_channel_buffered_elements -ne 0 `
+              -or $channelPayload.counters.live_channel_send_waiters -ne 0 `
+              -or $channelPayload.counters.live_channel_receive_waiters -ne 0) {
+            throw "unexpected bounded-channel counters"
           }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-

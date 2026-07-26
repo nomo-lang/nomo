@@ -7,6 +7,7 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
                 expr_is_async_yield(expr)
                     || expr_is_async_sleep(expr)
                     || expr_is_async_tcp_connect(expr)
+                    || expr_is_async_tcp_io(expr)
                     || expr_is_async_channel_send(expr)
                     || expr_is_async_channel_receive(expr)
                     || expr_is_async_check_cancelled(expr)
@@ -140,6 +141,20 @@ fn expr_is_async_tcp_connect(expr: &ValueExpr) -> bool {
         expr,
         ValueExpr::Call { name, args }
             if name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3
+    )
+}
+
+fn expr_is_async_tcp_io(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if matches!(
+                name.as_str(),
+                BUILTIN_TCP_STREAM_READ_EXPR
+                    | BUILTIN_TCP_STREAM_READ_STRING_EXPR
+                    | BUILTIN_TCP_STREAM_WRITE_EXPR
+                    | BUILTIN_TCP_STREAM_WRITE_STRING_EXPR
+            ) && args.len() == 3
     )
 }
 
@@ -302,6 +317,81 @@ fn statement_async_tcp_connect(statement: &Statement) -> Option<AsyncTcpConnect<
     Some(AsyncTcpConnect {
         host,
         port,
+        timeout_millis,
+        binding,
+        value_type,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncTcpIoKind {
+    Read,
+    ReadString,
+    Write,
+    WriteString,
+}
+
+impl AsyncTcpIoKind {
+    fn start_function(self) -> &'static str {
+        match self {
+            Self::Read => "nomo_async_tcp_read_start",
+            Self::ReadString => "nomo_async_tcp_read_string_start",
+            Self::Write => "nomo_async_tcp_write_start",
+            Self::WriteString => "nomo_async_tcp_write_string_start",
+        }
+    }
+
+    fn resume_function(self) -> &'static str {
+        match self {
+            Self::Read => "nomo_async_tcp_read_resume",
+            Self::ReadString => "nomo_async_tcp_read_string_resume",
+            Self::Write => "nomo_async_tcp_write_resume",
+            Self::WriteString => "nomo_async_tcp_write_string_resume",
+        }
+    }
+
+    fn payload_type(self) -> Option<ValueType> {
+        match self {
+            Self::Read | Self::ReadString => None,
+            Self::Write => Some(ValueType::Array(Box::new(ValueType::U32))),
+            Self::WriteString => Some(ValueType::String),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncTcpIo<'a> {
+    kind: AsyncTcpIoKind,
+    stream: &'a ValueExpr,
+    value: &'a ValueExpr,
+    timeout_millis: &'a ValueExpr,
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_async_tcp_io(statement: &Statement) -> Option<AsyncTcpIo<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    let kind = match name.as_str() {
+        BUILTIN_TCP_STREAM_READ_EXPR => AsyncTcpIoKind::Read,
+        BUILTIN_TCP_STREAM_READ_STRING_EXPR => AsyncTcpIoKind::ReadString,
+        BUILTIN_TCP_STREAM_WRITE_EXPR => AsyncTcpIoKind::Write,
+        BUILTIN_TCP_STREAM_WRITE_STRING_EXPR => AsyncTcpIoKind::WriteString,
+        _ => return None,
+    };
+    let [stream, value, timeout_millis] = args.as_slice() else {
+        return None;
+    };
+    Some(AsyncTcpIo {
+        kind,
+        stream,
+        value,
         timeout_millis,
         binding,
         value_type,
@@ -545,6 +635,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
     statement_is_async_yield(statement)
         || statement_async_sleep(statement).is_some()
         || statement_async_tcp_connect(statement).is_some()
+        || statement_async_tcp_io(statement).is_some()
         || statement_async_channel_send(statement).is_some()
         || statement_async_channel_receive(statement).is_some()
         || statement_task_select(statement).is_some()
@@ -703,6 +794,30 @@ fn async_tcp_connect_result_field(index: usize) -> String {
 
 fn async_tcp_connect_result_owned_field(index: usize) -> String {
     format!("nomo_async_tcp_connect_result_owned_{index}")
+}
+
+fn async_tcp_connect_host_temp(index: usize) -> String {
+    format!("nomo_async_tcp_connect_host_{index}")
+}
+
+fn async_tcp_io_registration_field(index: usize) -> String {
+    format!("nomo_async_tcp_io_registration_{index}")
+}
+
+fn async_tcp_io_result_field(index: usize) -> String {
+    format!("nomo_async_tcp_io_result_{index}")
+}
+
+fn async_tcp_io_result_owned_field(index: usize) -> String {
+    format!("nomo_async_tcp_io_result_owned_{index}")
+}
+
+fn async_tcp_io_payload_temp(index: usize) -> String {
+    format!("nomo_async_tcp_io_payload_{index}")
+}
+
+fn async_tcp_io_start_status_temp(index: usize) -> String {
+    format!("nomo_async_tcp_io_start_status_{index}")
 }
 
 fn async_join_result_field(index: usize) -> String {
@@ -916,6 +1031,17 @@ fn emit_async_frame_type(
             out.push_str(&async_tcp_connect_result_field(index));
             out.push_str(";\n    uint8_t ");
             out.push_str(&async_tcp_connect_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if let Some(operation) = statement_async_tcp_io(statement) {
+            out.push_str("    nomo_async_tcp_io_registration ");
+            out.push_str(&async_tcp_io_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(operation.value_type));
+            out.push(' ');
+            out.push_str(&async_tcp_io_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_tcp_io_result_owned_field(index));
             out.push_str(";\n");
         }
         if statement_structured_join(statement).is_some() {
@@ -1259,6 +1385,57 @@ fn emit_async_tcp_connect_result_binding(
     }
 }
 
+fn emit_async_tcp_io_result_binding(
+    out: &mut String,
+    index: usize,
+    operation: AsyncTcpIo<'_>,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    if let Some(frame_local) = frame_locals
+        .iter()
+        .find(|local| local.declaration_index == index)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_value_field(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_tcp_io_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_frame_owned_field(operation.binding));
+            out.push_str(" = frame->");
+            out.push_str(&async_tcp_io_result_owned_field(index));
+            out.push_str(";\n");
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_tcp_io_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        emit_async_frame_alias(out, frame_local, indent);
+    } else {
+        write_indent(out, indent);
+        out.push_str(&c_type(operation.value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_tcp_io_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_tcp_io_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        if let Some(local) = local_array(operation.binding, operation.value_type) {
+            local_owned.push(local);
+        }
+    }
+}
+
 fn emit_async_tcp_connect_cancellations(out: &mut String, function: &Function, indent: usize) {
     for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_tcp_connect(statement).is_none() {
@@ -1267,6 +1444,18 @@ fn emit_async_tcp_connect_cancellations(out: &mut String, function: &Function, i
         write_indent(out, indent);
         out.push_str("nomo_async_tcp_connect_cancel(&frame->");
         out.push_str(&async_tcp_connect_registration_field(index));
+        out.push_str(", context);\n");
+    }
+}
+
+fn emit_async_tcp_io_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_tcp_io(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_tcp_io_cancel(&frame->");
+        out.push_str(&async_tcp_io_registration_field(index));
         out.push_str(", context);\n");
     }
 }
@@ -1509,6 +1698,7 @@ fn emit_async_deadline_failure(
     emit_async_select_cancellations(out, function, indent);
     emit_async_channel_cancellations(out, function, indent);
     emit_async_tcp_connect_cancellations(out, function, indent);
+    emit_async_tcp_io_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1603,6 +1793,7 @@ fn emit_async_child_failure_propagation(
     emit_async_select_cancellations(out, function, indent + 1);
     emit_async_channel_cancellations(out, function, indent + 1);
     emit_async_tcp_connect_cancellations(out, function, indent + 1);
+    emit_async_tcp_io_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1690,6 +1881,7 @@ fn emit_async_cancel_function(
     emit_async_select_cancellations(out, function, 1);
     emit_async_channel_cancellations(out, function, 1);
     emit_async_tcp_connect_cancellations(out, function, 1);
+    emit_async_tcp_io_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
@@ -2377,6 +2569,8 @@ typedef struct {
     nomo_socket handle;
     uint32_t generation;
     uint8_t occupied;
+    uint8_t read_busy;
+    uint8_t write_busy;
 } nomo_async_io_handle_slot;
 
 struct nomo_async_context {
@@ -2426,6 +2620,8 @@ struct nomo_async_context {
     uint64_t live_timers;
     uint64_t peak_live_timers;
     uint64_t io_connect_starts;
+    uint64_t io_read_starts;
+    uint64_t io_write_starts;
     uint64_t io_ready_completions;
     uint64_t io_timeouts;
     uint64_t io_cancellations;
@@ -2434,6 +2630,8 @@ struct nomo_async_context {
     uint64_t peak_live_io_handles;
     uint64_t live_io_operations;
     uint64_t peak_live_io_operations;
+    uint64_t retained_io_bytes;
+    uint64_t peak_retained_io_bytes;
     uint32_t next_timer_generation;
     uint32_t next_io_handle_generation;
     void *current_frame;
@@ -2475,6 +2673,8 @@ static int nomo_async_io_handle_insert(
     slot->handle = handle;
     slot->generation = context->next_io_handle_generation;
     slot->occupied = 1u;
+    slot->read_busy = 0u;
+    slot->write_busy = 0u;
     *slot_out = selected;
     *generation_out = slot->generation;
     context->live_io_handles += 1u;
@@ -2499,6 +2699,51 @@ static nomo_socket nomo_async_io_handle_get(
     return slot->handle;
 }
 
+#define NOMO_ASYNC_IO_DIRECTION_READ 1u
+#define NOMO_ASYNC_IO_DIRECTION_WRITE 2u
+
+static int nomo_async_io_handle_acquire(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation,
+    uint32_t direction
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return 1;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return 1;
+    }
+    uint8_t *busy = direction == NOMO_ASYNC_IO_DIRECTION_READ
+        ? &slot->read_busy
+        : &slot->write_busy;
+    if (*busy != 0u) {
+        return 2;
+    }
+    *busy = 1u;
+    return 0;
+}
+
+static void nomo_async_io_handle_release(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation,
+    uint32_t direction
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return;
+    }
+    uint8_t *busy = direction == NOMO_ASYNC_IO_DIRECTION_READ
+        ? &slot->read_busy
+        : &slot->write_busy;
+    *busy = 0u;
+}
+
 static void nomo_async_io_handle_close(
     nomo_async_context *context,
     uint32_t slot_index,
@@ -2514,6 +2759,8 @@ static void nomo_async_io_handle_close(
     NOMO_SOCKET_CLOSE(slot->handle);
     slot->handle = NOMO_INVALID_SOCKET;
     slot->occupied = 0u;
+    slot->read_busy = 0u;
+    slot->write_busy = 0u;
     slot->generation += 1u;
     if (slot->generation == 0u) {
         slot->generation = 1u;
@@ -3196,8 +3443,8 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"live_reactors\": %" PRIu64 ",\n"
         "    \"peak_live_reactors\": %" PRIu64 ",\n"
         "    \"io_connect_starts\": %" PRIu64 ",\n"
-        "    \"io_read_starts\": 0,\n"
-        "    \"io_write_starts\": 0,\n"
+        "    \"io_read_starts\": %" PRIu64 ",\n"
+        "    \"io_write_starts\": %" PRIu64 ",\n"
         "    \"io_ready_completions\": %" PRIu64 ",\n"
         "    \"io_timeouts\": %" PRIu64 ",\n"
         "    \"io_cancellations\": %" PRIu64 ",\n"
@@ -3206,8 +3453,8 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"peak_live_io_handles\": %" PRIu64 ",\n"
         "    \"live_io_operations\": %" PRIu64 ",\n"
         "    \"peak_live_io_operations\": %" PRIu64 ",\n"
-        "    \"retained_io_bytes\": 0,\n"
-        "    \"peak_retained_io_bytes\": 0\n"
+        "    \"retained_io_bytes\": %" PRIu64 ",\n"
+        "    \"peak_retained_io_bytes\": %" PRIu64 "\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
@@ -3277,6 +3524,8 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->reactor.live,
         context->reactor.peak_live,
         context->io_connect_starts,
+        context->io_read_starts,
+        context->io_write_starts,
         context->io_ready_completions,
         context->io_timeouts,
         context->io_cancellations,
@@ -3284,7 +3533,9 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->live_io_handles,
         context->peak_live_io_handles,
         context->live_io_operations,
-        context->peak_live_io_operations
+        context->peak_live_io_operations,
+        context->retained_io_bytes,
+        context->peak_retained_io_bytes
     );
     int close_status = fclose(output);
     return write_status < 0 || close_status != 0;
@@ -3298,6 +3549,7 @@ pub(super) fn emit_async_function(
     function: &Function,
     async_names: &BTreeSet<String>,
     functions: &HashMap<&str, &Function>,
+    target: &nomo_target::TargetTriple,
 ) {
     debug_assert!(function.params.iter().all(|parameter| !parameter.mutable));
     debug_assert!(async_names.contains(&function.name));
@@ -3461,6 +3713,7 @@ pub(super) fn emit_async_function(
             }
             let sleep = statement_async_sleep(statement);
             let tcp_connect = statement_async_tcp_connect(statement);
+            let tcp_io = statement_async_tcp_io(statement);
             let channel_send = statement_async_channel_send(statement);
             let channel_receive = statement_async_channel_receive(statement);
             let select = statement_task_select(statement);
@@ -3508,6 +3761,42 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
+            let windows_unsupported_tcp =
+                target.operating_system() == nomo_target::OperatingSystem::Windows;
+            if let Some(connect) = tcp_connect.filter(|_| !windows_unsupported_tcp) {
+                let host_temp = async_tcp_connect_host_temp(index);
+                out.push_str("            nomo_string ");
+                out.push_str(&host_temp);
+                out.push_str(" = ");
+                emit_expr(out, connect.host);
+                out.push_str(";\n");
+                emit_value_retain_value_if_needed(
+                    out,
+                    &host_temp,
+                    &ValueType::String,
+                    connect.host,
+                    3,
+                );
+            }
+            if let Some(operation) = tcp_io.filter(|_| !windows_unsupported_tcp) {
+                if let Some(payload_type) = operation.kind.payload_type() {
+                    let payload_temp = async_tcp_io_payload_temp(index);
+                    out.push_str("            ");
+                    out.push_str(&c_type(&payload_type));
+                    out.push(' ');
+                    out.push_str(&payload_temp);
+                    out.push_str(" = ");
+                    emit_expr(out, operation.value);
+                    out.push_str(";\n");
+                    emit_value_retain_value_if_needed(
+                        out,
+                        &payload_temp,
+                        &payload_type,
+                        operation.value,
+                        3,
+                    );
+                }
+            }
             let moved_to_frame = frame_locals
                 .iter()
                 .filter(|local| {
@@ -3538,23 +3827,104 @@ pub(super) fn emit_async_function(
                 out.push_str("            context->pending_reason = NOMO_ASYNC_PENDING_YIELD;\n");
                 out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
             } else if let Some(connect) = tcp_connect {
-                out.push_str("            if (nomo_async_tcp_connect_start(&frame->");
+                let host_temp = async_tcp_connect_host_temp(index);
+                out.push_str("            nomo_async_poll nomo_async_tcp_connect_start_status_");
+                out.push_str(&index.to_string());
+                out.push_str(" = nomo_async_tcp_connect_start(&frame->");
                 out.push_str(&async_tcp_connect_registration_field(index));
                 out.push_str(", ");
-                emit_expr(out, connect.host);
+                if windows_unsupported_tcp {
+                    out.push_str("nomo_string_literal(\"\")");
+                } else {
+                    out.push_str(&host_temp);
+                }
                 out.push_str(", ");
-                emit_expr(out, connect.port);
+                if windows_unsupported_tcp {
+                    out.push('0');
+                } else {
+                    emit_expr(out, connect.port);
+                }
                 out.push_str(", ");
-                emit_expr(out, connect.timeout_millis);
+                if windows_unsupported_tcp {
+                    out.push_str("0u");
+                } else {
+                    emit_expr(out, connect.timeout_millis);
+                }
                 out.push_str(", context, &frame->");
                 out.push_str(&async_tcp_connect_result_field(index));
+                out.push_str(");\n");
+                if !windows_unsupported_tcp {
+                    emit_value_release_in_place(out, &ValueType::String, &host_temp, 3);
+                }
+                out.push_str("            if (nomo_async_tcp_connect_start_status_");
+                out.push_str(&index.to_string());
                 out.push_str(
-                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                    " == NOMO_ASYNC_POLL_PENDING) {\n\
                                  return NOMO_ASYNC_POLL_PENDING;\n\
                              }\n",
                 );
                 out.push_str("            frame->");
                 out.push_str(&async_tcp_connect_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+            } else if let Some(operation) = tcp_io {
+                let start_status = async_tcp_io_start_status_temp(index);
+                out.push_str("            nomo_async_poll ");
+                out.push_str(&start_status);
+                out.push_str(" = ");
+                out.push_str(operation.kind.start_function());
+                out.push_str("(&frame->");
+                out.push_str(&async_tcp_io_registration_field(index));
+                out.push_str(", ");
+                if windows_unsupported_tcp {
+                    out.push_str("(nomo_async_tcp_stream){0}");
+                } else {
+                    emit_expr(out, operation.stream);
+                }
+                out.push_str(", ");
+                if windows_unsupported_tcp {
+                    match operation.kind {
+                        AsyncTcpIoKind::Read | AsyncTcpIoKind::ReadString => out.push_str("1u"),
+                        AsyncTcpIoKind::Write => out.push_str("nomo_array_u32_new()"),
+                        AsyncTcpIoKind::WriteString => out.push_str("nomo_string_literal(\"\")"),
+                    }
+                } else if operation.kind.payload_type().is_some() {
+                    out.push_str(&async_tcp_io_payload_temp(index));
+                } else {
+                    emit_expr(out, operation.value);
+                }
+                out.push_str(", ");
+                if windows_unsupported_tcp {
+                    out.push_str("0u");
+                } else {
+                    emit_expr(out, operation.timeout_millis);
+                }
+                out.push_str(", context, &frame->");
+                out.push_str(&async_tcp_io_result_field(index));
+                out.push_str(");\n");
+                if let Some(payload_type) = operation
+                    .kind
+                    .payload_type()
+                    .filter(|_| !windows_unsupported_tcp)
+                {
+                    emit_value_release_in_place(
+                        out,
+                        &payload_type,
+                        &async_tcp_io_payload_temp(index),
+                        3,
+                    );
+                }
+                out.push_str("            if (");
+                out.push_str(&start_status);
+                out.push_str(
+                    " == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_tcp_io_result_owned_field(index));
                 out.push_str(" = 1u;\n");
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
@@ -3710,6 +4080,22 @@ pub(super) fn emit_async_function(
                 out.push_str(&async_tcp_connect_result_owned_field(index));
                 out.push_str(" = 1u;\n");
             }
+            if let Some(operation) = tcp_io {
+                out.push_str("            if (");
+                out.push_str(operation.kind.resume_function());
+                out.push_str("(&frame->");
+                out.push_str(&async_tcp_io_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_tcp_io_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_tcp_io_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
             if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_resume(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -3801,6 +4187,7 @@ pub(super) fn emit_async_function(
             }
             if sleep.is_some()
                 || tcp_connect.is_some()
+                || tcp_io.is_some()
                 || channel_send.is_some()
                 || channel_receive.is_some()
                 || call.is_some()
@@ -3907,6 +4294,16 @@ pub(super) fn emit_async_function(
                     out,
                     index,
                     connect,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
+            }
+            if let Some(operation) = tcp_io {
+                emit_async_tcp_io_result_binding(
+                    out,
+                    index,
+                    operation,
                     &frame_locals,
                     &mut local_owned,
                     3,
@@ -4248,6 +4645,15 @@ pub(super) fn emit_async_function(
         out.push_str(", frame->context);\n    }\n");
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_tcp_io(statement).is_none() {
+            continue;
+        }
+        out.push_str("    if (frame->context != NULL) {\n");
+        out.push_str("        nomo_async_tcp_io_cancel(&frame->");
+        out.push_str(&async_tcp_io_registration_field(index));
+        out.push_str(", frame->context);\n    }\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(arms) = statement_task_select(statement) else {
             continue;
         };
@@ -4270,6 +4676,18 @@ pub(super) fn emit_async_function(
             connect.value_type,
             &async_tcp_connect_result_owned_field(index),
             &async_tcp_connect_result_field(index),
+            1,
+        );
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(operation) = statement_async_tcp_io(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            operation.value_type,
+            &async_tcp_io_result_owned_field(index),
+            &async_tcp_io_result_field(index),
             1,
         );
     }

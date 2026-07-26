@@ -59,7 +59,8 @@ non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
 
-The P2-TCP-A slice also provides a direct-style numeric-address connect:
+The P2-TCP-A/B slices also provide direct-style numeric-address connect plus
+bounded incremental reads and complete writes:
 
 ```nomo
 import std.net
@@ -69,20 +70,39 @@ suspend fn main() -> void {
     let connected: Result<TcpStream, NetError> =
         net.connect("127.0.0.1", 8080, 1000)
 }
+
+suspend fn exchange(stream: TcpStream) -> void {
+    let wrote: Result<void, NetError> =
+        stream.write_string("ping", 1000)
+    let received: Result<TcpTextChunk, NetError> =
+        stream.read_string(4096, 1000)
+}
 ```
 
 Linux and macOS attempt the socket in nonblocking mode and suspend through one
 generation-checked epoll/kqueue registration. `TcpStream` remains bound to its
 owner executor and is Local/!Send. A positive timeout is monotonic and bounded
 to 15 minutes; zero makes one immediate attempt without a reactor
-registration. Hostnames return `NetErrorKind.Unsupported` until the bounded
-resolver slice. Windows compiles and returns `Unsupported` without claiming
-IOCP socket completion support. The preview blocking names are
+registration. Each stream permits one pending read and one pending write;
+another operation in the same direction returns `Busy`. `read` returns one
+`Array<u32>` byte chunk, `read_string` validates one UTF-8 chunk, and neither
+reads to EOF. Each payload is bounded to 1 MiB. Writes retain only their
+unsent suffix across one-shot readiness and either complete the whole payload
+or return an error. Timeout and structured cancellation remove the
+registration and retained buffer while leaving the stream reusable unless it
+is closed.
+
+Hostnames return `NetErrorKind.Unsupported` until the bounded resolver slice.
+Windows compiles and returns `Unsupported` without evaluating write payloads
+or claiming IOCP socket completion support. The preview blocking names are
 `net.connect_blocking`, `read_to_string_blocking`, and
 `write_string_blocking`; reaching them from a suspend call graph reports
-E0891. This first stackless slice binds the complete `Result` as shown above;
-placing `?` directly on `net.connect(...)` remains an E0876 limitation until
-the general suspend-question lowering slice lands.
+E0891. This stackless slice binds each complete `Result` as shown above;
+placing `?` directly on these I/O operations remains an E0876 limitation
+until the general suspend-question lowering slice lands. P2-TCP-B does not
+yet expose a `shutdown_write` half-close; use `close` until that dedicated
+lifecycle slice lands. See
+[`examples/async_tcp_io`](../examples/async_tcp_io).
 
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:
@@ -256,7 +276,7 @@ slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
 operand rather than approximating select sequentially. See
 [`examples/async_static_select`](../examples/async_static_select).
 
-## Implemented P1, P2 Reactor/P2-TCP-A, and P3-B/P3-C Slices
+## Implemented P1, P2 Reactor/P2-TCP-A/B, and P3-B/P3-C Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -276,6 +296,10 @@ On the native C99 backend, a suspend call chain that reaches
 - a bounded 64-slot I/O owner table with slot generations and exclusive close,
   plus one embedded connect registration and timer for each pending
   numeric-address TCP connect on epoll/kqueue;
+- one embedded read/write registration per source operation, one pending
+  operation per stream direction, one-shot readiness rearming, complete
+  partial-write progress, bounded retained-byte metrics, and exactly-once
+  timeout/cancellation cleanup;
 - embedded structured child frames enqueued onto the same bounded FIFO, plus a
   single owner-local waiter edge that re-enqueues the parent when its child
   completes;

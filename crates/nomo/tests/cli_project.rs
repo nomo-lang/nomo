@@ -15801,6 +15801,832 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
+#[cfg(unix)]
+#[test]
+fn nomo_run_executes_bounded_owner_affine_async_tcp_io() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut request = [0_u8; 5];
+        stream.read_exact(&mut request).unwrap();
+        assert_eq!(&request, b"ping!");
+
+        std::thread::sleep(Duration::from_millis(100));
+        stream.write_all(b"p").unwrap();
+        stream.flush().unwrap();
+        std::thread::sleep(Duration::from_millis(100));
+        stream.write_all(b"ong").unwrap();
+        stream.flush().unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
+    });
+
+    let root = temp_test_root("async-tcp-io");
+    reset_dir(&root);
+    let project = root.join("async_tcp_io");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_io\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_io.main
+
+import std.io
+import std.net
+import std.result
+import std.string
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn require_write(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_bytes(result: Result<TcpChunk, NetError>) -> TcpChunk {
+    return match result {
+        Result.Ok(chunk) => chunk
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn require_text(result: Result<TcpTextChunk, NetError>) -> TcpTextChunk {
+    return match result {
+        Result.Ok(chunk) => chunk
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn main() -> void {
+    let host: string = string.concat("127.0.0.", "1")
+    let connected: Result<TcpStream, NetError> = net.connect(host, __PORT__, 1000)
+    let stream: TcpStream = require_stream(connected)
+
+    let wrote_bytes: Result<void, NetError> = stream.write([112, 105, 110, 103], 1000)
+    require_write(wrote_bytes)
+    let wrote_text: Result<void, NetError> = stream.write_string("!", 1000)
+    require_write(wrote_text)
+
+    let first_result: Result<TcpChunk, NetError> = stream.read(1, 1000)
+    let first: TcpChunk = require_bytes(first_result)
+    io.println(first.data[0])
+
+    let second_result: Result<TcpTextChunk, NetError> = stream.read_string(3, 1000)
+    let second: TcpTextChunk = require_text(second_result)
+    io.println(second.data)
+
+    let eof_result: Result<TcpTextChunk, NetError> = stream.read_string(1, 1000)
+    let eof: TcpTextChunk = require_text(eof_result)
+    io.println(eof.eof)
+    stream.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-io-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "112\nong\ntrue\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 3),
+        ("io_write_starts", 2),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+    assert!(
+        metrics["counters"]["peak_retained_io_bytes"]
+            .as_u64()
+            .is_some_and(|value| value >= 1),
+        "pending read retained no bounded buffer in:\n{metrics}"
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_affine_async_tcp_read_timeout_preserves_stream_and_rejects_invalid_utf8() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        stream.write_all(&[0xff]).unwrap();
+        stream.flush().unwrap();
+        stream.shutdown(Shutdown::Write).unwrap();
+    });
+
+    let root = temp_test_root("async-tcp-read-errors");
+    reset_dir(&root);
+    let project = root.join("async_tcp_read_errors");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_read_errors\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_read_errors.main
+
+import std.io
+import std.net
+import std.result
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn expect_timeout(result: Result<TcpTextChunk, NetError>, label: string) -> void {
+    match result {
+        Result.Ok(chunk) => {
+            panic("expected TCP timeout")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Timeout = error.kind {
+                io.println(label)
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+fn expect_read_error(result: Result<TcpTextChunk, NetError>) -> void {
+    match result {
+        Result.Ok(chunk) => {
+            panic("expected invalid UTF-8 failure")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Read = error.kind {
+                io.println("invalid utf8")
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
+    let stream: TcpStream = require_stream(connected)
+
+    let timed_out: Result<TcpTextChunk, NetError> = stream.read_string(1, 50)
+    expect_timeout(timed_out, "positive timeout")
+
+    let immediate: Result<TcpTextChunk, NetError> = stream.read_string(1, 0)
+    expect_timeout(immediate, "zero timeout")
+
+    let invalid: Result<TcpTextChunk, NetError> = stream.read_string(1, 1000)
+    expect_read_error(invalid)
+    stream.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-read-errors-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "positive timeout\nzero timeout\ninvalid utf8\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 3),
+        ("io_write_starts", 0),
+        ("io_timeouts", 2),
+        ("io_cancellations", 0),
+        ("io_errors", 1),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_affine_async_tcp_rejects_invalid_bounds_before_reactor_registration() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut payload = Vec::new();
+        stream.read_to_end(&mut payload).unwrap();
+        assert!(payload.is_empty());
+    });
+
+    let root = temp_test_root("async-tcp-invalid-bounds");
+    reset_dir(&root);
+    let project = root.join("async_tcp_invalid_bounds");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_invalid_bounds\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_invalid_bounds.main
+
+import std.io
+import std.net
+import std.result
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn expect_invalid_read(result: Result<TcpChunk, NetError>, label: string) -> void {
+    match result {
+        Result.Ok(chunk) => {
+            panic("expected invalid TCP read input")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.InvalidInput = error.kind {
+                io.println(label)
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+fn expect_invalid_write(result: Result<void, NetError>, label: string) -> void {
+    match result {
+        Result.Ok(value) => {
+            panic("expected invalid TCP write input")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.InvalidInput = error.kind {
+                io.println(label)
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
+    let stream: TcpStream = require_stream(connected)
+
+    let zero_read: Result<TcpChunk, NetError> = stream.read(0, 0)
+    expect_invalid_read(zero_read, "zero read")
+
+    let oversized_read: Result<TcpChunk, NetError> = stream.read(1048577, 0)
+    expect_invalid_read(oversized_read, "oversized read")
+
+    let excessive_read_timeout: Result<TcpChunk, NetError> = stream.read(1, 900001)
+    expect_invalid_read(excessive_read_timeout, "read timeout")
+
+    let invalid_byte: Result<void, NetError> = stream.write([256], 0)
+    expect_invalid_write(invalid_byte, "invalid byte")
+
+    let excessive_write_timeout: Result<void, NetError> = stream.write_string("", 900001)
+    expect_invalid_write(excessive_write_timeout, "write timeout")
+    stream.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-invalid-bounds-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "zero read\noversized read\nread timeout\ninvalid byte\nwrite timeout\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 3),
+        ("io_write_starts", 2),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("retained_io_bytes", 0),
+        ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_affine_async_tcp_write_completes_maximum_payload_across_readiness() {
+    const PAYLOAD_BYTES: usize = 1_048_576;
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        std::thread::sleep(Duration::from_millis(250));
+        let mut payload = Vec::new();
+        let mut chunk = [0_u8; 4096];
+        loop {
+            let read = stream.read(&mut chunk).unwrap();
+            if read == 0 {
+                break;
+            }
+            payload.extend_from_slice(&chunk[..read]);
+            std::thread::sleep(Duration::from_millis(2));
+        }
+        assert_eq!(payload.len(), PAYLOAD_BYTES);
+        assert!(payload.iter().all(|byte| *byte == b'x'));
+    });
+
+    let root = temp_test_root("async-tcp-write-maximum");
+    reset_dir(&root);
+    let project = root.join("async_tcp_write_maximum");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_write_maximum\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_write_maximum.main
+
+import std.array
+import std.io
+import std.net
+import std.result
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn make_payload() -> Array<u32> {
+    let mut payload: Array<u32> = Array.new<u32>()
+    for let index: u64 = 0; index < 1048576; index++ {
+        payload.push(120)
+    }
+    return payload
+}
+
+fn require_write(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+            io.println("wrote maximum payload")
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
+    let stream: TcpStream = require_stream(connected)
+    let payload: Array<u32> = make_payload()
+    let wrote: Result<void, NetError> = stream.write(payload, 5000)
+    require_write(wrote)
+    stream.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-write-maximum-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "wrote maximum payload\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 0),
+        ("io_write_starts", 1),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+    let peak_retained = metrics["counters"]["peak_retained_io_bytes"]
+        .as_u64()
+        .expect("peak retained bytes should be numeric");
+    assert!(
+        (1..=PAYLOAD_BYTES as u64).contains(&peak_retained),
+        "partial write did not retain a bounded remainder in:\n{metrics}"
+    );
+    assert!(
+        metrics["counters"]["reactor_reregistrations"]
+            .as_u64()
+            .is_some_and(|value| value >= 1),
+        "partial write did not rearm one-shot readiness in:\n{metrics}"
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn owner_affine_async_tcp_managed_write_arguments_are_asan_clean_when_available() {
+    let root = temp_test_root("asan-async-tcp-write-arguments");
+    reset_dir(&root);
+    if !cc_supports_address_sanitizer(&root) {
+        fs::remove_dir_all(&root).unwrap();
+        return;
+    }
+
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        let mut request = Vec::new();
+        stream.read_to_end(&mut request).unwrap();
+        assert_eq!(request, b"pingready!");
+    });
+
+    let project = root.join("async_tcp_write_arguments");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_write_arguments\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_write_arguments.main
+
+import std.net
+import std.result
+import std.string
+import std.array.Array
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn require_write(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn make_bytes() -> Array<u32> {
+    return [112, 105, 110, 103]
+}
+
+fn make_text() -> string {
+    return string.concat("rea", "dy")
+}
+
+suspend fn main() -> void {
+    let host: string = string.concat("127.0.0.", "1")
+    let connected: Result<TcpStream, NetError> = net.connect(host, __PORT__, 1000)
+    let stream: TcpStream = require_stream(connected)
+
+    let bytes: Array<u32> = make_bytes()
+    let wrote_bytes: Result<void, NetError> = stream.write(bytes, 1000)
+    require_write(wrote_bytes)
+
+    let text: string = make_text()
+    let wrote_text: Result<void, NetError> = stream.write_string(text, 1000)
+    require_write(wrote_text)
+
+    let wrote_literal: Result<void, NetError> = stream.write([33], 1000)
+    require_write(wrote_literal)
+    stream.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let generated_c = project.join("build/c/main.c");
+    let binary = root.join("async-tcp-write-arguments-asan");
+    let cc_output = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-fno-omit-frame-pointer")
+        .arg("-g")
+        .arg(&generated_c)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let asan_options = if cfg!(target_os = "macos") {
+        "detect_leaks=0:abort_on_error=1"
+    } else {
+        "detect_leaks=1:abort_on_error=1"
+    };
+    let run_output = Command::new(&binary)
+        .env("ASAN_OPTIONS", asan_options)
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert!(run_output.stdout.is_empty());
+    assert!(
+        run_output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn structured_cancel_drops_pending_owner_affine_async_tcp_read() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut stream, _) = listener.accept().unwrap();
+        stream
+            .set_read_timeout(Some(Duration::from_secs(2)))
+            .unwrap();
+        let mut closed = [0_u8; 1];
+        assert_eq!(stream.read(&mut closed).unwrap(), 0);
+    });
+
+    let root = temp_test_root("async-tcp-read-cancel");
+    reset_dir(&root);
+    let project = root.join("async_tcp_read_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_read_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_read_cancel.main
+
+import std.io
+import std.net
+import std.result
+import std.task
+import std.time
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn reader(port: i64) -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", port, 1000)
+    let stream: TcpStream = require_stream(connected)
+    let pending: Result<TcpTextChunk, NetError> = stream.read_string(1, 10000)
+}
+
+suspend fn gate() -> void {
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(200))
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let reader_task = task.spawn reader(__PORT__)
+        let gate_task = task.spawn gate()
+        let waited: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(reader_task)
+        io.println("cancelled", result.is_ok(cancelled))
+    }
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-read-cancel-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 1),
+        ("io_read_starts", 1),
+        ("io_write_starts", 0),
+        ("io_timeouts", 0),
+        ("io_cancellations", 1),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+
+    server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
 #[test]
 fn nomo_run_cancels_owner_affine_async_tcp_connect_before_reactor_wait() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();

@@ -133,8 +133,10 @@ pub(super) fn standard_struct_names(
     }
     if needs.net {
         names.push(("NetError".to_string(), 0));
+        names.push(("TcpChunk".to_string(), 0));
         names.push(("TcpListener".to_string(), 0));
         names.push(("TcpStream".to_string(), 0));
+        names.push(("TcpTextChunk".to_string(), 0));
         names.push(("UdpDatagram".to_string(), 0));
         names.push(("UdpSocket".to_string(), 0));
     }
@@ -229,6 +231,7 @@ pub(super) fn standard_enum_names(
         || needs.cron
         || needs.sqlite
         || needs.regex
+        || needs.net
         || needs.result
     {
         names.push(("Result".to_string(), 2));
@@ -244,6 +247,7 @@ pub(super) fn standard_enum_names(
         || needs.jsonrpc
         || needs.sqlite
         || needs.regex
+        || needs.net
         || needs.task
     {
         names.push(("Option".to_string(), 1));
@@ -330,6 +334,40 @@ pub(super) fn inject_standard_types(
             name: "TcpStream".to_string(),
             type_params: Vec::new(),
             fields: Vec::new(),
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "TcpChunk") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "TcpChunk".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "data".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::U32)),
+                },
+                StructField {
+                    name: "eof".to_string(),
+                    value_type: ValueType::Bool,
+                },
+            ],
+        });
+    }
+    if needs.net && !structs.iter().any(|item| item.name == "TcpTextChunk") {
+        structs.push(StructType {
+            package: "std.net".to_string(),
+            name: "TcpTextChunk".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "data".to_string(),
+                    value_type: ValueType::String,
+                },
+                StructField {
+                    name: "eof".to_string(),
+                    value_type: ValueType::Bool,
+                },
+            ],
         });
     }
     if needs.net && !structs.iter().any(|item| item.name == "TcpListener") {
@@ -1353,6 +1391,7 @@ pub(super) fn inject_standard_types(
         || needs.cron
         || needs.sqlite
         || needs.regex
+        || needs.net
         || needs.result)
         && !enums.iter().any(|item| item.name == "Result")
     {
@@ -1383,6 +1422,7 @@ pub(super) fn inject_standard_types(
         || needs.jsonrpc
         || needs.sqlite
         || needs.regex
+        || needs.net
         || needs.task)
         && !enums.iter().any(|item| item.name == "Option")
     {

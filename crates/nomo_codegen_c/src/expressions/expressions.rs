@@ -212,6 +212,11 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
                     | BUILTIN_TASK_CHECK_CANCELLED_EXPR
                     | BUILTIN_TASK_DEADLINE_ENTER_EXPR
                     | BUILTIN_TASK_DEADLINE_EXIT_EXPR
+                    | BUILTIN_NET_CONNECT_EXPR
+                    | BUILTIN_TCP_STREAM_READ_EXPR
+                    | BUILTIN_TCP_STREAM_READ_STRING_EXPR
+                    | BUILTIN_TCP_STREAM_WRITE_EXPR
+                    | BUILTIN_TCP_STREAM_WRITE_STRING_EXPR
             ) || name.starts_with(BUILTIN_TASK_SEND_PREFIX)
                 || name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX)
             {

@@ -146,6 +146,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     }
     if uses_net_connect(program)
         || uses_async_net_connect(program)
+        || uses_async_tcp_io(program)
         || uses_net_listen(program)
         || uses_net_udp_bind(program)
         || uses_http_server(program)
@@ -329,6 +330,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_async_net_connect_helpers(&mut out, target);
         out.push('\n');
     }
+    if uses_async_tcp_io(program) {
+        emit_async_tcp_io_helpers(&mut out, target);
+        out.push('\n');
+    }
     for element_type in &channel_element_types {
         emit_channel_instance_helpers(&mut out, element_type, !async_names.is_empty());
         out.push('\n');
@@ -396,7 +401,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     for function in async_functions {
-        emit_async_function(&mut out, function, &async_names, &function_map);
+        emit_async_function(&mut out, function, &async_names, &function_map, target);
         out.push('\n');
     }
 

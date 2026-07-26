@@ -273,6 +273,30 @@ static void nomo_async_tcp_connect_cancel(
         out.push_str(
             "}, \"could not configure nonblocking TCP socket\");\n        context->io_errors += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
         );
+        if target.operating_system() == nomo_target::OperatingSystem::Darwin {
+            out.push_str(
+                r#"#ifndef SO_NOSIGPIPE
+#define SO_NOSIGPIPE 0x1022
+#endif
+    int no_sigpipe = 1;
+    if (setsockopt(
+            handle,
+            SOL_SOCKET,
+            SO_NOSIGPIPE,
+            &no_sigpipe,
+            (socklen_t)sizeof(no_sigpipe)
+        ) != 0) {
+        NOMO_SOCKET_CLOSE(handle);
+"#,
+            );
+            out.push_str("        nomo_async_tcp_connect_error(result, (");
+            out.push_str(&net_error_kind);
+            out.push_str("){.tag = ");
+            out.push_str(&connect);
+            out.push_str(
+                "}, \"could not configure safe TCP writes\");\n        context->io_errors += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
+            );
+        }
         out.push_str(
             r#"    int connect_status = connect(
         handle,

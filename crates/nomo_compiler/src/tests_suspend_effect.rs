@@ -575,6 +575,126 @@ suspend fn main() -> void {
     assert!(!c.contains("inet_pton("));
     assert!(!c.contains("epoll_ctl("));
     assert!(!c.contains("kevent("));
+    assert!(!c.contains("nomo_string_literal(\"127.0.0.1\")"));
+}
+
+#[test]
+fn async_tcp_stream_io_lowers_to_bounded_owner_affine_operations() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn exercise(stream: TcpStream) -> void {
+    let bytes: Result<TcpChunk, NetError> = stream.read(4096, 100)
+    let text: Result<TcpTextChunk, NetError> = stream.read_string(4096, 100)
+    let wrote_bytes: Result<void, NetError> = stream.write([65, 66, 67], 100)
+    let wrote_text: Result<void, NetError> = stream.write_string("ready", 100)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let exercise = program
+        .functions
+        .iter()
+        .find(|function| function.name == "exercise")
+        .unwrap();
+    let names = exercise
+        .body
+        .iter()
+        .filter_map(|statement| match statement {
+            Statement::Let {
+                initializer: ValueExpr::Call { name, .. },
+                ..
+            } => Some(name.as_str()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        names,
+        vec![
+            BUILTIN_TCP_STREAM_READ_EXPR,
+            BUILTIN_TCP_STREAM_READ_STRING_EXPR,
+            BUILTIN_TCP_STREAM_WRITE_EXPR,
+            BUILTIN_TCP_STREAM_WRITE_STRING_EXPR,
+        ]
+    );
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    for helper in [
+        "nomo_async_tcp_read_start",
+        "nomo_async_tcp_read_resume",
+        "nomo_async_tcp_read_string_start",
+        "nomo_async_tcp_read_string_resume",
+        "nomo_async_tcp_write_start",
+        "nomo_async_tcp_write_resume",
+        "nomo_async_tcp_write_string_start",
+        "nomo_async_tcp_write_string_resume",
+        "nomo_async_io_handle_acquire",
+        "nomo_async_tcp_io_cancel",
+        "NOMO_ASYNC_TCP_SEND_FLAGS",
+    ] {
+        assert!(c.contains(helper), "missing generated helper {helper}");
+    }
+}
+
+#[test]
+fn async_tcp_stream_io_windows_preview_is_explicitly_unsupported() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+suspend fn exercise(stream: TcpStream) -> void {
+    let bytes: Result<TcpChunk, NetError> = stream.read(16, 100)
+    let wrote: Result<void, NetError> = stream.write_string("secret", 100)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let target = "x86_64-pc-windows-msvc"
+        .parse::<nomo_target::TargetTriple>()
+        .unwrap();
+    let c = codegen::emit_c_for_target(&program, &target);
+
+    assert!(c.contains("async TCP read is not available on the Windows preview backend"));
+    assert!(c.contains("async TCP string write is not available on the Windows preview backend"));
+    assert!(!c.contains("recv("));
+    assert!(!c.contains("send("));
+    assert!(!c.contains("nomo_string_literal(\"secret\")"));
+}
+
+#[test]
+fn rejects_async_tcp_stream_io_from_synchronous_function() {
+    let source = r#"package app.main
+
+import std.net
+import std.result
+
+fn read_once(stream: TcpStream) -> void {
+    let result: Result<TcpChunk, NetError> = stream.read(16, 100)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0870");
+    assert!(error.message.contains("suspend function"));
 }
 
 #[test]

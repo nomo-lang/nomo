@@ -39,6 +39,8 @@ mod expressions;
 // Runtime and host helper emission.
 #[path = "runtime/host_async_executor_helpers.rs"]
 mod host_async_executor_helpers;
+#[path = "runtime/host_async_tcp_io_helpers.rs"]
+mod host_async_tcp_io_helpers;
 #[path = "runtime/host_channel_helpers.rs"]
 mod host_channel_helpers;
 #[path = "runtime/host_cron_helpers.rs"]
@@ -132,6 +134,7 @@ use expression_std_misc::*;
 use expression_string_char::*;
 use expressions::*;
 use host_async_executor_helpers::*;
+use host_async_tcp_io_helpers::*;
 use host_channel_helpers::*;
 use host_cron_helpers::*;
 use host_env_process_helpers::*;
@@ -204,6 +207,10 @@ const BUILTIN_HTTP_RESPOND_STRING_EXPR: &str = "__nomo_http_respond_string";
 const BUILTIN_HTTP_CLOSE_SERVER_EXPR: &str = "__nomo_http_close_server";
 const BUILTIN_HTTP_CLOSE_EXCHANGE_EXPR: &str = "__nomo_http_close_exchange";
 const BUILTIN_NET_CONNECT_EXPR: &str = "__nomo_net_connect_async";
+const BUILTIN_TCP_STREAM_READ_EXPR: &str = "__nomo_tcp_stream_read_async";
+const BUILTIN_TCP_STREAM_READ_STRING_EXPR: &str = "__nomo_tcp_stream_read_string_async";
+const BUILTIN_TCP_STREAM_WRITE_EXPR: &str = "__nomo_tcp_stream_write_async";
+const BUILTIN_TCP_STREAM_WRITE_STRING_EXPR: &str = "__nomo_tcp_stream_write_string_async";
 const BUILTIN_TASK_SPAWN_EXPR: &str = "__nomo_task_spawn";
 const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";

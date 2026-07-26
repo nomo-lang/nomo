@@ -1,0 +1,35 @@
+{
+  "schema": 1,
+  "gate": "p3a-structured-publication-move",
+  "required_absent_generated_c_patterns": [
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h",
+    "nomo_struct_AgentMessage_retain(frame->nomo_async_child_0.nomo_async_parameter_nomo_message)"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static int nomo_async_metrics_export": 1,
+    "nomo_async_metrics_export(&nomo__context)": 1,
+    "context->publication_moves += 1u;": 1,
+    "frame->nomo_async_child_0.nomo_async_parameter_nomo_message = nomo_message;": 1,
+    "frame->nomo_async_child_0.nomo_async_parameter_owned_nomo_message = 1u;": 2,
+    "frame->nomo_async_parameter_owned_nomo_message = 0u;\n            context->publication_moves += 1u;": 1
+  },
+  "runtime_counters": {
+    "available": true,
+    "schema": 1,
+    "counters": {
+      "frame_allocations": 0,
+      "task_spawns": 1,
+      "publication_moves": 1,
+      "task_joins": 1,
+      "join_suspensions": 1
+    },
+    "unavailable": [
+      "local_retain",
+      "local_release"
+    ]
+  }
+}

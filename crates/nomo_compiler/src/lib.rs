@@ -167,6 +167,8 @@ mod type_parsing;
 mod typing;
 #[path = "validation/validation.rs"]
 mod validation;
+#[path = "validation/validation_concurrency.rs"]
+mod validation_concurrency;
 #[path = "validation/validation_imports.rs"]
 mod validation_imports;
 #[path = "validation/validation_suspend.rs"]
@@ -252,6 +254,7 @@ use statements::*;
 use type_parsing::*;
 use typing::*;
 use validation::*;
+use validation_concurrency::*;
 
 const BUILTIN_PRINTLN_EXPR: &str = "__nomo_builtin_println";
 const BUILTIN_PRINT_EXPR: &str = "__nomo_builtin_print";
@@ -296,6 +299,7 @@ const BUILTIN_TASK_CHECK_CANCELLED_EXPR: &str = "__nomo_task_check_cancelled";
 const BUILTIN_TASK_DEADLINE_ENTER_EXPR: &str = "__nomo_task_deadline_enter";
 const BUILTIN_TASK_DEADLINE_EXIT_EXPR: &str = "__nomo_task_deadline_exit";
 const BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX: &str = "__nomo_structured_task_spawn::";
+const BUILTIN_TASK_PUBLICATION_MOVE_EXPR: &str = "__nomo_task_publication_move";
 const BUILTIN_TASK_STRUCTURED_JOIN_EXPR: &str = "__nomo_structured_task_join";
 const BUILTIN_TASK_STRUCTURED_CANCEL_EXPR: &str = "__nomo_structured_task_cancel";
 const BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR: &str = "__nomo_structured_task_cancel_join";
@@ -357,15 +361,19 @@ struct Binding {
 #[derive(Debug, Clone)]
 enum BindingSource {
     Local,
+    Const,
     Param,
     EnumPayload { value: ValueExpr, variant: String },
     FunctionEffect { is_suspend: bool },
     TaskScope,
+    PublicationMove { line: usize, boundary: &'static str },
 }
 
 fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
     match &binding.source {
-        BindingSource::Local | BindingSource::Param => ValueExpr::Variable(name.to_string()),
+        BindingSource::Local | BindingSource::Const | BindingSource::Param => {
+            ValueExpr::Variable(name.to_string())
+        }
         BindingSource::EnumPayload { value, variant } => ValueExpr::EnumPayload {
             value: Box::new(value.clone()),
             variant: variant.clone(),
@@ -375,6 +383,55 @@ fn binding_value_expr(name: &str, binding: &Binding) -> ValueExpr {
         }
         BindingSource::TaskScope => {
             unreachable!("the internal task-scope binding is never a source expression")
+        }
+        BindingSource::PublicationMove { .. } => {
+            unreachable!("publication-move markers are stored under internal scope keys")
+        }
+    }
+}
+
+const PUBLICATION_MOVE_BINDING_PREFIX: &str = "\0nomo_publication_move::";
+
+fn publication_move_binding_key(name: &str) -> String {
+    format!("{PUBLICATION_MOVE_BINDING_PREFIX}{name}")
+}
+
+fn publication_move_site(
+    scope: &HashMap<String, Binding>,
+    name: &str,
+) -> Option<(usize, &'static str)> {
+    match scope
+        .get(&publication_move_binding_key(name))
+        .map(|binding| &binding.source)
+    {
+        Some(BindingSource::PublicationMove { line, boundary }) => Some((*line, *boundary)),
+        _ => None,
+    }
+}
+
+fn mark_publication_move(
+    scope: &mut HashMap<String, Binding>,
+    name: &str,
+    line: usize,
+    boundary: &'static str,
+) {
+    scope.insert(
+        publication_move_binding_key(name),
+        Binding {
+            value_type: ValueType::Void,
+            mutable: false,
+            source: BindingSource::PublicationMove { line, boundary },
+        },
+    );
+}
+
+fn propagate_publication_moves(
+    destination: &mut HashMap<String, Binding>,
+    source: &HashMap<String, Binding>,
+) {
+    for (name, binding) in source {
+        if name.starts_with(PUBLICATION_MOVE_BINDING_PREFIX) {
+            destination.insert(name.clone(), binding.clone());
         }
     }
 }

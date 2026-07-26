@@ -130,6 +130,17 @@
       "note": "Validates that a typed final scope return cancels and drops an unjoined armed-timer child before completing the helper and waking its root frame."
     },
     {
+      "id": "publication_move_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P1",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/publication_move_probe",
+      "expected_stdout": "publication\n",
+      "snapshot": "snapshots/publication-move-probe.json",
+      "note": "Validates P3-A compiler-known structural Send and exactly-once ownership-bit transfer without threads, atomics, heap frames, or a managed-value retain."
+    },
+    {
       "id": "structured_question_cancel_probe",
       "kind": "runtime_counter_gate",
       "available_phase": "P1",

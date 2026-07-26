@@ -80,6 +80,42 @@ suspend fn main() -> void {
 a scope-owned `Task<T>` from the child return type; the one-argument join
 consumes it exactly once and returns `Result<T, TaskError>`.
 
+### Publication moves and compiler-known Send
+
+Structured spawn is now a publication boundary. The compiler derives a
+private capability for every child parameter; user code cannot implement or
+override it in this slice:
+
+| Value | Publication behavior |
+| --- | --- |
+| numeric, `bool`, `char` | Copy; the source binding remains available |
+| `string`, `CString`, `Array<T>`, `Map<K,V>`, ordinary structs/enums | Send when every nested type is Send; a named binding is consumed |
+| `File`, sockets, HTTP server/exchange/stream, `ProcessChild`, SQLite/task/FFI handles | Local/!Send and rejected |
+
+```nomo
+let message: AgentMessage = build_message()
+task.scope {
+    let child = task.spawn consume(message)
+    // E0881: message was publication-moved into child
+}
+```
+
+There is deliberately no `move` keyword and no public `Send` interface.
+Consumption is determined by the compiler-known spawn argument position.
+Constants remain reusable, and owned temporaries transfer directly. Moving
+only a managed field such as `message.content` is rejected in P3-A; move the
+whole aggregate or construct a temporary. E0880 reports a direct Local value,
+E0883 reports the first nested field that prevents structural Send, and E0881
+reports duplicate or later use after publication.
+
+The IR marks each consuming argument explicitly. Native C99 initializes the
+embedded child parameter first, sets the child's ownership bit, then clears
+the parent parameter/local ownership bit. It does not retain the moved value,
+and child cancellation, queue rejection, join, panic, and parent drop all
+converge on the existing exactly-once child-frame cleanup. Cross-shard COW
+detach is intentionally deferred until the sharded executor exists; the
+current implementation has only one owner thread.
+
 An immutable top-level
 `let cancelled: Result<void, TaskError> = task.cancel(handle)` is the
 structured consuming cancel-and-join operation. It requests cancellation,
@@ -140,6 +176,8 @@ On the native C99 backend, a suspend call chain that reaches
   structured spawn cannot enter the 64-entry ready queue;
 - exactly-once transfer of a typed child result into the successful join
   payload before the child frame is dropped;
+- compiler-known structural Send checking plus ownership-bit transfer for
+  non-Copy named structured-spawn arguments;
 - a structured cancel-and-join suspension boundary that propagates
   cancellation through the child subtree, removes ready/timer registrations,
   waits for terminal cleanup, returns `Result<void, TaskError>`, and drops the
@@ -163,7 +201,7 @@ ready zero-duration timer neither registers nor enters the queue. A positive
 timer is not polled again until its deadline moves the owner frame to the ready
 queue. The generated context records poll, yield, frame-drop/live-frame,
 enqueue/dequeue/saturation/cancellation, structured
-spawn/join/join-suspension/cancellation, deadline
+spawn/publication-move/join/join-suspension/cancellation, deadline
 registration/expiry/disarm, and timer
 registration/expiry/cancellation/live/peak counters.
 Native programs export the versioned
@@ -178,14 +216,16 @@ referenced in a resumed segment are reintroduced as non-owning C aliases.
 An embedded child is polled inline and does not allocate or enter the ready
 queue when it completes synchronously. Normal completion and explicit early
 root drop share the same child-first idempotent cleanup path. Immutable
-frame-safe call arguments evaluate exactly once from left to right. Shared
-managed values are retained into the child frame, owned temporaries transfer
-directly, and an owned result moves into its immutable caller binding before
-the child frame is dropped.
+frame-safe call arguments evaluate exactly once from left to right. Ordinary
+direct suspend calls retain shared managed values into the child frame.
+Structured spawn instead publication-moves non-Copy named bindings; owned
+temporaries transfer directly in both forms. An owned result moves into its
+immutable caller binding before the child frame is dropped.
 
 That inline fast path describes ordinary direct suspend calls. A structured
-spawn is intentionally concurrent: it evaluates immutable frame-safe arguments
-once, initializes an embedded child frame, and schedules that frame on the
+spawn is intentionally concurrent: it evaluates immutable frame-safe
+arguments once, validates compiler-known Send, publication-moves non-Copy
+named bindings into an embedded child frame, and schedules that frame on the
 bounded FIFO. Join suspends only while the selected child is incomplete. Child
 completion wakes one owner-local waiter, and both explicit join cleanup and
 parent cleanup use idempotent child drop. This slice creates no heap task, OS

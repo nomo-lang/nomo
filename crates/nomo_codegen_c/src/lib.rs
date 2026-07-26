@@ -208,6 +208,7 @@ const BUILTIN_TASK_CHECK_CANCELLED_EXPR: &str = "__nomo_task_check_cancelled";
 const BUILTIN_TASK_DEADLINE_ENTER_EXPR: &str = "__nomo_task_deadline_enter";
 const BUILTIN_TASK_DEADLINE_EXIT_EXPR: &str = "__nomo_task_deadline_exit";
 const BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX: &str = "__nomo_structured_task_spawn::";
+const BUILTIN_TASK_PUBLICATION_MOVE_EXPR: &str = "__nomo_task_publication_move";
 const BUILTIN_TASK_STRUCTURED_JOIN_EXPR: &str = "__nomo_structured_task_join";
 const BUILTIN_TASK_STRUCTURED_CANCEL_EXPR: &str = "__nomo_structured_task_cancel";
 const BUILTIN_TASK_STRUCTURED_CANCEL_JOIN_EXPR: &str = "__nomo_structured_task_cancel_join";

@@ -1,6 +1,7 @@
 package app.main
 
 import std.io
+import std.string
 import std.task
 import std.time
 
@@ -21,7 +22,8 @@ fn prepare(value: string) -> string {
 
 suspend fn finish(value: string) -> string {
     task.scope {
-        let slow = task.spawn slow_child(value)
+        let child_value: string = value.concat("")
+        let slow = task.spawn slow_child(child_value)
         let gate = task.spawn gate_child()
         let joined_gate: Result<void, TaskError> = task.join(gate)
         return prepare(value)

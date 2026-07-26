@@ -350,8 +350,13 @@ until its host-driven backend lands.
 The structured forms create true owner-local concurrency without changing
 direct-style child calls. Each child target is currently a direct,
 unqualified, non-generic top-level `suspend fn` with immutable frame-safe
-parameters and result. Spawn evaluates the arguments once, initializes an
-embedded child frame, and schedules it on the bounded 64-entry FIFO. The child
+parameters and result. Spawn evaluates the arguments once, derives
+compiler-known structural Send, publication-moves each non-Copy named binding
+into an embedded child frame, and schedules it on the bounded 64-entry FIFO.
+Copy scalars remain available. Files, sockets, HTTP streams, process/SQLite/task
+handles, FFI handles, and aggregates containing them are Local/!Send. P3-A has
+no public `Send` interface or `move` keyword; E0880/E0883 identify capability
+failures and E0881 diagnoses use after publication. The child
 return type becomes `Task<T>`. Join suspends only until that child completes,
 moves the result exactly once, and returns `Result<T, TaskError>`; queue
 saturation is reported with the stable `queue_full` code. Each inferred

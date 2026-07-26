@@ -172,7 +172,10 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
             out.push(')');
         }
         ValueExpr::Call { name, args } => {
-            if matches!(
+            if name == BUILTIN_TASK_PUBLICATION_MOVE_EXPR {
+                debug_assert_eq!(args.len(), 1);
+                emit_expr(out, &args[0]);
+            } else if matches!(
                 name.as_str(),
                 BUILTIN_TASK_YIELD_EXPR
                     | BUILTIN_TASK_SLEEP_EXPR

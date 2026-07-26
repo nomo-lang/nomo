@@ -4,6 +4,8 @@ use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
 use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket as RustUdpSocket};
+#[cfg(unix)]
+use std::os::fd::AsRawFd;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -34,6 +36,26 @@ fn http_header<'a>(headers: &'a str, name: &str) -> Option<&'a str> {
         let (actual_name, value) = line.split_once(':')?;
         actual_name.eq_ignore_ascii_case(name).then(|| value.trim())
     })
+}
+
+#[cfg(unix)]
+fn set_tcp_listener_receive_buffer(listener: &TcpListener, bytes: i32) {
+    let value = bytes as libc::c_int;
+    let status = unsafe {
+        libc::setsockopt(
+            listener.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_RCVBUF,
+            (&raw const value).cast(),
+            std::mem::size_of_val(&value) as libc::socklen_t,
+        )
+    };
+    assert_eq!(
+        status,
+        0,
+        "failed to set TCP fixture receive buffer: {}",
+        std::io::Error::last_os_error()
+    );
 }
 
 #[test]
@@ -16238,6 +16260,7 @@ fn owner_affine_async_tcp_write_completes_maximum_payload_across_readiness() {
     const PAYLOAD_BYTES: usize = 1_048_576;
 
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    set_tcp_listener_receive_buffer(&listener, 4096);
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();

@@ -169,6 +169,9 @@ the same code.
 - [E0872](E0872.md) - scope-owned task handle is escaped, reused, or left unjoined
 - [E0875](E0875.md) - structured task spawn target is not a supported suspend function
 - [E0876](E0876.md) - suspension shape is not supported by the current runtime slice
+- [E0880](E0880.md) - Local/!Send value crosses a publication boundary
+- [E0881](E0881.md) - binding is used after publication move
+- [E0883](E0883.md) - structural Send derivation fails
 - [E0891](E0891.md) - suspend call graph reaches a blocking sleep operation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error

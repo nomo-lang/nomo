@@ -72,6 +72,38 @@ suspend fn main() -> void {
 不同。结构化形式从 child 返回类型推导 scope-owned `Task<T>`，单参数 join
 必须且只能消费一次该 handle，并返回 `Result<T, TaskError>`。
 
+### Publication move 与编译器内建 Send
+
+structured spawn 现在是 publication boundary。编译器会为每个 child 参数做
+私有 capability 推导；这一切片不允许用户实现或覆盖它：
+
+| 值 | publication 行为 |
+| --- | --- |
+| 数值、`bool`、`char` | Copy；源 binding 仍可使用 |
+| `string`、`CString`、`Array<T>`、`Map<K,V>`、普通 struct/enum | 所有嵌套类型均为 Send 时可发布；命名 binding 会被消费 |
+| `File`、socket、HTTP server/exchange/stream、`ProcessChild`、SQLite/task/FFI handle | Local/!Send，直接拒绝 |
+
+```nomo
+let message: AgentMessage = build_message()
+task.scope {
+    let child = task.spawn consume(message)
+    // E0881：message 已 publication-move 到 child
+}
+```
+
+这里刻意没有 `move` 关键字，也没有 public `Send` interface；编译器根据
+structured-spawn 参数位置决定消费语义。常量仍可重复使用，owned temporary
+直接 transfer。P3-A 不允许只移动 `message.content` 这样的 managed field；
+需要移动整个 aggregate，或先构造 temporary。E0880 报告直接 Local 值，
+E0883 指出 structural Send 失败的第一个嵌套字段，E0881 报告同一 boundary
+重复消费或 publication 后再次使用。
+
+IR 会显式标记每个 consuming argument。Native C99 先初始化 embedded child
+参数并设置 child ownership bit，再清除 parent parameter/local ownership bit，
+不会对 moved value 执行 retain。child cancellation、queue rejection、join、
+panic 与 parent drop 都汇入既有的 exactly-once child-frame cleanup。跨 shard
+的 COW detach 要等 sharded executor 落地；当前实现只有一个 owner thread。
+
 顶层不可变
 `let cancelled: Result<void, TaskError> = task.cancel(handle)` 是 structured
 cancel-and-join：它请求取消，等待 child 完成终态清理，再消费并 drop handle。
@@ -126,6 +158,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   `TaskError { code: "queue_full", ... }`；
 - 在 drop child frame 前，把 typed child result 恰好一次 move 到 join 的成功
   payload；
+- 对 structured-spawn 的非 Copy 命名参数执行 compiler-known structural Send
+  校验和 ownership-bit transfer；
 - structured cancel-and-join 挂起边界：向 child subtree 传播取消、移除 ready
   queue/timer 注册、等待终态清理、返回 `Result<void, TaskError>`，再 drop
   已消费的 child frame；
@@ -145,7 +179,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
 frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
 frame drop/live frame、入队/出队/饱和/取消、
-structured spawn/join/join suspension/取消、deadline 注册/到期/解除，以及 timer
+structured spawn/publication move/join/join suspension/取消、deadline
+注册/到期/解除，以及 timer
 注册/到期/取消/live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
 `nomo-c99-current-thread` JSON；普通运行不会执行 metrics I/O。P1 benchmark
@@ -155,13 +190,15 @@ unavailable，而不是伪装成 0。
 后仍使用的不可变局部变量会 move 到 frame；恢复后只为当前 segment 真正引用
 的值生成 non-owning C alias。内嵌 child 先 inline poll；同步完成时不分配也不
 进入 ready queue。正常完成和显式 early root drop 共用同一条 child-first 幂等
-清理路径。不可变且 frame-safe 的调用参数按源码顺序只求值一次；共享 managed
-值 retain 进 child frame，owned temporary 直接 transfer，owned 结果会在
-child drop 前 move 到调用方的不可变 binding。
+清理路径。不可变且 frame-safe 的调用参数按源码顺序只求值一次。普通 direct
+suspend call 会把共享 managed 值 retain 进 child frame；structured spawn
+则会 publication-move 非 Copy 命名 binding。两种形式的 owned temporary
+都直接 transfer；owned 结果会在 child drop 前 move 到调用方的不可变 binding。
 
 上述 inline fast path 适用于普通 direct suspend call。structured spawn
-会真正创建并发：不可变且 frame-safe 的参数只求值一次，随后初始化内嵌 child
-frame 并将其调度到有界 FIFO。join 只在目标 child 尚未完成时挂起；child
+会真正创建并发：不可变且 frame-safe 的参数只求值一次，完成 compiler-known
+Send 校验，并把非 Copy 命名 binding publication-move 到内嵌 child frame，
+再将其调度到有界 FIFO。join 只在目标 child 尚未完成时挂起；child
 完成会唤醒一个 owner-local waiter。显式 join 清理与 parent 清理都会执行幂等
 child drop。该切片不创建 heap task、OS thread、atomic reference count 或
 全局 work-stealing queue。

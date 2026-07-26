@@ -8040,6 +8040,122 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_spawn_publication_move_is_asan_clean_when_available() {
+    let root = temp_test_root("asan-structured-publication-move");
+    reset_dir(&root);
+
+    if !cc_supports_address_sanitizer(&root) {
+        fs::remove_dir_all(&root).unwrap();
+        return;
+    }
+
+    let source = root.join("main.nomo");
+    let generated_c = root.join("generated.c");
+    let bin_path = root.join(if cfg!(windows) {
+        "asan-structured-publication-move.exe"
+    } else {
+        "asan-structured-publication-move"
+    });
+    fs::write(
+        &source,
+        r#"package app.main
+
+import std.array
+import std.io
+import std.result
+import std.task
+
+struct AgentMessage {
+    content: string
+    tags: Array<string>
+}
+
+suspend fn consume(message: AgentMessage) -> string {
+    task.yield_now()
+    return message.content
+}
+
+suspend fn launch(message: AgentMessage) -> string {
+    task.scope {
+        let child = task.spawn consume(message)
+        let joined: Result<string, TaskError> = task.join(child)
+        return result.unwrap_or(joined, "unavailable")
+    }
+}
+
+suspend fn main() -> void {
+    let content: string = launch(AgentMessage {
+        content: "publication",
+        tags: ["agent", "task"]
+    })
+    io.println(content)
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+        .arg("build")
+        .arg(&source)
+        .arg("--emit-c")
+        .arg("--out")
+        .arg(&generated_c)
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(
+        generated.contains(
+            "frame->nomo_async_child_0.nomo_async_parameter_nomo_message = nomo_message;"
+        )
+    );
+    assert!(generated.contains("frame->nomo_async_parameter_owned_nomo_message = 0u;"));
+    assert!(!generated.contains(
+        "frame->nomo_async_child_0.nomo_async_parameter_nomo_message = nomo_retain_AgentMessage"
+    ));
+
+    let cc_output = Command::new("cc")
+        .arg("-fsanitize=address")
+        .arg("-fno-omit-frame-pointer")
+        .arg("-g")
+        .arg(&generated_c)
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        cc_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&cc_output.stdout),
+        String::from_utf8_lossy(&cc_output.stderr)
+    );
+
+    let asan_options = if cfg!(target_os = "macos") {
+        "detect_leaks=0:abort_on_error=1"
+    } else {
+        "detect_leaks=1:abort_on_error=1"
+    };
+    let run_output = Command::new(&bin_path)
+        .env("ASAN_OPTIONS", asan_options)
+        .output()
+        .unwrap();
+    assert!(
+        run_output.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&run_output.stdout),
+        String::from_utf8_lossy(&run_output.stderr)
+    );
+    assert_eq!(run_output.stdout, b"publication\n");
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn structured_scope_auto_cancel_is_asan_clean_when_available() {
     let root = temp_test_root("asan-structured-scope-auto-cancel");
     reset_dir(&root);
@@ -8550,6 +8666,7 @@ fn structured_scope_return_cancel_is_asan_clean_when_available() {
         r#"package app.main
 
 import std.io
+import std.string
 import std.task
 import std.time
 
@@ -8570,7 +8687,8 @@ fn prepare(value: string) -> string {
 
 suspend fn finish(value: string) -> string {
     task.scope {
-        let slow = task.spawn slow_child(value)
+        let child_value: string = value.concat("")
+        let slow = task.spawn slow_child(child_value)
         let gate = task.spawn gate_child()
         let joined_gate: Result<void, TaskError> = task.join(gate)
         return prepare(value)
@@ -8602,8 +8720,8 @@ suspend fn main() -> void {
     let generated = fs::read_to_string(&generated_c).unwrap();
     assert!(generated.contains(concat!(
         "            nomo_string nomo___nomo_structured_return_value = nomo_fn_prepare(nomo_value);\n",
-        "            nomo_async_cancel_slow_child(&frame->nomo_async_child_0, context);\n",
-        "            nomo_async_drop_slow_child(&frame->nomo_async_child_0);\n",
+        "            nomo_async_cancel_slow_child(&frame->nomo_async_child_1, context);\n",
+        "            nomo_async_drop_slow_child(&frame->nomo_async_child_1);\n",
         "            frame->nomo_async_result = nomo___nomo_structured_return_value;"
     )));
     assert!(generated.contains("frame->nomo_async_result_owned = 1u;"));
@@ -9931,6 +10049,7 @@ fn structured_scope_return_cancels_unjoined_child_before_waking_parent() {
         r#"package app.main
 
 import std.io
+import std.string
 import std.task
 import std.time
 
@@ -9951,7 +10070,8 @@ fn prepare(value: string) -> string {
 
 suspend fn finish(value: string) -> string {
     task.scope {
-        let slow = task.spawn slow_child(value)
+        let child_value: string = value.concat("")
+        let slow = task.spawn slow_child(child_value)
         let gate = task.spawn gate_child()
         let joined_gate: Result<void, TaskError> = task.join(gate)
         return prepare(value)
@@ -9989,8 +10109,8 @@ suspend fn main() -> void {
     assert!(
         generated.contains(concat!(
             "            nomo_string nomo___nomo_structured_return_value = nomo_fn_prepare(nomo_value);\n",
-            "            nomo_async_cancel_slow_child(&frame->nomo_async_child_0, context);\n",
-            "            nomo_async_drop_slow_child(&frame->nomo_async_child_0);\n",
+            "            nomo_async_cancel_slow_child(&frame->nomo_async_child_1, context);\n",
+            "            nomo_async_drop_slow_child(&frame->nomo_async_child_1);\n",
             "            frame->nomo_async_result = nomo___nomo_structured_return_value;"
         )),
         "{generated}"

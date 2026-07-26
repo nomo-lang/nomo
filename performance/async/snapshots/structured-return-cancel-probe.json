@@ -22,7 +22,10 @@
     "nomo_string nomo___nomo_structured_return_value = nomo_fn_prepare(nomo_value);": 1,
     "frame->nomo_async_result = nomo___nomo_structured_return_value;": 1,
     "frame->nomo_async_result_owned = 1u;": 1,
-    "frame->nomo_async_child_0.nomo_async_parameter_owned_nomo_value = 1u;": 2,
+    "frame->nomo_async_child_0.nomo_async_parameter_owned_nomo_value = 1u;": 1,
+    "frame->nomo_async_child_1.nomo_async_parameter_nomo_value = nomo_child_value;": 1,
+    "frame->nomo_async_child_1.nomo_async_parameter_owned_nomo_value = 1u;": 1,
+    "context->publication_moves += 1u;": 1,
     "nomo_string_release(frame->nomo_async_parameter_nomo_value)": 2
   },
   "runtime_counters": {
@@ -39,6 +42,7 @@
       "ready_queue_saturations": 0,
       "ready_queue_cancellations": 0,
       "task_spawns": 2,
+      "publication_moves": 1,
       "task_joins": 1,
       "join_suspensions": 1,
       "task_cancellations": 1,

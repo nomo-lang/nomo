@@ -524,6 +524,15 @@ or queue operation. Normal scope fallthrough and a final scope
 `return` cancel unjoined children, remove their ready/timer registrations, and
 drop their frames before code after the scope or return completion runs. A
 return expression evaluates into an owned temporary before that cleanup.
+P3-A also makes every structured-spawn argument a compiler-known publication
+boundary. Numeric, Boolean, and character values remain Copy. A named string,
+array, ordered map, or structurally Send aggregate is moved into the child
+frame and its source binding becomes unavailable; E0881 rejects any later use.
+The C99 lowering transfers the existing owner bit without retaining the value.
+Native resource handles such as files, sockets, HTTP streams, processes,
+SQLite handles, task handles, and FFI handles remain Local/!Send; E0880 and
+E0883 report the direct type or first nested field. There is no public `Send`
+interface or `move` keyword in this slice.
 An immutable top-level `let value: T = expression?` inside the scope stores an
 owned propagated Err/None, cancels and drops the children that are live at
 that statement, and only then completes the helper. The operand may be a
@@ -543,8 +552,9 @@ timer table; normal fallthrough disarms the timer, while timeout cancels the
 current child subtree and becomes a typed structured-join error or a
 secret-safe nonzero root failure. Browser WASM rejects the deadline without
 evaluating its duration or body.
-E0871, E0872, E0875, and E0876 reject invalid boundaries, ownership, targets,
-and unsupported shapes. Mutable
+E0871, E0872, E0875, E0876, E0880, E0881, and E0883 reject invalid
+boundaries, ownership, targets, publication moves, and unsupported shapes.
+Mutable
 parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
@@ -553,7 +563,8 @@ channels/select,
 the multi-task timer wheel, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
-`examples/async_timer`, `examples/async_structured_void`,
+`examples/async_timer`, `examples/async_publication_move`,
+`examples/async_structured_void`,
 `examples/async_structured_results`, `examples/async_structured_return`,
 `examples/async_structured_cancel`,
 `examples/async_structured_return_cancel`,

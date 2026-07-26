@@ -348,11 +348,15 @@ pub(super) fn lower_value_expr_with_expected(
                         field: field.clone(),
                     }
                 }
-                BindingSource::Local | BindingSource::Param => ValueExpr::FieldAccess {
-                    base: base.clone(),
-                    field: field.clone(),
-                },
-                BindingSource::FunctionEffect { .. } | BindingSource::TaskScope => {
+                BindingSource::Local | BindingSource::Const | BindingSource::Param => {
+                    ValueExpr::FieldAccess {
+                        base: base.clone(),
+                        field: field.clone(),
+                    }
+                }
+                BindingSource::FunctionEffect { .. }
+                | BindingSource::TaskScope
+                | BindingSource::PublicationMove { .. } => {
                     unreachable!("internal scope bindings have no fields")
                 }
             };

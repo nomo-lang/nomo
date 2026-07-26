@@ -124,6 +124,7 @@ pub(super) fn lower_program(
     validate_extern_calls_are_unsafe(path, &ast, &extern_call_names)?;
     validate_task_workers(path, &ast, &imports, &extern_call_names)?;
     validate_suspend_blocking_calls(path, &ast, &imports)?;
+    validate_structured_spawn_publications(path, &ast, &signatures, &struct_map, &enum_map)?;
     validate_p1_suspending_functions(path, &ast.functions, &imports)?;
     let local_struct_names = ast
         .structs

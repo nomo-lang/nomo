@@ -29,6 +29,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_yield",
     "async_call_abi",
     "async_timer",
+    "async_publication_move",
     "async_structured_void",
     "async_structured_results",
     "async_structured_return",
@@ -1297,6 +1298,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_structured_void" => {
             "left before\nright before\nleft after\nright after\ntrue true\n"
         }
+        "async_publication_move" => "publication\n",
         "async_structured_results" => {
             "left before\nright before\nleft after\nright after\nleft right\n"
         }

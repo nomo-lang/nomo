@@ -62,6 +62,12 @@
       "semantics": "Structured task.spawn operations executed, including attempts rejected by the bounded owner-local FIFO."
     },
     {
+      "name": "publication_moves",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Compiler-known non-Copy publication moves whose source ownership bit transferred to a structured child."
+    },
+    {
       "name": "task_joins",
       "unit": "count",
       "available_phase": "P1",

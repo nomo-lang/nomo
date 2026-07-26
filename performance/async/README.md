@@ -19,7 +19,8 @@ The separate `manifest-p1.json` repeats both zero-cost controls and enables
 `structured_cancel_probe`, `structured_return_cancel_probe`, and
 `structured_question_cancel_probe`, plus
 `structured_explicit_cancel_probe` and
-`structured_deadline_probe` and `structured_panic_cleanup_probe`. Each counter
+`structured_deadline_probe`, `structured_panic_cleanup_probe`, and
+`publication_move_probe`. Each counter
 probe executes outside measured
 samples with `NOMO_ASYNC_METRICS_PATH` set, then validates the versioned
 current-thread JSON contract against `counter-catalog.json`. Panic is an
@@ -64,6 +65,9 @@ The deadline gate arms a deadline and a longer child sleep on the same
 owner-local table, requires timeout to win, cancels the sleep registration,
 materializes a typed join error, and validates the three deadline-specific
 counters without adding frame allocation or atomic symbols.
+The publication-move gate transfers one managed aggregate with nested COW
+storage into a structured child, requires exactly one `publication_moves`
+event, and rejects generated retain, thread, atomic, and heap-frame evidence.
 
 ## Run
 

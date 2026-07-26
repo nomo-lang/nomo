@@ -785,6 +785,9 @@ fn emit_async_child_init(
     callee: &Function,
     index: usize,
     indent: usize,
+    function: &Function,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
 ) {
     debug_assert_eq!(call.args.len(), callee.params.len());
     let child = async_child_field(index);
@@ -809,12 +812,51 @@ fn emit_async_child_init(
             out.push('.');
             out.push_str(&async_parameter_owned_field(&parameter.name));
             out.push_str(" = 1u;\n");
+            if let Some(binding) = publication_move_binding(argument) {
+                if function
+                    .params
+                    .iter()
+                    .any(|candidate| candidate.name == binding)
+                {
+                    write_indent(out, indent);
+                    out.push_str("frame->");
+                    out.push_str(&async_parameter_owned_field(binding));
+                    out.push_str(" = 0u;\n");
+                } else if frame_locals
+                    .iter()
+                    .any(|candidate| candidate.name == binding)
+                {
+                    write_indent(out, indent);
+                    out.push_str("frame->");
+                    out.push_str(&async_frame_owned_field(binding));
+                    out.push_str(" = 0u;\n");
+                } else {
+                    local_owned.retain(|candidate| candidate.name != binding);
+                }
+                write_indent(out, indent);
+                out.push_str("context->publication_moves += 1u;\n");
+            }
         }
     }
     write_indent(out, indent);
     out.push_str("frame->");
     out.push_str(&child);
     out.push_str(".initialized = 1u;\n");
+}
+
+fn publication_move_binding(argument: &ValueExpr) -> Option<&str> {
+    match argument {
+        ValueExpr::Call { name, args }
+            if name == BUILTIN_TASK_PUBLICATION_MOVE_EXPR
+                && matches!(args.as_slice(), [ValueExpr::Variable(_)]) =>
+        {
+            let [ValueExpr::Variable(binding)] = args.as_slice() else {
+                unreachable!("publication move shape was checked by the guard")
+            };
+            Some(binding)
+        }
+        _ => None,
+    }
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -1530,6 +1572,7 @@ struct nomo_async_context {
     uint64_t ready_queue_saturations;
     uint64_t ready_queue_cancellations;
     uint64_t task_spawns;
+    uint64_t publication_moves;
     uint64_t task_joins;
     uint64_t join_suspensions;
     uint64_t task_cancellations;
@@ -1978,6 +2021,7 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"ready_queue_saturations\": %" PRIu64 ",\n"
         "    \"ready_queue_cancellations\": %" PRIu64 ",\n"
         "    \"task_spawns\": %" PRIu64 ",\n"
+        "    \"publication_moves\": %" PRIu64 ",\n"
         "    \"task_joins\": %" PRIu64 ",\n"
         "    \"join_suspensions\": %" PRIu64 ",\n"
         "    \"task_cancellations\": %" PRIu64 ",\n"
@@ -2004,6 +2048,7 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->ready_queue_saturations,
         context->ready_queue_cancellations,
         context->task_spawns,
+        context->publication_moves,
         context->task_joins,
         context->join_suspensions,
         context->task_cancellations,
@@ -2144,6 +2189,9 @@ pub(super) fn emit_async_function(
                 callee,
                 index,
                 3,
+                function,
+                &frame_locals,
+                &mut local_owned,
             );
             out.push_str("            context->task_spawns += 1u;\n");
             out.push_str("            if (nomo_async_ready_enqueue(context, &frame->");
@@ -2180,7 +2228,16 @@ pub(super) fn emit_async_function(
                 let callee = functions
                     .get(call.callee)
                     .expect("validated suspend call target exists");
-                emit_async_child_init(out, call, callee, index, 3);
+                emit_async_child_init(
+                    out,
+                    call,
+                    callee,
+                    index,
+                    3,
+                    function,
+                    &frame_locals,
+                    &mut local_owned,
+                );
             }
             let moved_to_frame = frame_locals
                 .iter()

@@ -121,10 +121,11 @@ pub(super) fn lower_task_builtin(
             }
             let mut lowered_args = Vec::with_capacity(target_args.len());
             let mut mutable_borrows = Vec::new();
+            let mut moved_bindings = HashSet::new();
             for (index, (argument, parameter)) in
                 target_args.iter().zip(&signature.params).enumerate()
             {
-                lowered_args.push(lower_call_arg_for_param(
+                let mut lowered = lower_call_arg_for_param(
                     path,
                     argument,
                     parameter,
@@ -137,7 +138,77 @@ pub(super) fn lower_task_builtin(
                     target_name,
                     index + 1,
                     &mut mutable_borrows,
-                )?);
+                )?;
+                let transfer = validate_publication_type(
+                    path,
+                    span,
+                    &format!("argument {} to `{target_name}`", index + 1),
+                    &parameter.value_type,
+                    structs,
+                    enums,
+                )?;
+                if transfer == PublicationTransfer::Move
+                    && let AstExpr::Name(argument_path) = argument
+                    && let Some(root) = argument_path.first()
+                    && let Some(binding) = scope.get(root)
+                {
+                    if argument_path.len() != 1 {
+                        return Err(Diagnostic::new(
+                            "E0883",
+                            format!(
+                                "structured task.spawn cannot move only `{}` from non-Copy binding `{root}`; publish the whole binding or construct a temporary value",
+                                argument_path.join(".")
+                            ),
+                            path,
+                            span.line,
+                            span.column,
+                            span.length,
+                            &span.text,
+                        ));
+                    }
+                    match binding.source {
+                        BindingSource::Local | BindingSource::Param => {
+                            ensure_publication_binding_available(path, span, scope, root)?;
+                            if !moved_bindings.insert(root.clone()) {
+                                return Err(Diagnostic::new(
+                                    "E0881",
+                                    format!(
+                                        "binding `{root}` is consumed more than once by the same structured task.spawn publication"
+                                    ),
+                                    path,
+                                    span.line,
+                                    span.column,
+                                    span.length,
+                                    &span.text,
+                                ));
+                            }
+                            lowered = ValueExpr::Call {
+                                name: BUILTIN_TASK_PUBLICATION_MOVE_EXPR.to_string(),
+                                args: vec![lowered],
+                            };
+                        }
+                        BindingSource::EnumPayload { .. } => {
+                            return Err(Diagnostic::new(
+                                "E0883",
+                                format!(
+                                    "structured task.spawn cannot move enum payload binding `{root}` in the current P3-A slice; construct an owned temporary first"
+                                ),
+                                path,
+                                span.line,
+                                span.column,
+                                span.length,
+                                &span.text,
+                            ));
+                        }
+                        BindingSource::Const => {}
+                        BindingSource::FunctionEffect { .. }
+                        | BindingSource::TaskScope
+                        | BindingSource::PublicationMove { .. } => {
+                            unreachable!("internal bindings cannot be publication operands")
+                        }
+                    }
+                }
+                lowered_args.push(lowered);
             }
             Ok((
                 ValueType::Struct("Task".to_string(), vec![signature.return_type.clone()]),

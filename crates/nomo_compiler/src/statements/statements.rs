@@ -12,6 +12,7 @@ pub(super) fn lower_stmt(
     is_tail: bool,
     loop_depth: usize,
 ) -> Result<Statement, Diagnostic> {
+    validate_statement_publication_uses(path, stmt, scope)?;
     match stmt {
         Stmt::Let {
             name,
@@ -498,6 +499,7 @@ pub(super) fn lower_stmt_into(
     loop_depth: usize,
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
+    validate_statement_publication_uses(path, stmt, scope)?;
     if let Stmt::TaskDeadline {
         duration,
         body,
@@ -590,6 +592,7 @@ pub(super) fn lower_stmt_into(
                 out,
             )?;
         }
+        propagate_publication_moves(scope, &task_scope);
         push_structured_cancellations(out, &unjoined);
         out.push(Statement::Expr(ValueExpr::Call {
             name: BUILTIN_TASK_DEADLINE_EXIT_EXPR.to_string(),
@@ -701,6 +704,7 @@ pub(super) fn lower_stmt_into(
                 out,
             )?;
         }
+        propagate_publication_moves(scope, &task_scope);
         if !exits_with_return {
             push_structured_cancellations(out, &unjoined);
         }
@@ -721,7 +725,7 @@ pub(super) fn lower_stmt_into(
     )? {
         return Ok(());
     }
-    out.push(lower_stmt(
+    let lowered = lower_stmt(
         path,
         stmt,
         scope,
@@ -732,7 +736,59 @@ pub(super) fn lower_stmt_into(
         return_type,
         is_tail,
         loop_depth,
-    )?);
+    )?;
+    record_structured_spawn_publication_moves(path, stmt, &lowered, scope, loop_depth)?;
+    out.push(lowered);
+    Ok(())
+}
+
+fn record_structured_spawn_publication_moves(
+    path: &Path,
+    source: &Stmt,
+    lowered: &Statement,
+    scope: &mut HashMap<String, Binding>,
+    loop_depth: usize,
+) -> Result<(), Diagnostic> {
+    let Statement::Let {
+        initializer: ValueExpr::Call { name, args },
+        ..
+    } = lowered
+    else {
+        return Ok(());
+    };
+    if !name.starts_with(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX) {
+        return Ok(());
+    }
+    let span = statement_span(source);
+    for argument in args {
+        let ValueExpr::Call {
+            name: move_name,
+            args: move_args,
+        } = argument
+        else {
+            continue;
+        };
+        if move_name != BUILTIN_TASK_PUBLICATION_MOVE_EXPR {
+            continue;
+        }
+        let [ValueExpr::Variable(binding)] = move_args.as_slice() else {
+            unreachable!("publication-move IR always wraps one variable")
+        };
+        if loop_depth > 0 {
+            return Err(Diagnostic::new(
+                "E0881",
+                format!(
+                    "binding `{binding}` cannot be publication-moved from a repeatable loop in the current P3-A slice; construct the value inside a non-repeating task scope"
+                ),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        mark_publication_move(scope, binding, span.line, "structured task.spawn");
+    }
     Ok(())
 }
 

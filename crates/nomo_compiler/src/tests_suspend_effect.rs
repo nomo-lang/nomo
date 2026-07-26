@@ -1110,6 +1110,367 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_spawn_marks_non_copy_arguments_as_publication_moves() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: string) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let launch = program
+        .functions
+        .iter()
+        .find(|function| function.name == "launch")
+        .unwrap();
+    assert!(matches!(
+        &launch.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == "__nomo_structured_task_spawn::worker"
+            && matches!(
+                args.as_slice(),
+                [ValueExpr::Call { name: move_name, args: move_args }]
+                    if move_name == "__nomo_task_publication_move"
+                        && matches!(
+                            move_args.as_slice(),
+                            [ValueExpr::Variable(value)] if value == "value"
+                        )
+            )
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("frame->nomo_async_child_0.nomo_async_parameter_nomo_value = nomo_value;"));
+    assert!(c.contains("frame->nomo_async_parameter_owned_nomo_value = 0u;"));
+    assert!(!c.contains(
+        "frame->nomo_async_child_0.nomo_async_parameter_nomo_value = nomo_string_retain"
+    ));
+}
+
+#[test]
+fn structured_spawn_keeps_copy_arguments_available() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: i64) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: i64) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let kept: i64 = value
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let launch = program
+        .functions
+        .iter()
+        .find(|function| function.name == "launch")
+        .unwrap();
+    assert!(matches!(
+        &launch.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { args, .. },
+            ..
+        } if matches!(args.as_slice(), [ValueExpr::Variable(value)] if value == "value")
+    ));
+}
+
+#[test]
+fn structured_spawn_derives_send_for_managed_aggregates() {
+    let source = r#"package app.main
+
+import std.array
+import std.task
+
+struct Envelope {
+    message: string
+    tags: Array<string>
+}
+
+suspend fn worker(value: Envelope) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: Envelope) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let launch = program
+        .functions
+        .iter()
+        .find(|function| function.name == "launch")
+        .unwrap();
+    assert!(matches!(
+        &launch.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { args, .. },
+            ..
+        } if matches!(
+            args.as_slice(),
+            [ValueExpr::Call { name, .. }] if name == "__nomo_task_publication_move"
+        )
+    ));
+}
+
+#[test]
+fn structured_spawn_rejects_local_and_nested_local_values() {
+    let direct = r#"package app.main
+
+import std.fs
+import std.task
+
+suspend fn worker(file: File) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(file: File) -> void {
+    task.scope {
+        let child = task.spawn worker(file)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let direct_error = parse_inline(direct).unwrap_err();
+    assert_eq!(direct_error.code, "E0880");
+    assert!(direct_error.message.contains("Local/!Send type `File`"));
+
+    let nested = r#"package app.main
+
+import std.fs
+import std.task
+
+struct Envelope {
+    file: File
+}
+
+suspend fn worker(value: Envelope) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: Envelope) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let nested_error = parse_inline(nested).unwrap_err();
+    assert_eq!(nested_error.code, "E0883");
+    assert!(nested_error.message.contains("Envelope.file"));
+    assert!(nested_error.message.contains("Local/!Send type `File`"));
+}
+
+#[test]
+fn structured_spawn_rejects_partial_duplicate_and_later_move_uses() {
+    let partial = r#"package app.main
+
+import std.task
+
+struct Envelope {
+    message: string
+}
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: Envelope) -> void {
+    task.scope {
+        let child = task.spawn worker(value.message)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let partial_error = parse_inline(partial).unwrap_err();
+    assert_eq!(partial_error.code, "E0883");
+    assert!(
+        partial_error
+            .message
+            .contains("cannot move only `value.message`")
+    );
+
+    let duplicate = r#"package app.main
+
+import std.task
+
+suspend fn worker(left: string, right: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: string) -> void {
+    task.scope {
+        let child = task.spawn worker(value, value)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let duplicate_error = parse_inline(duplicate).unwrap_err();
+    assert_eq!(duplicate_error.code, "E0881");
+    assert!(duplicate_error.message.contains("consumed more than once"));
+
+    let later_use = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: string) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let reused: string = value
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let later_error = parse_inline(later_use).unwrap_err();
+    assert_eq!(later_error.code, "E0881");
+    assert!(later_error.message.contains("publication move"));
+    assert!(later_error.message.contains("structured task.spawn"));
+
+    let after_scope = r#"package app.main
+
+import std.task
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: string) -> void {
+    task.scope {
+        let child = task.spawn worker(value)
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+    let reused: string = value
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let after_scope_error = parse_inline(after_scope).unwrap_err();
+    assert_eq!(after_scope_error.code, "E0881");
+    assert!(after_scope_error.message.contains("publication move"));
+
+    let question_use = r#"package app.main
+
+import std.task
+
+fn keep(value: string) -> Result<string, TaskError> {
+    return Ok(value)
+}
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(value: string) -> Result<void, TaskError> {
+    task.scope {
+        let child = task.spawn worker(value)
+        let reused: string = keep(value)?
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+    return Ok(void)
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let question_error = parse_inline(question_use).unwrap_err();
+    assert_eq!(question_error.code, "E0881");
+    assert!(question_error.message.contains("publication move"));
+}
+
+#[test]
+fn structured_spawn_does_not_consume_reusable_constants() {
+    let source = r#"package app.main
+
+import std.task
+
+const greeting: string = "hello"
+
+suspend fn worker(value: string) -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn worker(greeting)
+        let kept: string = greeting
+        let joined: Result<void, TaskError> = task.join(child)
+    }
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(matches!(
+        &main.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { args, .. },
+            ..
+        } if matches!(args.as_slice(), [ValueExpr::Variable(value)] if value == "greeting")
+    ));
+}
+
+#[test]
 fn structured_typed_scope_lowers_task_and_join_result_types() {
     let source = r#"package app.main
 

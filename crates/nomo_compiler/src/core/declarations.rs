@@ -365,7 +365,7 @@ pub(super) fn lower_function_as(
             Binding {
                 value_type: value_type.clone(),
                 mutable: false,
-                source: BindingSource::Local,
+                source: BindingSource::Const,
             },
         );
     }

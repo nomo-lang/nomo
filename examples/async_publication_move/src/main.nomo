@@ -1,0 +1,27 @@
+package app.main
+
+import std.array
+import std.io
+import std.result
+import std.task
+
+struct AgentMessage {
+    content: string
+    attempts: u64
+    tags: Array<string>
+}
+
+suspend fn consume(message: AgentMessage) -> string {
+    task.yield_now()
+    return message.content
+}
+
+suspend fn main() -> void {
+    let message: AgentMessage = AgentMessage { content: "publication", attempts: 1, tags: ["agent", "task"] }
+    task.scope {
+        let child = task.spawn consume(message)
+        let joined: Result<string, TaskError> = task.join(child)
+        let content: string = result.unwrap_or(joined, "unavailable")
+        io.println(content)
+    }
+}

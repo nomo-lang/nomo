@@ -172,6 +172,7 @@ the same code.
 - [E0880](E0880.md) - Local/!Send value crosses a publication boundary
 - [E0881](E0881.md) - binding is used after publication move
 - [E0883](E0883.md) - structural Send derivation fails
+- [E0886](E0886.md) - static select arm count or operation shape is invalid
 - [E0891](E0891.md) - suspend call graph reaches a blocking sleep operation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error

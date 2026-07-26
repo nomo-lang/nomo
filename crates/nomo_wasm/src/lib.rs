@@ -517,6 +517,49 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn rejects_static_select_without_evaluating_operands_or_arm_bodies() {
+        let source = r#"package app.main
+
+import std.io
+import std.task
+import std.time
+
+fn channel_value() -> Channel<string> {
+    panic("browser-select-channel-secret")
+}
+
+fn duration() -> Duration {
+    panic("browser-select-duration-secret")
+}
+
+suspend fn main() -> void {
+    task.select {
+        task.receive(channel_value()) => received {
+            io.println("browser-select-receive-body-secret")
+        }
+        task.sleep(duration()) => timeout {
+            io.println("browser-select-timer-body-secret")
+        }
+    }
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("browser select should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("task select"));
+        assert!(!error.message.contains("browser-select-channel-secret"));
+        assert!(!error.message.contains("browser-select-duration-secret"));
+        assert!(response.stdout.is_empty());
+        assert!(response.stderr.is_empty());
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn returns_structured_task_runtime_unavailable_without_invoking_the_child() {
         let source = r#"package app.main
 

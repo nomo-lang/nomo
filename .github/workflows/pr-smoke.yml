@@ -337,6 +337,24 @@ jobs:
               -or $channelPayload.counters.live_channel_receive_waiters -ne 0) {
             throw "unexpected bounded-channel counters"
           }
+          $selectMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-static-select-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $selectMetrics
+          $selectOutput = cargo run --locked --bin nomo -- run examples/async_static_select
+          if (($selectOutput -join "`n") -notmatch "^winner$") {
+            throw "unexpected static-select output"
+          }
+          $selectPayload = Get-Content -Raw $selectMetrics | ConvertFrom-Json
+          if ($selectPayload.schema -ne 1 `
+              -or $selectPayload.runtime -ne "nomo-c99-current-thread" `
+              -or $selectPayload.counters.select_registrations -ne 3 `
+              -or $selectPayload.counters.select_immediate_wins -ne 0 `
+              -or $selectPayload.counters.select_suspended_wins -ne 1 `
+              -or $selectPayload.counters.select_loser_cancellations -ne 2 `
+              -or $selectPayload.counters.select_cancellations -ne 0 `
+              -or $selectPayload.counters.live_channel_receive_waiters -ne 0 `
+              -or $selectPayload.counters.live_timers -ne 0) {
+            throw "unexpected static-select counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -394,6 +412,11 @@ jobs:
           NOMO_ASYNC_METRICS_PATH="$timer_metrics" \
             cargo run --locked --bin nomo -- run examples/async_timer
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 2 and c["timer_registrations"] == 1 and c["timer_expirations"] == 1 and c["timer_cancellations"] == 0 and c["live_timers"] == 0 and c["peak_live_timers"] == 1' "$timer_metrics"
+          static_select_metrics="$RUNNER_TEMP/nomo-async-static-select-metrics.json"
+          static_select_output=$(NOMO_ASYNC_METRICS_PATH="$static_select_metrics" \
+            cargo run --locked --bin nomo -- run examples/async_static_select)
+          test "$static_select_output" = 'winner'
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert c["select_registrations"] == 3 and c["select_immediate_wins"] == 0 and c["select_suspended_wins"] == 1 and c["select_loser_cancellations"] == 2 and c["select_cancellations"] == 0 and c["live_channel_receive_waiters"] == 0 and c["live_timers"] == 0' "$static_select_metrics"
           structured_metrics="$RUNNER_TEMP/nomo-async-structured-metrics.json"
           NOMO_ASYNC_METRICS_PATH="$structured_metrics" \
             cargo run --locked --bin nomo -- run examples/async_structured_void

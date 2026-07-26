@@ -114,6 +114,13 @@ fn stmt_uses_core_prelude_variant(stmt: &Stmt, enum_name: &str) -> bool {
                     .iter()
                     .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name))
         }
+        Stmt::TaskSelect { arms, .. } => arms.iter().any(|arm| {
+            expr_uses_core_prelude_variant(&arm.operation, enum_name)
+                || arm
+                    .body
+                    .iter()
+                    .any(|stmt| stmt_uses_core_prelude_variant(stmt, enum_name))
+        }),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }

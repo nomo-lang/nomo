@@ -2158,6 +2158,127 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn static_receive_timer_select_lowers_into_typed_ir_and_c99_state_machine() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn choose(channel_value: Channel<string>) -> void {
+    task.select {
+        task.receive(channel_value) => received {
+            let value = received
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            let value = timeout
+        }
+    }
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let choose = program
+        .functions
+        .iter()
+        .find(|function| function.name == "choose")
+        .unwrap();
+    let Statement::TaskSelect { arms } = &choose.body[0] else {
+        panic!("expected typed task.select IR");
+    };
+    assert_eq!(arms.len(), 2);
+    assert!(matches!(
+        &arms[0].operation,
+        TaskSelectOperation::Receive { element_type, .. }
+            if element_type == &ValueType::String
+    ));
+    assert_eq!(
+        arms[0].binding_type,
+        ValueType::Enum("Option".to_string(), vec![ValueType::String])
+    );
+    assert!(matches!(
+        &arms[1].operation,
+        TaskSelectOperation::Sleep { .. }
+    ));
+    assert_eq!(
+        arms[1].binding_type,
+        ValueType::Enum(
+            "Result".to_string(),
+            vec![
+                ValueType::Void,
+                ValueType::Struct("TaskError".to_string(), Vec::new())
+            ]
+        )
+    );
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_async_select_token_0"));
+    assert!(c.contains("nomo_async_select_immediate_win"));
+    assert!(c.contains("nomo_async_select_suspend"));
+    assert!(c.contains("nomo_channel_receive_select_cancel_string"));
+    assert!(c.contains("nomo_async_timer_select_cancel"));
+    assert!(c.contains("NOMO_ASYNC_PENDING_SELECT"));
+}
+
+#[test]
+fn static_select_rejects_unsupported_operations_and_early_arm_exits() {
+    let unsupported = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn choose(channel_value: Channel<string>) -> void {
+    task.select {
+        task.send(channel_value, "value") => sent {
+            let value = sent
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            let value = timeout
+        }
+    }
+}
+
+fn main() -> void {
+}
+"#;
+    let error = parse_inline(unsupported).unwrap_err();
+    assert_eq!(error.code, "E0886");
+    assert!(error.message.contains("supports only"));
+
+    let early_exit = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn choose(channel_value: Channel<string>) -> void {
+    task.select {
+        task.receive(channel_value) => received {
+            return
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            let value = timeout
+        }
+    }
+}
+
+fn main() -> void {
+}
+"#;
+    let error = parse_inline(early_exit).unwrap_err();
+    assert_eq!(error.code, "E0876");
+    assert!(error.message.contains("select early exits"));
+}
+
+#[test]
 fn bounded_channel_requires_send_elements() {
     let source = r#"package app.main
 

@@ -2,16 +2,17 @@ use super::*;
 
 pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
     function.body.iter().any(|statement| {
-        statement_contains_expr(statement, |expr| {
-            expr_is_async_yield(expr)
-                || expr_is_async_sleep(expr)
-                || expr_is_async_channel_send(expr)
-                || expr_is_async_channel_receive(expr)
-                || expr_is_async_check_cancelled(expr)
-                || expr_is_async_deadline_enter(expr)
-                || expr_is_structured_join(expr)
-                || expr_is_structured_cancel(expr)
-        })
+        statement_task_select(statement).is_some()
+            || statement_contains_expr(statement, |expr| {
+                expr_is_async_yield(expr)
+                    || expr_is_async_sleep(expr)
+                    || expr_is_async_channel_send(expr)
+                    || expr_is_async_channel_receive(expr)
+                    || expr_is_async_check_cancelled(expr)
+                    || expr_is_async_deadline_enter(expr)
+                    || expr_is_structured_join(expr)
+                    || expr_is_structured_cancel(expr)
+            })
     })
 }
 
@@ -358,6 +359,13 @@ fn statement_async_channel_receive(statement: &Statement) -> Option<AsyncChannel
     })
 }
 
+fn statement_task_select(statement: &Statement) -> Option<&[TaskSelectArm]> {
+    match statement {
+        Statement::TaskSelect { arms } => Some(arms),
+        _ => None,
+    }
+}
+
 fn statement_structured_spawn(statement: &Statement) -> Option<StructuredSpawn<'_>> {
     let Statement::Let {
         name: handle,
@@ -496,6 +504,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
         || statement_async_sleep(statement).is_some()
         || statement_async_channel_send(statement).is_some()
         || statement_async_channel_receive(statement).is_some()
+        || statement_task_select(statement).is_some()
         || statement_async_call(statement, async_names).is_some()
         || statement_structured_join(statement).is_some()
         || statement_structured_cancel_join(statement).is_some()
@@ -541,7 +550,8 @@ fn collect_async_frame_locals(
                 })?;
             let crosses_suspend = function.body[declaration_index + 1..last_use_index]
                 .iter()
-                .any(|statement| statement_is_async_suspend(statement, async_names));
+                .any(|statement| statement_is_async_suspend(statement, async_names))
+                || task_select_arm_bodies_use_binding(&function.body[last_use_index], name);
             crosses_suspend.then(|| AsyncFrameLocal {
                 name: name.clone(),
                 value_type: value_type.clone(),
@@ -550,6 +560,16 @@ fn collect_async_frame_locals(
             })
         })
         .collect()
+}
+
+fn task_select_arm_bodies_use_binding(statement: &Statement, binding: &str) -> bool {
+    statement_task_select(statement).is_some_and(|arms| {
+        arms.iter().any(|arm| {
+            arm.body
+                .iter()
+                .any(|statement| statement_uses_binding(statement, binding))
+        })
+    })
 }
 
 fn statement_uses_binding(statement: &Statement, binding: &str) -> bool {
@@ -666,6 +686,30 @@ fn async_channel_result_owned_field(index: usize) -> String {
     format!("nomo_async_channel_result_owned_{index}")
 }
 
+fn async_select_token_field(index: usize) -> String {
+    format!("nomo_async_select_token_{index}")
+}
+
+fn async_select_receive_registration_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_receive_registration_{index}_{arm}")
+}
+
+fn async_select_timer_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_timer_{index}_{arm}")
+}
+
+fn async_select_timer_outcome_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_timer_outcome_{index}_{arm}")
+}
+
+fn async_select_result_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_result_{index}_{arm}")
+}
+
+fn async_select_result_owned_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_result_owned_{index}_{arm}")
+}
+
 fn async_sleep_result_type() -> ValueType {
     ValueType::Enum(
         "Result".to_string(),
@@ -739,6 +783,36 @@ fn emit_async_frame_type(
         }
     }
     for (index, statement) in function.body.iter().enumerate() {
+        if let Some(arms) = statement_task_select(statement) {
+            out.push_str("    nomo_async_select_token ");
+            out.push_str(&async_select_token_field(index));
+            out.push_str(";\n");
+            for (arm_index, arm) in arms.iter().enumerate() {
+                match &arm.operation {
+                    TaskSelectOperation::Receive { element_type, .. } => {
+                        out.push_str("    nomo_channel_receive_registration_");
+                        out.push_str(&c_type_name_part(element_type));
+                        out.push(' ');
+                        out.push_str(&async_select_receive_registration_field(index, arm_index));
+                        out.push_str(";\n");
+                    }
+                    TaskSelectOperation::Sleep { .. } => {
+                        out.push_str("    nomo_async_timer_registration ");
+                        out.push_str(&async_select_timer_field(index, arm_index));
+                        out.push_str(";\n    nomo_async_timer_outcome ");
+                        out.push_str(&async_select_timer_outcome_field(index, arm_index));
+                        out.push_str(";\n");
+                    }
+                }
+                out.push_str("    ");
+                out.push_str(&c_type(&arm.binding_type));
+                out.push(' ');
+                out.push_str(&async_select_result_field(index, arm_index));
+                out.push_str(";\n    uint8_t ");
+                out.push_str(&async_select_result_owned_field(index, arm_index));
+                out.push_str(";\n");
+            }
+        }
         if let Some(send) = statement_async_channel_send(statement) {
             out.push_str("    nomo_channel_send_registration_");
             out.push_str(send.suffix);
@@ -1089,6 +1163,18 @@ fn emit_async_channel_cancellations(out: &mut String, function: &Function, inden
     }
 }
 
+fn emit_async_select_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_task_select(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_select_cancel(&frame->");
+        out.push_str(&async_select_token_field(index));
+        out.push_str(");\n");
+    }
+}
+
 #[allow(clippy::too_many_arguments)]
 fn emit_async_question_let(
     out: &mut String,
@@ -1291,6 +1377,7 @@ fn emit_async_deadline_failure(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_select_cancellations(out, function, indent);
     emit_async_channel_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
@@ -1383,6 +1470,7 @@ fn emit_async_child_failure_propagation(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_select_cancellations(out, function, indent + 1);
     emit_async_channel_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
@@ -1468,6 +1556,7 @@ fn emit_async_cancel_function(
         out.push_str(&async_timer_field(index));
         out.push_str(", context);\n");
     }
+    emit_async_select_cancellations(out, function, 1);
     emit_async_channel_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
@@ -1508,12 +1597,28 @@ fn next_async_suspend(function: &Function, start: usize, async_names: &BTreeSet<
 }
 
 fn emit_async_timer_result_materialize(out: &mut String, index: usize, indent: usize) {
+    emit_async_timer_result_materialize_fields(
+        out,
+        &async_timer_result_field(index),
+        &async_timer_outcome_field(index),
+        &async_timer_result_owned_field(index),
+        indent,
+    );
+}
+
+fn emit_async_timer_result_materialize_fields(
+    out: &mut String,
+    result_field: &str,
+    outcome_field: &str,
+    owned_field: &str,
+    indent: usize,
+) {
     let result_type = async_sleep_result_type();
     let ValueType::Enum(_, result_args) = &result_type else {
         unreachable!("sleep result is always a Result enum");
     };
-    let result = format!("frame->{}", async_timer_result_field(index));
-    let outcome = format!("frame->{}", async_timer_outcome_field(index));
+    let result = format!("frame->{result_field}");
+    let outcome = format!("frame->{outcome_field}");
     write_indent(out, indent);
     out.push_str("memset(&");
     out.push_str(&result);
@@ -1566,8 +1671,326 @@ fn emit_async_timer_result_materialize(out: &mut String, index: usize, indent: u
     out.push_str("}\n");
     write_indent(out, indent);
     out.push_str("frame->");
-    out.push_str(&async_timer_result_owned_field(index));
+    out.push_str(owned_field);
     out.push_str(" = 1u;\n");
+}
+
+fn async_select_channel_local(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_channel_{index}_{arm}")
+}
+
+fn async_select_duration_local(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_duration_{index}_{arm}")
+}
+
+fn emit_async_select_operands(
+    out: &mut String,
+    index: usize,
+    arms: &[TaskSelectArm],
+    indent: usize,
+) {
+    for (arm_index, arm) in arms.iter().enumerate() {
+        write_indent(out, indent);
+        match &arm.operation {
+            TaskSelectOperation::Receive {
+                channel,
+                element_type,
+            } => {
+                out.push_str(&c_type(&ValueType::Struct(
+                    "Channel".to_string(),
+                    vec![element_type.clone()],
+                )));
+                out.push(' ');
+                out.push_str(&async_select_channel_local(index, arm_index));
+                out.push_str(" = ");
+                emit_expr(out, channel);
+                out.push_str(";\n");
+            }
+            TaskSelectOperation::Sleep { duration } => {
+                out.push_str("int64_t ");
+                out.push_str(&async_select_duration_local(index, arm_index));
+                out.push_str(" = (");
+                emit_expr(out, duration);
+                out.push_str(").nomo_member_millis;\n");
+            }
+        }
+    }
+}
+
+fn emit_async_select_start(
+    out: &mut String,
+    index: usize,
+    state: u32,
+    arms: &[TaskSelectArm],
+    indent: usize,
+) {
+    let token = async_select_token_field(index);
+    write_indent(out, indent);
+    out.push_str("nomo_async_select_init(&frame->");
+    out.push_str(&token);
+    out.push_str(", ");
+    out.push_str(&arms.len().to_string());
+    out.push_str("u, context);\n");
+    for (arm_index, arm) in arms.iter().enumerate() {
+        match &arm.operation {
+            TaskSelectOperation::Receive { element_type, .. } => {
+                let suffix = c_type_name_part(element_type);
+                let registration = async_select_receive_registration_field(index, arm_index);
+                write_indent(out, indent);
+                out.push_str("if (nomo_channel_receive_start_");
+                out.push_str(&suffix);
+                out.push_str("(&frame->");
+                out.push_str(&registration);
+                out.push_str(", ");
+                out.push_str(&async_select_channel_local(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_select_result_field(index, arm_index));
+                out.push_str(", &frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == NOMO_ASYNC_POLL_READY) {\n");
+                write_indent(out, indent + 1);
+                out.push_str("frame->");
+                out.push_str(&async_select_result_owned_field(index, arm_index));
+                out.push_str(" = 1u;\n");
+                write_indent(out, indent + 1);
+                out.push_str("if (nomo_async_select_immediate_win(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == 0) {\n");
+                write_indent(out, indent + 2);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 2);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 1);
+                out.push_str("}\n");
+                write_indent(out, indent + 1);
+                out.push_str("goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("}\n");
+                write_indent(out, indent);
+                out.push_str("nomo_async_select_register(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u, &frame->");
+                out.push_str(&registration);
+                out.push_str(", nomo_channel_receive_select_cancel_");
+                out.push_str(&suffix);
+                out.push_str(");\n");
+            }
+            TaskSelectOperation::Sleep { .. } => {
+                let timer = async_select_timer_field(index, arm_index);
+                let outcome = async_select_timer_outcome_field(index, arm_index);
+                write_indent(out, indent);
+                out.push_str("if (nomo_async_timer_start(&frame->");
+                out.push_str(&timer);
+                out.push_str(", ");
+                out.push_str(&async_select_duration_local(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&outcome);
+                out.push_str(", &frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == NOMO_ASYNC_POLL_READY) {\n");
+                emit_async_timer_result_materialize_fields(
+                    out,
+                    &async_select_result_field(index, arm_index),
+                    &outcome,
+                    &async_select_result_owned_field(index, arm_index),
+                    indent + 1,
+                );
+                write_indent(out, indent + 1);
+                out.push_str("if (nomo_async_select_immediate_win(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == 0) {\n");
+                write_indent(out, indent + 2);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 2);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 1);
+                out.push_str("}\n");
+                write_indent(out, indent + 1);
+                out.push_str("goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("}\n");
+                write_indent(out, indent);
+                out.push_str("nomo_async_select_register(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u, &frame->");
+                out.push_str(&timer);
+                out.push_str(", nomo_async_timer_select_cancel);\n");
+            }
+        }
+    }
+    write_indent(out, indent);
+    out.push_str("nomo_async_select_suspend(&frame->");
+    out.push_str(&token);
+    out.push_str(");\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_PENDING;\n");
+}
+
+fn emit_async_select_resume_and_body(
+    out: &mut String,
+    index: usize,
+    arms: &[TaskSelectArm],
+    function: &Function,
+    frame_locals: &[AsyncFrameLocal],
+    indent: usize,
+) {
+    let token = async_select_token_field(index);
+    write_indent(out, indent);
+    out.push_str("if (frame->");
+    out.push_str(&token);
+    out.push_str(".winner == NOMO_ASYNC_SELECT_PENDING) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("nomo_async_select_suspend(&frame->");
+    out.push_str(&token);
+    out.push_str(");\n");
+    write_indent(out, indent + 1);
+    out.push_str("return NOMO_ASYNC_POLL_PENDING;\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    for (arm_index, arm) in arms.iter().enumerate() {
+        write_indent(out, indent);
+        out.push_str("if (frame->");
+        out.push_str(&token);
+        out.push_str(".winner == ");
+        out.push_str(&arm_index.to_string());
+        out.push_str("u) {\n");
+        for local in frame_locals
+            .iter()
+            .filter(|local| local.declaration_index < index)
+            .filter(|local| {
+                arm.body
+                    .iter()
+                    .any(|statement| statement_uses_binding(statement, &local.name))
+            })
+        {
+            emit_async_frame_alias(out, local, indent + 1);
+        }
+        write_indent(out, indent + 1);
+        out.push_str("if (frame->");
+        out.push_str(&token);
+        out.push_str(".suspended != 0u) {\n");
+        match &arm.operation {
+            TaskSelectOperation::Receive { element_type, .. } => {
+                let suffix = c_type_name_part(element_type);
+                write_indent(out, indent + 2);
+                out.push_str("if (nomo_channel_receive_resume_");
+                out.push_str(&suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_select_receive_registration_field(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_select_result_field(index, arm_index));
+                out.push_str(") == NOMO_ASYNC_POLL_PENDING) {\n");
+                write_indent(out, indent + 3);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 3);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 2);
+                out.push_str("}\n");
+                write_indent(out, indent + 2);
+                out.push_str("frame->");
+                out.push_str(&async_select_result_owned_field(index, arm_index));
+                out.push_str(" = 1u;\n");
+            }
+            TaskSelectOperation::Sleep { .. } => {
+                write_indent(out, indent + 2);
+                out.push_str("if (nomo_async_timer_resume(&frame->");
+                out.push_str(&async_select_timer_field(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_select_timer_outcome_field(index, arm_index));
+                out.push_str(") == NOMO_ASYNC_POLL_PENDING) {\n");
+                write_indent(out, indent + 3);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 3);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 2);
+                out.push_str("}\n");
+                emit_async_timer_result_materialize_fields(
+                    out,
+                    &async_select_result_field(index, arm_index),
+                    &async_select_timer_outcome_field(index, arm_index),
+                    &async_select_result_owned_field(index, arm_index),
+                    indent + 2,
+                );
+            }
+        }
+        write_indent(out, indent + 1);
+        out.push_str("}\n");
+        write_indent(out, indent + 1);
+        out.push_str("nomo_async_select_complete(&frame->");
+        out.push_str(&token);
+        out.push_str(", ");
+        out.push_str(&arm_index.to_string());
+        out.push_str("u);\n");
+        write_indent(out, indent + 1);
+        out.push_str(&c_type(&arm.binding_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(&arm.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_select_result_field(index, arm_index));
+        out.push_str(";\n");
+        if value_type_needs_release(&arm.binding_type) {
+            write_indent(out, indent + 1);
+            out.push_str("frame->");
+            out.push_str(&async_select_result_owned_field(index, arm_index));
+            out.push_str(" = 0u;\n");
+        }
+        let mut active_arrays = Vec::new();
+        if let Some(local) = local_array(&arm.binding, &arm.binding_type) {
+            active_arrays.push(local);
+        }
+        emit_block(
+            out,
+            &arm.body,
+            indent + 1,
+            &[],
+            &function.return_type,
+            &active_arrays,
+            0,
+            0,
+            0,
+            0,
+        );
+        if value_type_needs_release(&arm.binding_type) {
+            emit_value_release_binding(out, &arm.binding, &arm.binding_type, indent + 1);
+        }
+        write_indent(out, indent + 1);
+        out.push_str("goto nomo_async_select_done_");
+        out.push_str(&index.to_string());
+        out.push_str(";\n");
+        write_indent(out, indent);
+        out.push_str("}\n");
+    }
+    write_indent(out, indent);
+    out.push_str("context->runtime_failed = 1u;\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+    out.push_str("nomo_async_select_done_");
+    out.push_str(&index.to_string());
+    out.push_str(":\n");
+    write_indent(out, indent);
+    out.push_str(";\n");
+    for local in frame_locals
+        .iter()
+        .filter(|local| local.last_use_index == index)
+    {
+        emit_async_frame_field_drop(out, local, indent);
+    }
 }
 
 fn emit_structured_join_result_materialize(
@@ -1749,7 +2172,8 @@ typedef enum {
     NOMO_ASYNC_PENDING_JOIN = 3,
     NOMO_ASYNC_PENDING_PANIC = 4,
     NOMO_ASYNC_PENDING_CANCEL = 5,
-    NOMO_ASYNC_PENDING_CHANNEL = 6
+    NOMO_ASYNC_PENDING_CHANNEL = 6,
+    NOMO_ASYNC_PENDING_SELECT = 7
 } nomo_async_pending_reason;
 
 typedef enum {
@@ -1769,14 +2193,33 @@ typedef enum {
 
 typedef struct nomo_async_context nomo_async_context;
 typedef nomo_async_poll (*nomo_async_poll_fn)(void *, nomo_async_context *);
+typedef struct nomo_async_select_token nomo_async_select_token;
+typedef void (*nomo_async_select_cancel_fn)(void *, nomo_async_context *);
 
 #define NOMO_ASYNC_READY_CAPACITY 64u
 #define NOMO_ASYNC_TIMER_CAPACITY 64u
+#define NOMO_ASYNC_SELECT_MAX_ARMS 8u
+#define NOMO_ASYNC_SELECT_PENDING UINT32_MAX
+
+struct nomo_async_select_token {
+    nomo_async_context *context;
+    void *frame;
+    nomo_async_poll_fn poll;
+    void *registrations[NOMO_ASYNC_SELECT_MAX_ARMS];
+    nomo_async_select_cancel_fn cancel[NOMO_ASYNC_SELECT_MAX_ARMS];
+    uint32_t arm_count;
+    uint32_t winner;
+    uint8_t active;
+    uint8_t suspended;
+    uint8_t enqueued;
+};
 
 typedef struct {
     uint32_t slot;
     uint32_t generation;
     int64_t deadline_millis;
+    nomo_async_select_token *select_token;
+    uint32_t select_arm;
     uint8_t armed;
     uint8_t expired;
 } nomo_async_timer_registration;
@@ -1827,6 +2270,11 @@ struct nomo_async_context {
     uint64_t channel_wakeups;
     uint64_t channel_closes;
     uint64_t channel_cancellations;
+    uint64_t select_registrations;
+    uint64_t select_immediate_wins;
+    uint64_t select_suspended_wins;
+    uint64_t select_loser_cancellations;
+    uint64_t select_cancellations;
     uint64_t live_channel_buffered_elements;
     uint64_t peak_live_channel_buffered_elements;
     uint64_t live_channel_send_waiters;
@@ -1866,6 +2314,123 @@ static int nomo_async_ready_enqueue(
     context->ready_count += 1u;
     context->ready_queue_enqueues += 1u;
     return 0;
+}
+
+static void nomo_async_select_init(
+    nomo_async_select_token *token,
+    uint32_t arm_count,
+    nomo_async_context *context
+) {
+    memset(token, 0, sizeof(*token));
+    token->context = context;
+    token->frame = context->current_frame;
+    token->poll = context->current_poll;
+    token->arm_count = arm_count;
+    token->winner = NOMO_ASYNC_SELECT_PENDING;
+    token->active = 1u;
+}
+
+static void nomo_async_select_register(
+    nomo_async_select_token *token,
+    uint32_t arm,
+    void *registration,
+    nomo_async_select_cancel_fn cancel
+) {
+    if (token == NULL
+        || token->active == 0u
+        || token->winner != NOMO_ASYNC_SELECT_PENDING
+        || arm >= token->arm_count
+        || arm >= NOMO_ASYNC_SELECT_MAX_ARMS) {
+        return;
+    }
+    token->registrations[arm] = registration;
+    token->cancel[arm] = cancel;
+    token->context->select_registrations += 1u;
+}
+
+static int nomo_async_select_claim(
+    nomo_async_select_token *token,
+    uint32_t arm
+) {
+    if (token == NULL
+        || token->active == 0u
+        || token->winner != NOMO_ASYNC_SELECT_PENDING
+        || arm >= token->arm_count) {
+        return 0;
+    }
+    token->winner = arm;
+    for (uint32_t index = 0u; index < token->arm_count; index += 1u) {
+        if (index == arm || token->registrations[index] == NULL) {
+            continue;
+        }
+        token->cancel[index](token->registrations[index], token->context);
+        token->registrations[index] = NULL;
+        token->cancel[index] = NULL;
+        token->context->select_loser_cancellations += 1u;
+    }
+    return 1;
+}
+
+static int nomo_async_select_immediate_win(
+    nomo_async_select_token *token,
+    uint32_t arm
+) {
+    if (nomo_async_select_claim(token, arm) == 0) {
+        return 0;
+    }
+    token->context->select_immediate_wins += 1u;
+    return 1;
+}
+
+static void nomo_async_select_suspend(nomo_async_select_token *token) {
+    token->suspended = 1u;
+    token->context->pending_reason = NOMO_ASYNC_PENDING_SELECT;
+}
+
+static void nomo_async_select_wake(nomo_async_select_token *token) {
+    if (token == NULL
+        || token->active == 0u
+        || token->suspended == 0u
+        || token->enqueued != 0u) {
+        return;
+    }
+    token->enqueued = 1u;
+    token->context->select_suspended_wins += 1u;
+    if (nomo_async_ready_enqueue(token->context, token->frame, token->poll) != 0) {
+        token->context->runtime_failed = 1u;
+    }
+}
+
+static void nomo_async_select_complete(
+    nomo_async_select_token *token,
+    uint32_t winner
+) {
+    if (token == NULL || token->active == 0u || token->winner != winner) {
+        return;
+    }
+    token->registrations[winner] = NULL;
+    token->cancel[winner] = NULL;
+    token->active = 0u;
+    token->suspended = 0u;
+    token->enqueued = 0u;
+}
+
+static void nomo_async_select_cancel(nomo_async_select_token *token) {
+    if (token == NULL || token->active == 0u) {
+        return;
+    }
+    for (uint32_t index = 0u; index < token->arm_count; index += 1u) {
+        if (token->registrations[index] == NULL) {
+            continue;
+        }
+        token->cancel[index](token->registrations[index], token->context);
+        token->registrations[index] = NULL;
+        token->cancel[index] = NULL;
+        token->context->select_cancellations += 1u;
+    }
+    token->active = 0u;
+    token->suspended = 0u;
+    token->enqueued = 0u;
 }
 
 static int nomo_async_ready_dequeue(
@@ -1921,7 +2486,9 @@ static nomo_async_poll nomo_async_timer_start(
     nomo_async_timer_registration *registration,
     int64_t duration_millis,
     nomo_async_context *context,
-    nomo_async_timer_outcome *outcome
+    nomo_async_timer_outcome *outcome,
+    nomo_async_select_token *select_token,
+    uint32_t select_arm
 ) {
     if (duration_millis <= 0) {
         *outcome = NOMO_ASYNC_TIMER_OUTCOME_OK;
@@ -1953,6 +2520,8 @@ static nomo_async_poll nomo_async_timer_start(
     registration->slot = slot_index;
     registration->generation = context->next_timer_generation;
     registration->deadline_millis = deadline;
+    registration->select_token = select_token;
+    registration->select_arm = select_arm;
     registration->armed = 1u;
     registration->expired = 0u;
     nomo_async_timer_slot *slot = &context->timers[slot_index];
@@ -1979,6 +2548,7 @@ static nomo_async_poll nomo_async_timer_resume(
 ) {
     if (registration->expired != 0u) {
         registration->expired = 0u;
+        registration->select_token = NULL;
         *outcome = NOMO_ASYNC_TIMER_OUTCOME_OK;
         return NOMO_ASYNC_POLL_READY;
     }
@@ -2022,6 +2592,8 @@ static nomo_async_timer_outcome nomo_async_deadline_arm(
     registration->slot = slot_index;
     registration->generation = context->next_timer_generation;
     registration->deadline_millis = deadline;
+    registration->select_token = NULL;
+    registration->select_arm = 0u;
     registration->armed = 1u;
     registration->expired = 0u;
     nomo_async_timer_slot *slot = &context->timers[slot_index];
@@ -2046,6 +2618,7 @@ static void nomo_async_timer_disarm(
 ) {
     if (registration->armed == 0u) {
         registration->expired = 0u;
+        registration->select_token = NULL;
         return;
     }
     if (registration->slot < NOMO_ASYNC_TIMER_CAPACITY) {
@@ -2065,6 +2638,17 @@ static void nomo_async_timer_disarm(
     }
     registration->armed = 0u;
     registration->expired = 0u;
+    registration->select_token = NULL;
+}
+
+static void nomo_async_timer_select_cancel(
+    void *raw_registration,
+    nomo_async_context *context
+) {
+    nomo_async_timer_disarm(
+        (nomo_async_timer_registration *)raw_registration,
+        context
+    );
 }
 
 static int nomo_async_deadline_due(
@@ -2164,6 +2748,12 @@ static int nomo_async_timer_wait_next(nomo_async_context *context) {
         || registration->generation != slot->generation) {
         return 1;
     }
+    nomo_async_select_token *select_token = registration->select_token;
+    if (select_token != NULL
+        && nomo_async_select_claim(select_token, registration->select_arm) == 0) {
+        context->runtime_failed = 1u;
+        return 1;
+    }
     registration->armed = 0u;
     registration->expired = 1u;
     slot->occupied = 0u;
@@ -2174,6 +2764,10 @@ static int nomo_async_timer_wait_next(nomo_async_context *context) {
         context->live_timers -= 1u;
     }
     context->timer_expirations += 1u;
+    if (select_token != NULL) {
+        nomo_async_select_wake(select_token);
+        return context->runtime_failed != 0u;
+    }
     return nomo_async_ready_enqueue(context, frame, poll);
 }
 
@@ -2212,7 +2806,8 @@ static int nomo_async_executor_run_root(
         }
     } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
         && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
-        && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL) {
+        && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL
+        && context->pending_reason != NOMO_ASYNC_PENDING_SELECT) {
         return 1;
     }
     while (context->ready_count != 0u || context->live_timers != 0u) {
@@ -2239,7 +2834,8 @@ static int nomo_async_executor_run_root(
                 }
             } else if (context->pending_reason != NOMO_ASYNC_PENDING_TIMER
                 && context->pending_reason != NOMO_ASYNC_PENDING_JOIN
-                && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL) {
+                && context->pending_reason != NOMO_ASYNC_PENDING_CHANNEL
+                && context->pending_reason != NOMO_ASYNC_PENDING_SELECT) {
                 return 1;
             }
         }
@@ -2295,6 +2891,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"channel_wakeups\": %" PRIu64 ",\n"
         "    \"channel_closes\": %" PRIu64 ",\n"
         "    \"channel_cancellations\": %" PRIu64 ",\n"
+        "    \"select_registrations\": %" PRIu64 ",\n"
+        "    \"select_immediate_wins\": %" PRIu64 ",\n"
+        "    \"select_suspended_wins\": %" PRIu64 ",\n"
+        "    \"select_loser_cancellations\": %" PRIu64 ",\n"
+        "    \"select_cancellations\": %" PRIu64 ",\n"
         "    \"live_channel_buffered_elements\": %" PRIu64 ",\n"
         "    \"peak_live_channel_buffered_elements\": %" PRIu64 ",\n"
         "    \"live_channel_send_waiters\": %" PRIu64 ",\n"
@@ -2345,6 +2946,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->channel_wakeups,
         context->channel_closes,
         context->channel_cancellations,
+        context->select_registrations,
+        context->select_immediate_wins,
+        context->select_suspended_wins,
+        context->select_loser_cancellations,
+        context->select_cancellations,
         context->live_channel_buffered_elements,
         context->peak_live_channel_buffered_elements,
         context->live_channel_send_waiters,
@@ -2407,7 +3013,9 @@ pub(super) fn emit_async_function(
     let mut emitted_terminal_return = false;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
-        if statement_is_within_async_deadline(function, index) {
+        if statement_is_within_async_deadline(function, index)
+            && statement_task_select(statement).is_none()
+        {
             emit_async_deadline_due_check(out, function, async_names, 3);
         }
         if let Some(duration) = statement_async_deadline_enter(statement) {
@@ -2528,6 +3136,7 @@ pub(super) fn emit_async_function(
             let sleep = statement_async_sleep(statement);
             let channel_send = statement_async_channel_send(statement);
             let channel_receive = statement_async_channel_receive(statement);
+            let select = statement_task_select(statement);
             let join = statement_structured_join(statement);
             let cancel_join = statement_structured_cancel_join(statement);
             if join.is_some() {
@@ -2539,6 +3148,12 @@ pub(super) fn emit_async_function(
                 out.push_str(" = (");
                 emit_expr(out, duration);
                 out.push_str(").nomo_member_millis;\n");
+            }
+            if let Some(arms) = select {
+                emit_async_select_operands(out, index, arms, 3);
+                if statement_is_within_async_deadline(function, index) {
+                    emit_async_deadline_due_check(out, function, async_names, 3);
+                }
             }
             let call = statement_async_call(statement, async_names);
             if let Some(call) = call {
@@ -2589,7 +3204,9 @@ pub(super) fn emit_async_function(
             out.push_str("            frame->state = ");
             out.push_str(&state.to_string());
             out.push_str("u;\n");
-            if statement_is_async_yield(statement) {
+            if let Some(arms) = select {
+                emit_async_select_start(out, index, state, arms, 3);
+            } else if statement_is_async_yield(statement) {
                 out.push_str("            context->yield_count += 1u;\n");
                 out.push_str("            context->pending_reason = NOMO_ASYNC_PENDING_YIELD;\n");
                 out.push_str("            return NOMO_ASYNC_POLL_PENDING;\n");
@@ -2625,7 +3242,7 @@ pub(super) fn emit_async_function(
                 out.push_str(", context, &frame->");
                 out.push_str(&async_channel_result_field(index));
                 out.push_str(
-                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                    ", NULL, 0u) == NOMO_ASYNC_POLL_PENDING) {\n\
                                  return NOMO_ASYNC_POLL_PENDING;\n\
                              }\n",
                 );
@@ -2643,7 +3260,7 @@ pub(super) fn emit_async_function(
                 out.push_str(", context, &frame->");
                 out.push_str(&async_timer_outcome_field(index));
                 out.push_str(
-                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                    ", NULL, 0u) == NOMO_ASYNC_POLL_PENDING) {\n\
                                  return NOMO_ASYNC_POLL_PENDING;\n\
                              }\n",
                 );
@@ -2825,10 +3442,14 @@ pub(super) fn emit_async_function(
                 || call.is_some()
                 || join.is_some()
                 || cancel_join.is_some()
+                || select.is_some()
             {
                 out.push_str("nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(":\n            ;\n");
+            }
+            if let Some(arms) = select {
+                emit_async_select_resume_and_body(out, index, arms, function, &frame_locals, 3);
             }
             segment_start = index + 1;
             let segment_end = next_async_suspend(function, segment_start, async_names);
@@ -3241,7 +3862,22 @@ pub(super) fn emit_async_function(
         out.push_str(&async_child_field(index));
         out.push_str(");\n");
     }
+    emit_async_select_cancellations(out, function, 1);
     emit_async_channel_cancellations(out, function, 1);
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(arms) = statement_task_select(statement) else {
+            continue;
+        };
+        for (arm_index, arm) in arms.iter().enumerate().rev() {
+            emit_async_owned_field_drop(
+                out,
+                &arm.binding_type,
+                &async_select_result_owned_field(index, arm_index),
+                &async_select_result_field(index, arm_index),
+                1,
+            );
+        }
+    }
     for (index, statement) in function.body.iter().enumerate().rev() {
         let channel_value_type = statement_async_channel_send(statement)
             .map(|send| send.value_type)

@@ -117,6 +117,70 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn parses_static_task_select_arms() {
+    let source = r#"package app.main
+
+import std.task
+import std.time
+
+suspend fn main(channel_value: Channel<string>) -> void {
+    task.select {
+        task.receive(channel_value) => received {
+            let value = received
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            let value = timeout
+        }
+    }
+}
+"#;
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    let Stmt::TaskSelect { arms, .. } = &ast.functions[0].body[0] else {
+        panic!("expected task.select statement");
+    };
+    assert_eq!(arms.len(), 2);
+    assert_eq!(arms[0].binding, "received");
+    assert!(matches!(
+        &arms[0].operation,
+        Expr::Call { callee, args, .. }
+            if callee == &["task", "receive"]
+                && matches!(
+                    args.as_slice(),
+                    [Expr::Name(name)] if name == &vec!["channel_value".to_string()]
+                )
+    ));
+    assert_eq!(arms[1].binding, "timeout");
+    assert!(matches!(
+        &arms[1].operation,
+        Expr::Call { callee, args, .. }
+            if callee == &["task", "sleep"] && args.len() == 1
+    ));
+}
+
+#[test]
+fn rejects_static_task_select_outside_the_two_to_eight_arm_range() {
+    let source = r#"package app.main
+
+import std.task
+
+suspend fn main(channel_value: Channel<string>) -> void {
+    task.select {
+        task.receive(channel_value) => received {
+            let value = received
+        }
+    }
+}
+"#;
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let error = parse(Path::new("main.nomo"), &tokens).unwrap_err();
+
+    assert_eq!(error.code, "E0886");
+    assert!(error.message.contains("2 through 8"));
+}
+
+#[test]
 fn rejects_suspend_extern_functions() {
     let source = "package app.main\n\nextern \"C\" {\n    suspend fn wait() -> void\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

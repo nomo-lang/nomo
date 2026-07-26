@@ -197,7 +197,39 @@ returns `runtime_unavailable` without evaluating capacity. Other channel
 operations report a sandbox capability error before evaluating a channel
 operand or send value that would be consumed.
 
-## Implemented P1 and P3-B Slices
+### Static receive/timer select
+
+P3-C adds one compiler-recognized statement with 2 through 8 static arms:
+
+```nomo
+task.select {
+    task.receive(messages) => message {
+        consume(message)
+    }
+    task.sleep(time.duration_millis(50)) => timeout {
+        observe(timeout)
+    }
+}
+```
+
+The first slice accepts only direct `task.receive(Channel<T>)` and
+`task.sleep(Duration)` operations. Every operand evaluates exactly once from
+top to bottom before cancellation/deadline readiness checks. If multiple arms
+are already ready, the first source-order arm wins. Otherwise each arm
+registers against the same owner-local select token; the first successful
+claim eagerly unlinks or disarms every loser and enqueues the owner frame at
+most once. A late loser event cannot execute an arm body.
+
+Each arm binds its operation result (`Option<T>` or
+`Result<void, TaskError>`) in a non-empty lexical body. This initial lowering
+requires normal fallthrough and rejects `return`, `break`, `continue`, `?`,
+panic, defer, nested scope/deadline/select, and suspending arm bodies with
+E0876. Send/join/select operations and general structured exits remain later
+slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
+operand rather than approximating select sequentially. See
+[`examples/async_static_select`](../examples/async_static_select).
+
+## Implemented P1 and P3-B/P3-C Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -228,6 +260,9 @@ On the native C99 backend, a suspend call chain that reaches
   immediate non-positive timeout, saturating monotonic deadline calculation,
   deterministic ready/timeout checks, typed child failure, and child-first
   cancellation cleanup;
+- static receive/timer select tokens with source-order ready arbitration,
+  exactly-once operand evaluation, one owner-frame wake, eager loser cleanup,
+  and no heap task or per-select allocation;
 - compiler-inserted scope cleanup on normal fallthrough and final `return` that
   cancels unjoined children, removes their ready-queue entries, disarms owned
   timers, and drops their frames before the next statement or return
@@ -292,8 +327,9 @@ block or evaluate its duration in the browser sandbox; it returns
 also not evaluated there yet; their join and structured cancel return the same
 stable error and consume the inert browser handle. `task.deadline` currently
 returns a sandbox capability error without evaluating either its duration or
-body. Channel operations use the capability behavior described above;
-host-driven browser deadlines and channels remain later backend slices.
+body. Channel operations use the capability behavior described above. Static
+select is also a capability error before operand evaluation; host-driven
+browser deadlines, channels, and select remain later backend slices.
 
 ## Deliberate Restrictions
 
@@ -351,8 +387,9 @@ then prints and releases the original message before exiting with status 1.
 runtime error while keeping structured child bodies inert. Nested scopes,
 nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
 other positions, panic nested in another expression, cancellation tokens,
-nested/general deadline exits, cross-shard channels, and static select remain
-later slices.
+nested/general deadline exits, cross-shard channels, and general send/join
+select remain later slices. P3-C's static receive/timer select is limited to
+non-empty fallthrough arm bodies without nested suspension.
 E0871, E0872, E0875, and E0876 reject unsupported cases before code
 generation.
 
@@ -388,6 +425,10 @@ handoff, full/empty try operations, buffered close, blocked sender/receiver
 wakeup, repeated close, timeout cancellation, typed value recovery,
 cross-suspension handle liveness, exact counters, native C99 and browser
 capability behavior, and AddressSanitizer/UndefinedBehaviorSanitizer cleanup.
+Static-select tests additionally cover source-order immediate readiness,
+suspend-and-wake arbitration, receive/timer loser removal, exact select/live
+resource counters, C99 generation, browser operand suppression, and
+AddressSanitizer cleanup.
 The P3 manifest runs the same capacity-eight 32-value exchange against pinned
 single-core Go while keeping the result ineligible for a performance claim.
 Later slices must still prove, rather than assume:
@@ -421,3 +462,5 @@ plus
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup).
 The bounded FIFO example is
 [`examples/async_bounded_channel`](../examples/async_bounded_channel).
+The static receive/timer selection example is
+[`examples/async_static_select`](../examples/async_static_select).

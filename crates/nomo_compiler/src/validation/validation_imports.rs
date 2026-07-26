@@ -198,6 +198,15 @@ pub(super) fn validate_stmt_type_imports(
             }
             Ok(())
         }
+        Stmt::TaskSelect { arms, .. } => {
+            for arm in arms {
+                validate_expr_type_imports(path, imports, &arm.operation, &arm.span)?;
+                for stmt in &arm.body {
+                    validate_stmt_type_imports(path, imports, stmt)?;
+                }
+            }
+            Ok(())
+        }
     }
 }
 

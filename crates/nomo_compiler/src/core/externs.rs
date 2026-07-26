@@ -474,6 +474,21 @@ fn validate_extern_stmt_is_unsafe(
             }
             Ok(())
         }
+        Stmt::TaskSelect { arms, .. } => {
+            for arm in arms {
+                validate_extern_expr_is_unsafe(
+                    path,
+                    &arm.operation,
+                    in_unsafe,
+                    extern_names,
+                    &arm.span,
+                )?;
+                for stmt in &arm.body {
+                    validate_extern_stmt_is_unsafe(path, stmt, in_unsafe, extern_names)?;
+                }
+            }
+            Ok(())
+        }
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
     }
 }

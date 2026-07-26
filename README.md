@@ -561,6 +561,13 @@ owner or return it through `ChannelSendError<T>`/`ChannelTrySend<T>`. The
 browser sandbox reports `runtime_unavailable` before evaluating unsupported
 consuming operands. Channel code adds no OS thread or atomic shim, and programs
 that never construct a channel emit no channel metadata.
+P3-C adds a compiler-recognized `task.select` with 2 through 8 direct
+`task.receive`/`task.sleep` arms. Operands evaluate once from top to bottom,
+already-ready arms resolve in source order, and a suspended winner eagerly
+removes every loser before one owner-frame wake. The first slice requires
+non-empty fallthrough arm bodies; send/join selection and general structured
+exits remain later work. Browser WASM reports a capability error before
+evaluating select operands.
 E0871, E0872, E0875, E0876, E0880, E0881, and E0883 reject invalid
 boundaries, ownership, targets, publication moves, and unsupported shapes.
 Mutable
@@ -568,7 +575,7 @@ parameters/locals, resource-handle wrappers, recursive suspend graphs,
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
 non-final scope return, cancellation tokens, nested/general deadline exits,
-cross-shard channels/static select,
+cross-shard channels, general send/join select,
 the multi-task timer wheel, and the async test runner land in later reviewable
 slices. See
 `examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
@@ -581,7 +588,7 @@ slices. See
 `examples/async_structured_explicit_cancel`,
 `examples/async_structured_deadline`,
 `examples/async_structured_panic_cleanup`,
-`examples/async_bounded_channel`, the
+`examples/async_bounded_channel`, `examples/async_static_select`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
 [P0/P1/P3 async benchmark gates](performance/async/README.md).
 

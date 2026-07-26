@@ -177,7 +177,37 @@ capacity 的情况下返回 `runtime_unavailable`；其他 channel operation 会
 求值可能被消费的 channel operand 或 send value 前报告 sandbox capability
 error。
 
-## 已实现的 P1 与 P3-B 小切片
+### 静态 receive/timer select
+
+P3-C 增加一个由编译器识别、包含 2 到 8 个静态 arm 的 statement：
+
+```nomo
+task.select {
+    task.receive(messages) => message {
+        consume(message)
+    }
+    task.sleep(time.duration_millis(50)) => timeout {
+        observe(timeout)
+    }
+}
+```
+
+首个切片只接受直接 `task.receive(Channel<T>)` 与 `task.sleep(Duration)`
+operation。全部 operand 会先按源码从上到下各求值一次，再执行
+cancellation/deadline readiness 检查。若多个 arm 已 ready，则源码中最靠前的
+arm 获胜；否则全部 arm 会注册到同一个 owner-local select token。第一个成功
+claim 会立即 unlink 或 disarm 所有 loser，并保证 owner frame 最多只入队一次；
+迟到的 loser event 不会执行 arm body。
+
+每个 arm 会在非空 lexical body 中绑定 operation result（`Option<T>` 或
+`Result<void, TaskError>`）。首个 lowering 要求 normal fallthrough，并以
+E0876 拒绝 `return`、`break`、`continue`、`?`、panic、defer、嵌套
+scope/deadline/select 以及会挂起的 arm body。send/join select 与 general
+structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand 前报告
+`runtime_unavailable`，不会用顺序执行伪装 select。示例见
+[`examples/async_static_select`](../examples/async_static_select)。
+
+## 已实现的 P1 与 P3-B/P3-C 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -204,6 +234,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - 每个 suspend function 可有一个非嵌套 `task.deadline(Duration)` scope，
   覆盖非正时长立即 timeout、饱和 monotonic deadline 计算、确定性的
   ready/timeout 检查、typed child failure 与 child-first cancellation cleanup；
+- static receive/timer select token，覆盖源码顺序 ready arbitration、operand
+  恰好一次求值、owner frame 单次 wake、eager loser cleanup，且不创建 heap
+  task 或 per-select allocation；
 - 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
   join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
   后语句或完成 return 前 drop frame；
@@ -257,8 +290,9 @@ host Promise 或浏览器 event loop。`task.sleep` 在 browser sandbox 中既�
 目前同样不会在 browser 中执行，其 join 和 structured cancel 返回同一稳定
 错误，并消费 inert browser handle。
 `task.deadline` 当前会在不求值 duration、也不执行 body 的前提下返回 sandbox
-capability error。Channel operation 遵循上面的 capability 行为；
-host-driven browser deadline 与 channel 属于后续 backend 小切片。
+capability error。Channel operation 遵循上面的 capability 行为。Static
+select 同样会在 operand 求值前报告 capability error；host-driven browser
+deadline、channel 与 select 属于后续 backend 小切片。
 
 ## 有意保留的限制
 
@@ -304,7 +338,9 @@ entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics e
 路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
 body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
 其他位置的 `?`、其他表达式内部的 panic、取消 token、嵌套/通用 deadline
-exit、跨 shard channel 与 static select 仍属于后续切片。
+exit、跨 shard channel 与通用 send/join select 仍属于后续切片。P3-C 的
+static receive/timer select 仅支持非空、normal fallthrough 且不包含嵌套
+suspension 的 arm body。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
@@ -335,7 +371,11 @@ deadline 测试还覆盖非正时长 body suppression、normal disarm、child fr
 full/empty try operation、buffered close、blocked sender/receiver wakeup、
 repeated close、timeout cancellation、typed value recovery、跨 suspension
 handle liveness、精确 counter、native C99/browser capability 行为与
-AddressSanitizer/UndefinedBehaviorSanitizer cleanup。P3 manifest 会把同一个
+AddressSanitizer/UndefinedBehaviorSanitizer cleanup。
+static-select 测试还会覆盖源码顺序 immediate readiness、suspend-and-wake
+arbitration、receive/timer loser removal、精确 select/live resource counter、
+C99 生成、browser operand suppression 与 AddressSanitizer cleanup。
+P3 manifest 会把同一个
 容量 8、32 个值的 exchange 与固定单核 Go 对照执行，但结果仍不具备
 performance claim 资格。
 后续实现仍必须用测试和证据证明：
@@ -363,3 +403,5 @@ P0/P1/P3 控制组与原始证据格式位于
 [`examples/async_structured_panic_cleanup`](../examples/async_structured_panic_cleanup)。
 有界 FIFO 示例位于
 [`examples/async_bounded_channel`](../examples/async_bounded_channel)。
+静态 receive/timer 选择示例位于
+[`examples/async_static_select`](../examples/async_static_select)。

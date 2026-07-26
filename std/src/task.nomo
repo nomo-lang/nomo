@@ -154,6 +154,23 @@ pub fn try_receive<T>(channel_value: Channel<T>) -> ChannelTryReceive<T> {
 /// normal fallthrough. Timeout cancels children and is observed by structured
 /// join. Browser WASM currently rejects the scope without evaluating duration
 /// or body.
+///
+/// Static receive/timer selection is also compiler recognized:
+///
+/// task.select {
+///     task.receive(channel_value) => received {
+///         consume(received)
+///     }
+///     task.sleep(duration) => timeout {
+///         observe(timeout)
+///     }
+/// }
+///
+/// The first P3-C slice accepts 2 through 8 `task.receive`/`task.sleep` arms.
+/// Operands evaluate once from top to bottom, an already-ready arm wins in
+/// source order, and a suspended winner eagerly removes every loser before
+/// waking the owner frame. Arm bodies must be non-empty and fall through.
+/// Browser WASM reports `runtime_unavailable` before evaluating operands.
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
     return task.spawn(worker, input)

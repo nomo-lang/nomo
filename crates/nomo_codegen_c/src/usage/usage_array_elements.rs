@@ -266,6 +266,26 @@ pub(super) fn collect_statement_array_elements(
                 }
             }
         }
+        Statement::TaskSelect { arms } => {
+            for arm in arms {
+                collect_type_array_elements(&arm.binding_type, seen, out);
+                match &arm.operation {
+                    TaskSelectOperation::Receive {
+                        channel,
+                        element_type,
+                    } => {
+                        collect_type_array_elements(element_type, seen, out);
+                        collect_expr_array_elements(channel, seen, out);
+                    }
+                    TaskSelectOperation::Sleep { duration } => {
+                        collect_expr_array_elements(duration, seen, out);
+                    }
+                }
+                for stmt in &arm.body {
+                    collect_statement_array_elements(stmt, seen, out);
+                }
+            }
+        }
         Statement::Defer { call } => collect_deferred_array_elements(call, seen, out),
         Statement::Break | Statement::Continue => {}
         Statement::Return(None) => {}

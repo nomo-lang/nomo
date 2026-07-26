@@ -214,6 +214,10 @@ pub enum Stmt {
         body: Vec<Stmt>,
         span: Span,
     },
+    TaskSelect {
+        arms: Vec<TaskSelectArm>,
+        span: Span,
+    },
     Unsafe {
         body: Vec<Stmt>,
         span: Span,
@@ -342,6 +346,14 @@ pub struct MatchStmtArm {
     pub pattern: Vec<String>,
     pub binding: Option<String>,
     pub body: Vec<Stmt>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSelectArm {
+    pub operation: Expr,
+    pub binding: String,
+    pub body: Vec<Stmt>,
+    pub span: Span,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

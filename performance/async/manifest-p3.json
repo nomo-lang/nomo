@@ -85,6 +85,17 @@
       "note": "Measures one capacity-eight same-shard producer/consumer exchange with deterministic backpressure and exact channel counters against the pinned single-core Go control; this is evidence, not a performance claim."
     },
     {
+      "id": "static_select_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P3",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/static_select_probe",
+      "expected_stdout": "static-select winner\n",
+      "snapshot": "snapshots/static-select-probe.json",
+      "note": "Proves source-ordered owner-local receive/timer arbitration, one suspended wake, eager loser cleanup, and zero live registrations at exit."
+    },
+    {
       "id": "task_spawn_complete",
       "kind": "required_async_workload",
       "available_phase": "P1",

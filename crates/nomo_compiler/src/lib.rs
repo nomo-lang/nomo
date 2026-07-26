@@ -323,7 +323,8 @@ pub use nomo_ir::{
     BinaryOp, Const, CronOperation, DeferredCall, EnumType, EnumVariantType, ExternFunction,
     Function, JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm,
     MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier,
-    Statement, StructField, StructType, UnaryOp, ValueExpr, ValueType,
+    Statement, StructField, StructType, TaskSelectArm, TaskSelectOperation, UnaryOp, ValueExpr,
+    ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

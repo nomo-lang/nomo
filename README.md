@@ -503,12 +503,13 @@ locals whose transitive value fields are frame-safe may live across a
 suspension: exact liveness decides which values enter each frame, and managed
 fields carry ownership bits for child-first idempotent completion or explicit
 early root drop. Positive sleeps use bounded, generation-checked owner-local
-monotonic timers and are not polled before expiry; non-positive sleeps complete
-inline without registration or queue traffic. Opt-in, versioned P1 probes
-export exact current-thread poll, yield, frame, ready-queue, and timer counters
-without changing normal stdout. Managed call arguments are evaluated once and
-retained or transferred into the child frame; owned results move out before
-child drop.
+monotonic timers and wait through a lazily initialized epoll, kqueue, or IOCP
+backend; non-positive sleeps complete inline without registration, queue
+traffic, or reactor initialization. Opt-in, versioned P1/P2 probes export exact
+current-thread poll, yield, frame, ready-queue, timer, and reactor lifecycle
+counters without changing normal stdout. Managed call arguments are evaluated
+once and retained or transferred into the child frame; owned results move out
+before child drop.
 The structured slice adds `task.scope`, direct `task.spawn child(args)`, and
 one-argument `task.join(handle)` and `task.cancel(handle)` for scope-owned
 `Task<T>` children. Spawned

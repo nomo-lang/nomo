@@ -207,7 +207,7 @@ structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand
 `runtime_unavailable`，不会用顺序执行伪装 select。示例见
 [`examples/async_static_select`](../examples/async_static_select)。
 
-## 已实现的 P1 与 P3-B/P3-C 小切片
+## 已实现的 P1、P2 Reactor Foundation 与 P3-B/P3-C 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -220,6 +220,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   用尽时明确报告 saturation，不允许无界增长；
 - 带 generation 校验、monotonic deadline、按 deadline/generation
   确定性排序与幂等 disarm 的有界 owner-local timer table；
+- 惰性初始化的 owner-local platform reactor：Linux 使用 epoll、macOS 使用
+  kqueue、Windows 使用 IOCP。正时长 timer 以有界 timeout 进入 reactor；
+  ready-only 工作与非正时长 timer 不初始化它；
 - 入同一有界 FIFO 的内嵌 structured child frame，以及 child 完成时重新入队
   parent 的单一 owner-local waiter edge；
 - structured spawn 无法进入 64 槽 ready queue 时，由 join 构造
@@ -246,13 +249,18 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - managed ARC/COW frame 字段各自的 ownership bit；
 - release 前先清 ownership bit、按 child-first 顺序执行的幂等 frame drop。
 
-这一小切片不会创建 OS thread、heap task、reactor 或 atomic metadata。ready
-的零时长 timer 不注册也不入队；正时长 timer 只有在 deadline 到达并把 owner
-frame 移入 ready queue 后才会再次 poll。生成的 context 会记录 poll、yield、
-frame drop/live frame、入队/出队/饱和/取消、
+这一小切片不会创建 OS thread、heap task 或 atomic metadata。ready 的零时长
+timer 不注册、不入队，也不初始化 reactor。正时长 timer 会惰性创建一个
+owner-local epoll、kqueue 或 IOCP instance，通过它等待而不是调用
+`Sleep`/`nanosleep`，并在 metrics export 前关闭。timer 只有在 deadline
+到达并把 owner frame 移入 ready queue 后才会再次 poll。生成的 context 会记录
+poll、yield、frame drop/live frame、入队/出队/饱和/取消、
 structured spawn/publication move/join/join suspension/取消、deadline
 注册/到期/解除，以及 timer
-注册/到期/取消/live/peak 计数。
+注册/到期/取消/live/peak 计数；同时记录 reactor 初始化、wait、timeout、
+completion、error、shutdown 与 live/peak 生命周期计数。纯 yield 探针要求所有
+reactor counter 为 0；正时长 timer 探针要求各一次初始化、wait、timeout 与
+shutdown，且退出时 live reactor 为 0。
 P3-B channel 还记录 construction binding、buffered/direct delivery、
 suspension、wakeup、close/cancel 与 buffer/waiter 的 live/peak 计数。
 Native 程序只在设置 `NOMO_ASYNC_METRICS_PATH` 时导出版本化
@@ -304,7 +312,9 @@ deadline、channel 与 select 属于后续 backend 小切片。
 async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
 handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
 内部挂起、下述 structured binding 之外的 `?`、其他表达式内部的 panic、
-取消 token 和 reactor I/O 都属于后续小 PR。
+取消 token 和 reactor-backed socket/process/HTTP operation 都属于后续小 PR。
+当前 P2 foundation 只统一 timer wait，尚不声称 network 或 process handle
+已经是 nonblocking。
 
 当前 deadline 小切片允许每个 suspend function 有一个非嵌套
 `task.deadline(Duration) { ... }`。body 遵循与 `task.scope` 相同的顶层

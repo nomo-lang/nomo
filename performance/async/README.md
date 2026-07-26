@@ -31,7 +31,11 @@ requires zero heap/slab frame allocations, two idempotent frame drops, peak two
 live frames, two queue round trips, five polls, and two cooperative yields. The
 timer probe requires an inline
 zero-duration ready path plus exactly one positive registration, expiry and
-queue round trip, two polls, no cancellation, and zero live timers at exit.
+queue round trip, two polls, no cancellation, and zero live timers at exit. It
+also requires one lazy platform-reactor initialization, bounded wait, timeout,
+and shutdown, with no reactor error or live reactor at exit. The yield-only
+probe requires zero reactor initialization, proving that ready work does not
+pay the handle cost.
 The spawn/complete workload runs 32 scope-owned Nomo `Task<void>` children and
 32 Go goroutines under the same pinned single-core configuration. It validates
 exact spawn/join/join-suspension counters and frame/queue cleanup, but remains
@@ -82,6 +86,12 @@ both losers are removed before a single owner-frame wake, and all waiter/timer
 live counters return to zero. The probe validates exact select counters and
 forbids thread or atomic symbols; it is a correctness gate, not a benchmark
 claim.
+
+The first P2 foundation emits epoll for Linux, kqueue for macOS, and IOCP for
+Windows. Existing positive timers now use the normalized reactor wait instead
+of a timer-specific sleep primitive. This is platform/lifecycle evidence, not
+async network evidence: TCP, HTTP/SSE, and process-pipe registrations remain
+disabled until their own fixture-backed slices land.
 
 ## Run
 

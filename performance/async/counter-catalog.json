@@ -270,6 +270,54 @@
       "available_phase": "P2"
     },
     {
+      "name": "reactor_initializations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Owner-local platform reactor instances initialized after the first operation must wait."
+    },
+    {
+      "name": "reactor_waits",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Blocking entries into epoll, kqueue, or IOCP with a bounded timer-derived timeout."
+    },
+    {
+      "name": "reactor_timeouts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Reactor waits that returned because their bounded timeout elapsed without a completion."
+    },
+    {
+      "name": "reactor_completions",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Normalized platform completion events returned by the owner-local reactor."
+    },
+    {
+      "name": "reactor_errors",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Reactor initialization, wait, or shutdown failures observed by the measured executor."
+    },
+    {
+      "name": "reactor_shutdowns",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Initialized owner-local platform reactor instances closed during root executor shutdown."
+    },
+    {
+      "name": "live_reactors",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Owner-local platform reactor instances still open when metrics are exported."
+    },
+    {
+      "name": "peak_live_reactors",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneously initialized reactor instances in the measured current-thread executor."
+    },
+    {
       "name": "local_retain",
       "unit": "count",
       "available_phase": "P1",

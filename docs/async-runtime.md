@@ -229,7 +229,7 @@ slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
 operand rather than approximating select sequentially. See
 [`examples/async_static_select`](../examples/async_static_select).
 
-## Implemented P1 and P3-B/P3-C Slices
+## Implemented P1, P2 Reactor Foundation, and P3-B/P3-C Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -243,6 +243,9 @@ On the native C99 backend, a suspend call chain that reaches
 - a bounded owner-local timer table with generation-checked registrations,
   monotonic deadlines, deterministic deadline/generation ordering, and
   idempotent disarm;
+- a lazily initialized owner-local platform reactor: epoll on Linux, kqueue on
+  macOS, and IOCP on Windows. Positive timers enter that reactor with a bounded
+  timeout; ready-only work and non-positive timers do not initialize it;
 - embedded structured child frames enqueued onto the same bounded FIFO, plus a
   single owner-local waiter edge that re-enqueues the parent when its child
   completes;
@@ -273,14 +276,21 @@ On the native C99 backend, a suspend call chain that reaches
 - per-field ownership bits for managed ARC/COW frame values;
 - idempotent child-first frame drop that clears ownership before release.
 
-This slice creates no OS thread, heap task, reactor, or atomic metadata. A
-ready zero-duration timer neither registers nor enters the queue. A positive
-timer is not polled again until its deadline moves the owner frame to the ready
-queue. The generated context records poll, yield, frame-drop/live-frame,
+This slice creates no OS thread, heap task, or atomic metadata. A ready
+zero-duration timer neither registers, enters the queue, nor initializes the
+reactor. A positive timer lazily creates one owner-local epoll, kqueue, or IOCP
+instance, waits through it rather than `Sleep`/`nanosleep`, and closes it before
+metrics export. The timer is not polled again until its deadline moves the
+owner frame to the ready queue. The generated context records poll, yield,
+frame-drop/live-frame,
 enqueue/dequeue/saturation/cancellation, structured
 spawn/publication-move/join/join-suspension/cancellation, deadline
 registration/expiry/disarm, and timer
-registration/expiry/cancellation/live/peak counters.
+registration/expiry/cancellation/live/peak counters. It also records reactor
+initialization, wait, timeout, completion, error, shutdown, and live/peak
+lifecycle counters. The pure-yield probe requires every reactor counter to
+remain zero; the positive-timer probe requires one initialization, wait,
+timeout, and shutdown with zero live reactors at exit.
 The P3-B channel slice also records construction binding, buffered/direct
 delivery, suspension, wakeup, close/cancellation, and live/peak buffer and
 waiter counts.
@@ -344,7 +354,9 @@ Mutable parameters/locals, borrows, guards, resource handles or wrappers
 containing them, recursive suspend graphs, suspension in control flow, nested
 expressions or argument expressions, `?` outside the direct structured binding
 described below, panic nested inside another expression, cancellation
-tokens, and reactor-backed I/O are later slices.
+tokens, and reactor-backed socket/process/HTTP operations are later slices. The
+current P2 foundation normalizes timer waiting only; it does not claim that a
+network or process handle is nonblocking yet.
 
 The current deadline slice permits one non-nested
 `task.deadline(Duration) { ... }` per suspend function. Its body has the same

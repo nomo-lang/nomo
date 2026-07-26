@@ -8610,6 +8610,14 @@ suspend fn main() -> void {
     assert_eq!(metrics["counters"]["timer_cancellations"], 0);
     assert_eq!(metrics["counters"]["live_timers"], 0);
     assert_eq!(metrics["counters"]["peak_live_timers"], 0);
+    assert_eq!(metrics["counters"]["reactor_initializations"], 0);
+    assert_eq!(metrics["counters"]["reactor_waits"], 0);
+    assert_eq!(metrics["counters"]["reactor_timeouts"], 0);
+    assert_eq!(metrics["counters"]["reactor_completions"], 0);
+    assert_eq!(metrics["counters"]["reactor_errors"], 0);
+    assert_eq!(metrics["counters"]["reactor_shutdowns"], 0);
+    assert_eq!(metrics["counters"]["live_reactors"], 0);
+    assert_eq!(metrics["counters"]["peak_live_reactors"], 0);
     assert!(metrics["unavailable"]["local_retain"].is_string());
     assert!(metrics["unavailable"]["local_release"].is_string());
     assert!(metrics["unavailable"]["live_timers"].is_null());
@@ -11482,6 +11490,27 @@ suspend fn main() -> void {
     assert!(generated.contains("nomo_async_timer_start"));
     assert!(generated.contains("nomo_async_timer_wait_next"));
     assert!(generated.contains("nomo_async_timer_disarm"));
+    assert!(generated.contains("nomo_async_reactor_wait"));
+    assert!(generated.contains("nomo_async_reactor_shutdown"));
+    if cfg!(target_os = "linux") {
+        assert!(generated.contains("epoll_create(1)"));
+        assert!(generated.contains("epoll_wait("));
+    } else if cfg!(target_os = "macos") {
+        assert!(generated.contains("kqueue()"));
+        assert!(generated.contains("kevent("));
+    } else if cfg!(windows) {
+        assert!(generated.contains("CreateIoCompletionPort"));
+        assert!(generated.contains("GetQueuedCompletionStatus"));
+    }
+    let timer_wait = generated
+        .split("static int nomo_async_timer_wait_next")
+        .nth(1)
+        .unwrap()
+        .split("static nomo_async_poll nomo_async_poll_task")
+        .next()
+        .unwrap();
+    assert!(timer_wait.contains("nomo_async_reactor_wait"));
+    assert!(!timer_wait.contains("nomo_time_sleep_millis"));
     assert!(generated.contains("timer_registrations"));
     assert!(generated.contains("timer_expirations"));
     assert!(generated.contains("timer_cancellations"));
@@ -11550,6 +11579,14 @@ suspend fn main() -> void {
     assert_eq!(metrics["counters"]["timer_cancellations"], 0);
     assert_eq!(metrics["counters"]["live_timers"], 0);
     assert_eq!(metrics["counters"]["peak_live_timers"], 1);
+    assert_eq!(metrics["counters"]["reactor_initializations"], 1);
+    assert_eq!(metrics["counters"]["reactor_waits"], 1);
+    assert_eq!(metrics["counters"]["reactor_timeouts"], 1);
+    assert_eq!(metrics["counters"]["reactor_completions"], 0);
+    assert_eq!(metrics["counters"]["reactor_errors"], 0);
+    assert_eq!(metrics["counters"]["reactor_shutdowns"], 1);
+    assert_eq!(metrics["counters"]["live_reactors"], 0);
+    assert_eq!(metrics["counters"]["peak_live_reactors"], 1);
     assert!(metrics["unavailable"]["local_retain"].is_string());
     assert!(metrics["unavailable"]["local_release"].is_string());
     assert!(metrics["unavailable"]["live_timers"].is_null());

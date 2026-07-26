@@ -221,6 +221,26 @@ fn collect_stmt_struct(
                 }
             }
         }
+        Statement::TaskSelect { arms } => {
+            for arm in arms {
+                collect_type_struct(&arm.binding_type, seen, out);
+                match &arm.operation {
+                    TaskSelectOperation::Receive {
+                        channel,
+                        element_type,
+                    } => {
+                        collect_type_struct(element_type, seen, out);
+                        collect_expr_struct(channel, seen, out);
+                    }
+                    TaskSelectOperation::Sleep { duration } => {
+                        collect_expr_struct(duration, seen, out);
+                    }
+                }
+                for stmt in &arm.body {
+                    collect_stmt_struct(stmt, seen, out);
+                }
+            }
+        }
         Statement::Defer { call } => collect_deferred_struct(call, seen, out),
         Statement::Break | Statement::Continue => {}
         Statement::Return(None) => {}

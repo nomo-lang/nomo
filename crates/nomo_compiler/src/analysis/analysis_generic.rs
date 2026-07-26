@@ -233,6 +233,25 @@ fn collect_stmt_generic_function_instances(
             }
             Ok(())
         }
+        Stmt::TaskSelect { arms, .. } => {
+            for arm in arms {
+                collect_expr_generic_function_instances(
+                    path,
+                    &arm.operation,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    out,
+                )?;
+                for stmt in &arm.body {
+                    collect_stmt_generic_function_instances(
+                        path, stmt, imports, signatures, structs, enums, out,
+                    )?;
+                }
+            }
+            Ok(())
+        }
         Stmt::Postfix { .. } => Ok(()),
         Stmt::Break { .. } | Stmt::Continue { .. } => Ok(()),
     }

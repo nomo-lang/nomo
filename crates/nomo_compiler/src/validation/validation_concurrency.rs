@@ -200,6 +200,12 @@ pub(super) fn validate_statement_publication_uses(
         },
         Stmt::Defer { stmt, .. } => validate_statement_publication_uses(path, stmt, scope),
         Stmt::TaskDeadline { duration, .. } => validate_expr(duration),
+        Stmt::TaskSelect { arms, .. } => {
+            for arm in arms {
+                validate_expr(&arm.operation)?;
+            }
+            Ok(())
+        }
         Stmt::Unsafe { .. }
         | Stmt::TaskScope { .. }
         | Stmt::Return { value: None, .. }

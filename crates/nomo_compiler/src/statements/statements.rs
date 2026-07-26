@@ -451,6 +451,9 @@ pub(super) fn lower_stmt(
         Stmt::TaskDeadline { .. } => {
             unreachable!("task.deadline is lowered by lower_stmt_into")
         }
+        Stmt::TaskSelect { .. } => {
+            unreachable!("task.select is lowered by lower_stmt_into")
+        }
         Stmt::Expr { expr, span } => {
             let (expr_type, lowered) = lower_value_expr_with_expected(
                 path,
@@ -500,6 +503,155 @@ pub(super) fn lower_stmt_into(
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
     validate_statement_publication_uses(path, stmt, scope)?;
+    if let Stmt::TaskSelect { arms, span } = stmt {
+        require_import(path, imports, span, "std.task", "task.select")?;
+        if !current_function_is_suspend(scope) {
+            return Err(Diagnostic::new(
+                "E0870",
+                "synchronous function cannot enter `task.select`; mark the caller `suspend`",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        if !(2..=8).contains(&arms.len()) {
+            return Err(Diagnostic::new(
+                "E0886",
+                format!(
+                    "task.select expects 2 through 8 static arms, got {}",
+                    arms.len()
+                ),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+
+        let mut lowered_arms = Vec::with_capacity(arms.len());
+        for arm in arms {
+            validate_static_select_arm_body(path, &arm.body, &arm.span)?;
+            if scope.contains_key(&arm.binding) {
+                return Err(Diagnostic::new(
+                    "E0886",
+                    format!(
+                        "task.select result binding `{}` is already defined in the surrounding scope",
+                        arm.binding
+                    ),
+                    path,
+                    arm.span.line,
+                    arm.span.column,
+                    arm.span.length,
+                    &arm.span.text,
+                ));
+            }
+
+            let AstExpr::Call {
+                callee,
+                type_args,
+                args: _,
+            } = &arm.operation
+            else {
+                return Err(static_select_operation_diagnostic(path, &arm.span));
+            };
+            if !type_args.is_empty()
+                || !matches!(
+                    callee.as_slice(),
+                    [module, operation]
+                        if module == "task"
+                            && matches!(operation.as_str(), "receive" | "sleep")
+                )
+            {
+                return Err(static_select_operation_diagnostic(path, &arm.span));
+            }
+
+            let (binding_type, lowered_operation) = lower_value_expr(
+                path,
+                &arm.operation,
+                scope,
+                imports,
+                signatures,
+                structs,
+                enums,
+                &arm.span,
+            )?;
+            let operation = match (callee[1].as_str(), lowered_operation) {
+                ("receive", ValueExpr::Call { name, mut args })
+                    if name.starts_with(BUILTIN_TASK_RECEIVE_PREFIX) && args.len() == 1 =>
+                {
+                    let ValueType::Enum(option, option_args) = &binding_type else {
+                        unreachable!("task.receive always returns Option<T>")
+                    };
+                    debug_assert_eq!(option, "Option");
+                    let [element_type] = option_args.as_slice() else {
+                        unreachable!("task.receive Option has one type argument")
+                    };
+                    TaskSelectOperation::Receive {
+                        channel: args.remove(0),
+                        element_type: element_type.clone(),
+                    }
+                }
+                ("sleep", ValueExpr::Call { name, mut args })
+                    if name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1 =>
+                {
+                    TaskSelectOperation::Sleep {
+                        duration: args.remove(0),
+                    }
+                }
+                _ => return Err(static_select_operation_diagnostic(path, &arm.span)),
+            };
+
+            let mut arm_scope = scope.clone();
+            arm_scope.insert(
+                arm.binding.clone(),
+                Binding {
+                    value_type: binding_type.clone(),
+                    mutable: false,
+                    source: BindingSource::Local,
+                },
+            );
+            let mut body = Vec::new();
+            for statement in &arm.body {
+                lower_stmt_into(
+                    path,
+                    statement,
+                    &mut arm_scope,
+                    imports,
+                    signatures,
+                    structs,
+                    enums,
+                    return_type,
+                    false,
+                    loop_depth,
+                    &mut body,
+                )?;
+            }
+            if arm_scope.keys().any(|name| {
+                name.starts_with(PUBLICATION_MOVE_BINDING_PREFIX) && !scope.contains_key(name)
+            }) {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "the first task.select slice does not allow arm-local publication moves of surrounding bindings",
+                    path,
+                    arm.span.line,
+                    arm.span.column,
+                    arm.span.length,
+                    &arm.span.text,
+                ));
+            }
+            lowered_arms.push(TaskSelectArm {
+                operation,
+                binding: arm.binding.clone(),
+                binding_type,
+                body,
+            });
+        }
+        out.push(Statement::TaskSelect { arms: lowered_arms });
+        return Ok(());
+    }
     if let Stmt::TaskDeadline {
         duration,
         body,
@@ -739,6 +891,124 @@ pub(super) fn lower_stmt_into(
     )?;
     record_publication_moves(path, stmt, &lowered, scope, loop_depth)?;
     out.push(lowered);
+    Ok(())
+}
+
+fn static_select_operation_diagnostic(path: &Path, span: &Span) -> Diagnostic {
+    Diagnostic::new(
+        "E0886",
+        "the P3-C task.select slice supports only `task.receive(channel)` and `task.sleep(duration)` arms",
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
+}
+
+fn validate_static_select_arm_body(
+    path: &Path,
+    body: &[Stmt],
+    arm_span: &Span,
+) -> Result<(), Diagnostic> {
+    fn validate_statement(path: &Path, statement: &Stmt) -> Result<(), Diagnostic> {
+        let span = statement_span(statement);
+        match statement {
+            Stmt::Return { .. }
+            | Stmt::Break { .. }
+            | Stmt::Continue { .. }
+            | Stmt::Defer { .. }
+            | Stmt::TaskScope { .. }
+            | Stmt::TaskDeadline { .. }
+            | Stmt::TaskSelect { .. }
+            | Stmt::Unsafe { .. } => {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "the first task.select slice requires fallthrough arms without return, break, continue, defer, unsafe, nested task scopes, deadlines, or select",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Stmt::LetElse { else_body, .. } => {
+                for statement in else_body {
+                    validate_statement(path, statement)?;
+                }
+            }
+            Stmt::IfLet {
+                body, else_body, ..
+            } => {
+                for statement in body {
+                    validate_statement(path, statement)?;
+                }
+                if let Some(else_body) = else_body {
+                    for statement in else_body {
+                        validate_statement(path, statement)?;
+                    }
+                }
+            }
+            Stmt::Match { arms, .. } => {
+                for arm in arms {
+                    for statement in &arm.body {
+                        validate_statement(path, statement)?;
+                    }
+                }
+            }
+            Stmt::For { variant, .. } => {
+                let nested = match variant {
+                    ForVariant::Infinite { body }
+                    | ForVariant::While { body, .. }
+                    | ForVariant::CStyle { body, .. }
+                    | ForVariant::Iterate { body, .. } => body,
+                };
+                for statement in nested {
+                    validate_statement(path, statement)?;
+                }
+            }
+            Stmt::Let { .. }
+            | Stmt::Assign { .. }
+            | Stmt::IndexAssign { .. }
+            | Stmt::Postfix { .. }
+            | Stmt::Expr { .. } => {}
+        }
+
+        let mut contains_frame_exit = false;
+        crate::validation_tasks::visit_statement_expressions(statement, &mut |expression| {
+            if matches!(expression, AstExpr::Panic { .. } | AstExpr::Question { .. }) {
+                contains_frame_exit = true;
+            }
+            Ok(())
+        })?;
+        if contains_frame_exit {
+            return Err(Diagnostic::new(
+                "E0876",
+                "panic and `?` inside task.select arms require the later general structured-exit slice",
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
+        }
+        Ok(())
+    }
+
+    if body.is_empty() {
+        return Err(Diagnostic::new(
+            "E0886",
+            "task.select arms require a non-empty lexical body",
+            path,
+            arm_span.line,
+            arm_span.column,
+            arm_span.length,
+            &arm_span.text,
+        ));
+    }
+    for statement in body {
+        validate_statement(path, statement)?;
+    }
     Ok(())
 }
 

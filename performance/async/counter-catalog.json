@@ -194,6 +194,36 @@
       "semantics": "Active send or receive registrations cancelled and cleaned before normal resume completion."
     },
     {
+      "name": "select_registrations",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Receive and timer operations registered as pending arms of a static owner-local task.select."
+    },
+    {
+      "name": "select_immediate_wins",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Static task.select operations resolved synchronously by the first source-order ready arm."
+    },
+    {
+      "name": "select_suspended_wins",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Suspended static task.select operations whose winning arm enqueued the owner frame exactly once."
+    },
+    {
+      "name": "select_loser_cancellations",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Pending non-winning select arm registrations synchronously unlinked or disarmed after a winner claim."
+    },
+    {
+      "name": "select_cancellations",
+      "unit": "count",
+      "available_phase": "P3",
+      "semantics": "Pending select arm registrations cleaned because their owning select was cancelled before completion."
+    },
+    {
       "name": "live_channel_buffered_elements",
       "unit": "count",
       "available_phase": "P3",

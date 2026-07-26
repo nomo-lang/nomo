@@ -1,0 +1,41 @@
+package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<u64> {
+    let created: Result<Channel<u64>, ChannelError> = task.channel<u64>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn publish(channel_value: Channel<u64>) -> void {
+    task.yield_now()
+    let sent: Result<void, ChannelSendError<u64>> = task.send(channel_value, 7)
+}
+
+suspend fn main() -> void {
+    let idle_channel: Channel<u64> = make_channel()
+    let ready_channel: Channel<u64> = make_channel()
+    task.scope {
+        let publisher = task.spawn publish(ready_channel)
+        task.select {
+            task.receive(idle_channel) => idle {
+                io.println("static-select idle")
+            }
+            task.receive(ready_channel) => received {
+                io.println("static-select winner")
+            }
+            task.sleep(time.duration_millis(100)) => timeout {
+                io.println("static-select timeout")
+            }
+        }
+        let publisher_result: Result<void, TaskError> = task.join(publisher)
+    }
+    task.close(idle_channel)
+    task.close(ready_channel)
+}

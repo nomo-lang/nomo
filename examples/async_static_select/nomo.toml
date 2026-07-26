@@ -1,0 +1,3 @@
+[package]
+name = "async_static_select"
+version = "0.1.0"

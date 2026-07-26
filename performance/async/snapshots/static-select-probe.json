@@ -1,0 +1,42 @@
+{
+  "schema": 1,
+  "gate": "p3-current-thread-static-select",
+  "required_absent_generated_c_patterns": [
+    "pthread_create",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static int nomo_async_metrics_export": 1,
+    "nomo_async_metrics_export(&nomo__context)": 1,
+    "static int nomo_async_select_claim(": 1,
+    "static void nomo_async_timer_select_cancel(": 1,
+    "static void nomo_channel_receive_select_cancel_u64(": 1
+  },
+  "runtime_counters": {
+    "available": true,
+    "schema": 1,
+    "counters": {
+      "frame_allocations": 0,
+      "select_registrations": 3,
+      "select_immediate_wins": 0,
+      "select_suspended_wins": 1,
+      "select_loser_cancellations": 2,
+      "select_cancellations": 0,
+      "live_channel_receive_waiters": 0,
+      "live_timers": 0
+    },
+    "unavailable": [
+      "local_retain",
+      "local_release",
+      "atomic_retain",
+      "atomic_release",
+      "cow_detach_count",
+      "cow_detach_bytes",
+      "publish_copy_count",
+      "publish_copy_bytes"
+    ]
+  }
+}

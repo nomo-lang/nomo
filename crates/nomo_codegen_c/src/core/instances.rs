@@ -281,6 +281,21 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
                 }
             }
         }
+        Statement::TaskSelect { arms } => {
+            for arm in arms {
+                match &arm.operation {
+                    TaskSelectOperation::Receive { channel, .. } => {
+                        collect_expr_result_map_err(channel, out);
+                    }
+                    TaskSelectOperation::Sleep { duration } => {
+                        collect_expr_result_map_err(duration, out);
+                    }
+                }
+                for statement in &arm.body {
+                    collect_stmt_result_map_err(statement, out);
+                }
+            }
+        }
         Statement::Defer { call } => collect_deferred_result_map_err(call, out),
         Statement::Return(None) | Statement::Break | Statement::Continue => {}
     }
@@ -705,6 +720,17 @@ where
         Statement::LetMatch { value, arms, .. } | Statement::Match { value, arms, .. } => {
             walk_expr(value, visit);
             for arm in arms {
+                for statement in &arm.body {
+                    walk_stmt_exprs(statement, visit);
+                }
+            }
+        }
+        Statement::TaskSelect { arms } => {
+            for arm in arms {
+                match &arm.operation {
+                    TaskSelectOperation::Receive { channel, .. } => walk_expr(channel, visit),
+                    TaskSelectOperation::Sleep { duration } => walk_expr(duration, visit),
+                }
                 for statement in &arm.body {
                     walk_stmt_exprs(statement, visit);
                 }

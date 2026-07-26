@@ -159,6 +159,9 @@ pub enum Statement {
         enum_args: Vec<ValueType>,
         arms: Vec<MatchStatementArm>,
     },
+    TaskSelect {
+        arms: Vec<TaskSelectArm>,
+    },
     Loop {
         kind: LoopKind,
         body: Vec<Statement>,
@@ -181,6 +184,25 @@ pub struct MatchStatementArm {
     pub variant: String,
     pub binding: Option<String>,
     pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TaskSelectArm {
+    pub operation: TaskSelectOperation,
+    pub binding: String,
+    pub binding_type: ValueType,
+    pub body: Vec<Statement>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum TaskSelectOperation {
+    Receive {
+        channel: ValueExpr,
+        element_type: ValueType,
+    },
+    Sleep {
+        duration: ValueExpr,
+    },
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]

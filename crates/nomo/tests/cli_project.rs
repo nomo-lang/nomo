@@ -10302,6 +10302,273 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn static_receive_timer_select_is_source_ordered_and_cleans_losers() {
+    let root = temp_test_root("async-static-select-runtime");
+    reset_dir(&root);
+    let project = root.join("async_static_select");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_static_select\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn publish(channel_value: Channel<string>) -> void {
+    task.yield_now()
+    let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, "winner")
+}
+
+suspend fn main() -> void {
+    let idle_channel: Channel<string> = make_channel()
+    let ready_channel: Channel<string> = make_channel()
+    let selected_prefix: string = "selected"
+    task.scope {
+        let publisher = task.spawn publish(ready_channel)
+        task.select {
+            task.receive(idle_channel) => idle {
+                io.println(option.unwrap_or(idle, "idle closed"))
+            }
+            task.receive(ready_channel) => received {
+                io.println(selected_prefix)
+                io.println(option.unwrap_or(received, "ready closed"))
+            }
+            task.sleep(time.duration_millis(100)) => timeout {
+                io.println("timeout")
+            }
+        }
+        let publisher_result: Result<void, TaskError> = task.join(publisher)
+    }
+
+    let first_channel: Channel<string> = make_channel()
+    let second_channel: Channel<string> = make_channel()
+    let first_sent: Result<void, ChannelSendError<string>> = task.send(first_channel, "first")
+    let second_sent: Result<void, ChannelSendError<string>> = task.send(second_channel, "second")
+    task.select {
+        task.receive(first_channel) => first {
+            io.println(option.unwrap_or(first, "first closed"))
+        }
+        task.receive(second_channel) => second {
+            io.println(option.unwrap_or(second, "second closed"))
+        }
+        task.sleep(time.duration_millis(0)) => immediate {
+            io.println("immediate timer")
+        }
+    }
+
+    let timer_channel: Channel<string> = make_channel()
+    task.select {
+        task.receive(timer_channel) => received {
+            io.println("unexpected timer receive")
+        }
+        task.sleep(time.duration_millis(1)) => waited {
+            io.println("timer")
+        }
+    }
+
+    task.close(idle_channel)
+    task.close(ready_channel)
+    task.close(first_channel)
+    task.close(second_channel)
+    task.close(timer_channel)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("select-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "selected\nwinner\nfirst\ntimer\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_async_select_claim"));
+    assert!(generated.contains("nomo_async_select_suspend"));
+    assert!(generated.contains("nomo_channel_receive_select_cancel_string"));
+    assert!(generated.contains("nomo_async_timer_select_cancel"));
+    assert!(!generated.contains("pthread_create"));
+    assert!(!generated.contains("CreateThread"));
+    assert!(!generated.contains("__atomic_"));
+    assert!(!generated.contains("Interlocked"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["select_registrations"], 5);
+    assert_eq!(metrics["counters"]["select_immediate_wins"], 1);
+    assert_eq!(metrics["counters"]["select_suspended_wins"], 2);
+    assert_eq!(metrics["counters"]["select_loser_cancellations"], 3);
+    assert_eq!(metrics["counters"]["select_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-async-static-select.exe"
+        } else {
+            "asan-async-static-select"
+        });
+        let asan_metrics_path = root.join("asan-select-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "selected\nwinner\nfirst\ntimer\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn static_select_deadline_cancels_every_pending_registration_once() {
+    let root = temp_test_root("async-static-select-deadline");
+    reset_dir(&root);
+    let project = root.join("async_static_select_deadline");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_static_select_deadline\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn bounded_select(channel_value: Channel<string>) -> void {
+    task.deadline(time.duration_millis(5)) {
+        task.select {
+            task.receive(channel_value) => received {
+                io.println("unexpected receive")
+            }
+            task.sleep(time.duration_millis(100)) => waited {
+                io.println("unexpected timer")
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let child = task.spawn bounded_select(channel_value)
+        let joined: Result<void, TaskError> = task.join(child)
+        io.println(result.is_err(joined))
+    }
+    task.close(channel_value)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("select-deadline-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "true\n");
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["select_registrations"], 2);
+    assert_eq!(metrics["counters"]["select_immediate_wins"], 0);
+    assert_eq!(metrics["counters"]["select_suspended_wins"], 0);
+    assert_eq!(metrics["counters"]["select_loser_cancellations"], 0);
+    assert_eq!(metrics["counters"]["select_cancellations"], 2);
+    assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn bounded_channel_close_wakes_sender_and_returns_the_single_unsent_owner() {
     let root = temp_test_root("async-bounded-channel-close");
     reset_dir(&root);

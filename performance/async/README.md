@@ -76,6 +76,12 @@ close, and live/peak buffer/waiter counters. It also repeats `sync_unused` and
 the async yield probe with `nomo_channel_` forbidden, proving that code which
 does not construct a channel carries no channel storage or metadata. The
 Nomo/Go samples are evidence only and do not authorize a performance claim.
+The same manifest also enables `static_select_probe`: two empty receives and
+one positive timer register against one token, a later direct handoff wins,
+both losers are removed before a single owner-frame wake, and all waiter/timer
+live counters return to zero. The probe validates exact select counters and
+forbids thread or atomic symbols; it is a correctness gate, not a benchmark
+claim.
 
 ## Run
 

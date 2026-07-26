@@ -83,6 +83,13 @@ pub(super) fn statement_uses_env_get(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_env_get))
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation_uses = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => expr_uses_env_get(channel),
+                TaskSelectOperation::Sleep { duration } => expr_uses_env_get(duration),
+            };
+            operation_uses || arm.body.iter().any(statement_uses_env_get)
+        }),
         Statement::Defer { call } => deferred_uses_env_get(call),
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,
@@ -172,6 +179,13 @@ pub(super) fn statement_uses_env_args(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_env_args))
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation_uses = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => expr_uses_env_args(channel),
+                TaskSelectOperation::Sleep { duration } => expr_uses_env_args(duration),
+            };
+            operation_uses || arm.body.iter().any(statement_uses_env_args)
+        }),
         Statement::Defer { call } => deferred_uses_env_args(call),
         Statement::Break | Statement::Continue => false,
         Statement::Return(None) => false,

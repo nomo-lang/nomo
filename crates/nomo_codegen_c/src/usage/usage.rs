@@ -551,6 +551,15 @@ pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_read_to_string))
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation_uses = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => {
+                    expr_uses_fs_read_to_string(channel)
+                }
+                TaskSelectOperation::Sleep { duration } => expr_uses_fs_read_to_string(duration),
+            };
+            operation_uses || arm.body.iter().any(statement_uses_fs_read_to_string)
+        }),
         Statement::Defer { call } => deferred_uses_fs_read_to_string(call),
         Statement::ArrayIndexAssign { indices, value, .. } => {
             indices.iter().any(expr_uses_fs_read_to_string) || expr_uses_fs_read_to_string(value)
@@ -644,6 +653,13 @@ pub(super) fn statement_uses_fs_write_string(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_write_string))
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation_uses = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => expr_uses_fs_write_string(channel),
+                TaskSelectOperation::Sleep { duration } => expr_uses_fs_write_string(duration),
+            };
+            operation_uses || arm.body.iter().any(statement_uses_fs_write_string)
+        }),
         Statement::Defer { call } => deferred_uses_fs_write_string(call),
         Statement::ArrayIndexAssign { indices, value, .. } => {
             indices.iter().any(expr_uses_fs_write_string) || expr_uses_fs_write_string(value)
@@ -733,6 +749,13 @@ pub(super) fn statement_uses_fs_open(statement: &Statement) -> bool {
                     .iter()
                     .any(|arm| arm.body.iter().any(statement_uses_fs_open))
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation_uses = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => expr_uses_fs_open(channel),
+                TaskSelectOperation::Sleep { duration } => expr_uses_fs_open(duration),
+            };
+            operation_uses || arm.body.iter().any(statement_uses_fs_open)
+        }),
         Statement::Defer { call } => deferred_uses_fs_open(call),
         Statement::ArrayIndexAssign { indices, value, .. } => {
             indices.iter().any(expr_uses_fs_open) || expr_uses_fs_open(value)

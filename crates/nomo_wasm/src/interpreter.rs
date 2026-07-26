@@ -762,6 +762,7 @@ impl<'a> Interpreter<'a> {
             Statement::QuestionReturn { result_expr, .. } => {
                 Ok(Signal::Return(self.eval_expr(result_expr)?))
             }
+            Statement::TaskSelect { .. } => Err(RuntimeError::capability("task select")),
             Statement::LetIf { .. } | Statement::LetMatch { .. } => Err(RuntimeError::runtime(
                 "this control-flow form is not implemented by the browser interpreter yet",
             )),

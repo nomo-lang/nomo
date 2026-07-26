@@ -62,6 +62,11 @@ ring 与固定 `GOMAXPROCS=1` 的 Go channel 都传递 32 个 `u64` 值。Nomo p
 live/peak counter 全部精确匹配。它还重复运行 `sync_unused` 与 async yield
 probe，并禁止出现 `nomo_channel_`，证明未构造 channel 的代码没有 channel
 storage 或 metadata。Nomo/Go sample 仅作为证据，不构成性能声明。
+同一 manifest 还会启用 `static_select_probe`：两个 empty receive 与一个正时长
+timer 注册到同一个 token，稍后的 direct handoff 获胜，两个 loser 会在
+owner frame 单次 wake 前被清理，最终 waiter/timer live counter 都回到零。
+该探针会校验精确 select counter 并禁止 thread/atomic symbol；它是正确性门禁，
+不是性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

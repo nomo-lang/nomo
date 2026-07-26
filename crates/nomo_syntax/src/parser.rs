@@ -1,7 +1,7 @@
 use crate::ast::{
     AssignOp, BinaryOp, ConstDef, EnumDef, EnumVariant, Expr, ExternBlock, ExternOpaqueType, Field,
     ForVariant, Function, FunctionSignature, ImplBlock, InterfaceDef, MatchArm, MatchStmtArm,
-    Param, PostfixOp, SourceFile, Span, Stmt, StructDef, TypeRef,
+    Param, PostfixOp, SourceFile, Span, Stmt, StructDef, TaskSelectArm, TypeRef,
 };
 use crate::diagnostic::Diagnostic;
 use crate::lexer::{Token, TokenKind};

@@ -5,6 +5,12 @@ impl Parser<'_> {
         let token = self.peek().clone();
         if matches!(&token.kind, TokenKind::Ident(name) if name == "task")
             && matches!(self.peek_n(1).kind, TokenKind::Dot)
+            && matches!(&self.peek_n(2).kind, TokenKind::Ident(name) if name == "select")
+        {
+            return self.parse_task_select_stmt(token);
+        }
+        if matches!(&token.kind, TokenKind::Ident(name) if name == "task")
+            && matches!(self.peek_n(1).kind, TokenKind::Dot)
             && matches!(&self.peek_n(2).kind, TokenKind::Ident(name) if name == "scope")
         {
             return self.parse_task_scope_stmt(token);
@@ -530,6 +536,88 @@ impl Parser<'_> {
                 column: token.column,
                 length: "task.deadline".len(),
                 text: "task.deadline".to_string(),
+            },
+        })
+    }
+
+    fn parse_task_select_stmt(&mut self, token: Token) -> Result<Stmt, Diagnostic> {
+        let module = self.expect_ident("expected `task`")?;
+        debug_assert_eq!(module, "task");
+        self.expect_kind(TokenKind::Dot, "E0886", "expected `.` after `task`")?;
+        let operation = self.expect_ident("expected `select` after `task.`")?;
+        debug_assert_eq!(operation, "select");
+        self.expect_kind(
+            TokenKind::LBrace,
+            "E0886",
+            "expected `{` before task.select arms",
+        )?;
+
+        let mut arms = Vec::new();
+        loop {
+            self.skip_newlines();
+            match self.peek().kind {
+                TokenKind::RBrace => {
+                    self.advance();
+                    break;
+                }
+                TokenKind::Eof => {
+                    return Err(self.error(
+                        "E0886",
+                        "unterminated task.select body; expected `}`",
+                        1,
+                    ));
+                }
+                _ => {
+                    let arm_token = self.peek().clone();
+                    let operation = self.parse_expr()?;
+                    self.expect_kind(
+                        TokenKind::FatArrow,
+                        "E0886",
+                        "expected `=>` after task.select operation",
+                    )?;
+                    let binding = self
+                        .expect_ident("expected immutable result binding after task.select `=>`")?;
+                    self.skip_newlines();
+                    let body =
+                        self.parse_stmt_block("E0886", "expected `{` before task.select arm body")?;
+                    arms.push(TaskSelectArm {
+                        operation,
+                        binding,
+                        body,
+                        span: Span {
+                            line: arm_token.line,
+                            column: arm_token.column,
+                            length: arm_token.length(),
+                            text: arm_token.text,
+                        },
+                    });
+                    self.expect_newline("expected newline after task.select arm")?;
+                }
+            }
+        }
+
+        if !(2..=8).contains(&arms.len()) {
+            return Err(Diagnostic::new(
+                "E0886",
+                format!(
+                    "task.select expects 2 through 8 static arms, got {}",
+                    arms.len()
+                ),
+                self.path,
+                token.line,
+                token.column,
+                "task.select".len(),
+                &token.text,
+            ));
+        }
+
+        Ok(Stmt::TaskSelect {
+            arms,
+            span: Span {
+                line: token.line,
+                column: token.column,
+                length: "task.select".len(),
+                text: "task.select".to_string(),
             },
         })
     }

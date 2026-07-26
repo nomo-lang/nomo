@@ -13,8 +13,8 @@
 use nomo_ir::{
     BinaryOp, CronOperation, DeferredCall, EnumType, ExternFunction, Function, JsonOperation,
     JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm, MathBinaryFunction,
-    MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement, StructType, UnaryOp,
-    ValueExpr, ValueType,
+    MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement, StructType,
+    TaskSelectArm, TaskSelectOperation, UnaryOp, ValueExpr, ValueType,
 };
 use std::collections::{BTreeSet, HashMap};
 

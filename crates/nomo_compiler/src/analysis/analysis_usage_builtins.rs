@@ -118,6 +118,9 @@ fn stmt_uses_expr(stmt: &Stmt, expr_uses: &impl Fn(&AstExpr) -> bool) -> bool {
         Stmt::TaskDeadline { duration, body, .. } => {
             expr_uses(duration) || body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
         }
+        Stmt::TaskSelect { arms, .. } => arms.iter().any(|arm| {
+            expr_uses(&arm.operation) || arm.body.iter().any(|stmt| stmt_uses_expr(stmt, expr_uses))
+        }),
         Stmt::Postfix { .. } | Stmt::Break { .. } | Stmt::Continue { .. } => false,
     }
 }

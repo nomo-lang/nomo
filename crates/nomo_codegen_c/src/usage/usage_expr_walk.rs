@@ -127,6 +127,17 @@ where
                         .any(|statement| statement_contains_expr(statement, predicate))
                 })
         }
+        Statement::TaskSelect { arms } => arms.iter().any(|arm| {
+            let operation = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => channel,
+                TaskSelectOperation::Sleep { duration } => duration,
+            };
+            expr_contains(operation, predicate)
+                || arm
+                    .body
+                    .iter()
+                    .any(|statement| statement_contains_expr(statement, predicate))
+        }),
         Statement::Defer { call } => deferred_contains_expr(call, predicate),
         Statement::Break | Statement::Continue | Statement::Return(None) => false,
     }

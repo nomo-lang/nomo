@@ -243,6 +243,11 @@ fn validate_p1_suspend_function_shape(
                                             ) && !ast_expr_contains_frame_exit(value)
                                         })
                                 }
+                                Stmt::TaskSelect { arms, .. } => ast_static_select_shape_supported(
+                                    arms,
+                                    imports,
+                                    suspending_functions,
+                                ),
                                 _ => false,
                             })
                 }
@@ -284,8 +289,16 @@ fn validate_p1_suspend_function_shape(
                                     ))
                                     && !ast_expr_contains_frame_exit(expr)
                             }
+                            Stmt::TaskSelect { arms, .. } => ast_static_select_shape_supported(
+                                arms,
+                                imports,
+                                suspending_functions,
+                            ),
                             _ => false,
                         })
+                }
+                Stmt::TaskSelect { arms, .. } => {
+                    ast_static_select_shape_supported(arms, imports, suspending_functions)
                 }
                 _ => false,
             });
@@ -296,7 +309,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, deadline return/`?`/panic, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, 2 through 8-arm fallthrough `task.select` over direct receive/sleep operations, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, deadline return/`?`/panic, select early exits, and non-final early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -805,7 +818,10 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
 }
 
 fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) -> bool {
-    if matches!(statement, Stmt::TaskDeadline { .. }) {
+    if matches!(
+        statement,
+        Stmt::TaskDeadline { .. } | Stmt::TaskSelect { .. }
+    ) {
         return true;
     }
     ast_statement_any_expr(statement, |candidate| {
@@ -925,11 +941,45 @@ where
                     .iter()
                     .any(|statement| ast_statement_any_expr(statement, predicate))
         }
+        Stmt::TaskSelect { arms, .. } => arms.iter().any(|arm| {
+            ast_expr_any(&arm.operation, predicate)
+                || arm
+                    .body
+                    .iter()
+                    .any(|statement| ast_statement_any_expr(statement, predicate))
+        }),
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
         | Stmt::Continue { .. } => false,
     }
+}
+
+fn ast_static_select_shape_supported(
+    arms: &[crate::ast::TaskSelectArm],
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> bool {
+    (2..=8).contains(&arms.len())
+        && arms.iter().all(|arm| {
+            !arm.body.is_empty()
+                && arm.body.iter().all(|statement| {
+                    !matches!(
+                        statement,
+                        Stmt::Return { .. }
+                            | Stmt::Break { .. }
+                            | Stmt::Continue { .. }
+                            | Stmt::Defer { .. }
+                            | Stmt::TaskScope { .. }
+                            | Stmt::TaskDeadline { .. }
+                            | Stmt::TaskSelect { .. }
+                            | Stmt::Unsafe { .. }
+                    ) && !ast_statement_any_expr(statement, |candidate| {
+                        ast_expr_is_direct_suspension(candidate, imports, suspending_functions)
+                            || ast_expr_contains_frame_exit(candidate)
+                    })
+                })
+        })
 }
 
 fn ast_expr_contains_suspension(

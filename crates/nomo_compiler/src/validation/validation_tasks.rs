@@ -142,7 +142,10 @@ fn validate_task_safe_statement<'a>(
 ) -> Result<(), Diagnostic> {
     if matches!(
         statement,
-        Stmt::Unsafe { .. } | Stmt::TaskScope { .. } | Stmt::TaskDeadline { .. }
+        Stmt::Unsafe { .. }
+            | Stmt::TaskScope { .. }
+            | Stmt::TaskDeadline { .. }
+            | Stmt::TaskSelect { .. }
     ) {
         return Err(task_safety_call_path_diagnostic(
             path,
@@ -152,6 +155,8 @@ fn validate_task_safe_statement<'a>(
                 "unsafe block"
             } else if matches!(statement, Stmt::TaskDeadline { .. }) {
                 "structured task deadline"
+            } else if matches!(statement, Stmt::TaskSelect { .. }) {
+                "static task select"
             } else {
                 "structured task scope"
             },
@@ -420,6 +425,9 @@ fn validate_task_safe_statement<'a>(
         }
         Stmt::TaskDeadline { .. } => {
             unreachable!("structured task deadlines are rejected above")
+        }
+        Stmt::TaskSelect { .. } => {
+            unreachable!("static task select statements are rejected above")
         }
         Stmt::Unsafe { .. } => unreachable!("unsafe statements are rejected above"),
     }
@@ -717,6 +725,13 @@ pub(super) fn visit_statement_expressions(
             visit_expression(duration, visitor)?;
             visit_statements(body, visitor)
         }
+        Stmt::TaskSelect { arms, .. } => {
+            for arm in arms {
+                visit_expression(&arm.operation, visitor)?;
+                visit_statements(&arm.body, visitor)?;
+            }
+            Ok(())
+        }
         Stmt::Postfix { .. }
         | Stmt::Return { value: None, .. }
         | Stmt::Break { .. }
@@ -811,6 +826,7 @@ pub(super) fn statement_span(statement: &Stmt) -> &Span {
         | Stmt::Defer { span, .. }
         | Stmt::TaskScope { span, .. }
         | Stmt::TaskDeadline { span, .. }
+        | Stmt::TaskSelect { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

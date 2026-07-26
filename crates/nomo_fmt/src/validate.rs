@@ -59,6 +59,11 @@ fn validate_stmts(path: &Path, stmts: &[Stmt]) -> Result<(), Diagnostic> {
             Stmt::TaskScope { body, .. }
             | Stmt::TaskDeadline { body, .. }
             | Stmt::Unsafe { body, .. } => validate_stmts(path, body)?,
+            Stmt::TaskSelect { arms, .. } => {
+                for arm in arms {
+                    validate_stmts(path, &arm.body)?;
+                }
+            }
             Stmt::Let { .. }
             | Stmt::Assign { .. }
             | Stmt::IndexAssign { .. }
@@ -89,6 +94,7 @@ fn stmt_span(stmt: &Stmt) -> &Span {
         | Stmt::Defer { span, .. }
         | Stmt::TaskScope { span, .. }
         | Stmt::TaskDeadline { span, .. }
+        | Stmt::TaskSelect { span, .. }
         | Stmt::Unsafe { span, .. } => span,
     }
 }

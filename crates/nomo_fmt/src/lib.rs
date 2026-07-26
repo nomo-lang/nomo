@@ -4,7 +4,7 @@ use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
     ConstDef, EnumDef, ExternBlock, ExternOpaqueType, Field, ForVariant, Function,
     FunctionSignature, ImplBlock, InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef,
-    TypeParamBound,
+    TaskSelectArm, TypeParamBound,
 };
 use nomo_syntax::lexer::{Token, lex};
 use nomo_syntax::parser::parse;
@@ -469,6 +469,13 @@ impl<'a> Formatter<'a> {
                 self.stmt_block(body, indent + 1);
                 self.line(indent, "}");
             }
+            Stmt::TaskSelect { arms, .. } => {
+                self.line_at(indent, "task.select {", stmt_line(stmt));
+                for arm in arms {
+                    self.task_select_arm(arm, indent + 1);
+                }
+                self.line(indent, "}");
+            }
             Stmt::Unsafe { body, .. } => {
                 self.line_at(indent, "unsafe {", stmt_line(stmt));
                 self.stmt_block(body, indent + 1);
@@ -554,6 +561,16 @@ impl<'a> Formatter<'a> {
                 "{} => {{",
                 pattern_with_binding(&arm.pattern, arm.binding.as_deref())
             ),
+        );
+        self.stmt_block(&arm.body, indent + 1);
+        self.line(indent, "}");
+    }
+
+    fn task_select_arm(&mut self, arm: &TaskSelectArm, indent: usize) {
+        self.line_at(
+            indent,
+            &format!("{} => {} {{", expr(&arm.operation, indent, 0), arm.binding),
+            arm.span.line,
         );
         self.stmt_block(&arm.body, indent + 1);
         self.line(indent, "}");
@@ -928,6 +945,21 @@ mod tests {
         assert_eq!(
             formatted,
             "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main() -> void {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
+        );
+        assert_eq!(
+            format_source(Path::new("main.nomo"), &formatted).unwrap(),
+            formatted
+        );
+    }
+
+    #[test]
+    fn formats_static_task_select_idempotently() {
+        let source = "package app.main\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value:Channel<string>){\ntask.select{\ntask.receive(channel_value)=>received{\nlet value=received\n}\ntask.sleep(time.duration_millis(5))=>timeout{\nlet value=timeout\n}\n}\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            formatted,
+            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value: Channel<string>) -> void {\n    task.select {\n        task.receive(channel_value) => received {\n            let value = received\n        }\n        task.sleep(time.duration_millis(5)) => timeout {\n            let value = timeout\n        }\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

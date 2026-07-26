@@ -257,6 +257,9 @@ pub(super) fn emit_stmt(
             break_cleanup_start,
             continue_cleanup_start,
         ),
+        Statement::TaskSelect { .. } => {
+            unreachable!("task.select is lowered by the async C99 state machine")
+        }
         Statement::Loop { kind, body } => emit_loop(
             out,
             kind,

@@ -28,8 +28,17 @@ where
                         .any(|statement| statement_contains_expr(statement, predicate))
                 })
         }
-        Statement::QuestionLet { result_expr, .. }
-        | Statement::QuestionReturn { result_expr, .. } => expr_contains(result_expr, predicate),
+        Statement::QuestionLet {
+            result_expr,
+            early_exit_actions,
+            ..
+        } => {
+            expr_contains(result_expr, predicate)
+                || early_exit_actions
+                    .iter()
+                    .any(|action| expr_contains(action, predicate))
+        }
+        Statement::QuestionReturn { result_expr, .. } => expr_contains(result_expr, predicate),
         Statement::LetElse {
             value, else_body, ..
         } => {

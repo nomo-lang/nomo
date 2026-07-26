@@ -89,6 +89,7 @@ fn emits_array_releases_before_return_and_question_error_exit() {
                             name: "parse".to_string(),
                             args: Vec::new(),
                         },
+                        early_exit_actions: Vec::new(),
                     },
                     Statement::Return(Some(ValueExpr::EnumVariant {
                         enum_name: "Result".to_string(),
@@ -325,6 +326,7 @@ fn question_let_retains_managed_payloads_when_result_expr_is_shared() {
                         result_type: result_array_array.clone(),
                         return_type: result_array_array.clone(),
                         result_expr: ValueExpr::Variable("raw".to_string()),
+                        early_exit_actions: Vec::new(),
                     },
                     Statement::Return(Some(ValueExpr::EnumVariant {
                         enum_name: "Result".to_string(),

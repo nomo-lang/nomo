@@ -699,6 +699,25 @@ suspend fn main() -> void {
             .message
             .contains("without a P1 frame move/drop implementation")
     );
+
+    let question_outside_scope = r#"package app.main
+
+import std.num
+import std.task
+
+suspend fn parse_after_yield() -> Result<i64, NumError> {
+    task.yield_now()
+    let value: i64 = num.parse_i64("42")?
+    return Ok(value)
+}
+
+suspend fn main() -> void {
+    let value: Result<i64, NumError> = parse_after_yield()
+}
+"#;
+    let question_error = parse_inline(question_outside_scope).unwrap_err();
+    assert_eq!(question_error.code, "E0876");
+    assert!(question_error.message.contains("`?` in other positions"));
 }
 
 #[test]
@@ -1064,6 +1083,93 @@ suspend fn main() -> void {
     assert!(!c.contains(".structured_waiter_frame = frame;"));
     assert!(c.matches("frame->nomo_async_result = ").count() >= 2);
     assert!(c.contains("nomo_async_drop_worker(&frame->nomo_async_child_0);"));
+}
+
+#[test]
+fn structured_scope_question_join_cancels_live_siblings_and_spills_success_values() {
+    let source = r#"package app.main
+
+import std.result
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn gather() -> Result<string, TaskError> {
+    task.scope {
+        let left = task.spawn worker("left")
+        let right = task.spawn worker("right")
+        let left_value: string = task.join(left)?
+        let right_value: string = task.join(right)?
+        return Ok(left_value)
+    }
+}
+
+suspend fn main() -> void {
+    let gathered: Result<string, TaskError> = gather()
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let gather = program
+        .functions
+        .iter()
+        .find(|function| function.name == "gather")
+        .unwrap();
+    assert_eq!(gather.body.len(), 7);
+    assert!(matches!(
+        &gather.body[2],
+        Statement::Let {
+            name,
+            initializer: ValueExpr::Call { name: call, args },
+            ..
+        } if name == "__structured_question_result_0"
+            && call == "__nomo_structured_task_join"
+            && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "left")
+    ));
+    assert!(matches!(
+        &gather.body[3],
+        Statement::QuestionLet {
+            name,
+            result_expr: ValueExpr::Variable(result),
+            early_exit_actions,
+            ..
+        } if name == "left_value"
+            && result == "__structured_question_result_0"
+            && matches!(
+                early_exit_actions.as_slice(),
+                [ValueExpr::Call { name: action, args }]
+                    if action == "__nomo_structured_task_cancel"
+                        && matches!(args.as_slice(), [ValueExpr::Variable(handle)] if handle == "right")
+            )
+    ));
+    assert!(matches!(
+        &gather.body[5],
+        Statement::QuestionLet {
+            name,
+            result_expr: ValueExpr::Variable(result),
+            early_exit_actions,
+            ..
+        } if name == "right_value"
+            && result == "__structured_question_result_1"
+            && early_exit_actions.is_empty()
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_string nomo_async_local_nomo_left_value;"));
+    assert!(c.contains("uint8_t nomo_async_owned_nomo_left_value;"));
+    assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_1, context);"));
+    assert!(c.contains("frame->nomo_async_local_nomo_left_value = nomo_left_value;"));
+    assert!(c.contains("frame->nomo_async_result_owned = 1u;"));
 }
 
 #[test]

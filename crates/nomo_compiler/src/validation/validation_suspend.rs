@@ -181,15 +181,26 @@ fn validate_p1_suspend_function_shape(
                             .enumerate()
                             .all(|(scope_index, statement)| match statement {
                                 Stmt::Let { mutable, value, .. } => {
-                                    !mutable
-                                        && (ast_expr_is_structured_spawn(value)
-                                            || ast_expr_is_structured_join(value)
-                                            || !ast_expr_contains_suspension(
-                                                value,
-                                                imports,
-                                                suspending_functions,
-                                            ))
-                                        && !ast_expr_contains_frame_exit(value)
+                                    if let AstExpr::Question { expr } = value {
+                                        !mutable
+                                            && (ast_expr_is_structured_join(expr)
+                                                || !ast_expr_contains_suspension(
+                                                    expr,
+                                                    imports,
+                                                    suspending_functions,
+                                                ))
+                                            && !ast_expr_contains_frame_exit(expr)
+                                    } else {
+                                        !mutable
+                                            && (ast_expr_is_structured_spawn(value)
+                                                || ast_expr_is_structured_join(value)
+                                                || !ast_expr_contains_suspension(
+                                                    value,
+                                                    imports,
+                                                    suspending_functions,
+                                                ))
+                                            && !ast_expr_contains_frame_exit(value)
+                                    }
                                 }
                                 Stmt::Expr { expr, .. } => {
                                     !ast_expr_contains_suspension(
@@ -220,7 +231,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?`, explicit panic, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)` results, normal task.scope cancellation cleanup, direct immutable `?` bindings inside task.scope, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` in other positions, explicit panic, and non-final early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -552,6 +563,11 @@ pub(super) fn validate_p1_suspend_ir_program(
                 initializer,
             } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
                 (!ir_expr_is_structured_spawn(initializer)).then_some((name, value_type))
+            }
+            Statement::QuestionLet {
+                name, value_type, ..
+            } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
+                Some((name, value_type))
             }
             _ => None,
         }) {

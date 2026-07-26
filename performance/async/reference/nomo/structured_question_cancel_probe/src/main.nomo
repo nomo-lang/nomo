@@ -1,0 +1,32 @@
+package app.main
+
+import std.io
+import std.num
+import std.result
+import std.task
+import std.time
+
+suspend fn slow_child(value: string) -> void {
+    io.println(value, "before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println(value, "after")
+}
+
+suspend fn gate_child() -> void {
+    io.println("gate")
+}
+
+suspend fn finish(value: string) -> Result<void, NumError> {
+    task.scope {
+        let slow = task.spawn slow_child(value)
+        let gate = task.spawn gate_child()
+        let joined_gate: Result<void, TaskError> = task.join(gate)
+        let parsed: i64 = num.parse_i64("not-a-number")?
+        return Ok(void)
+    }
+}
+
+suspend fn main() -> void {
+    let outcome: Result<void, NumError> = finish("managed")
+    io.println(result.is_err(outcome))
+}

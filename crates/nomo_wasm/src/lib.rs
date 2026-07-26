@@ -493,6 +493,40 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn structured_scope_question_propagation_cancels_browser_child_before_returning_error() {
+        let source = r#"package app.main
+
+import std.io
+import std.num
+import std.result
+import std.task
+
+suspend fn child(secret: string) -> void {
+    io.println(secret)
+}
+
+suspend fn finish() -> Result<void, NumError> {
+    task.scope {
+        let child_task = task.spawn child("browser-question-cancel-secret")
+        let parsed: i64 = num.parse_i64("not-a-number")?
+        return Ok(void)
+    }
+}
+
+suspend fn main() -> void {
+    let outcome: Result<void, NumError> = finish()
+    io.println(result.is_err(outcome))
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "true\n");
+        assert!(!response.stderr.contains("browser-question-cancel-secret"));
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn runs_structured_json_with_native_semantics() {
         let source = r#"package app.main
 

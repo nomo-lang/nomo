@@ -8663,6 +8663,395 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn structured_scope_question_propagation_cancels_unjoined_child_and_is_asan_clean() {
+    let root = temp_test_root("structured-scope-question-cancel");
+    reset_dir(&root);
+    let project = root.join("structured_scope_question_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_scope_question_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.num
+import std.result
+import std.task
+import std.time
+
+suspend fn slow_child(value: string) -> void {
+    io.println(value, "before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println(value, "after")
+}
+
+suspend fn gate_child() -> void {
+    io.println("gate")
+}
+
+suspend fn finish(value: string) -> Result<void, NumError> {
+    task.scope {
+        let slow = task.spawn slow_child(value)
+        let gate = task.spawn gate_child()
+        let joined_gate: Result<void, TaskError> = task.join(gate)
+        let parsed: i64 = num.parse_i64("not-a-number")?
+        return Ok(void)
+    }
+}
+
+suspend fn main() -> void {
+    let outcome: Result<void, NumError> = finish("managed")
+    io.println(result.is_err(outcome))
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-question-cancel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "managed before\ngate\ntrue\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    let question = generated
+        .find("nomo_async_question_result_3 = nomo_num_parse_i64")
+        .unwrap();
+    let result_owned = generated[question..]
+        .find("frame->nomo_async_result_owned = 1u;")
+        .map(|index| question + index)
+        .unwrap();
+    let cancel = generated[result_owned..]
+        .find("nomo_async_cancel_slow_child(&frame->nomo_async_child_0, context);")
+        .map(|index| result_owned + index)
+        .unwrap();
+    let drop_child = generated[cancel..]
+        .find("nomo_async_drop_slow_child(&frame->nomo_async_child_0);")
+        .map(|index| cancel + index)
+        .unwrap();
+    let complete = generated[drop_child..]
+        .find("frame->structured_completed = 1u;")
+        .map(|index| drop_child + index)
+        .unwrap();
+    assert!(question < result_owned);
+    assert!(result_owned < cancel);
+    assert!(cancel < drop_child);
+    assert!(drop_child < complete);
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["poll_calls"], 6);
+    assert_eq!(metrics["counters"]["cooperative_yields"], 0);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 4);
+    assert_eq!(metrics["counters"]["peak_live_frames"], 4);
+    assert_eq!(metrics["counters"]["ready_queue_enqueues"], 3);
+    assert_eq!(metrics["counters"]["ready_queue_dequeues"], 3);
+    assert_eq!(metrics["counters"]["ready_queue_saturations"], 0);
+    assert_eq!(metrics["counters"]["ready_queue_cancellations"], 0);
+    assert_eq!(metrics["counters"]["task_spawns"], 2);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["task_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["peak_live_timers"], 1);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-structured-scope-question-cancel.exe"
+        } else {
+            "asan-structured-scope-question-cancel"
+        });
+        let asan_metrics_path = root.join("asan-metrics.json");
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "managed before\ngate\ntrue\n"
+        );
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_scope_option_question_none_cancels_live_child_before_completion() {
+    let root = temp_test_root("structured-scope-option-question-cancel");
+    reset_dir(&root);
+    let project = root.join("structured_scope_option_question_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_scope_option_question_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.option
+import std.task
+import std.time
+
+fn missing() -> Option<string> {
+    return None
+}
+
+suspend fn slow_child() -> void {
+    io.println("slow before")
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+    io.println("slow after")
+}
+
+suspend fn gate_child() -> void {
+    io.println("gate")
+}
+
+suspend fn finish() -> Option<void> {
+    task.scope {
+        let slow = task.spawn slow_child()
+        let gate = task.spawn gate_child()
+        let joined_gate: Result<void, TaskError> = task.join(gate)
+        let value: string = missing()?
+        return Some(void)
+    }
+}
+
+suspend fn main() -> void {
+    let outcome: Option<void> = finish()
+    io.println(option.is_none(outcome))
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("structured-option-question-cancel-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "slow before\ngate\ntrue\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let generated = fs::read_to_string(project.join("build/c/main.c")).unwrap();
+    let question = generated
+        .find("nomo_async_question_result_3 = nomo_fn_missing()")
+        .unwrap();
+    let none_result = generated[question..]
+        .find("frame->nomo_async_result = (nomo_enum_Option_void){.tag = nomo_enum_Option_void_None};")
+        .map(|index| question + index)
+        .unwrap();
+    let cancel = generated[none_result..]
+        .find("nomo_async_cancel_slow_child(&frame->nomo_async_child_0, context);")
+        .map(|index| none_result + index)
+        .unwrap();
+    let complete = generated[cancel..]
+        .find("frame->structured_completed = 1u;")
+        .map(|index| cancel + index)
+        .unwrap();
+    assert!(question < none_result);
+    assert!(none_result < cancel);
+    assert!(cancel < complete);
+    assert!(generated[none_result..cancel].contains("frame->nomo_async_result_owned = 1u;"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["task_spawns"], 2);
+    assert_eq!(metrics["counters"]["task_joins"], 1);
+    assert_eq!(metrics["counters"]["task_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_expirations"], 0);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn structured_scope_question_join_spills_managed_success_across_later_suspension() {
+    let root = temp_test_root("structured-scope-question-join-success");
+    reset_dir(&root);
+    let project = root.join("structured_scope_question_join_success");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"structured_scope_question_join_success\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.task
+
+suspend fn worker(value: string) -> string {
+    task.yield_now()
+    return value
+}
+
+suspend fn gather() -> Result<string, TaskError> {
+    task.scope {
+        let left = task.spawn worker("left")
+        let right = task.spawn worker("right")
+        let left_value: string = task.join(left)?
+        let right_value: string = task.join(right)?
+        return Ok(left_value)
+    }
+}
+
+suspend fn main() -> void {
+    let gathered: Result<string, TaskError> = gather()
+    io.println(result.unwrap_or(gathered, "failed"))
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "left\n");
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_string nomo_async_local_nomo_left_value;"));
+    assert!(generated.contains("uint8_t nomo_async_owned_nomo_left_value;"));
+    let question_success = generated
+        .find("nomo_left_value = nomo_async_question_result_3.payload.nomo_payload_Ok;")
+        .unwrap();
+    let retain = generated[question_success..]
+        .find("nomo_left_value = nomo_string_retain(nomo_left_value);")
+        .map(|index| question_success + index)
+        .unwrap();
+    let spill = generated[retain..]
+        .find("frame->nomo_async_local_nomo_left_value = nomo_left_value;")
+        .map(|index| retain + index)
+        .unwrap();
+    assert!(question_success < retain);
+    assert!(retain < spill);
+    assert!(generated.contains("nomo_async_cancel_worker(&frame->nomo_async_child_1, context);"));
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-structured-scope-question-join-success.exe"
+        } else {
+            "asan-structured-scope-question-join-success"
+        });
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(String::from_utf8_lossy(&asan_output.stdout), "left\n");
+        assert!(asan_output.stderr.is_empty());
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn structured_tasks_use_bounded_fifo_and_surface_typed_queue_saturation() {
     let root = temp_test_root("structured-typed-tasks");
     reset_dir(&root);

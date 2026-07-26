@@ -58,6 +58,7 @@ fn emits_result_question_let_early_return() {
                             name: "parse".to_string(),
                             args: Vec::new(),
                         },
+                        early_exit_actions: Vec::new(),
                     },
                     Statement::Return(Some(ValueExpr::EnumVariant {
                         enum_name: "Result".to_string(),
@@ -153,6 +154,7 @@ fn emits_result_void_question_let_without_void_temp() {
                             name: "write".to_string(),
                             args: Vec::new(),
                         },
+                        early_exit_actions: Vec::new(),
                     },
                     Statement::Return(Some(ValueExpr::EnumVariant {
                         enum_name: "Result".to_string(),

@@ -97,6 +97,7 @@ pub enum Statement {
         result_type: ValueType,
         return_type: ValueType,
         result_expr: ValueExpr,
+        early_exit_actions: Vec<ValueExpr>,
     },
     QuestionReturn {
         carrier: QuestionCarrier,

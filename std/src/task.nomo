@@ -52,8 +52,9 @@ pub suspend fn sleep(duration: Duration) -> Result<void, TaskError> {
 /// The compiler infers Task<ChildResult>, owns each immutable handle in one
 /// lexical scope, and permits at most one join. Normal fallthrough cancels and
 /// cleans up unjoined children; a final return evaluates its expression, then
-/// performs the same cleanup before moving its result. It is distinct from the
-/// legacy functions below.
+/// performs the same cleanup before moving its result. A direct immutable
+/// `let value: T = expression?` stores Err/None, cancels live children, and
+/// then completes the helper. It is distinct from the legacy functions below.
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
     return task.spawn(worker, input)

@@ -699,6 +699,7 @@ impl<'a> Interpreter<'a> {
                 name,
                 value_type,
                 result_expr,
+                early_exit_actions,
                 ..
             } => {
                 let value = self.eval_expr(result_expr)?;
@@ -715,6 +716,9 @@ impl<'a> Interpreter<'a> {
                     nomo_ir::QuestionCarrier::Option => ("Some", "None"),
                 };
                 if variant == early {
+                    for action in early_exit_actions {
+                        self.eval_expr(action)?;
+                    }
                     return Ok(Signal::Return(value));
                 }
                 if variant != success {

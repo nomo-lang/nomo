@@ -142,7 +142,10 @@ operation slot，并由 `CancelIoEx` 排空延迟 completion；async 路径不�
 child 创建 reader/writer thread。`iocp_operations_started` 只统计已被系统
 接受、后续会交付 completion 的操作；`live_iocp_operations` 还覆盖系统调用
 即时尝试期间预留的 slot，因此同步 EOF 或启动失败只释放容量，不会虚构一条
-已提交操作。
+已提交操作。P2-PROC-D 直接对 release artifact 锁定 browser boundary：
+零 import 的 WASM module 会执行 async `process.start` probe，其 command 与
+timeout function 一旦被求值就会 panic；module 必须在两者运行前返回
+secret-safe `NOMO-WASM-003`。
 
 RFC 0024 行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，
 并全部由 E0891 隔离。示例见

@@ -160,6 +160,10 @@ threads. `iocp_operations_started` counts only operations accepted for
 completion delivery, while `live_iocp_operations` also covers a slot reserved
 during the immediate system-call attempt; a synchronous EOF or start failure
 therefore releases capacity without fabricating a submitted operation.
+P2-PROC-D locks the browser boundary against the release artifact: the
+zero-import WASM module runs an async `process.start` probe with command and
+timeout functions that panic if evaluated, and must return secret-safe
+`NOMO-WASM-003` before either operand runs.
 
 RFC 0024 behavior remains temporarily available only through
 `BlockingProcessChild` and explicit `_blocking` names, all quarantined by

@@ -888,7 +888,11 @@ still running. `ProcessControlError.code` is one of `invalid_request`, `busy`,
 `runtime_unavailable`. Messages and default diagnostics never include program,
 argv, environment, cwd, stdin, stdout, or stderr values. Native Unix-like and
 Windows adapters are owned by the toolchain; application code declares no C
-FFI. Browser WASM rejects this controlled API before argument evaluation.
+FFI. Browser WASM rejects this controlled API before argument evaluation. The
+release-WASM verifier invokes async `process.start` with command and timeout
+operands that panic if evaluated, requires the secret-safe `NOMO-WASM-003`
+capability error, and confirms that the artifact imports no process or other
+host API.
 
 Suspend call graphs reject the shell helpers and every `_blocking` controlled
 call with E0891. Synchronous calls to the new `start` or `next_event` report

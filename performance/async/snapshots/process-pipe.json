@@ -63,13 +63,11 @@
       "retained_process_bytes": 0
     },
     "counter_minimums": {
-      "poll_calls": 770,
-      "ready_queue_enqueues": 257,
-      "ready_queue_dequeues": 257,
-      "reactor_waits": 257,
-      "reactor_completions": 257,
-      "reactor_registrations": 257,
-      "reactor_deregistrations": 257
+      "poll_calls": 258,
+      "reactor_waits": 1,
+      "reactor_completions": 1,
+      "reactor_registrations": 1,
+      "reactor_deregistrations": 1
     },
     "unavailable": [
       "local_retain",

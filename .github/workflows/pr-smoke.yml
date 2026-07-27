@@ -170,6 +170,7 @@ jobs:
               -or $timerPayload.counters.reactor_shutdowns -ne 1 `
               -or $timerPayload.counters.live_reactors -ne 0 `
               -or $timerPayload.counters.peak_live_reactors -ne 1) {
+            Write-Host ($timerPayload | ConvertTo-Json -Depth 4)
             throw "unexpected async timer counters"
           }
           $tcpMetrics = Join-Path $env:RUNNER_TEMP "nomo-async-tcp-metrics.json"

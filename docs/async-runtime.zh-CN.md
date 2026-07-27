@@ -52,8 +52,8 @@ current-thread backend。duration 只求值一次；非正时长 inline 完成�
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
 
-P2-TCP-A/B/C 还提供 direct-style 的数值地址或 hostname connect、有界增量
-读取与完整写入：
+P2-TCP-A/B/C 加上聚焦的 P2-TCP-D Windows 数值地址小切片，还提供
+direct-style connect、有界增量读取与完整写入：
 
 ```nomo
 import std.net
@@ -73,12 +73,16 @@ suspend fn exchange(stream: TcpStream) -> void {
 ```
 
 Linux 与 macOS 会以 nonblocking socket 发起每次连接，并通过带 generation
-校验的 epoll/kqueue registration 挂起。数值地址不会启动 OS thread。最长
+校验的 epoll/kqueue registration 挂起。Windows 数值 IPv4/IPv6 connect 使用
+`ConnectEx`，read/write 使用 `WSARecv`/`WSASend` 与 owner-local 64 槽固定
+IOCP operation table。数值地址不会启动 OS thread。Linux 与 macOS 上最长
 253 字节的 hostname 会进入一个惰性启动的 resolver worker；该 worker 前有
 16 个 job 的固定容量，completion 通过 owner reactor 返回，最多按 resolver
 顺序尝试 16 个 IPv4/IPv6 candidate。解析与所有 candidate 共用一个最长
 15 分钟的 monotonic deadline。hostname 零 timeout 会 inline 返回，且不会
-初始化 pool 或 reactor。`TcpStream` 固定到 owner executor，属于 Local/!Send。
+初始化 pool 或 reactor；Windows hostname 在余下的 P2-TCP-D resolver 子切片
+落地前明确返回 `Unsupported`。`TcpStream` 固定到 owner executor，属于
+Local/!Send。
 
 每条 stream 同时最多有一个 pending read 和一个 pending write；同方向冲突
 返回 `Busy`。`read` 返回一块 `Array<u32>` 字节，`read_string` 校验一块
@@ -93,8 +97,11 @@ resolver 容量用尽返回 `Limit`，解析失败返回 `Resolve`；两者的�
 cooperative cancellation：调用者进入终态，但 executor shutdown 会等待
 lookup 返回，以便把 worker 与 owner registration 恰好清理一次。这是
 P2-TCP-C 的单 worker 聚焦切片，不是 RFC 0032 的通用 blocking pool。Windows
-当前可以编译，并在不求值 write payload 的情况下明确返回 `Unsupported`，
-不声称已经支持 IOCP socket completion。预览期的阻塞名称是
+发生 timeout 或 structured cancellation 时，会把 pending read/write buffer
+从 coroutine frame 脱离，调用 `CancelIoEx`，并让固定 IOCP slot 持有该 buffer
+直到 late completion 被 drain；reactor shutdown 会在关闭 completion port 前
+清空所有 live IOCP slot，避免 `OVERLAPPED` 指回已经释放的 frame。预览期的
+阻塞名称是
 `net.connect_blocking`、`read_to_string_blocking` 与
 `write_string_blocking`；suspend 调用图到达这些 API 时报告 E0891。
 当前 stackless 小切片需要像上例一样绑定每个完整 `Result`；在通用的
@@ -260,7 +267,7 @@ structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand
 `runtime_unavailable`，不会用顺序执行伪装 select。示例见
 [`examples/async_static_select`](../examples/async_static_select)。
 
-## 已实现的 P1、P2 Reactor/P2-TCP-A/B/C 与 P3-B/P3-C 小切片
+## 已实现的 P1、P2 Reactor/P2-TCP-A/B/C/D-数值地址与 P3-B/P3-C 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -278,7 +285,8 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   ready-only 工作与非正时长 timer 不初始化它；
 - 64 槽有界 I/O owner table、slot generation 与 exclusive close；每个 pending
   TCP candidate 在 epoll/kqueue 上只使用一个内嵌 registration 和一个 timeout
-  timer；
+  timer；Windows 每次数值 connect/read/write submission 使用一个固定表
+  IOCP operation；
 - 一个惰性 resolver worker、16 个固定 job slot、nonblocking owner wake pipe、
   最多 16 个复制后的地址 candidate、一个总 deadline，以及精确的 queued/
   running/cancelled/completed/live/peak 生命周期 counter；
@@ -286,6 +294,9 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   direction 最多一个 pending operation，并支持 one-shot readiness rearm、
   完整 partial-write progress、有界 retained-byte metric，以及 timeout/
   cancellation 的恰好一次清理；
+- Windows `OVERLAPPED` storage 位于 owner reactor 而非 coroutine frame，
+  并提供 `CancelIoEx`、late completion 的 detached payload ownership、固定
+  64-operation backpressure 与 shutdown drain；
 - 入同一有界 FIFO 的内嵌 structured child frame，以及 child 完成时重新入队
   parent 的单一 owner-local waiter edge；
 - structured spawn 无法进入 64 槽 ready queue 时，由 join 构造

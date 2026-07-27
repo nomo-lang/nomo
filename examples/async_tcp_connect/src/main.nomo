@@ -11,7 +11,11 @@ fn report(result: Result<TcpStream, NetError>) -> void {
             stream.close()
         }
         Err(error) => {
-            io.println(error.message)
+            if let NetErrorKind.Unsupported = error.kind {
+                io.println("unsupported")
+            } else {
+                io.println(error.message)
+            }
         }
     }
 }

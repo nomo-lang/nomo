@@ -115,6 +115,7 @@ typedef struct {
     void *frame;
     nomo_async_poll_fn poll;
     uint8_t *read_buffer;
+    uint8_t *write_buffer;
     nomo_array_u32 write_bytes;
     nomo_string write_text;
     int64_t deadline_millis;
@@ -200,6 +201,10 @@ static void nomo_async_tcp_io_release_payload(
         free(registration->read_buffer);
         registration->read_buffer = NULL;
     }
+    if (registration->write_buffer != NULL) {
+        free(registration->write_buffer);
+        registration->write_buffer = NULL;
+    }
     if (registration->payload_owned == 0u) {
         return;
     }
@@ -220,6 +225,23 @@ static void nomo_async_tcp_io_finish(
     if (context == NULL) {
         return;
     }
+#ifdef _WIN32
+    if (registration->reactor_registration.operation != NULL) {
+        if (registration->read_buffer != NULL) {
+            nomo_async_reactor_detach_buffer(
+                &registration->reactor_registration,
+                registration->read_buffer
+            );
+            registration->read_buffer = NULL;
+        } else if (registration->write_buffer != NULL) {
+            nomo_async_reactor_detach_buffer(
+                &registration->reactor_registration,
+                registration->write_buffer
+            );
+            registration->write_buffer = NULL;
+        }
+    }
+#endif
     nomo_async_reactor_deregister(
         &context->reactor,
         &registration->reactor_registration
@@ -251,8 +273,10 @@ static void nomo_async_tcp_io_wake(void *owner, uint32_t ready) {
         || (ready & registration->interests) == 0u) {
         return;
     }
+#ifndef _WIN32
     registration->deadline_millis = registration->timer.deadline_millis;
     nomo_async_timer_disarm(&registration->timer, registration->context);
+#endif
     registration->ready = 1u;
     registration->context->io_ready_completions += 1u;
     if (nomo_async_ready_enqueue(
@@ -416,6 +440,309 @@ static int nomo_async_tcp_utf8_valid(const uint8_t *data, size_t length) {
 fn emit_windows_async_tcp_io(out: &mut String) {
     out.push_str(
         r#"
+static int nomo_async_tcp_iocp_prepare(
+    nomo_async_tcp_io_registration *registration,
+    nomo_async_tcp_stream stream,
+    uint64_t timeout_millis,
+    uint32_t direction,
+    uint32_t interests,
+    nomo_async_tcp_io_kind kind,
+    nomo_async_context *context,
+    nomo_async_tcp_error_kind *error_kind,
+    const char **error_message
+) {
+    memset(registration, 0, sizeof(*registration));
+    registration->context = context;
+    registration->frame = context->current_frame;
+    registration->poll = context->current_poll;
+    registration->handle_slot = stream.nomo_member_slot;
+    registration->handle_generation = stream.nomo_member_generation;
+    registration->direction = direction;
+    registration->interests = interests;
+    registration->kind = kind;
+    if (timeout_millis > 900000u) {
+        *error_kind = (nomo_async_tcp_error_kind){
+            .tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT
+        };
+        *error_message = "timeout_millis must be at most 900000";
+        return 1;
+    }
+    if (stream.nomo_member_owner != context
+        || stream.nomo_member_close_fn != nomo_async_io_handle_close_callback) {
+        *error_kind = (nomo_async_tcp_error_kind){
+            .tag = NOMO_ASYNC_TCP_KIND_CLOSED
+        };
+        *error_message = "TCP stream is closed or belongs to another executor";
+        return 1;
+    }
+    int acquired = nomo_async_io_handle_acquire(
+        context,
+        registration->handle_slot,
+        registration->handle_generation,
+        direction
+    );
+    if (acquired != 0) {
+        *error_kind = (nomo_async_tcp_error_kind){
+            .tag = acquired == 2
+                ? NOMO_ASYNC_TCP_KIND_BUSY
+                : NOMO_ASYNC_TCP_KIND_CLOSED
+        };
+        *error_message = acquired == 2
+            ? "TCP stream direction already has a pending operation"
+            : "TCP stream is closed";
+        return 1;
+    }
+    registration->acquired = 1u;
+    return 0;
+}
+
+static int nomo_async_tcp_iocp_begin(
+    nomo_async_tcp_io_registration *registration,
+    nomo_socket handle,
+    uint64_t timeout_millis
+) {
+    nomo_async_poll timer_status = nomo_async_timer_start(
+        &registration->timer,
+        (int64_t)timeout_millis,
+        registration->context,
+        &registration->timer_outcome,
+        NULL,
+        0u
+    );
+    if (timer_status != NOMO_ASYNC_POLL_PENDING) {
+        return 3;
+    }
+    registration->deadline_millis = registration->timer.deadline_millis;
+    registration->reactor_registration.owner = registration;
+    registration->reactor_registration.wake = nomo_async_tcp_io_wake;
+    if (nomo_async_io_handle_associate_reactor(
+            registration->context,
+            registration->handle_slot,
+            registration->handle_generation
+        ) != 0) {
+        nomo_async_timer_disarm(
+            &registration->timer,
+            registration->context
+        );
+        return 1;
+    }
+    if (nomo_async_reactor_register(
+            &registration->context->reactor,
+            &registration->reactor_registration,
+            handle,
+            registration->interests
+        ) != 0) {
+        nomo_async_timer_disarm(
+            &registration->timer,
+            registration->context
+        );
+        return 2;
+    }
+    return 0;
+}
+
+static void nomo_async_tcp_iocp_mark_active(
+    nomo_async_tcp_io_registration *registration
+) {
+    nomo_async_reactor_mark_submitted(
+        &registration->reactor_registration
+    );
+    if (registration->active == 0u) {
+        registration->active = 1u;
+        registration->context->live_io_operations += 1u;
+        if (registration->context->live_io_operations
+            > registration->context->peak_live_io_operations) {
+            registration->context->peak_live_io_operations =
+                registration->context->live_io_operations;
+        }
+    }
+    registration->context->pending_reason = NOMO_ASYNC_PENDING_IO;
+}
+
+static int nomo_async_tcp_iocp_issue_read(
+    nomo_async_tcp_io_registration *registration,
+    nomo_socket handle
+) {
+    WSABUF buffer;
+    buffer.buf = (CHAR *)registration->read_buffer;
+    buffer.len = (ULONG)registration->read_capacity;
+    DWORD transferred = 0u;
+    DWORD flags = 0u;
+    int status = WSARecv(
+        handle,
+        &buffer,
+        1u,
+        &transferred,
+        &flags,
+        nomo_async_reactor_overlapped(
+            &registration->reactor_registration
+        ),
+        NULL
+    );
+    int error = status == 0 ? 0 : WSAGetLastError();
+    if (status == SOCKET_ERROR && error != WSA_IO_PENDING) {
+        return 1;
+    }
+    nomo_async_tcp_iocp_mark_active(registration);
+    return 0;
+}
+
+static int nomo_async_tcp_iocp_issue_write(
+    nomo_async_tcp_io_registration *registration,
+    nomo_socket handle
+) {
+    size_t remaining =
+        registration->write_length - registration->write_offset;
+    size_t chunk = remaining < NOMO_ASYNC_TCP_WRITE_POLL_BUDGET
+        ? remaining
+        : NOMO_ASYNC_TCP_WRITE_POLL_BUDGET;
+    WSABUF buffer;
+    buffer.buf = (CHAR *)registration->write_buffer
+        + registration->write_offset;
+    buffer.len = (ULONG)chunk;
+    DWORD transferred = 0u;
+    int status = WSASend(
+        handle,
+        &buffer,
+        1u,
+        &transferred,
+        0u,
+        nomo_async_reactor_overlapped(
+            &registration->reactor_registration
+        ),
+        NULL
+    );
+    int error = status == 0 ? 0 : WSAGetLastError();
+    if (status == SOCKET_ERROR && error != WSA_IO_PENDING) {
+        return 1;
+    }
+    nomo_async_tcp_iocp_mark_active(registration);
+    return 0;
+}
+
+static void nomo_async_tcp_iocp_error_from_begin(
+    int begin,
+    nomo_async_tcp_error_kind *kind,
+    const char **message
+) {
+    *kind = (nomo_async_tcp_error_kind){
+        .tag = begin == 1
+            ? NOMO_ASYNC_TCP_KIND_REACTOR
+            : NOMO_ASYNC_TCP_KIND_LIMIT
+    };
+    *message = begin == 1
+        ? "IOCP socket association failed"
+        : (begin == 2
+            ? "owner executor IOCP operation capacity is exhausted"
+            : "owner executor timer capacity is exhausted");
+}
+
+static int nomo_async_tcp_iocp_resume_common(
+    nomo_async_tcp_io_registration *registration,
+    nomo_async_context *context,
+    nomo_async_tcp_error_kind *error_kind,
+    const char **error_message
+) {
+    if (registration->timer.armed != 0u
+        && nomo_time_monotonic_millis()
+            >= registration->timer.deadline_millis) {
+        (void)nomo_async_deadline_due(&registration->timer, context);
+    }
+    if (registration->timer.expired != 0u) {
+        registration->timer.expired = 0u;
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        context->io_timeouts += 1u;
+        *error_kind = (nomo_async_tcp_error_kind){
+            .tag = NOMO_ASYNC_TCP_KIND_TIMEOUT
+        };
+        *error_message = "TCP operation timed out";
+        return 1;
+    }
+    if (registration->ready == 0u) {
+        context->pending_reason = NOMO_ASYNC_PENDING_IO;
+        return 2;
+    }
+    registration->ready = 0u;
+    if (registration->reactor_registration.error != ERROR_SUCCESS) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        context->io_errors += 1u;
+        return 3;
+    }
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
+    );
+    if (handle == NOMO_INVALID_SOCKET) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        *error_kind = (nomo_async_tcp_error_kind){
+            .tag = NOMO_ASYNC_TCP_KIND_CLOSED
+        };
+        *error_message = "TCP stream is closed";
+        return 1;
+    }
+    return 0;
+}
+
+static void nomo_async_tcp_iocp_complete_read(
+    nomo_async_tcp_io_registration *registration,
+    nomo_async_tcp_read_result *result
+) {
+    size_t length =
+        (size_t)registration->reactor_registration.transferred;
+    nomo_array_u32 data = nomo_array_u32_new();
+    for (size_t index = 0u; index < length; index += 1u) {
+        data = nomo_array_u32_push(
+            data,
+            (uint32_t)registration->read_buffer[index]
+        );
+    }
+    nomo_async_tcp_io_finish(registration);
+    nomo_async_tcp_io_release_payload(registration);
+    memset(result, 0, sizeof(*result));
+    result->tag = NOMO_ASYNC_TCP_READ_OK;
+    result->payload.nomo_payload_Ok = (nomo_async_tcp_chunk){
+        .nomo_member_data = data,
+        .nomo_member_eof = length == 0u
+    };
+}
+
+static void nomo_async_tcp_iocp_complete_text(
+    nomo_async_tcp_io_registration *registration,
+    nomo_async_tcp_text_result *result
+) {
+    size_t length =
+        (size_t)registration->reactor_registration.transferred;
+    if (!nomo_async_tcp_utf8_valid(registration->read_buffer, length)) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_text_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_READ},
+            "TCP text chunk is not valid Nomo UTF-8 text"
+        );
+        registration->context->io_errors += 1u;
+        return;
+    }
+    nomo_string data = nomo_string_literal("");
+    if (length > 0u) {
+        registration->read_buffer[length] = 0u;
+        data = nomo_string_owned((char *)registration->read_buffer);
+        registration->read_buffer = NULL;
+    }
+    nomo_async_tcp_io_finish(registration);
+    nomo_async_tcp_io_release_payload(registration);
+    memset(result, 0, sizeof(*result));
+    result->tag = NOMO_ASYNC_TCP_TEXT_OK;
+    result->payload.nomo_payload_Ok = (nomo_async_tcp_text_chunk){
+        .nomo_member_data = data,
+        .nomo_member_eof = length == 0u
+    };
+}
+
 static nomo_async_poll nomo_async_tcp_read_start(
     nomo_async_tcp_io_registration *registration,
     nomo_async_tcp_stream stream,
@@ -424,17 +751,101 @@ static nomo_async_poll nomo_async_tcp_read_start(
     nomo_async_context *context,
     nomo_async_tcp_read_result *result
 ) {
-    (void)registration;
-    (void)stream;
-    (void)max_bytes;
-    (void)timeout_millis;
     context->io_read_starts += 1u;
-    nomo_async_tcp_read_error(
-        result,
-        (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_UNSUPPORTED},
-        "async TCP read is not available on the Windows preview backend"
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    if (max_bytes == 0u || max_bytes > 1048576u) {
+        nomo_async_tcp_read_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT},
+            "max_bytes must be in 1..=1048576"
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_prepare(
+            registration,
+            stream,
+            timeout_millis,
+            NOMO_ASYNC_IO_DIRECTION_READ,
+            NOMO_ASYNC_REACTOR_READ,
+            NOMO_ASYNC_TCP_IO_READ,
+            context,
+            &error_kind,
+            &error_message
+        ) != 0) {
+        nomo_async_tcp_read_error(result, error_kind, error_message);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->read_capacity = (size_t)max_bytes;
+    registration->read_buffer = (uint8_t *)malloc((size_t)max_bytes + 1u);
+    if (registration->read_buffer == NULL) {
+        nomo_panic("out of memory");
+    }
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
     );
-    return NOMO_ASYNC_POLL_READY;
+    if (timeout_millis == 0u) {
+        int received = recv(
+            handle,
+            (char *)registration->read_buffer,
+            (int)registration->read_capacity,
+            0
+        );
+        if (received >= 0) {
+            registration->reactor_registration.transferred = (DWORD)received;
+            nomo_async_tcp_iocp_complete_read(registration, result);
+        } else {
+            int receive_error = WSAGetLastError();
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_read_error(
+                result,
+                (nomo_async_tcp_error_kind){
+                    .tag = receive_error == WSAEWOULDBLOCK
+                        ? NOMO_ASYNC_TCP_KIND_TIMEOUT
+                        : NOMO_ASYNC_TCP_KIND_READ
+                },
+                receive_error == WSAEWOULDBLOCK
+                    ? "TCP read did not complete immediately"
+                    : "TCP read failed"
+            );
+            context->io_timeouts += receive_error == WSAEWOULDBLOCK;
+            context->io_errors += receive_error != WSAEWOULDBLOCK;
+        }
+        return NOMO_ASYNC_POLL_READY;
+    }
+    int begin = nomo_async_tcp_iocp_begin(
+        registration,
+        handle,
+        timeout_millis
+    );
+    if (begin != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_iocp_error_from_begin(
+            begin,
+            &error_kind,
+            &error_message
+        );
+        nomo_async_tcp_read_error(result, error_kind, error_message);
+        context->io_errors += begin == 1;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_issue_read(registration, handle) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_read_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_READ},
+            "TCP read failed to start"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_io_set_retained(registration, max_bytes);
+    return NOMO_ASYNC_POLL_PENDING;
 }
 
 static nomo_async_poll nomo_async_tcp_read_string_start(
@@ -445,17 +856,101 @@ static nomo_async_poll nomo_async_tcp_read_string_start(
     nomo_async_context *context,
     nomo_async_tcp_text_result *result
 ) {
-    (void)registration;
-    (void)stream;
-    (void)max_bytes;
-    (void)timeout_millis;
     context->io_read_starts += 1u;
-    nomo_async_tcp_text_error(
-        result,
-        (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_UNSUPPORTED},
-        "async TCP text read is not available on the Windows preview backend"
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    if (max_bytes == 0u || max_bytes > 1048576u) {
+        nomo_async_tcp_text_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT},
+            "max_bytes must be in 1..=1048576"
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_prepare(
+            registration,
+            stream,
+            timeout_millis,
+            NOMO_ASYNC_IO_DIRECTION_READ,
+            NOMO_ASYNC_REACTOR_READ,
+            NOMO_ASYNC_TCP_IO_READ_STRING,
+            context,
+            &error_kind,
+            &error_message
+        ) != 0) {
+        nomo_async_tcp_text_error(result, error_kind, error_message);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->read_capacity = (size_t)max_bytes;
+    registration->read_buffer = (uint8_t *)malloc((size_t)max_bytes + 1u);
+    if (registration->read_buffer == NULL) {
+        nomo_panic("out of memory");
+    }
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
     );
-    return NOMO_ASYNC_POLL_READY;
+    if (timeout_millis == 0u) {
+        int received = recv(
+            handle,
+            (char *)registration->read_buffer,
+            (int)registration->read_capacity,
+            0
+        );
+        if (received >= 0) {
+            registration->reactor_registration.transferred = (DWORD)received;
+            nomo_async_tcp_iocp_complete_text(registration, result);
+        } else {
+            int receive_error = WSAGetLastError();
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_text_error(
+                result,
+                (nomo_async_tcp_error_kind){
+                    .tag = receive_error == WSAEWOULDBLOCK
+                        ? NOMO_ASYNC_TCP_KIND_TIMEOUT
+                        : NOMO_ASYNC_TCP_KIND_READ
+                },
+                receive_error == WSAEWOULDBLOCK
+                    ? "TCP text read did not complete immediately"
+                    : "TCP text read failed"
+            );
+            context->io_timeouts += receive_error == WSAEWOULDBLOCK;
+            context->io_errors += receive_error != WSAEWOULDBLOCK;
+        }
+        return NOMO_ASYNC_POLL_READY;
+    }
+    int begin = nomo_async_tcp_iocp_begin(
+        registration,
+        handle,
+        timeout_millis
+    );
+    if (begin != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_iocp_error_from_begin(
+            begin,
+            &error_kind,
+            &error_message
+        );
+        nomo_async_tcp_text_error(result, error_kind, error_message);
+        context->io_errors += begin == 1;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_issue_read(registration, handle) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_text_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_READ},
+            "TCP text read failed to start"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_io_set_retained(registration, max_bytes);
+    return NOMO_ASYNC_POLL_PENDING;
 }
 
 static nomo_async_poll nomo_async_tcp_write_start(
@@ -466,17 +961,122 @@ static nomo_async_poll nomo_async_tcp_write_start(
     nomo_async_context *context,
     nomo_async_tcp_write_result *result
 ) {
-    (void)registration;
-    (void)stream;
-    (void)data;
-    (void)timeout_millis;
     context->io_write_starts += 1u;
-    nomo_async_tcp_write_error(
-        result,
-        (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_UNSUPPORTED},
-        "async TCP write is not available on the Windows preview backend"
+    if (data.len > 1048576u || timeout_millis > 900000u) {
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT},
+            "TCP write exceeds the payload or timeout bound"
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    for (size_t index = 0u; index < data.len; index += 1u) {
+        if (data.data[index] > 255u) {
+            nomo_async_tcp_write_error(
+                result,
+                (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT},
+                "TCP byte values must be in 0..=255"
+            );
+            return NOMO_ASYNC_POLL_READY;
+        }
+    }
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    if (nomo_async_tcp_iocp_prepare(
+            registration,
+            stream,
+            timeout_millis,
+            NOMO_ASYNC_IO_DIRECTION_WRITE,
+            NOMO_ASYNC_REACTOR_WRITE,
+            NOMO_ASYNC_TCP_IO_WRITE,
+            context,
+            &error_kind,
+            &error_message
+        ) != 0) {
+        nomo_async_tcp_write_error(result, error_kind, error_message);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->write_length = data.len;
+    if (data.len == 0u) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_write_success(result);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->write_buffer = (uint8_t *)malloc(data.len);
+    if (registration->write_buffer == NULL) {
+        nomo_panic("out of memory");
+    }
+    for (size_t index = 0u; index < data.len; index += 1u) {
+        registration->write_buffer[index] = (uint8_t)data.data[index];
+    }
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
     );
-    return NOMO_ASYNC_POLL_READY;
+    if (timeout_millis == 0u) {
+        int sent = send(
+            handle,
+            (const char *)registration->write_buffer,
+            (int)(data.len < NOMO_ASYNC_TCP_WRITE_POLL_BUDGET
+                ? data.len
+                : NOMO_ASYNC_TCP_WRITE_POLL_BUDGET),
+            0
+        );
+        if (sent >= 0 && (size_t)sent == data.len) {
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_write_success(result);
+        } else {
+            int send_error = sent < 0 ? WSAGetLastError() : WSAEWOULDBLOCK;
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_write_error(
+                result,
+                (nomo_async_tcp_error_kind){
+                    .tag = send_error == WSAEWOULDBLOCK
+                        ? NOMO_ASYNC_TCP_KIND_TIMEOUT
+                        : NOMO_ASYNC_TCP_KIND_WRITE
+                },
+                send_error == WSAEWOULDBLOCK
+                    ? "TCP write did not complete immediately"
+                    : "TCP write failed"
+            );
+            context->io_timeouts += send_error == WSAEWOULDBLOCK;
+            context->io_errors += send_error != WSAEWOULDBLOCK;
+        }
+        return NOMO_ASYNC_POLL_READY;
+    }
+    int begin = nomo_async_tcp_iocp_begin(
+        registration,
+        handle,
+        timeout_millis
+    );
+    if (begin != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_iocp_error_from_begin(
+            begin,
+            &error_kind,
+            &error_message
+        );
+        nomo_async_tcp_write_error(result, error_kind, error_message);
+        context->io_errors += begin == 1;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_issue_write(registration, handle) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_WRITE},
+            "TCP write failed to start"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_io_set_retained(registration, data.len);
+    return NOMO_ASYNC_POLL_PENDING;
 }
 
 static nomo_async_poll nomo_async_tcp_write_string_start(
@@ -487,17 +1087,111 @@ static nomo_async_poll nomo_async_tcp_write_string_start(
     nomo_async_context *context,
     nomo_async_tcp_write_result *result
 ) {
-    (void)registration;
-    (void)stream;
-    (void)content;
-    (void)timeout_millis;
     context->io_write_starts += 1u;
-    nomo_async_tcp_write_error(
-        result,
-        (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_UNSUPPORTED},
-        "async TCP string write is not available on the Windows preview backend"
+    size_t length = strlen(content.data);
+    if (length > 1048576u || timeout_millis > 900000u) {
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_INVALIDINPUT},
+            "TCP string write exceeds the payload or timeout bound"
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    if (nomo_async_tcp_iocp_prepare(
+            registration,
+            stream,
+            timeout_millis,
+            NOMO_ASYNC_IO_DIRECTION_WRITE,
+            NOMO_ASYNC_REACTOR_WRITE,
+            NOMO_ASYNC_TCP_IO_WRITE_STRING,
+            context,
+            &error_kind,
+            &error_message
+        ) != 0) {
+        nomo_async_tcp_write_error(result, error_kind, error_message);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->write_length = length;
+    if (length == 0u) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_write_success(result);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->write_buffer = (uint8_t *)malloc(length);
+    if (registration->write_buffer == NULL) {
+        nomo_panic("out of memory");
+    }
+    memcpy(registration->write_buffer, content.data, length);
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
     );
-    return NOMO_ASYNC_POLL_READY;
+    if (timeout_millis == 0u) {
+        int sent = send(
+            handle,
+            (const char *)registration->write_buffer,
+            (int)(length < NOMO_ASYNC_TCP_WRITE_POLL_BUDGET
+                ? length
+                : NOMO_ASYNC_TCP_WRITE_POLL_BUDGET),
+            0
+        );
+        if (sent >= 0 && (size_t)sent == length) {
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_write_success(result);
+        } else {
+            int send_error = sent < 0 ? WSAGetLastError() : WSAEWOULDBLOCK;
+            nomo_async_tcp_io_finish(registration);
+            nomo_async_tcp_io_release_payload(registration);
+            nomo_async_tcp_write_error(
+                result,
+                (nomo_async_tcp_error_kind){
+                    .tag = send_error == WSAEWOULDBLOCK
+                        ? NOMO_ASYNC_TCP_KIND_TIMEOUT
+                        : NOMO_ASYNC_TCP_KIND_WRITE
+                },
+                send_error == WSAEWOULDBLOCK
+                    ? "TCP string write did not complete immediately"
+                    : "TCP string write failed"
+            );
+            context->io_timeouts += send_error == WSAEWOULDBLOCK;
+            context->io_errors += send_error != WSAEWOULDBLOCK;
+        }
+        return NOMO_ASYNC_POLL_READY;
+    }
+    int begin = nomo_async_tcp_iocp_begin(
+        registration,
+        handle,
+        timeout_millis
+    );
+    if (begin != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_iocp_error_from_begin(
+            begin,
+            &error_kind,
+            &error_message
+        );
+        nomo_async_tcp_write_error(result, error_kind, error_message);
+        context->io_errors += begin == 1;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_issue_write(registration, handle) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_WRITE},
+            "TCP string write failed to start"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_io_set_retained(registration, length);
+    return NOMO_ASYNC_POLL_PENDING;
 }
 
 static nomo_async_poll nomo_async_tcp_read_resume(
@@ -505,9 +1199,28 @@ static nomo_async_poll nomo_async_tcp_read_resume(
     nomo_async_context *context,
     nomo_async_tcp_read_result *result
 ) {
-    (void)registration;
-    (void)context;
-    (void)result;
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    int common = nomo_async_tcp_iocp_resume_common(
+        registration,
+        context,
+        &error_kind,
+        &error_message
+    );
+    if (common == 2) {
+        return NOMO_ASYNC_POLL_PENDING;
+    }
+    if (common == 1 || common == 3) {
+        nomo_async_tcp_read_error(
+            result,
+            common == 3
+                ? (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_READ}
+                : error_kind,
+            common == 3 ? "TCP read failed" : error_message
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_iocp_complete_read(registration, result);
     return NOMO_ASYNC_POLL_READY;
 }
 
@@ -516,9 +1229,28 @@ static nomo_async_poll nomo_async_tcp_read_string_resume(
     nomo_async_context *context,
     nomo_async_tcp_text_result *result
 ) {
-    (void)registration;
-    (void)context;
-    (void)result;
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    int common = nomo_async_tcp_iocp_resume_common(
+        registration,
+        context,
+        &error_kind,
+        &error_message
+    );
+    if (common == 2) {
+        return NOMO_ASYNC_POLL_PENDING;
+    }
+    if (common == 1 || common == 3) {
+        nomo_async_tcp_text_error(
+            result,
+            common == 3
+                ? (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_READ}
+                : error_kind,
+            common == 3 ? "TCP text read failed" : error_message
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_iocp_complete_text(registration, result);
     return NOMO_ASYNC_POLL_READY;
 }
 
@@ -527,10 +1259,84 @@ static nomo_async_poll nomo_async_tcp_write_resume(
     nomo_async_context *context,
     nomo_async_tcp_write_result *result
 ) {
-    (void)registration;
-    (void)context;
-    (void)result;
-    return NOMO_ASYNC_POLL_READY;
+    nomo_async_tcp_error_kind error_kind = {0};
+    const char *error_message = NULL;
+    int common = nomo_async_tcp_iocp_resume_common(
+        registration,
+        context,
+        &error_kind,
+        &error_message
+    );
+    if (common == 2) {
+        return NOMO_ASYNC_POLL_PENDING;
+    }
+    if (common == 1 || common == 3) {
+        nomo_async_tcp_write_error(
+            result,
+            common == 3
+                ? (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_WRITE}
+                : error_kind,
+            common == 3 ? "TCP write failed" : error_message
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    size_t transferred =
+        (size_t)registration->reactor_registration.transferred;
+    if (transferred == 0u
+        || transferred > registration->write_length
+            - registration->write_offset) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_WRITE},
+            "TCP write made invalid progress"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    registration->write_offset += transferred;
+    if (registration->write_offset == registration->write_length) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_success(result);
+        return NOMO_ASYNC_POLL_READY;
+    }
+    nomo_async_tcp_io_set_retained(
+        registration,
+        registration->write_length - registration->write_offset
+    );
+    nomo_socket handle = nomo_async_io_handle_get(
+        context,
+        registration->handle_slot,
+        registration->handle_generation
+    );
+    if (nomo_async_reactor_reregister(
+            &context->reactor,
+            &registration->reactor_registration,
+            NOMO_ASYNC_REACTOR_WRITE
+        ) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_LIMIT},
+            "owner executor IOCP operation capacity is exhausted"
+        );
+        return NOMO_ASYNC_POLL_READY;
+    }
+    if (nomo_async_tcp_iocp_issue_write(registration, handle) != 0) {
+        nomo_async_tcp_io_finish(registration);
+        nomo_async_tcp_io_release_payload(registration);
+        nomo_async_tcp_write_error(
+            result,
+            (nomo_async_tcp_error_kind){.tag = NOMO_ASYNC_TCP_KIND_WRITE},
+            "TCP write failed to continue"
+        );
+        context->io_errors += 1u;
+        return NOMO_ASYNC_POLL_READY;
+    }
+    return NOMO_ASYNC_POLL_PENDING;
 }
 
 static nomo_async_poll nomo_async_tcp_write_string_resume(
@@ -538,10 +1344,7 @@ static nomo_async_poll nomo_async_tcp_write_string_resume(
     nomo_async_context *context,
     nomo_async_tcp_write_result *result
 ) {
-    (void)registration;
-    (void)context;
-    (void)result;
-    return NOMO_ASYNC_POLL_READY;
+    return nomo_async_tcp_write_resume(registration, context, result);
 }
 "#,
     );

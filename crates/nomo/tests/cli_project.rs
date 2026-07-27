@@ -15758,7 +15758,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "connected\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "connected\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -15808,12 +15811,23 @@ suspend fn main() -> void {
             "unexpected {name} in:\n{metrics}"
         );
     }
+    for (name, expected) in [
+        ("iocp_operations_started", u64::from(cfg!(windows))),
+        ("iocp_operations_completed", u64::from(cfg!(windows))),
+        ("iocp_operations_cancelled", 0),
+        ("live_iocp_operations", 0),
+        ("peak_live_iocp_operations", u64::from(cfg!(windows))),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
 
     server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn nomo_run_executes_bounded_owner_affine_async_tcp_io() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -15924,7 +15938,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "112\nong\ntrue\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "112\nong\ntrue\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -15963,12 +15980,26 @@ suspend fn main() -> void {
             .is_some_and(|value| value >= 1),
         "pending read retained no bounded buffer in:\n{metrics}"
     );
+    for (name, expected) in [
+        ("iocp_operations_started", if cfg!(windows) { 6 } else { 0 }),
+        (
+            "iocp_operations_completed",
+            if cfg!(windows) { 6 } else { 0 },
+        ),
+        ("iocp_operations_cancelled", 0),
+        ("live_iocp_operations", 0),
+        ("peak_live_iocp_operations", u64::from(cfg!(windows))),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
 
     server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn owner_affine_async_tcp_read_timeout_preserves_stream_and_rejects_invalid_utf8() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -16066,7 +16097,7 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "positive timeout\nzero timeout\ninvalid utf8\n"
     );
     assert!(
@@ -16101,6 +16132,24 @@ suspend fn main() -> void {
         metrics["counters"]["reactor_deregistrations"],
         "reactor registration leak in:\n{metrics}"
     );
+    for (name, expected) in [
+        ("iocp_operations_started", if cfg!(windows) { 3 } else { 0 }),
+        (
+            "iocp_operations_completed",
+            if cfg!(windows) { 3 } else { 0 },
+        ),
+        ("iocp_operations_cancelled", u64::from(cfg!(windows))),
+        ("live_iocp_operations", 0),
+        (
+            "peak_live_iocp_operations",
+            if cfg!(windows) { 2 } else { 0 },
+        ),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
 
     server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
@@ -16527,7 +16576,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn structured_cancel_drops_pending_owner_affine_async_tcp_read() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -16602,7 +16650,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "cancelled true\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16635,6 +16686,21 @@ suspend fn main() -> void {
         metrics["counters"]["reactor_deregistrations"],
         "reactor registration leak in:\n{metrics}"
     );
+    for (name, expected) in [
+        ("iocp_operations_started", if cfg!(windows) { 2 } else { 0 }),
+        (
+            "iocp_operations_completed",
+            if cfg!(windows) { 2 } else { 0 },
+        ),
+        ("iocp_operations_cancelled", u64::from(cfg!(windows))),
+        ("live_iocp_operations", 0),
+        ("peak_live_iocp_operations", u64::from(cfg!(windows))),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
 
     server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
@@ -16696,7 +16762,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "cancelled true\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16705,8 +16774,8 @@ suspend fn main() -> void {
     let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
     for (name, expected) in [
         ("reactor_initializations", 1u64),
-        ("reactor_waits", 0),
-        ("reactor_completions", 0),
+        ("reactor_waits", u64::from(cfg!(windows))),
+        ("reactor_completions", u64::from(cfg!(windows))),
         ("reactor_errors", 0),
         ("reactor_registrations", 1),
         ("reactor_deregistrations", 1),
@@ -16729,6 +16798,18 @@ suspend fn main() -> void {
         ("peak_live_io_operations", 1),
         ("retained_io_bytes", 0),
         ("peak_retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    for (name, expected) in [
+        ("iocp_operations_started", u64::from(cfg!(windows))),
+        ("iocp_operations_completed", u64::from(cfg!(windows))),
+        ("iocp_operations_cancelled", u64::from(cfg!(windows))),
+        ("live_iocp_operations", 0),
+        ("peak_live_iocp_operations", u64::from(cfg!(windows))),
     ] {
         assert_eq!(
             metrics["counters"][name], expected,
@@ -16798,7 +16879,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "timed out\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -16823,7 +16907,7 @@ suspend fn main() -> void {
         ("io_cancellations", 0),
         ("io_errors", 0),
         ("live_io_handles", 0),
-        ("peak_live_io_handles", 1),
+        ("peak_live_io_handles", u64::from(!cfg!(windows))),
         ("live_io_operations", 0),
         ("peak_live_io_operations", 0),
         ("retained_io_bytes", 0),
@@ -16843,6 +16927,18 @@ suspend fn main() -> void {
     ] {
         assert_eq!(
             metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    for name in [
+        "iocp_operations_started",
+        "iocp_operations_completed",
+        "iocp_operations_cancelled",
+        "live_iocp_operations",
+        "peak_live_iocp_operations",
+    ] {
+        assert_eq!(
+            metrics["counters"][name], 0,
             "unexpected {name} in:\n{metrics}"
         );
     }

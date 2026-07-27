@@ -45,6 +45,8 @@ mod host_async_executor_helpers;
 mod host_async_tcp_connect_helpers;
 #[path = "runtime/host_async_tcp_io_helpers.rs"]
 mod host_async_tcp_io_helpers;
+#[path = "runtime/host_async_tcp_windows_helpers.rs"]
+mod host_async_tcp_windows_helpers;
 #[path = "runtime/host_channel_helpers.rs"]
 mod host_channel_helpers;
 #[path = "runtime/host_cron_helpers.rs"]
@@ -141,6 +143,7 @@ use host_async_blocking_pool_helpers::*;
 use host_async_executor_helpers::*;
 use host_async_tcp_connect_helpers::*;
 use host_async_tcp_io_helpers::*;
+use host_async_tcp_windows_helpers::*;
 use host_channel_helpers::*;
 use host_cron_helpers::*;
 use host_env_process_helpers::*;

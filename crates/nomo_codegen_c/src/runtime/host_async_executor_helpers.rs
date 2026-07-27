@@ -2571,6 +2571,7 @@ typedef struct {
     uint8_t occupied;
     uint8_t read_busy;
     uint8_t write_busy;
+    uint8_t reactor_associated;
 } nomo_async_io_handle_slot;
 
 struct nomo_async_context {
@@ -2688,6 +2689,7 @@ static int nomo_async_io_handle_insert(
     slot->occupied = 1u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->reactor_associated = 0u;
     *slot_out = selected;
     *generation_out = slot->generation;
     context->live_io_handles += 1u;
@@ -2711,6 +2713,33 @@ static nomo_socket nomo_async_io_handle_get(
     }
     return slot->handle;
 }
+
+#ifdef _WIN32
+static int nomo_async_io_handle_associate_reactor(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return 1;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return 1;
+    }
+    if (slot->reactor_associated != 0u) {
+        return 0;
+    }
+    if (nomo_async_reactor_associate_socket(
+            &context->reactor,
+            slot->handle
+        ) != 0) {
+        return 1;
+    }
+    slot->reactor_associated = 1u;
+    return 0;
+}
+#endif
 
 #define NOMO_ASYNC_IO_DIRECTION_READ 1u
 #define NOMO_ASYNC_IO_DIRECTION_WRITE 2u
@@ -2774,6 +2803,7 @@ static void nomo_async_io_handle_close(
     slot->occupied = 0u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->reactor_associated = 0u;
     slot->generation += 1u;
     if (slot->generation == 0u) {
         slot->generation = 1u;
@@ -3458,6 +3488,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"peak_live_reactor_registrations\": %" PRIu64 ",\n"
         "    \"live_reactors\": %" PRIu64 ",\n"
         "    \"peak_live_reactors\": %" PRIu64 ",\n"
+        "    \"iocp_operations_started\": %" PRIu64 ",\n"
+        "    \"iocp_operations_completed\": %" PRIu64 ",\n"
+        "    \"iocp_operations_cancelled\": %" PRIu64 ",\n"
+        "    \"live_iocp_operations\": %" PRIu64 ",\n"
+        "    \"peak_live_iocp_operations\": %" PRIu64 ",\n"
         "    \"io_connect_starts\": %" PRIu64 ",\n"
         "    \"io_read_starts\": %" PRIu64 ",\n"
         "    \"io_write_starts\": %" PRIu64 ",\n"
@@ -3551,6 +3586,11 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->reactor.peak_live_registrations,
         context->reactor.live,
         context->reactor.peak_live,
+        context->reactor.iocp_operations_started,
+        context->reactor.iocp_operations_completed,
+        context->reactor.iocp_operations_cancelled,
+        context->reactor.live_iocp_operations,
+        context->reactor.peak_live_iocp_operations,
         context->io_connect_starts,
         context->io_read_starts,
         context->io_write_starts,
@@ -3589,7 +3629,7 @@ pub(super) fn emit_async_function(
     function: &Function,
     async_names: &BTreeSet<String>,
     functions: &HashMap<&str, &Function>,
-    target: &nomo_target::TargetTriple,
+    _target: &nomo_target::TargetTriple,
 ) {
     debug_assert!(function.params.iter().all(|parameter| !parameter.mutable));
     debug_assert!(async_names.contains(&function.name));
@@ -3801,9 +3841,7 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            let windows_unsupported_tcp =
-                target.operating_system() == nomo_target::OperatingSystem::Windows;
-            if let Some(connect) = tcp_connect.filter(|_| !windows_unsupported_tcp) {
+            if let Some(connect) = tcp_connect {
                 let host_temp = async_tcp_connect_host_temp(index);
                 out.push_str("            nomo_string ");
                 out.push_str(&host_temp);
@@ -3818,7 +3856,7 @@ pub(super) fn emit_async_function(
                     3,
                 );
             }
-            if let Some(operation) = tcp_io.filter(|_| !windows_unsupported_tcp) {
+            if let Some(operation) = tcp_io {
                 if let Some(payload_type) = operation.kind.payload_type() {
                     let payload_temp = async_tcp_io_payload_temp(index);
                     out.push_str("            ");
@@ -3873,29 +3911,15 @@ pub(super) fn emit_async_function(
                 out.push_str(" = nomo_async_tcp_connect_start(&frame->");
                 out.push_str(&async_tcp_connect_registration_field(index));
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("nomo_string_literal(\"\")");
-                } else {
-                    out.push_str(&host_temp);
-                }
+                out.push_str(&host_temp);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push('0');
-                } else {
-                    emit_expr(out, connect.port);
-                }
+                emit_expr(out, connect.port);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("0u");
-                } else {
-                    emit_expr(out, connect.timeout_millis);
-                }
+                emit_expr(out, connect.timeout_millis);
                 out.push_str(", context, &frame->");
                 out.push_str(&async_tcp_connect_result_field(index));
                 out.push_str(");\n");
-                if !windows_unsupported_tcp {
-                    emit_value_release_in_place(out, &ValueType::String, &host_temp, 3);
-                }
+                emit_value_release_in_place(out, &ValueType::String, &host_temp, 3);
                 out.push_str("            if (nomo_async_tcp_connect_start_status_");
                 out.push_str(&index.to_string());
                 out.push_str(
@@ -3918,37 +3942,19 @@ pub(super) fn emit_async_function(
                 out.push_str("(&frame->");
                 out.push_str(&async_tcp_io_registration_field(index));
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("(nomo_async_tcp_stream){0}");
-                } else {
-                    emit_expr(out, operation.stream);
-                }
+                emit_expr(out, operation.stream);
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    match operation.kind {
-                        AsyncTcpIoKind::Read | AsyncTcpIoKind::ReadString => out.push_str("1u"),
-                        AsyncTcpIoKind::Write => out.push_str("nomo_array_u32_new()"),
-                        AsyncTcpIoKind::WriteString => out.push_str("nomo_string_literal(\"\")"),
-                    }
-                } else if operation.kind.payload_type().is_some() {
+                if operation.kind.payload_type().is_some() {
                     out.push_str(&async_tcp_io_payload_temp(index));
                 } else {
                     emit_expr(out, operation.value);
                 }
                 out.push_str(", ");
-                if windows_unsupported_tcp {
-                    out.push_str("0u");
-                } else {
-                    emit_expr(out, operation.timeout_millis);
-                }
+                emit_expr(out, operation.timeout_millis);
                 out.push_str(", context, &frame->");
                 out.push_str(&async_tcp_io_result_field(index));
                 out.push_str(");\n");
-                if let Some(payload_type) = operation
-                    .kind
-                    .payload_type()
-                    .filter(|_| !windows_unsupported_tcp)
-                {
+                if let Some(payload_type) = operation.kind.payload_type() {
                     emit_value_release_in_place(
                         out,
                         &payload_type,

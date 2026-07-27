@@ -34,10 +34,14 @@ pub(super) fn emit_net_common_helpers(out: &mut String) {
     out.push_str("}\n");
 }
 
-pub(super) fn emit_async_net_connect_windows_preview_helpers(
+pub(super) fn emit_async_net_connect_windows_helpers(
     out: &mut String,
     target: &nomo_target::TargetTriple,
 ) {
+    if target.operating_system() == nomo_target::OperatingSystem::Windows {
+        emit_async_net_connect_windows_iocp_helpers(out);
+        return;
+    }
     let tcp_stream = c_struct_ident("TcpStream", &[]);
     let net_error_kind = c_enum_ident("NetErrorKind", &[]);
     let result_args = [

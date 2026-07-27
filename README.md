@@ -787,14 +787,19 @@ rejects controlled process calls before evaluating their arguments. See
 `net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
 `Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
 complete `write`/`write_string` use epoll on Linux and kqueue on macOS without
-blocking the current-thread executor. Numeric addresses retain a zero-thread
-fast path. Hostnames use one lazy resolver worker behind a 16-live-job bounded
-capacity, return completion through the owner reactor, try at most 16 resolved
-addresses in resolver order, and share one overall timeout with those connect
-attempts. Reads and writes are limited to 1 MiB, timeouts to 15 minutes, each
-stream direction to one pending operation, and write progress to 64 KiB per
-executor poll for fairness. Windows returns explicit `Unsupported` without
-evaluating write payloads until the IOCP slice.
+blocking the current-thread executor. The focused Windows P2-TCP-D numeric
+slice uses `ConnectEx`, `WSARecv`, and `WSASend` through a fixed 64-slot
+owner-local IOCP operation table. Numeric addresses retain a zero-thread fast
+path. On Linux and macOS, hostnames use one lazy resolver worker behind a
+16-live-job bounded capacity, return completion through the owner reactor, try
+at most 16 resolved addresses in resolver order, and share one overall timeout
+with those connect attempts; Windows hostname resolution remains an explicit
+later P2-TCP-D sub-slice. Reads and writes are limited to 1 MiB, timeouts to
+15 minutes, each stream direction to one pending operation, and write progress
+to 64 KiB per executor poll for fairness. Windows cancellation detaches
+pending payload storage from the coroutine frame while `OVERLAPPED` remains in
+the stable reactor table, requests `CancelIoEx`, and drains late completions
+before reactor shutdown.
 
 The preview blocking client names are `net.connect_blocking`,
 `TcpStream.read_to_string_blocking`, and

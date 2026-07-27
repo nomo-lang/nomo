@@ -877,9 +877,11 @@ bytes and resolves it on one lazily started worker behind a fixed 16-job
 capacity. Resolver completion returns to the owner executor through the same
 platform reactor; at most 16 IPv4/IPv6 candidates are attempted in resolver
 order under one overall resolution-plus-connect deadline. Numeric addresses
-do not initialize the worker or its completion registration. Windows returns
-`NetErrorKind.Unsupported` until its native IOCP connect slice. A zero timeout
-performs one immediate numeric attempt, or returns hostname `Timeout`, without
+do not initialize the worker or its completion registration. The focused
+P2-TCP-D Windows numeric slice uses `ConnectEx` through a fixed owner-local
+IOCP operation table; Windows hostnames remain `NetErrorKind.Unsupported`
+until its resolver sub-slice. A zero timeout performs one immediate numeric
+attempt. On Linux and macOS, a zero-timeout hostname returns `Timeout` without
 initializing the resolver pool or reactor. The first stackless slice requires
 binding the complete `Result`; direct `?` propagation on these suspend I/O
 operations remains an E0876 limitation.
@@ -892,8 +894,9 @@ exposes partial text. `eof` may be true with empty data.
 
 One read/write payload is limited to 1,048,576 bytes and one timeout to
 900,000 milliseconds. Zero makes one immediate attempt with no I/O
-registration. A positive operation uses one owner-local timer and one
-epoll/kqueue one-shot registration only when it would block. Writes retain
+registration. A positive operation uses one owner-local timer and either one
+epoll/kqueue one-shot registration when it would block, or one Windows
+`WSARecv`/`WSASend` submission from a fixed 64-slot IOCP table. Writes retain
 progress and the bounded unsent suffix across readiness events, cap work at
 64 KiB per executor poll for fairness, suppress Unix `SIGPIPE`, and complete
 the whole input or fail. At most one operation per stream direction may be
@@ -921,10 +924,13 @@ owner-table slot and generation rather than exposing a raw socket as
 authority. `close` is idempotent against stale generations.
 
 P2-TCP-B/C execute read/write and bounded hostname resolution natively on
-Linux and macOS. Windows returns `Unsupported` without evaluating write
-payloads until the IOCP slice; browser raw TCP remains a later host-driven
-capability. A dedicated `shutdown_write` half-close operation is not part of
-P2-TCP-B; callers must use `close` until that focused lifecycle slice lands.
+Linux and macOS. The focused P2-TCP-D slice executes numeric connect/read/write
+natively through IOCP on Windows. Cancellation moves any in-flight payload
+ownership into stable reactor storage, calls `CancelIoEx`, and drains late
+completions before shutdown; Windows hostname resolution and browser raw TCP
+remain later focused capabilities. A dedicated `shutdown_write` half-close
+operation is not part of P2-TCP-B; callers must use `close` until that focused
+lifecycle slice lands.
 
 For the preview migration window, `connect_blocking`,
 `read_to_string_blocking`, and `write_string_blocking` retain the old blocking

@@ -59,8 +59,9 @@ non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
 
-The P2-TCP-A/B/C slices also provide direct-style numeric-address or hostname
-connect plus bounded incremental reads and complete writes:
+The P2-TCP-A/B/C slices plus the focused P2-TCP-D Windows numeric-address
+slice provide direct-style connect, bounded incremental reads, and complete
+writes:
 
 ```nomo
 import std.net
@@ -80,13 +81,16 @@ suspend fn exchange(stream: TcpStream) -> void {
 ```
 
 Linux and macOS attempt each socket in nonblocking mode and suspend through
-generation-checked epoll/kqueue registrations. Numeric addresses do not start
-an OS thread. A hostname of at most 253 bytes enters one lazy resolver worker
-through a 16-live-job bounded capacity; completion returns through the owner
-reactor, and up to 16 IPv4/IPv6 candidates are attempted in resolver order.
-Resolution and every candidate share one monotonic deadline bounded to 15
-minutes. A zero hostname timeout returns inline without initializing the pool
-or reactor.
+generation-checked epoll/kqueue registrations. Windows numeric IPv4/IPv6
+connects use `ConnectEx`; reads and writes use `WSARecv`/`WSASend` and a fixed
+64-slot owner-local IOCP operation table. Numeric addresses do not start an OS
+thread. On Linux and macOS, a hostname of at most 253 bytes enters one lazy
+resolver worker through a 16-live-job bounded capacity; completion returns
+through the owner reactor, and up to 16 IPv4/IPv6 candidates are attempted in
+resolver order. Resolution and every candidate share one monotonic deadline
+bounded to 15 minutes. A zero hostname timeout returns inline without
+initializing the pool or reactor. Windows hostnames remain explicit
+`Unsupported` until the remaining P2-TCP-D resolver sub-slice.
 `TcpStream` remains bound to its owner executor and is Local/!Send.
 
 Each stream permits one pending read and one pending write; another operation
@@ -104,8 +108,12 @@ the job immediately. Cancellation of an in-progress system resolver call is
 cooperative: the caller reaches its terminal result, but executor shutdown
 waits for that lookup's completion so the worker and owner registration can be
 cleaned exactly once. This one-worker resolver is a focused P2-TCP-C slice, not
-the general RFC 0032 blocking pool. Windows compiles and returns `Unsupported`
-without evaluating write payloads or claiming IOCP socket completion support.
+the general RFC 0032 blocking pool. On Windows, timeout or structured
+cancellation detaches any pending read/write buffer from the coroutine frame,
+requests `CancelIoEx`, and lets the fixed IOCP slot own that buffer until the
+late completion is drained. Reactor shutdown drains all live IOCP slots before
+closing the completion port, so frame destruction never leaves an
+`OVERLAPPED` pointer into freed frame storage.
 The preview blocking names are
 `net.connect_blocking`, `read_to_string_blocking`, and
 `write_string_blocking`; reaching them from a suspend call graph reports
@@ -288,7 +296,7 @@ slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
 operand rather than approximating select sequentially. See
 [`examples/async_static_select`](../examples/async_static_select).
 
-## Implemented P1, P2 Reactor/P2-TCP-A/B/C, and P3-B/P3-C Slices
+## Implemented P1, P2 Reactor/P2-TCP-A/B/C/D-numeric, and P3-B/P3-C Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -307,7 +315,8 @@ On the native C99 backend, a suspend call chain that reaches
   timeout; ready-only work and non-positive timers do not initialize it;
 - a bounded 64-slot I/O owner table with slot generations and exclusive close,
   plus one embedded connect registration and timer for each pending TCP
-  candidate on epoll/kqueue;
+  candidate on epoll/kqueue, or one fixed-table IOCP operation for each
+  Windows numeric connect/read/write submission;
 - one lazy resolver worker behind 16 fixed job slots, a nonblocking owner wake
   pipe, at most 16 copied address candidates, one overall deadline, and exact
   queue/running/cancelled/completed/live/peak lifecycle counters;
@@ -315,6 +324,9 @@ On the native C99 backend, a suspend call chain that reaches
   operation per stream direction, one-shot readiness rearming, complete
   partial-write progress, bounded retained-byte metrics, and exactly-once
   timeout/cancellation cleanup;
+- Windows `OVERLAPPED` storage that remains in the owner reactor rather than
+  the coroutine frame, with `CancelIoEx`, detached payload ownership for late
+  completions, fixed 64-operation backpressure, and shutdown draining;
 - embedded structured child frames enqueued onto the same bounded FIFO, plus a
   single owner-local waiter edge that re-enqueues the parent when its child
   completes;

@@ -558,7 +558,7 @@ fn main() -> void {
 }
 
 #[test]
-fn async_tcp_connect_windows_uses_bounded_owner_affine_iocp_for_numeric_addresses() {
+fn async_tcp_connect_windows_uses_bounded_resolver_and_owner_affine_iocp() {
     let source = r#"package app.main
 
 import std.net
@@ -586,7 +586,17 @@ suspend fn main() -> void {
         "SO_UPDATE_CONNECT_CONTEXT",
         "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
         "nomo_async_io_handle_associate_reactor",
-        "Windows hostname resolution remains a later P2-TCP-D slice",
+        "#define NOMO_ASYNC_BLOCKING_POOL_QUEUE_CAPACITY 16u",
+        "#define NOMO_ASYNC_RESOLVER_MAX_ADDRESSES 16u",
+        "CreateThread",
+        "CONDITION_VARIABLE",
+        "PostQueuedCompletionStatus",
+        "pending_posts",
+        "getaddrinfo(",
+        "nomo_async_resolver_submit",
+        "nomo_async_tcp_resolver_complete",
+        "nomo_async_blocking_pool_shutdown",
+        "hostname resolution failed",
     ] {
         assert!(c.contains(helper), "missing generated helper {helper}");
     }
@@ -596,8 +606,6 @@ suspend fn main() -> void {
     assert!(!c.contains("epoll_ctl("));
     assert!(!c.contains("kevent("));
     assert!(!c.contains("pthread_create"));
-    assert!(!c.contains("nomo_async_resolver_submit"));
-    assert!(!c.contains("getaddrinfo("));
     assert!(c.contains(
         "nomo_string nomo_async_tcp_connect_host_0 = nomo_string_literal(\"127.0.0.1\");"
     ));

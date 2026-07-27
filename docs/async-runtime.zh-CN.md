@@ -52,8 +52,7 @@ current-thread backend。duration 只求值一次；非正时长 inline 完成�
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
 
-P2-TCP-A/B/C 加上聚焦的 P2-TCP-D Windows 数值地址小切片，还提供
-direct-style connect、有界增量读取与完整写入：
+P2-TCP-A/B/C/D 还提供 direct-style connect、有界增量读取与完整写入：
 
 ```nomo
 import std.net
@@ -75,14 +74,14 @@ suspend fn exchange(stream: TcpStream) -> void {
 Linux 与 macOS 会以 nonblocking socket 发起每次连接，并通过带 generation
 校验的 epoll/kqueue registration 挂起。Windows 数值 IPv4/IPv6 connect 使用
 `ConnectEx`，read/write 使用 `WSARecv`/`WSASend` 与 owner-local 64 槽固定
-IOCP operation table。数值地址不会启动 OS thread。Linux 与 macOS 上最长
-253 字节的 hostname 会进入一个惰性启动的 resolver worker；该 worker 前有
-16 个 job 的固定容量，completion 通过 owner reactor 返回，最多按 resolver
-顺序尝试 16 个 IPv4/IPv6 candidate。解析与所有 candidate 共用一个最长
-15 分钟的 monotonic deadline。hostname 零 timeout 会 inline 返回，且不会
-初始化 pool 或 reactor；Windows hostname 在余下的 P2-TCP-D resolver 子切片
-落地前明确返回 `Unsupported`。`TcpStream` 固定到 owner executor，属于
-Local/!Send。
+IOCP operation table。数值地址不会启动 OS thread。所有 native platform 上
+最长 253 字节的 hostname 都会进入一个惰性启动的 resolver worker；该 worker
+前有 16 个 job 的固定容量，completion 通过 owner reactor 返回，最多按
+resolver 顺序尝试 16 个 IPv4/IPv6 candidate。Unix 使用 nonblocking
+completion pipe，Windows 向 owner IOCP 投递 completion。解析与所有 candidate
+共用一个最长 15 分钟的 monotonic deadline。hostname 零 timeout 会 inline
+返回，且不会初始化 pool 或 reactor。`TcpStream` 固定到 owner executor，
+属于 Local/!Send。
 
 每条 stream 同时最多有一个 pending read 和一个 pending write；同方向冲突
 返回 `Busy`。`read` 返回一块 `Array<u32>` 字节，`read_string` 校验一块
@@ -285,10 +284,11 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
   ready-only 工作与非正时长 timer 不初始化它；
 - 64 槽有界 I/O owner table、slot generation 与 exclusive close；每个 pending
   TCP candidate 在 epoll/kqueue 上只使用一个内嵌 registration 和一个 timeout
-  timer；Windows 每次数值 connect/read/write submission 使用一个固定表
-  IOCP operation；
-- 一个惰性 resolver worker、16 个固定 job slot、nonblocking owner wake pipe、
-  最多 16 个复制后的地址 candidate、一个总 deadline，以及精确的 queued/
+  timer；Windows 每次 connect/read/write submission 使用一个固定表 IOCP
+  operation；
+- 一个惰性 resolver worker、16 个固定 job slot、Unix nonblocking owner wake
+  pipe 或 Windows posted IOCP completion、最多 16 个复制后的地址 candidate、
+  一个总 deadline，以及精确的 queued/
   running/cancelled/completed/live/peak 生命周期 counter；
 - 每个源码 read/write operation 使用一个内嵌 registration；每个 stream
   direction 最多一个 pending operation，并支持 one-shot readiness rearm、

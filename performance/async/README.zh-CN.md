@@ -78,15 +78,16 @@ registration、completion、handle 与清理 counter。P2-TCP-B 增加有界增�
 read 与完整 write，并精确验证 timeout、cancellation、readiness rearm、
 retained bytes、handle、operation 与清理 counter；每次 poll 最多写 64 KiB，
 使公平性不依赖宿主 socket buffer。P2-TCP-C 增加 16 个 live job、单 worker
-的 hostname resolver 与 nonblocking owner completion pipe。fixture 覆盖数值
+的 hostname resolver；Unix 使用 nonblocking owner completion pipe，Windows
+向 owner IOCP 投递 bounded completion。fixture 覆盖数值
 地址零线程 fast path、hostname 成功与不泄露 secret 的失败、零 timeout
 不初始化、queued cancellation、running cooperative cancellation、17 个请求
 的精确饱和边界，以及 shutdown 后 resolver live resource 全归零。聚焦的
-P2-TCP-D Windows 数值地址小切片增加 `ConnectEx`、`WSARecv` 与 `WSASend`，
+P2-TCP-D Windows 切片增加 `ConnectEx`、`WSARecv` 与 `WSASend`，
 并使用 owner-local 64 槽固定 IOCP operation table；metrics 会分别记录
 submitted、completed、cancelled、live 与 peak operation，cancellation 会在
 frame drop 前转移 payload storage，shutdown 会 drain late completion。
-Windows hostname resolution 仍属于后续 P2-TCP-D 子切片。HTTP/SSE 与
+HTTP/SSE 与
 process-pipe registration 仍等待各自的聚焦小切片。这是 correctness/lifecycle
 证据，不是跨语言性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或

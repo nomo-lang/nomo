@@ -326,10 +326,8 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_current_thread_executor(&mut out, target);
         out.push('\n');
     }
-    if uses_async_net_connect(program)
-        && target.operating_system() != nomo_target::OperatingSystem::Windows
-    {
-        emit_async_resolver_pool_helpers(&mut out);
+    if uses_async_net_connect(program) {
+        emit_async_resolver_pool_helpers(&mut out, target);
         out.push('\n');
     }
     if uses_async_net_connect(program) {
@@ -450,9 +448,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         if uses_sqlite_runtime(program) {
             out.push_str("    nomo_sqlite_shutdown();\n");
         }
-        if uses_async_net_connect(program)
-            && target.operating_system() != nomo_target::OperatingSystem::Windows
-        {
+        if uses_async_net_connect(program) {
             out.push_str("    nomo_async_blocking_pool_shutdown(&nomo__context);\n");
         }
         out.push_str("    nomo_async_io_handle_shutdown(&nomo__context);\n");

@@ -877,12 +877,12 @@ bytes and resolves it on one lazily started worker behind a fixed 16-job
 capacity. Resolver completion returns to the owner executor through the same
 platform reactor; at most 16 IPv4/IPv6 candidates are attempted in resolver
 order under one overall resolution-plus-connect deadline. Numeric addresses
-do not initialize the worker or its completion registration. The focused
-P2-TCP-D Windows numeric slice uses `ConnectEx` through a fixed owner-local
-IOCP operation table; Windows hostnames remain `NetErrorKind.Unsupported`
-until its resolver sub-slice. A zero timeout performs one immediate numeric
-attempt. On Linux and macOS, a zero-timeout hostname returns `Timeout` without
-initializing the resolver pool or reactor. The first stackless slice requires
+do not initialize the worker or its completion registration. P2-TCP-D uses
+`ConnectEx` through a fixed owner-local IOCP operation table and posts resolver
+completion to the same owner IOCP on Windows. A zero timeout performs one
+immediate numeric attempt. A zero-timeout hostname returns `Timeout` without
+initializing the resolver pool or reactor on every native platform. The first
+stackless slice requires
 binding the complete `Result`; direct `?` propagation on these suspend I/O
 operations remains an E0876 limitation.
 
@@ -923,14 +923,12 @@ platform details from `message`. `TcpStream` is Local/!Send and identifies its
 owner-table slot and generation rather than exposing a raw socket as
 authority. `close` is idempotent against stale generations.
 
-P2-TCP-B/C execute read/write and bounded hostname resolution natively on
-Linux and macOS. The focused P2-TCP-D slice executes numeric connect/read/write
-natively through IOCP on Windows. Cancellation moves any in-flight payload
+P2-TCP-B/C/D execute read/write and bounded hostname resolution natively on
+Linux, macOS, and Windows. Windows cancellation moves any in-flight payload
 ownership into stable reactor storage, calls `CancelIoEx`, and drains late
-completions before shutdown; Windows hostname resolution and browser raw TCP
-remain later focused capabilities. A dedicated `shutdown_write` half-close
-operation is not part of P2-TCP-B; callers must use `close` until that focused
-lifecycle slice lands.
+completions before shutdown. Browser raw TCP remains a later focused
+capability. A dedicated `shutdown_write` half-close operation is not part of
+P2-TCP-B; callers must use `close` until that focused lifecycle slice lands.
 
 For the preview migration window, `connect_blocking`,
 `read_to_string_blocking`, and `write_string_blocking` retain the old blocking

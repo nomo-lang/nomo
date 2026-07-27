@@ -11,9 +11,9 @@ pub(super) fn emit_async_net_connect_windows_iocp_helpers(out: &mut String) {
     let ok = c_enum_variant_ident("Result", &result_args, "Ok");
     let err = c_enum_variant_ident("Result", &result_args, "Err");
     let invalid_input = c_enum_variant_ident("NetErrorKind", &[], "InvalidInput");
-    let unsupported = c_enum_variant_ident("NetErrorKind", &[], "Unsupported");
     let timeout = c_enum_variant_ident("NetErrorKind", &[], "Timeout");
     let limit = c_enum_variant_ident("NetErrorKind", &[], "Limit");
+    let resolve = c_enum_variant_ident("NetErrorKind", &[], "Resolve");
     let connect = c_enum_variant_ident("NetErrorKind", &[], "Connect");
     let reactor = c_enum_variant_ident("NetErrorKind", &[], "Reactor");
     let kind_member = c_member_ident("kind");
@@ -36,11 +36,20 @@ typedef struct {
     nomo_async_context *context;
     void *frame;
     nomo_async_poll_fn poll;
+    struct sockaddr_storage addresses[NOMO_ASYNC_RESOLVER_MAX_ADDRESSES];
+    int address_lengths[NOMO_ASYNC_RESOLVER_MAX_ADDRESSES];
+    uint32_t address_count;
+    uint32_t next_address;
     uint32_t handle_slot;
     uint32_t handle_generation;
+    uint32_t resolver_slot;
+    uint32_t resolver_generation;
+    uint64_t timeout_millis;
     uint8_t active;
     uint8_t ready;
     uint8_t owns_handle;
+    uint8_t resolving;
+    uint8_t resolver_ready;
 } nomo_async_tcp_connect_registration;
 
 "#,
@@ -103,6 +112,21 @@ typedef struct {
     }
 }
 
+static void nomo_async_tcp_connect_begin_operation(
+    nomo_async_tcp_connect_registration *registration
+) {
+    if (registration->active != 0u) {
+        return;
+    }
+    registration->active = 1u;
+    registration->context->live_io_operations += 1u;
+    if (registration->context->live_io_operations
+        > registration->context->peak_live_io_operations) {
+        registration->context->peak_live_io_operations =
+            registration->context->live_io_operations;
+    }
+}
+
 static void nomo_async_tcp_connect_wake(void *owner, uint32_t ready) {
     nomo_async_tcp_connect_registration *registration =
         (nomo_async_tcp_connect_registration *)owner;
@@ -122,12 +146,48 @@ static void nomo_async_tcp_connect_wake(void *owner, uint32_t ready) {
     }
 }
 
+static void nomo_async_tcp_resolver_complete(
+    void *owner,
+    uint32_t slot,
+    uint32_t generation
+) {
+    nomo_async_tcp_connect_registration *registration =
+        (nomo_async_tcp_connect_registration *)owner;
+    if (registration == NULL
+        || registration->active == 0u
+        || registration->resolving == 0u
+        || registration->resolver_slot != slot
+        || registration->resolver_generation != generation) {
+        return;
+    }
+    registration->resolver_ready = 1u;
+    registration->context->io_ready_completions += 1u;
+    if (nomo_async_ready_enqueue(
+            registration->context,
+            registration->frame,
+            registration->poll
+        ) != 0) {
+        registration->context->runtime_failed = 1u;
+    }
+}
+
 static void nomo_async_tcp_connect_cancel(
     nomo_async_tcp_connect_registration *registration,
     nomo_async_context *context
 ) {
-    if (registration->active == 0u && registration->owns_handle == 0u) {
+    if (registration->active == 0u
+        && registration->owns_handle == 0u
+        && registration->resolving == 0u) {
         return;
+    }
+    if (registration->resolving != 0u) {
+        nomo_async_resolver_cancel(
+            context,
+            registration->resolver_slot,
+            registration->resolver_generation
+        );
+        registration->resolving = 0u;
+        registration->resolver_ready = 0u;
     }
     nomo_async_tcp_connect_finish_operation(registration);
     if (registration->owns_handle != 0u) {
@@ -187,6 +247,217 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
 "#,
     );
 
+    out.push_str("static nomo_async_poll nomo_async_tcp_connect_attempt_candidates(\n");
+    out.push_str(
+        "    nomo_async_tcp_connect_registration *registration,\n    nomo_async_context *context,\n    ",
+    );
+    out.push_str(&result);
+    out.push_str(
+        r#" *result
+) {
+    uint8_t immediate_timeout = 0u;
+    while (registration->next_address < registration->address_count) {
+        uint32_t address_index = registration->next_address;
+        registration->next_address += 1u;
+        struct sockaddr_storage *storage =
+            &registration->addresses[address_index];
+        int address_length = registration->address_lengths[address_index];
+        int family = storage->ss_family;
+        nomo_socket handle = WSASocketW(
+            family,
+            SOCK_STREAM,
+            IPPROTO_TCP,
+            NULL,
+            0,
+            WSA_FLAG_OVERLAPPED
+        );
+        if (handle == NOMO_INVALID_SOCKET) {
+            continue;
+        }
+        u_long nonblocking = 1u;
+        if (ioctlsocket(handle, FIONBIO, &nonblocking) != 0) {
+            NOMO_SOCKET_CLOSE(handle);
+            continue;
+        }
+        if (registration->timeout_millis == 0u) {
+            int immediate = connect(
+                handle,
+                (const struct sockaddr *)storage,
+                address_length
+            );
+            if (immediate == 0) {
+                uint32_t slot = 0u;
+                uint32_t generation = 0u;
+                if (nomo_async_io_handle_insert(
+                        context,
+                        handle,
+                        &slot,
+                        &generation
+                    ) != 0) {
+                    NOMO_SOCKET_CLOSE(handle);
+"#,
+    );
+    out.push_str("                    nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str(
+        "}, \"owner executor TCP handle capacity is exhausted\");\n                    return NOMO_ASYNC_POLL_READY;\n                }\n                nomo_async_tcp_connect_success(result, context, slot, generation);\n                return NOMO_ASYNC_POLL_READY;\n            }\n            int immediate_error = WSAGetLastError();\n            NOMO_SOCKET_CLOSE(handle);\n            if (immediate_error == WSAEWOULDBLOCK\n                || immediate_error == WSAEINPROGRESS) {\n                immediate_timeout = 1u;\n            }\n            continue;\n        }\n",
+    );
+    out.push_str(
+        r#"        if (registration->timer.armed == 0u) {
+            nomo_async_poll timer_status = nomo_async_timer_start(
+                &registration->timer,
+                (int64_t)registration->timeout_millis,
+                context,
+                &registration->timer_outcome,
+                NULL,
+                0u
+            );
+            if (timer_status != NOMO_ASYNC_POLL_PENDING) {
+                NOMO_SOCKET_CLOSE(handle);
+                nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("                nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str(
+        "}, \"owner executor timer capacity is exhausted\");\n                return NOMO_ASYNC_POLL_READY;\n            }\n        }\n",
+    );
+    out.push_str(
+        r#"        if (nomo_async_tcp_bind_any(handle, family) != 0) {
+            NOMO_SOCKET_CLOSE(handle);
+            continue;
+        }
+        LPFN_CONNECTEX connect_ex = nomo_async_tcp_connect_ex(handle);
+        if (connect_ex == NULL) {
+            NOMO_SOCKET_CLOSE(handle);
+            continue;
+        }
+        uint32_t handle_slot = 0u;
+        uint32_t handle_generation = 0u;
+        if (nomo_async_io_handle_insert(
+                context,
+                handle,
+                &handle_slot,
+                &handle_generation
+            ) != 0) {
+            NOMO_SOCKET_CLOSE(handle);
+            nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str(
+        "}, \"owner executor TCP handle capacity is exhausted\");\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        registration->handle_slot = handle_slot;
+        registration->handle_generation = handle_generation;
+        registration->owns_handle = 1u;
+        registration->reactor_registration.owner = registration;
+        registration->reactor_registration.wake =
+            nomo_async_tcp_connect_wake;
+        if (nomo_async_io_handle_associate_reactor(
+                context,
+                handle_slot,
+                handle_generation
+            ) != 0) {
+            nomo_async_io_handle_close(
+                context,
+                handle_slot,
+                handle_generation
+            );
+            registration->owns_handle = 0u;
+            nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&reactor);
+    out.push_str(
+        "}, \"IOCP socket association failed\");\n            context->io_errors += 1u;\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        if (nomo_async_reactor_register(
+                &context->reactor,
+                &registration->reactor_registration,
+                handle,
+                NOMO_ASYNC_REACTOR_WRITE
+            ) != 0) {
+            nomo_async_io_handle_close(
+                context,
+                handle_slot,
+                handle_generation
+            );
+            registration->owns_handle = 0u;
+            nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str(
+        "}, \"owner executor IOCP operation capacity is exhausted\");\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        BOOL started = connect_ex(
+            handle,
+            (const struct sockaddr *)storage,
+            address_length,
+            NULL,
+            0u,
+            NULL,
+            nomo_async_reactor_overlapped(
+                &registration->reactor_registration
+            )
+        );
+        int start_error = started != FALSE ? 0 : WSAGetLastError();
+        if (started == FALSE && start_error != WSA_IO_PENDING) {
+            nomo_async_reactor_deregister(
+                &context->reactor,
+                &registration->reactor_registration
+            );
+            nomo_async_io_handle_close(
+                context,
+                handle_slot,
+                handle_generation
+            );
+            registration->owns_handle = 0u;
+            continue;
+        }
+        nomo_async_reactor_mark_submitted(
+            &registration->reactor_registration
+        );
+        nomo_async_tcp_connect_begin_operation(registration);
+        context->pending_reason = NOMO_ASYNC_PENDING_IO;
+        return NOMO_ASYNC_POLL_PENDING;
+    }
+    nomo_async_tcp_connect_finish_operation(registration);
+    if (immediate_timeout != 0u) {
+"#,
+    );
+    out.push_str("        nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&timeout);
+    out.push_str(
+        "}, \"TCP connect did not complete immediately\");\n        context->io_timeouts += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
+    );
+    out.push_str("    nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&connect);
+    out.push_str(
+        "}, \"TCP connect failed\");\n    context->io_errors += 1u;\n    return NOMO_ASYNC_POLL_READY;\n}\n\n",
+    );
+
     out.push_str("static nomo_async_poll nomo_async_tcp_connect_start(\n");
     out.push_str(
         "    nomo_async_tcp_connect_registration *registration,\n    nomo_string host,\n    int64_t port,\n    uint64_t timeout_millis,\n    nomo_async_context *context,\n    ",
@@ -218,6 +489,7 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     registration->context = context;
     registration->frame = context->current_frame;
     registration->poll = context->current_poll;
+    registration->timeout_millis = timeout_millis;
     struct sockaddr_storage storage;
     memset(&storage, 0, sizeof(storage));
     int address_length = 0;
@@ -240,12 +512,64 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     if (family == AF_UNSPEC) {
 "#,
     );
-    out.push_str("        nomo_async_tcp_connect_error(result, (");
+    out.push_str(
+        "        if (timeout_millis == 0u) {\n            nomo_async_tcp_connect_error(result, (",
+    );
     out.push_str(&net_error_kind);
     out.push_str("){.tag = ");
-    out.push_str(&unsupported);
+    out.push_str(&timeout);
     out.push_str(
-        "}, \"Windows hostname resolution remains a later P2-TCP-D slice\");\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
+        "}, \"hostname resolution cannot complete without suspension\");\n            context->io_timeouts += 1u;\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        nomo_async_poll resolver_timer_status = nomo_async_timer_start(
+            &registration->timer,
+            (int64_t)timeout_millis,
+            context,
+            &registration->timer_outcome,
+            NULL,
+            0u
+        );
+        if (resolver_timer_status != NOMO_ASYNC_POLL_PENDING) {
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str(
+        "}, \"owner executor timer capacity is exhausted\");\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        nomo_async_tcp_connect_begin_operation(registration);
+        char hostname[NOMO_ASYNC_RESOLVER_HOST_CAPACITY];
+        memcpy(hostname, host.data, host_length);
+        hostname[host_length] = '\0';
+        int submit_status = nomo_async_resolver_submit(
+            context,
+            hostname,
+            port,
+            registration,
+            nomo_async_tcp_resolver_complete,
+            &registration->resolver_slot,
+            &registration->resolver_generation
+        );
+        if (submit_status != 0) {
+            nomo_async_tcp_connect_finish_operation(registration);
+            if (submit_status == 2) {
+"#,
+    );
+    out.push_str("                nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&limit);
+    out.push_str("}, \"bounded resolver queue is full\");\n            } else {\n");
+    out.push_str("                nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&reactor);
+    out.push_str(
+        "}, \"bounded resolver pool initialization failed\");\n                context->io_errors += 1u;\n            }\n            return NOMO_ASYNC_POLL_READY;\n        }\n        registration->resolving = 1u;\n        context->pending_reason = NOMO_ASYNC_PENDING_IO;\n        return NOMO_ASYNC_POLL_PENDING;\n    }\n",
     );
     out.push_str(
         r#"    nomo_socket handle = WSASocketW(
@@ -485,6 +809,15 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     }
     if (registration->timer.expired != 0u) {
         registration->timer.expired = 0u;
+        if (registration->resolving != 0u) {
+            nomo_async_resolver_cancel(
+                context,
+                registration->resolver_slot,
+                registration->resolver_generation
+            );
+            registration->resolving = 0u;
+            registration->resolver_ready = 0u;
+        }
         nomo_async_tcp_connect_finish_operation(registration);
         if (registration->owns_handle != 0u) {
             nomo_async_io_handle_close(
@@ -504,13 +837,54 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
         "}, \"TCP connect timed out\");\n        context->io_timeouts += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
     );
     out.push_str(
+        r#"    if (registration->resolver_ready != 0u) {
+        registration->resolver_ready = 0u;
+        int resolver_status = 0;
+        if (nomo_async_resolver_take(
+                context,
+                registration->resolver_slot,
+                registration->resolver_generation,
+                registration->addresses,
+                registration->address_lengths,
+                &registration->address_count,
+                &resolver_status
+            ) != 0) {
+            registration->resolving = 0u;
+            nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&reactor);
+    out.push_str(
+        "}, \"bounded resolver completion was lost\");\n            context->io_errors += 1u;\n            return NOMO_ASYNC_POLL_READY;\n        }\n",
+    );
+    out.push_str(
+        r#"        registration->resolving = 0u;
+        registration->next_address = 0u;
+        if (resolver_status != 0 || registration->address_count == 0u) {
+            nomo_async_tcp_connect_finish_operation(registration);
+"#,
+    );
+    out.push_str("            nomo_async_tcp_connect_error(result, (");
+    out.push_str(&net_error_kind);
+    out.push_str("){.tag = ");
+    out.push_str(&resolve);
+    out.push_str(
+        "}, \"hostname resolution failed\");\n            context->io_errors += 1u;\n            return NOMO_ASYNC_POLL_READY;\n        }\n        return nomo_async_tcp_connect_attempt_candidates(registration, context, result);\n    }\n",
+    );
+    out.push_str(
         r#"    if (registration->ready == 0u) {
         context->pending_reason = NOMO_ASYNC_PENDING_IO;
         return NOMO_ASYNC_POLL_PENDING;
     }
     registration->ready = 0u;
     DWORD completion_error = registration->reactor_registration.error;
-    nomo_async_tcp_connect_finish_operation(registration);
+    nomo_async_reactor_deregister(
+        &context->reactor,
+        &registration->reactor_registration
+    );
     nomo_socket handle = nomo_async_io_handle_get(
         context,
         registration->handle_slot,
@@ -535,15 +909,12 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
         }
 "#,
     );
-    out.push_str("        nomo_async_tcp_connect_error(result, (");
-    out.push_str(&net_error_kind);
-    out.push_str("){.tag = ");
-    out.push_str(&connect);
     out.push_str(
-        "}, \"TCP connect failed\");\n        context->io_errors += 1u;\n        return NOMO_ASYNC_POLL_READY;\n    }\n",
+        "        return nomo_async_tcp_connect_attempt_candidates(registration, context, result);\n    }\n",
     );
     out.push_str(
         r#"    registration->owns_handle = 0u;
+    nomo_async_tcp_connect_finish_operation(registration);
     nomo_async_tcp_connect_success(
         result,
         context,

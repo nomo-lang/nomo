@@ -242,6 +242,15 @@ pub(super) fn resolve_specific_value_builtin(
         "send" if imports.iter().any(|item| item == "std.http.send") => {
             vec!["http".to_string(), "send".to_string()]
         }
+        "open_stream" if imports.iter().any(|item| item == "std.http.open_stream") => {
+            vec!["http".to_string(), "open_stream".to_string()]
+        }
+        "read_text" if imports.iter().any(|item| item == "std.http.read_text") => {
+            vec!["http".to_string(), "read_text".to_string()]
+        }
+        "next_sse" if imports.iter().any(|item| item == "std.http.next_sse") => {
+            vec!["http".to_string(), "next_sse".to_string()]
+        }
         "listen" if imports.iter().any(|item| item == "std.http.listen") => {
             vec!["http".to_string(), "listen".to_string()]
         }

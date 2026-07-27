@@ -485,6 +485,104 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn rejects_blocking_http_from_suspend_without_leaking_arguments() {
+    let source = r#"package app.main
+
+import std.http
+
+suspend fn main() -> void {
+    let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/?token=http-secret-sentinel")
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("main -> http.get"));
+    assert!(error.message.contains("nonblocking suspend equivalent"));
+    assert!(!error.message.contains("http-secret-sentinel"));
+    assert_eq!(error.text, "http.get(...)");
+}
+
+#[test]
+fn rejects_specifically_imported_blocking_http_stream_pull() {
+    let source = r#"package app.main
+
+import std.http.HttpError
+import std.http.HttpStream
+import std.http.SseEvent
+import std.http.next_sse
+
+suspend fn poll(stream: HttpStream) -> void {
+    let result: Result<Option<SseEvent>, HttpError> = next_sse(stream, 1024)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("poll -> http.next_sse"));
+}
+
+#[test]
+fn rejects_transitive_blocking_process_call_from_suspend() {
+    let source = r#"package app.main
+
+import std.process
+
+fn invoke() -> Result<string, ProcessError> {
+    return process.exec("process-secret-sentinel")
+}
+
+suspend fn main() -> void {
+    let result: Result<string, ProcessError> = invoke()
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0891");
+    assert!(error.message.contains("main -> invoke -> process.exec"));
+    assert!(!error.message.contains("process-secret-sentinel"));
+    assert_eq!(error.text, "process.exec(...)");
+}
+
+#[test]
+fn allows_nonwaiting_process_poll_from_suspend_compatibility_code() {
+    let source = r#"package app.main
+
+import std.process
+
+suspend fn observe(child: ProcessChild) -> void {
+    let result: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait(child)
+}
+
+fn main() -> void {
+}
+"#;
+
+    parse_inline(source).unwrap();
+}
+
+#[test]
+fn allows_blocking_http_in_synchronous_compatibility_code() {
+    let source = r#"package app.main
+
+import std.http
+import std.result
+
+fn main() -> void {
+    let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/")
+}
+"#;
+
+    parse_inline(source).unwrap();
+}
+
+#[test]
 fn async_tcp_connect_lowers_to_owner_affine_reactor_registration() {
     let source = r#"package app.main
 

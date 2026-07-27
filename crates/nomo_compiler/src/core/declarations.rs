@@ -344,7 +344,6 @@ pub(super) fn lower_function_as(
     enums: &HashMap<String, EnumType>,
     consts: &[(String, ValueType)],
 ) -> Result<Function, Diagnostic> {
-    validate_p1_yield_function(path, function, imports)?;
     let signature = signatures
         .get(lowered_name)
         .expect("signature table is built before lowering");

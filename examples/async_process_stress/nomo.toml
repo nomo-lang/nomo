@@ -1,0 +1,3 @@
+[package]
+name = "async_process_stress"
+version = "0.1.0"

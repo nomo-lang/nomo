@@ -16424,8 +16424,8 @@ fn compile_delayed_async_process_fixture(
 
 #[cfg(not(windows))]
 #[test]
-fn async_process_start_cancels_queued_job_without_waking_dropped_frame() {
-    let root = temp_test_root("async-process-start-cancel");
+fn async_process_start_cancellation_storm_drops_queued_jobs_without_waking_frames() {
+    let root = temp_test_root("async-process-start-cancellation-storm");
     reset_dir(&root);
     let project = root.join("async_process_start_cancel");
     fs::create_dir_all(project.join("src")).unwrap();
@@ -16468,6 +16468,16 @@ fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
     }
 }
 
+fn require_cancelled(cancelled: Result<void, TaskError>) -> void {
+    match cancelled {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
 suspend fn launch() -> void {
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(), 5000)
     report(started)
@@ -16479,13 +16489,56 @@ suspend fn gate() -> void {
 
 suspend fn main() -> void {
     task.scope {
-        let first = task.spawn launch()
-        let second = task.spawn launch()
+        let task_00 = task.spawn launch()
+        let task_01 = task.spawn launch()
+        let task_02 = task.spawn launch()
+        let task_03 = task.spawn launch()
+        let task_04 = task.spawn launch()
+        let task_05 = task.spawn launch()
+        let task_06 = task.spawn launch()
+        let task_07 = task.spawn launch()
+        let task_08 = task.spawn launch()
+        let task_09 = task.spawn launch()
+        let task_10 = task.spawn launch()
+        let task_11 = task.spawn launch()
+        let task_12 = task.spawn launch()
+        let task_13 = task.spawn launch()
+        let task_14 = task.spawn launch()
+        let task_15 = task.spawn launch()
         let gate_task = task.spawn gate()
         let gate_joined: Result<void, TaskError> = task.join(gate_task)
-        let cancelled: Result<void, TaskError> = task.cancel(second)
-        io.println("cancelled", result.is_ok(cancelled))
-        let joined: Result<void, TaskError> = task.join(first)
+        let cancelled_01: Result<void, TaskError> = task.cancel(task_01)
+        require_cancelled(cancelled_01)
+        let cancelled_02: Result<void, TaskError> = task.cancel(task_02)
+        require_cancelled(cancelled_02)
+        let cancelled_03: Result<void, TaskError> = task.cancel(task_03)
+        require_cancelled(cancelled_03)
+        let cancelled_04: Result<void, TaskError> = task.cancel(task_04)
+        require_cancelled(cancelled_04)
+        let cancelled_05: Result<void, TaskError> = task.cancel(task_05)
+        require_cancelled(cancelled_05)
+        let cancelled_06: Result<void, TaskError> = task.cancel(task_06)
+        require_cancelled(cancelled_06)
+        let cancelled_07: Result<void, TaskError> = task.cancel(task_07)
+        require_cancelled(cancelled_07)
+        let cancelled_08: Result<void, TaskError> = task.cancel(task_08)
+        require_cancelled(cancelled_08)
+        let cancelled_09: Result<void, TaskError> = task.cancel(task_09)
+        require_cancelled(cancelled_09)
+        let cancelled_10: Result<void, TaskError> = task.cancel(task_10)
+        require_cancelled(cancelled_10)
+        let cancelled_11: Result<void, TaskError> = task.cancel(task_11)
+        require_cancelled(cancelled_11)
+        let cancelled_12: Result<void, TaskError> = task.cancel(task_12)
+        require_cancelled(cancelled_12)
+        let cancelled_13: Result<void, TaskError> = task.cancel(task_13)
+        require_cancelled(cancelled_13)
+        let cancelled_14: Result<void, TaskError> = task.cancel(task_14)
+        require_cancelled(cancelled_14)
+        let cancelled_15: Result<void, TaskError> = task.cancel(task_15)
+        require_cancelled(cancelled_15)
+        io.println("cancelled", 15)
+        let joined: Result<void, TaskError> = task.join(task_00)
     }
 }
 "#,
@@ -16522,7 +16575,7 @@ suspend fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
-        "cancelled true\nspawn\n"
+        "cancelled 15\nspawn\n"
     );
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(
@@ -16532,14 +16585,14 @@ suspend fn main() -> void {
 
     let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
     for (name, expected) in [
-        ("process_starts", 2u64),
+        ("process_starts", 16u64),
         ("process_start_completions", 0),
-        ("process_cancellations", 1),
+        ("process_cancellations", 15),
         ("process_errors", 1),
-        ("blocking_jobs_queued", 2),
+        ("blocking_jobs_queued", 16),
         ("blocking_jobs_started", 1),
         ("blocking_jobs_completed", 1),
-        ("blocking_jobs_cancelled", 1),
+        ("blocking_jobs_cancelled", 15),
         ("live_process_handles", 0),
         ("live_process_operations", 0),
         ("retained_process_bytes", 0),

@@ -184,6 +184,10 @@ ARC/COW values stay owner-local and non-atomic. See
 and
 [`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) or
 [`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows).
+[`examples/async_process_stress`](../examples/async_process_stress) reaches the
+16-child capacity, verifies the typed `limit` result, closes every child, and
+then completes 32 sequential round trips without retaining process/runtime
+resources.
 [`examples/mcp_stdio_async`](../examples/mcp_stdio_async) composes this loop
 shape with fragmented/coalesced JSON-RPC process output.
 

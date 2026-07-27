@@ -414,6 +414,7 @@ pub(super) fn lower_program(
     for impl_block in &ast.impls {
         let owner_name = impl_block.type_name.path[0].clone();
         for method in &impl_block.methods {
+            validate_p1_yield_function(path, method, &imports)?;
             let lowered_name = method_internal_name(&owner_name, &method.name);
             functions.push(lower_function_as(
                 path,

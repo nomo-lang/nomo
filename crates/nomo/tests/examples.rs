@@ -33,6 +33,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_tcp_io",
     "async_process_pipe_unix",
     "async_process_pipe_windows",
+    "async_process_stress",
     "async_publication_move",
     "async_bounded_channel",
     "async_static_select",
@@ -307,7 +308,7 @@ fn assert_cli_run(example: &Path) {
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
         }),
-        "async_process_pipe_unix" | "async_process_pipe_windows" => {
+        "async_process_pipe_unix" | "async_process_pipe_windows" | "async_process_stress" => {
             run_with_async_process_fixture(|fixture| {
                 Command::new(env!("CARGO_BIN_EXE_nomo"))
                     .arg("run")
@@ -792,7 +793,7 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
         }),
-        "async_process_pipe_unix" | "async_process_pipe_windows" => {
+        "async_process_pipe_unix" | "async_process_pipe_windows" | "async_process_stress" => {
             run_with_async_process_fixture(|fixture| {
                 Command::new(bin)
                     .current_dir(project_root)
@@ -834,26 +835,14 @@ where
     } else {
         "fixture"
     });
-    fs::write(
-        &source,
-        r#"#include <stdio.h>
-#include <string.h>
-
-int main(int argc, char **argv) {
-    if (argc < 2 || strcmp(argv[1], "async") != 0) {
-        return 2;
-    }
-    char line[4096];
-    if (fgets(line, sizeof(line), stdin) == NULL) {
-        return 3;
-    }
-    printf("async:%s", line);
-    fflush(stdout);
-    return 0;
-}
-"#,
-    )
-    .unwrap();
+    let fixture_source = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../performance/async/fixtures/process_pipe/fixture.c");
+    fs::copy(&fixture_source, &source).unwrap_or_else(|error| {
+        panic!(
+            "failed to copy {} into the async process fixture: {error}",
+            fixture_source.display()
+        )
+    });
     let compiled = Command::new(if cfg!(windows) { "clang" } else { "cc" })
         .arg("-std=c99")
         .arg(&source)
@@ -1582,6 +1571,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_process_pipe_contract" => "spawn\n",
         "async_process_pipe_unix" => "stdin flushed\nasync:hello from Nomo\nexit 0 0\n",
         "async_process_pipe_windows" => "stdin flushed\nasync:hello from Nomo\nexit 0 0\n",
+        "async_process_stress" => "saturation limit\nslot reuse 32\n",
         "pub_visibility" => "pub visibility ok\n",
         "read_file" => "file ok\n",
         "result_chain" => "result ok\n",

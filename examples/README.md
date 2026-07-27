@@ -49,6 +49,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_process_pipe_contract`: cross-target async process capability example; native targets report a secret-safe missing-executable error, while the release-WASM gate proves browser rejection before command operands run
 - `async_process_pipe_unix`: P2-PROC-B native Unix owner-affine stdin, `StdinFlushed`, stdout, final `Exited`, and explicit close
 - `async_process_pipe_windows`: P2-PROC-C overlapped named-pipe stdin/output/exit through the owner IOCP without per-child reader/writer threads
+- `async_process_stress`: P2-PROC-E deterministic 16-child saturation, explicit `limit`, cleanup, and 32 sequential slot-reuse round trips
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

@@ -1,0 +1,207 @@
+package async_process_stress.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+import std.task
+import std.time
+
+struct RoundState {
+    flushed: bool
+    closed: bool
+    received: bool
+    exited: bool
+    valid: bool
+}
+
+fn require_fixture(value: Option<string>) -> string {
+    match value {
+        Some(program) => {
+            return program
+        }
+        None => {
+            panic("set NOMO_PROCESS_FIXTURE to the controlled-process fixture")
+        }
+    }
+}
+
+fn command(program: string, mode: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push(mode)
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_void(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_event(value: Result<ProcessEvent, ProcessControlError>) -> ProcessEvent {
+    match value {
+        Ok(event) => {
+            return event
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_sleep(value: Result<void, TaskError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_limit(value: Result<ProcessChild, ProcessControlError>) -> void {
+    match value {
+        Ok(child) => {
+            process.close_child(child)
+            panic("the bounded process table accepted a seventeenth child")
+        }
+        Err(error) => {
+            if error.code != "limit" {
+                panic(error.message)
+            } else {
+                io.print("")
+            }
+        }
+    }
+}
+
+fn advance(state: RoundState, event: ProcessEvent) -> RoundState {
+    match event {
+        ProcessEvent.StdinFlushed => {
+            return RoundState { flushed: true, closed: state.closed, received: state.received, exited: state.exited, valid: state.valid }
+        }
+        ProcessEvent.Stdout(text) => {
+            return RoundState { flushed: state.flushed, closed: state.closed, received: state.received || text == "async:stress-round\n", exited: state.exited, valid: state.valid && text == "async:stress-round\n" }
+        }
+        ProcessEvent.Stderr(text) => {
+            return RoundState { flushed: state.flushed, closed: state.closed, received: state.received, exited: state.exited, valid: false }
+        }
+        ProcessEvent.Exited(status) => {
+            return RoundState { flushed: state.flushed, closed: state.closed, received: state.received, exited: true, valid: state.valid && status.code == 0 }
+        }
+    }
+}
+
+fn closed_state(state: RoundState, value: Result<void, ProcessControlError>) -> RoundState {
+    match value {
+        Ok(done) => {
+            return RoundState { flushed: state.flushed, closed: true, received: state.received, exited: state.exited, valid: state.valid }
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn close_if_ready(state: RoundState, child: ProcessChild) -> RoundState {
+    if state.flushed && !state.closed {
+        closed_state(state, process.close_stdin(child))
+    } else {
+        state
+    }
+}
+
+fn advance_and_close(state: RoundState, event: ProcessEvent, child: ProcessChild) -> RoundState {
+    return close_if_ready(advance(state, event), child)
+}
+
+fn finish_round(child: ProcessChild, state: RoundState) -> void {
+    process.close_child(child)
+    if !state.flushed || !state.received || !state.valid {
+        panic("the process fixture did not complete the round trip")
+    } else {
+        io.print("")
+    }
+}
+
+suspend fn start_hold(program: string) -> ProcessChild {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "hold"), 5000)
+    return require_child(started)
+}
+
+suspend fn run_round() -> void {
+    let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "async"), 5000)
+    let child: ProcessChild = require_child(started)
+    require_void(process.write_stdin(child, "stress-round\n"))
+    let mut state: RoundState = RoundState { flushed: false, closed: false, received: false, exited: false, valid: true }
+    for !state.exited {
+        let pending: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+        let event: ProcessEvent = require_event(pending)
+        state = advance_and_close(state, event, child)
+    }
+    finish_round(child, state)
+}
+
+suspend fn main() -> void {
+    let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
+    let child_00: ProcessChild = start_hold(program)
+    let child_01: ProcessChild = start_hold(program)
+    let child_02: ProcessChild = start_hold(program)
+    let child_03: ProcessChild = start_hold(program)
+    let child_04: ProcessChild = start_hold(program)
+    let child_05: ProcessChild = start_hold(program)
+    let child_06: ProcessChild = start_hold(program)
+    let child_07: ProcessChild = start_hold(program)
+    let child_08: ProcessChild = start_hold(program)
+    let child_09: ProcessChild = start_hold(program)
+    let child_10: ProcessChild = start_hold(program)
+    let child_11: ProcessChild = start_hold(program)
+    let child_12: ProcessChild = start_hold(program)
+    let child_13: ProcessChild = start_hold(program)
+    let child_14: ProcessChild = start_hold(program)
+    let child_15: ProcessChild = start_hold(program)
+    let overflow: Result<ProcessChild, ProcessControlError> = process.start(command(program, "hold"), 5000)
+    require_limit(overflow)
+    io.println("saturation limit")
+    process.close_child(child_00)
+    process.close_child(child_01)
+    process.close_child(child_02)
+    process.close_child(child_03)
+    process.close_child(child_04)
+    process.close_child(child_05)
+    process.close_child(child_06)
+    process.close_child(child_07)
+    process.close_child(child_08)
+    process.close_child(child_09)
+    process.close_child(child_10)
+    process.close_child(child_11)
+    process.close_child(child_12)
+    process.close_child(child_13)
+    process.close_child(child_14)
+    process.close_child(child_15)
+    let sleeping: Result<void, TaskError> = task.sleep(time.duration_millis(100))
+    require_sleep(sleeping)
+    let mut remaining: u64 = 32
+    for remaining > 0 {
+        run_round()
+        remaining = remaining - 1
+    }
+    io.println("slot reuse", 32)
+}

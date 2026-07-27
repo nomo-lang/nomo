@@ -1,0 +1,112 @@
+// Derived line-by-line from the Computer Language Benchmarks Game
+// spectral-norm C gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
+// BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
+package benchmarksgame.spectral_norm
+
+import std.array
+import std.env
+import std.io
+import std.math
+import std.num
+import std.string
+
+fn input_size(default_value: u64) -> u64 {
+    let args: Array<string> = env.args()
+    let value: Option<string> = args.get(1)
+    return match value {
+        Some(text) => match num.parse_u64(text) {
+            Ok(parsed) => parsed
+            Err(error) => panic(error.message)
+        }
+        None => default_value
+    }
+}
+
+// Benchmark-private fixed-point rendering. This deliberately does not extend
+// std.fmt. The rounded fractional value is below 1e9 and therefore exactly
+// representable as an integer-valued f64 for num.to_string.
+fn format_fixed_9(value: f64) -> string {
+    let negative: bool = value < 0.0
+    let magnitude: f64 = if negative {
+        -value
+    } else {
+        value
+    }
+    let base_whole: f64 = math.floor(magnitude)
+    let rounded_fraction: f64 = math.round((magnitude - base_whole) * 1000000000.0)
+    let carried: bool = rounded_fraction >= 1000000000.0
+    let whole: f64 = if carried {
+        base_whole + 1.0
+    } else {
+        base_whole
+    }
+    let fraction: f64 = if carried {
+        0.0
+    } else {
+        rounded_fraction
+    }
+    let mut digits: string = num.to_string(fraction)
+    for string.len(digits) < 9 {
+        digits = string.concat("0", digits)
+    }
+    let integral: string = string.concat(num.to_string(whole), ".")
+    let rendered: string = string.concat(integral, digits)
+    return if negative {
+        string.concat("-", rendered)
+    } else {
+        rendered
+    }
+}
+
+fn eval_a(i: u64, j: u64) -> f64 {
+    let sum: u64 = i + j
+    return 1.0 / (sum * (sum + 1) / 2 + i + 1) as f64
+}
+
+fn eval_a_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
+    for let i: u64 = 0; i < n; i++ {
+        au[i] = 0.0
+        for let j: u64 = 0; j < n; j++ {
+            au[i] = au[i] + eval_a(i, j) * u[j]
+        }
+    }
+}
+
+fn eval_at_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
+    for let i: u64 = 0; i < n; i++ {
+        au[i] = 0.0
+        for let j: u64 = 0; j < n; j++ {
+            au[i] = au[i] + eval_a(j, i) * u[j]
+        }
+    }
+}
+
+fn eval_ata_times_u(n: u64, u: Array<f64>, mut atau: Array<f64>) -> void {
+    let mut temporary: Array<f64> = Array.new<f64>()
+    for let i: u64 = 0; i < n; i++ {
+        temporary.push(0.0)
+    }
+    eval_a_times_u(n, u, mut temporary)
+    eval_at_times_u(n, temporary, mut atau)
+}
+
+fn main() -> void {
+    let n: u64 = input_size(100)
+    let mut u: Array<f64> = Array.new<f64>()
+    let mut v: Array<f64> = Array.new<f64>()
+    for let i: u64 = 0; i < n; i++ {
+        u.push(1.0)
+        v.push(0.0)
+    }
+    for let i: u64 = 0; i < 10; i++ {
+        eval_ata_times_u(n, u, mut v)
+        eval_ata_times_u(n, v, mut u)
+    }
+    let mut vbv: f64 = 0.0
+    let mut vv: f64 = 0.0
+    for let i: u64 = 0; i < n; i++ {
+        vbv += u[i] * v[i]
+        vv += v[i] * v[i]
+    }
+    io.println(format_fixed_9(math.sqrt(vbv / vv)))
+}

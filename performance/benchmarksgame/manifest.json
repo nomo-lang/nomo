@@ -1,0 +1,238 @@
+{
+  "schema": 1,
+  "suite": "nomo-benchmarksgame-cpu-baseline",
+  "manifest_version": "2026-07-27",
+  "license": "BSD-3-Clause",
+  "methodology_urls": [
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/performance/comparable.html",
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/how-programs-are-measured.html",
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html"
+  ],
+  "methodology": {
+    "implementations": [
+      "nomo",
+      "c",
+      "go"
+    ],
+    "measured_runs": 12,
+    "cpu_statistics_exclude_first_run": true,
+    "warmup_runs": 0,
+    "first_formal_run_included_in_wall_min": true,
+    "stdout_after_first_run": "/dev/null",
+    "random_seed": 20260727,
+    "rotation_algorithm": "For each workload, seed Python random.Random with random_seed plus the zero-based workload index and shuffle [nomo,c,go] independently for each round.",
+    "slow_cutoff_seconds": 600,
+    "hard_timeout_seconds": 3600,
+    "correctness_timeout_seconds": 120,
+    "build_timeout_seconds": 600,
+    "affinity_enforced": false,
+    "gomaxprocs": 1,
+    "wall_summary": "minimum, median, and inclusive-quartile IQR across all completed samples",
+    "cpu_summary": "mean and two-sided 95% Student-t confidence interval across runs 2 through 12",
+    "rss_summary": "per-run peak RSS plus median and maximum",
+    "slow_program_rule": "An implementation whose first formal run reaches 600 seconds is explicitly downgraded to one sample; twelve-run statistics remain null.",
+    "compile_time_in_run_time": false,
+    "claims": "Exploratory local evidence only; not eligible for language-wide or Benchmarks Game website claims."
+  },
+  "toolchains": {
+    "nomo": {
+      "required_version": "0.0.0-20260721120555",
+      "build": "nomo build <project> --emit-c"
+    },
+    "clang": {
+      "required_family": "clang",
+      "flags": [
+        "-std=c99",
+        "-O3",
+        "-DNDEBUG",
+        "-fomit-frame-pointer"
+      ]
+    },
+    "go": {
+      "required_version": "go1.25.12",
+      "runtime_environment": {
+        "GOMAXPROCS": "1"
+      }
+    }
+  },
+  "workloads": [
+    {
+      "id": "spectral-norm",
+      "correctness_input": "100",
+      "performance_input": "5500",
+      "link_math": true,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/spectral-norm-100.txt",
+          "sha256": "a95e11fa07f7b196ef488e73f67afbbbc16cf6a2c6de5f8d54ea49821fe604e6"
+        },
+        "performance": {
+          "path": "fixtures/spectral-norm-5500.txt",
+          "sha256": "f9d5b5e3eb7657cf1bbba4cc856651864df9cd9fd9a6be9b9bc5fcbb67150deb"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/spectral-norm/src/main.nomo",
+          "sha256": "a9e14a0fa33e722de47ed184f6f89af3c8eba466e6eab937b4c9de417b327d3b",
+          "project_manifest": "reference/nomo/spectral-norm/nomo.toml",
+          "project_manifest_sha256": "005bfaeb3fd3d734e5c7020857fa18927064bf014679ec309bd3385b9a28f3ca",
+          "derived_from": [
+            "spectralnorm-gcc-8",
+            "spectralnorm-go-8"
+          ]
+        },
+        "c": {
+          "path": "reference/c/spectral-norm.c",
+          "sha256": "1f7f71ce5fc6f87432b3801fb57c3e8a619da2527c1b801154b8102c7af66c3e",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/spectralnorm-gcc-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "2fd32f77fbab6513c9e7330f16e249458dd7abdb5138a9d4694652af3e84f4f5"
+        },
+        "go": {
+          "path": "reference/go/spectral-norm.go",
+          "sha256": "862a4ca6a79a7457c253e88a77b0189583201fb551b86aec7221ce7c3e079810",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/spectralnorm-go-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "8f277cc7c9f4b0cb287c9bd697d047fc8d40562d960030d9c718a948073dd6ab"
+        }
+      }
+    },
+    {
+      "id": "n-body",
+      "correctness_input": "1000",
+      "performance_input": "50000000",
+      "link_math": true,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/n-body-1000.txt",
+          "sha256": "76de83d6d51a74f82828547423f516e7815cfe8cfea6290a2831aa173f806de7"
+        },
+        "performance": {
+          "path": "fixtures/n-body-50000000.txt",
+          "sha256": "3e6c9ef9d26cfe312a4cd8e1b81b3f671b88fbce84de543e8c23c206a942504d"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/n-body/src/main.nomo",
+          "sha256": "710b3cdf39cc062e3fb974ee91f7e0269d355892831f91e5c5ecdbdc1cf35343",
+          "project_manifest": "reference/nomo/n-body/nomo.toml",
+          "project_manifest_sha256": "0cd1b9fd7f3ae069fce5a33ab6e92ea10e72844cb77f23d4947fd51e589e313c",
+          "derived_from": [
+            "nbody-gcc-8",
+            "nbody-go-8"
+          ]
+        },
+        "c": {
+          "path": "reference/c/n-body.c",
+          "sha256": "a8649dd7babc5b9178fc363f4d61b468662c703668c2f8f4ddeab206b3e7e879",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "e6e067338140f86ec3aca2b43e2770f3dbe6c7c2d6108934671c58f00af13317"
+        },
+        "go": {
+          "path": "reference/go/n-body.go",
+          "sha256": "83e645802266f9d30a1093e97fc934dbb7dc6bd55ada49f58f45d63340c6e76a",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-go-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "31b4bbb15ee17fcbce6e37a5c3c7ea3b94a369d335fd9bb69edfb361f866f80e"
+        }
+      }
+    },
+    {
+      "id": "fannkuch-redux",
+      "correctness_input": "7",
+      "performance_input": "12",
+      "link_math": false,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/fannkuch-redux-7.txt",
+          "sha256": "2dc0a3cd4a547ba69389f97f3b447bd4d487fe6216c3cacd2f9bf8c908dc127f"
+        },
+        "performance": {
+          "path": "fixtures/fannkuch-redux-12.txt",
+          "sha256": "4265a65135c506a68d90d6474003fb9030b7ee244a06c046bd89b3932a28ce20"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/fannkuch-redux/src/main.nomo",
+          "sha256": "1d458e37ab74819007b1dbc72597f373b8909a46721b13ba388c7436fe63cc3a",
+          "project_manifest": "reference/nomo/fannkuch-redux/nomo.toml",
+          "project_manifest_sha256": "73cf8d9df45479fb59dce5ac34102dafba368aa4aa7cb4655512bbd1dc5ca00e",
+          "derived_from": [
+            "fannkuchredux-gcc-8",
+            "fannkuchredux-go-8"
+          ]
+        },
+        "c": {
+          "path": "reference/c/fannkuch-redux.c",
+          "sha256": "4d3135b2ed7a2fedb12b731c0f1a6bf901d763ac8421208fab6c4997c3ca9d80",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fannkuchredux-gcc-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "65c8d4b7b5697e1ee1ccff75aec8fb66ae97811fbd96b02a0ef46941c49dea97"
+        },
+        "go": {
+          "path": "reference/go/fannkuch-redux.go",
+          "sha256": "806403dc4801db2c7c8894f923d18bb3f0b8ed3741ac48890a65ccd38fcaa4a2",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fannkuchredux-go-8.html",
+          "fetched_on": "2026-07-27",
+          "upstream_extracted_sha256": "e746d5097b2ecde2df42387b1da17a0d8c4214d5ffdc396dd2498b11ba19c3e4"
+        }
+      }
+    }
+  ],
+  "readiness": [
+    {
+      "id": "spectral-norm",
+      "status": "implemented",
+      "reason": "Single-thread scalar floating-point and Array/COW behavior are expressible in current Nomo."
+    },
+    {
+      "id": "n-body",
+      "status": "implemented",
+      "reason": "Single-thread scalar structure and floating-point mutation are expressible in current Nomo."
+    },
+    {
+      "id": "fannkuch-redux",
+      "status": "implemented",
+      "reason": "Single-thread scalar permutation and Array/COW behavior are expressible in current Nomo."
+    },
+    {
+      "id": "fasta",
+      "status": "deferred-buffered-bytes-io",
+      "reason": "Wait for benchmark-suitable buffered byte output and I/O before adding an equivalent baseline."
+    },
+    {
+      "id": "mandelbrot",
+      "status": "deferred-buffered-bytes-io",
+      "reason": "Wait for benchmark-suitable buffered binary byte output before adding an equivalent baseline."
+    },
+    {
+      "id": "reverse-complement",
+      "status": "deferred-buffered-bytes-io",
+      "reason": "Wait for benchmark-suitable buffered byte input and output before adding an equivalent baseline."
+    },
+    {
+      "id": "k-nucleotide",
+      "status": "deferred-core-stdlib",
+      "reason": "Wait for the required core standard-library text and counting facilities before an equivalent implementation."
+    },
+    {
+      "id": "pidigits",
+      "status": "deferred-core-stdlib",
+      "reason": "Wait for a suitable core arbitrary-precision integer facility before an equivalent implementation."
+    },
+    {
+      "id": "regex-redux",
+      "status": "deferred-core-stdlib",
+      "reason": "Wait for the required core regular-expression and byte-processing facilities before an equivalent implementation."
+    },
+    {
+      "id": "binary-trees",
+      "status": "deferred-allocation-model",
+      "reason": "Wait for an explicit allocation and ownership model suitable for a fair tree-allocation comparison."
+    }
+  ]
+}

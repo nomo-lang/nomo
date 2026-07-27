@@ -1,0 +1,299 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomo-lang.org/schemas/benchmarksgame-result-v1.json",
+  "title": "Nomo Benchmarks Game CPU baseline result",
+  "type": "object",
+  "required": [
+    "schema",
+    "suite",
+    "manifest_version",
+    "mode",
+    "created_at_utc",
+    "claims",
+    "provenance",
+    "builds",
+    "correctness",
+    "workloads"
+  ],
+  "properties": {
+    "schema": {
+      "const": 1
+    },
+    "suite": {
+      "const": "nomo-benchmarksgame-cpu-baseline"
+    },
+    "manifest_version": {
+      "type": "string"
+    },
+    "mode": {
+      "enum": [
+        "correctness",
+        "measure"
+      ]
+    },
+    "created_at_utc": {
+      "type": "string",
+      "format": "date-time"
+    },
+    "claims": {
+      "type": "object",
+      "required": [
+        "exploratory",
+        "affinity_enforced",
+        "claim_eligible",
+        "scope"
+      ],
+      "properties": {
+        "exploratory": {
+          "const": true
+        },
+        "affinity_enforced": {
+          "const": false
+        },
+        "claim_eligible": {
+          "const": false
+        },
+        "scope": {
+          "type": "string"
+        }
+      },
+      "additionalProperties": false
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "repository",
+        "manifest_path",
+        "manifest_sha256",
+        "host",
+        "toolchains",
+        "methodology",
+        "methodology_urls"
+      ]
+    },
+    "builds": {
+      "type": "object",
+      "required": [
+        "spectral-norm",
+        "n-body",
+        "fannkuch-redux"
+      ],
+      "additionalProperties": {
+        "$ref": "#/$defs/build"
+      }
+    },
+    "correctness": {
+      "type": "array",
+      "minItems": 3,
+      "maxItems": 3,
+      "items": {
+        "$ref": "#/$defs/correctness"
+      }
+    },
+    "workloads": {
+      "type": "array",
+      "items": {
+        "$ref": "#/$defs/workload"
+      }
+    }
+  },
+  "$defs": {
+    "command": {
+      "type": "object",
+      "required": [
+        "argv",
+        "command",
+        "cwd",
+        "duration_ns",
+        "exit_code"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": {
+            "type": "string"
+          }
+        },
+        "command": {
+          "type": "string"
+        },
+        "cwd": {
+          "type": [
+            "string",
+            "null"
+          ]
+        },
+        "duration_ns": {
+          "type": "integer",
+          "minimum": 0
+        },
+        "exit_code": {
+          "const": 0
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "required": [
+        "source_files",
+        "source_tree_sha256",
+        "generated_c",
+        "binaries",
+        "commands",
+        "compile_time_excluded_from_run_time"
+      ],
+      "properties": {
+        "generated_c": {
+          "type": "object",
+          "required": [
+            "path",
+            "sha256",
+            "unmodified_after_emit"
+          ],
+          "properties": {
+            "unmodified_after_emit": {
+              "const": true
+            }
+          }
+        },
+        "commands": {
+          "type": "object",
+          "required": [
+            "nomo_emit_c",
+            "nomo_clang",
+            "c_clang",
+            "go_build"
+          ],
+          "additionalProperties": {
+            "$ref": "#/$defs/command"
+          }
+        },
+        "compile_time_excluded_from_run_time": {
+          "const": true
+        }
+      }
+    },
+    "correctness": {
+      "type": "object",
+      "required": [
+        "id",
+        "input",
+        "fixture_path",
+        "fixture_sha256",
+        "implementations"
+      ],
+      "properties": {
+        "implementations": {
+          "type": "object",
+          "required": [
+            "nomo",
+            "c",
+            "go"
+          ]
+        }
+      }
+    },
+    "sample": {
+      "type": "object",
+      "required": [
+        "command_argv",
+        "command",
+        "environment",
+        "stdout",
+        "wall_ns",
+        "user_cpu_ns",
+        "system_cpu_ns",
+        "cpu_total_ns",
+        "peak_rss_bytes",
+        "exit_code",
+        "run_index",
+        "round_index",
+        "order_position"
+      ]
+    },
+    "implementation": {
+      "type": "object",
+      "required": [
+        "single_run_downgrade",
+        "slow_cutoff_seconds",
+        "first_formal_output",
+        "samples",
+        "summary"
+      ],
+      "properties": {
+        "single_run_downgrade": {
+          "type": "boolean"
+        },
+        "samples": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": {
+            "$ref": "#/$defs/sample"
+          }
+        },
+        "summary": {
+          "type": "object",
+          "required": [
+            "measurement_mode",
+            "runs",
+            "wall_min_ns",
+            "wall_median_ns",
+            "wall_iqr_ns",
+            "cpu_statistics_exclude_first_run",
+            "cpu_mean_ns",
+            "cpu_ci_95",
+            "peak_rss_median_bytes",
+            "peak_rss_max_bytes"
+          ]
+        }
+      }
+    },
+    "workload": {
+      "type": "object",
+      "required": [
+        "id",
+        "performance_input",
+        "fixture_path",
+        "fixture_sha256",
+        "rotation_seed",
+        "execution_order_by_round",
+        "implementations",
+        "relative_time_vs_go",
+        "relative_time_vs_c",
+        "relative_time_interpretation"
+      ],
+      "properties": {
+        "implementations": {
+          "type": "object",
+          "required": [
+            "nomo",
+            "c",
+            "go"
+          ],
+          "properties": {
+            "nomo": {
+              "$ref": "#/$defs/implementation"
+            },
+            "c": {
+              "$ref": "#/$defs/implementation"
+            },
+            "go": {
+              "$ref": "#/$defs/implementation"
+            }
+          },
+          "additionalProperties": false
+        },
+        "relative_time_vs_go": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        },
+        "relative_time_vs_c": {
+          "type": "number",
+          "exclusiveMinimum": 0
+        }
+      }
+    }
+  }
+}

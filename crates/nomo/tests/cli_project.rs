@@ -15903,7 +15903,7 @@ fn async_process_pipe_native_runs_owner_affine_stdio_and_reaps_cleanly() {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
         "stdin flushed\nasync:hello from Nomo\nexit 0 0\n"
     );
     assert!(

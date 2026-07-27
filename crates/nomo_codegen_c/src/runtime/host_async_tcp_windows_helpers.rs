@@ -436,6 +436,7 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
             continue;
         }
         nomo_async_reactor_mark_submitted(
+            &context->reactor,
             &registration->reactor_registration
         );
         nomo_async_tcp_connect_begin_operation(registration);
@@ -783,6 +784,7 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     );
     out.push_str(
         r#"    nomo_async_reactor_mark_submitted(
+        &context->reactor,
         &registration->reactor_registration
     );
     registration->active = 1u;

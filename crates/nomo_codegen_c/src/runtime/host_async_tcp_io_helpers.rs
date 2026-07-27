@@ -545,6 +545,7 @@ static void nomo_async_tcp_iocp_mark_active(
     nomo_async_tcp_io_registration *registration
 ) {
     nomo_async_reactor_mark_submitted(
+        &registration->context->reactor,
         &registration->reactor_registration
     );
     if (registration->active == 0u) {

@@ -520,7 +520,6 @@ static nomo_async_iocp_operation *nomo_async_iocp_reserve(
         operation->active = 1u;
         operation->registration = registration;
         registration->operation = operation;
-        reactor->iocp_operations_started += 1u;
         reactor->live_iocp_operations += 1u;
         if (reactor->live_iocp_operations
             > reactor->peak_live_iocp_operations) {
@@ -684,10 +683,13 @@ static OVERLAPPED *nomo_async_reactor_overlapped(
 }
 
 static void nomo_async_reactor_mark_submitted(
+    nomo_async_reactor *reactor,
     nomo_async_reactor_registration *registration
 ) {
-    if (registration->operation != NULL) {
+    if (registration->operation != NULL
+        && registration->operation->submitted == 0u) {
         registration->operation->submitted = 1u;
+        reactor->iocp_operations_started += 1u;
     }
 }
 
@@ -924,6 +926,22 @@ mod tests {
         assert!(emitted.contains("CancelIoEx"));
         assert!(emitted.contains("CONTAINING_RECORD"));
         assert!(emitted.contains("while (reactor->live_iocp_operations > 0u)"));
+        let reserve = emitted
+            .split("static nomo_async_iocp_operation *nomo_async_iocp_reserve")
+            .nth(1)
+            .unwrap()
+            .split("static void nomo_async_iocp_release")
+            .next()
+            .unwrap();
+        assert!(!reserve.contains("iocp_operations_started += 1u"));
+        let mark_submitted = emitted
+            .split("static void nomo_async_reactor_mark_submitted")
+            .nth(1)
+            .unwrap()
+            .split("static void nomo_async_reactor_detach_buffer")
+            .next()
+            .unwrap();
+        assert!(mark_submitted.contains("iocp_operations_started += 1u"));
         assert!(!emitted.contains("epoll_create(1)"));
         assert!(!emitted.contains("kqueue()"));
     }

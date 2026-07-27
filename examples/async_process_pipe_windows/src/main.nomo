@@ -1,0 +1,84 @@
+package async_process_pipe_windows.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+fn require_fixture(value: Option<string>) -> string {
+    match value {
+        Some(program) => {
+            return program
+        }
+        None => {
+            panic("set NOMO_PROCESS_FIXTURE to the controlled-process fixture")
+        }
+    }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_void(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn print_event(value: Result<ProcessEvent, ProcessControlError>) -> void {
+    match value {
+        Ok(event) => {
+            match event {
+                ProcessEvent.StdinFlushed => {
+                    io.println("stdin flushed")
+                }
+                ProcessEvent.Stdout(text) => {
+                    io.print(text)
+                }
+                ProcessEvent.Stderr(text) => {
+                    io.print(text)
+                }
+                ProcessEvent.Exited(status) => {
+                    io.println("exit", status.code, status.signal)
+                }
+            }
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn command(program: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("async")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+}
+
+suspend fn main() -> void {
+    let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 15000)
+    let child: ProcessChild = require_child(started)
+    require_void(process.write_stdin(child, "hello from Nomo\n"))
+    let flushed: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 15000)
+    print_event(flushed)
+    require_void(process.close_stdin(child))
+    let first: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 15000)
+    print_event(first)
+    let second: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 15000)
+    print_event(second)
+    process.close_child(child)
+}

@@ -695,11 +695,16 @@ fn main() -> void {
     }
     assert!(c.contains("nomo_async_process_result_owned_0 = 1u"));
     assert!(!c.contains("nomo_process_control_states"));
-    assert!(!c.contains("CreateThread"));
     if cfg!(windows) {
-        assert!(c.contains("async process pipes are not available"));
+        assert_eq!(c.matches("CreateThread(").count(), 1);
+        assert!(c.contains("CreateNamedPipeW"));
+        assert!(c.contains("RegisterWaitForSingleObject"));
+        assert!(c.contains("WT_EXECUTEONLYONCE"));
+        assert!(c.contains("FILE_FLAG_OVERLAPPED"));
+        assert!(!c.contains("async process pipes are not available"));
         assert!(!c.contains("pthread_create"));
     } else {
+        assert!(!c.contains("CreateThread"));
         assert!(c.contains("pthread_create"));
         assert!(c.contains("nomo_async_process_pool_watch"));
         assert!(c.contains("NOMO_ASYNC_REACTOR_PROCESS"));
@@ -716,9 +721,9 @@ fn main() -> void {
         assert!(target_c.contains("nomo_async_process_spawn_start"));
         assert!(target_c.contains("nomo_async_process_event_start"));
         assert!(!target_c.contains("nomo_process_control_states"));
-        assert!(!target_c.contains("CreateThread"));
         match target_text {
             "x86_64-unknown-linux-gnu" => {
+                assert!(!target_c.contains("CreateThread"));
                 assert!(target_c.contains("pthread_create"));
                 assert!(target_c.contains("epoll_create(1)"));
                 assert!(target_c.contains("SYS_pidfd_open"));
@@ -726,14 +731,58 @@ fn main() -> void {
                 assert!(!target_c.contains("async process pipes are not available"));
             }
             "aarch64-apple-darwin" => {
+                assert!(!target_c.contains("CreateThread"));
                 assert!(target_c.contains("pthread_create"));
                 assert!(target_c.contains("kqueue()"));
                 assert!(target_c.contains("EVFILT_PROC"));
                 assert!(!target_c.contains("async process pipes are not available"));
             }
             "x86_64-pc-windows-msvc" => {
+                assert_eq!(target_c.matches("CreateThread(").count(), 1);
                 assert!(!target_c.contains("pthread_create"));
-                assert!(target_c.contains("async process pipes are not available"));
+                assert!(target_c.contains("CreateNamedPipeW"));
+                assert!(target_c.contains("RegisterWaitForSingleObject"));
+                assert!(target_c.contains("WT_EXECUTEONLYONCE"));
+                assert!(target_c.contains("FILE_FLAG_OVERLAPPED"));
+                assert!(target_c.contains("CancelIoEx"));
+                assert!(target_c.contains("nomo_async_process_pool_maybe_idle"));
+                let connect_index = target_c
+                    .find("ConnectNamedPipe(server, &connected_overlapped)")
+                    .expect("Windows process pipe must initiate its server connection");
+                let client_index = target_c
+                    .find("HANDLE client = CreateFileW(")
+                    .expect("Windows process pipe must open its child endpoint");
+                assert!(
+                    connect_index < client_index,
+                    "Windows process pipe must connect its server before opening the client"
+                );
+                let initialize_start = target_c
+                    .find("static int nomo_async_process_pool_initialize(")
+                    .expect("Windows process pool initializer must be emitted");
+                let runtime_get_start = target_c
+                    .find("static nomo_async_process_runtime *nomo_async_process_runtime_get(")
+                    .expect("Windows process runtime getter must be emitted");
+                assert!(
+                    !target_c[initialize_start..runtime_get_start]
+                        .contains("nomo_async_reactor_post_activate("),
+                    "an idle Windows process pool must not keep the executor alive"
+                );
+                let submit_start = target_c
+                    .find("static int nomo_async_process_pool_submit_start(")
+                    .expect("Windows process submit path must be emitted");
+                let cancel_start = target_c
+                    .find("static void nomo_async_process_pool_cancel_start(")
+                    .expect("Windows process cancel path must be emitted");
+                assert!(
+                    target_c[submit_start..cancel_start]
+                        .contains("nomo_async_reactor_post_activate("),
+                    "Windows process completion wake must activate on demand"
+                );
+                assert!(!target_c.contains("nomo_member_program.len"));
+                assert!(!target_c.contains("length != data.len"));
+                assert!(!target_c.contains("nomo_process_windows_reader_thread"));
+                assert!(!target_c.contains("nomo_process_windows_writer_thread"));
+                assert!(!target_c.contains("async process pipes are not available"));
             }
             _ => unreachable!(),
         }

@@ -791,11 +791,13 @@ Controlled process payloads and output chunks are limited to 1 MiB,
 without NUL. `ProcessControlError` exposes stable, secret-safe error codes;
 errors and default diagnostics do not copy command arguments, environment,
 cwd, stdin, or child output. The Unix async adapter is toolchain-owned, so
-application code needs no C FFI. Windows keeps the secret-safe ready
-`unsupported` path until P2-PROC-C adds IOCP process pipes; browser WASM
-rejects the capability before evaluating command operands. See
+application code needs no C FFI. Windows P2-PROC-C uses overlapped named pipes,
+one shared bounded process-creation worker, system wait callbacks, and stable
+owner-IOCP operation slots without per-child reader/writer threads. Browser
+WASM rejects the capability before evaluating command operands. See
 `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
+`examples/async_process_pipe_windows` for the native IOCP lifecycle,
 and `examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking`
 for the explicit migration path.
 

@@ -44,9 +44,12 @@ suspend fn main() -> void {
 普通 `fn` 不能调用 suspend 函数；编译器报告 E0870，而不是偷偷引入运行时。
 只声明或调用 always-ready suspend 函数不会创建 executor。
 
-编译器还会拒绝传递调用图最终到达阻塞兼容 API `time.sleep` 或
-`time.sleep_millis` 的 `suspend fn`。E0891 只报告函数/API 调用路径，绝不回显
-参数值。同步函数与旧的隔离 worker 仍可使用阻塞 API。非阻塞
+编译器还会拒绝传递调用图最终到达隔离清单中 blocking compatibility API 的
+`suspend fn`。E0891 覆盖 blocking sleep/TCP compatibility call、HTTP/HTTPS
+request 与 stream progress、blocking HTTP server progress、legacy shell helper，
+以及可能 spawn、wait、terminate 或 reap 的 process lifecycle operation。它只
+报告函数/API 调用路径，绝不回显参数值。同步函数与旧的隔离 worker 仍可使用
+阻塞 API。非阻塞
 `task.sleep(Duration) -> Result<void, TaskError>` 已可用于 native C99
 current-thread backend。duration 只求值一次；非正时长 inline 完成，正时长注册
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend

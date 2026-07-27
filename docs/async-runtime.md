@@ -49,10 +49,13 @@ A normal `fn` cannot call a suspend function. The compiler reports E0870
 instead of adding hidden runtime behavior. Merely declaring or calling an
 always-ready suspend function does not create an executor.
 
-The compiler also rejects a `suspend fn` whose transitive call graph reaches
-the blocking compatibility APIs `time.sleep` or `time.sleep_millis`. E0891
-reports only the function/API call path, never argument values. Synchronous
-functions and legacy isolated workers retain the blocking APIs. The
+The compiler also rejects a `suspend fn` whose transitive call graph reaches a
+quarantined blocking compatibility API. E0891 covers blocking sleep and TCP
+compatibility calls, HTTP/HTTPS request and stream progress, blocking HTTP
+server progress, legacy shell helpers, and process lifecycle operations that
+can spawn, wait, terminate, or reap. It reports only the function/API call
+path, never argument values. Synchronous functions and legacy isolated workers
+retain the blocking APIs. The
 nonblocking `task.sleep(Duration) -> Result<void, TaskError>` API is available
 on the native C99 current-thread backend. Its duration is evaluated once, a
 non-positive duration completes inline, and a positive duration registers an

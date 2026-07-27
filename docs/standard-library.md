@@ -851,6 +851,13 @@ stdout, or stderr values. Native Unix-like and Windows adapters are owned by
 the toolchain; application code declares no C FFI. Browser WASM rejects this
 controlled API before argument evaluation.
 
+Suspend call graphs reject the shell helpers plus `start`, `next_event`,
+`terminate`, and `close_child` with E0891 because they may spawn, wait,
+terminate, or reap on the current OS thread. The bounded queueing operations
+`write_stdin` and `close_stdin`, plus the non-consuming `try_wait`, remain
+current-thread compatibility calls until the focused owner-affine process RFC
+lands; they are not evidence of cross-shard safety.
+
 See `examples/process_controlled` for two queued stdin messages and
 multiplexed output/exit handling.
 
@@ -966,6 +973,13 @@ http.respond_string(exchange: HttpExchange, status: i64, body: string) -> Result
 http.close_server(server: HttpServer) -> void
 http.close_exchange(exchange: HttpExchange) -> void
 ```
+
+Suspend call graphs reject `get`, `post`, `send`, `open_stream`, `read_text`,
+`next_sse`, `listen`, `accept`, and `respond_string` with E0891. The current
+native adapters drive libcurl/WinHTTP or blocking server progress
+synchronously; wrapping these calls in a coroutine would still occupy the
+executor. Close and cancel helpers remain immediate current-thread
+compatibility operations until the focused owner-affine HTTP RFC lands.
 
 `HttpRequest` contains `method`, `url`, `headers`, `body`, `timeout_millis`,
 and `max_response_bytes`. v0.1 accepts `GET` and `POST`. `HttpResponse`

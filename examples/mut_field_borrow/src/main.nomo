@@ -1,4 +1,4 @@
-package app.main
+package mut_field_borrow
 
 import std.io
 
@@ -7,22 +7,22 @@ struct Point {
     y: i32
 }
 
-fn bump(mut value: i32) -> void {
+fn bump(mut value: i32) {
     value = value + 1
 }
 
-fn bump_twice(mut value: i32) -> void {
+fn bump_twice(mut value: i32) {
     bump(mut value)
     bump(mut value)
 }
 
-fn swap_values(mut left: i32, mut right: i32) -> void {
+fn swap_values(mut left: i32, mut right: i32) {
     let temp: i32 = left
     left = right
     right = temp
 }
 
-fn main() -> void {
+fn main() {
     let mut point: Point = Point { x: 1, y: 7 }
     bump_twice(mut point.x)
     swap_values(mut point.x, mut point.y)

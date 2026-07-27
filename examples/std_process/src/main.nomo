@@ -1,9 +1,9 @@
-package app.main
+package std_process
 
 import std.io
 import std.process
 
-fn main() -> void {
+fn main() {
     let spawned: Result<i32, ProcessError> = process.spawn("printf spawn-ok >/dev/null")
     match spawned {
         Ok(code) => {

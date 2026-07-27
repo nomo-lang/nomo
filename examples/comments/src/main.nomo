@@ -1,5 +1,5 @@
 //! Example module documentation.
-package app.main
+package comments
 
 import std.io
 
@@ -9,7 +9,7 @@ fn marker_text() -> string {
 }
 
 /** Keeps nested block comments out of the token stream. */
-fn main() -> void {
+fn main() {
     // Line comments can trail ordinary code.
     let text: string = marker_text() // trailing comment
     /*

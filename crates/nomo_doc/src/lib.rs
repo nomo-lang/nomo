@@ -442,14 +442,14 @@ fn function_signature(function: &Function) -> String {
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&function.return_type);
     format!(
-        "{}{}fn {}{}({}) -> {}",
+        "{}{}fn {}{}({}){return_type}",
         visibility_prefix(function.public),
         suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
-        type_ref(&function.return_type)
     )
 }
 
@@ -460,13 +460,13 @@ fn extern_function_signature(abi: &str, function: &FunctionSignature) -> String 
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&function.return_type);
     format!(
-        "extern \"{}\" fn {}{}({}) -> {}",
+        "extern \"{}\" fn {}{}({}){return_type}",
         abi,
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
-        type_ref(&function.return_type)
     )
 }
 
@@ -477,14 +477,22 @@ fn interface_method_signature(owner: &str, method: &FunctionSignature) -> String
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&method.return_type);
     format!(
-        "{}fn {owner}.{}{}({}) -> {}",
+        "{}fn {owner}.{}{}({}){return_type}",
         suspend_prefix(method.is_suspend),
         method.name,
         type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
-        type_ref(&method.return_type)
     )
+}
+
+fn declaration_return_suffix(return_type: &TypeRef) -> String {
+    if return_type.is_void() {
+        String::new()
+    } else {
+        format!(" -> {}", type_ref(return_type))
+    }
 }
 
 fn suspend_prefix(is_suspend: bool) -> &'static str {
@@ -723,7 +731,7 @@ mod tests {
             .unwrap();
         let println = io.items.iter().find(|item| item.name == "println").unwrap();
         assert_eq!(println.source, "std/src/io.nomo");
-        assert_eq!(println.signature, "pub fn println(value: string) -> void");
+        assert_eq!(println.signature, "pub fn println(value: string)");
 
         let fmt = package
             .modules

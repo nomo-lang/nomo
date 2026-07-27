@@ -1,9 +1,9 @@
-package app.main
+package operators_assignment
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let mut value: i64 = 10
     value += 5
     value -= 3

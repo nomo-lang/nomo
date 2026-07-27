@@ -1,4 +1,4 @@
-package app.main
+package async_structured_deadline
 
 import std.io
 import std.result
@@ -13,7 +13,7 @@ suspend fn bounded_work() -> string {
     return "completed"
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn bounded_work()
         let joined: Result<string, TaskError> = task.join(child)

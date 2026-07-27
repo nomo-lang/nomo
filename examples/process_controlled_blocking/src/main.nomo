@@ -1,4 +1,4 @@
-package process_controlled_blocking.main
+package process_controlled_blocking
 
 import std.array.Array
 import std.env
@@ -59,7 +59,7 @@ fn run_fixture(program: string) -> Result<void, ProcessControlError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let fixture: Option<string> = env.get("NOMO_PROCESS_FIXTURE")
     match fixture {
         Some(program) => {

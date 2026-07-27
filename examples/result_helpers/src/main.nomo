@@ -1,4 +1,4 @@
-package app.main
+package result_helpers
 
 import std.io
 import std.result
@@ -35,7 +35,7 @@ fn resolve_chain() -> Result<string, string> {
     return Ok(text)
 }
 
-fn main() -> void {
+fn main() {
     let pred_ok: Result<string, string> = parse_label(true)
     let pred_err: Result<string, string> = parse_label(false)
     if pred_ok.is_ok() && pred_err.is_err() {

@@ -1,4 +1,4 @@
-package app.main
+package struct_result_field
 
 import std.io
 import std.result
@@ -15,7 +15,7 @@ fn make_report(flag: bool) -> Report {
     }
 }
 
-fn main() -> void {
+fn main() {
     let report: Report = make_report(true)
     let message: string = match report.outcome {
         Ok(text) => text

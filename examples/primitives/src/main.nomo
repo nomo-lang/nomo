@@ -1,4 +1,4 @@
-package app.main
+package primitives
 
 import std.io
 
@@ -10,7 +10,7 @@ fn initial() -> char {
     return '語'
 }
 
-fn main() -> void {
+fn main() {
     let age: i32 = 18
     let value: f64 = ratio(age)
     let letter: char = initial()

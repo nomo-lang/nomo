@@ -1,4 +1,4 @@
-package app.main
+package hello
 
 import std.io
 
@@ -6,7 +6,7 @@ fn greeting() -> string {
     return "Hello, Nomo"
 }
 
-fn main() -> void {
+fn main() {
     let message: string = greeting()
     io.println(message)
 }

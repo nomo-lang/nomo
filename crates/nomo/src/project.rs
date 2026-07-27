@@ -1,6 +1,6 @@
-use crate::compiler::check_source_text_with_project_modules_and_overrides;
+use crate::compiler::check_source_text_with_module_identity_and_overrides;
 #[cfg(test)]
-use crate::compiler::{ExternalModule, ModuleId};
+use crate::compiler::{ExternalModule, ModuleId, ModulePackageIdentity};
 use crate::diagnostic::Diagnostic;
 use crate::incremental::{PersistentQueryCache, project_query_key};
 #[cfg(test)]
@@ -22,6 +22,7 @@ mod dependency_tree;
 mod ffi;
 mod git_cache;
 mod manifest_migration;
+mod module_root_migration;
 mod modules;
 mod package;
 mod package_graph;
@@ -46,6 +47,9 @@ use ffi::{
     project_ffi_link_metadata_for_target_with_options, project_ffi_link_metadata_with_options,
 };
 pub use manifest_migration::{ManifestMigrationResult, migrate_project_manifests};
+pub use module_root_migration::{
+    ModuleRootMigrationResult, migrate_project_module_roots, module_root_migration_diagnostics,
+};
 pub use modules::{
     ProjectModuleContext, project_module_context, project_module_context_for_target_with_options,
     project_module_context_with_options, project_module_graph, project_module_graph_with_overrides,
@@ -160,7 +164,7 @@ pub fn create_project(root: &Path, name: &str) -> Result<Project, String> {
     let module_root = package_name_to_module_root(name)?;
     fs::write(
         project_root.join("src/main.nomo"),
-        format!("package {module_root}\n\nimport std.io\n\nfn greeting() -> string {{\n    return \"Hello, Nomo\"\n}}\n\nfn main() -> void {{\n    let message: string = greeting()\n    io.println(message)\n}}\n"),
+        format!("package {module_root}\n\nimport std.io\n\nfn greeting() -> string {{\n    return \"Hello, Nomo\"\n}}\n\nfn main() {{\n    let message: string = greeting()\n    io.println(message)\n}}\n"),
     )
     .map_err(|err| err.to_string())?;
     discover_project(&project_root)
@@ -270,10 +274,11 @@ pub fn check_project_with_persistent_cache(project: &Project) -> Result<(), Diag
     if cache.get::<bool>(&key) == Some(true) {
         return Ok(());
     }
-    check_source_text_with_project_modules_and_overrides(
+    check_source_text_with_module_identity_and_overrides(
         &project.main,
         &source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_import_roots,
         &context.external_modules,
         &[],
@@ -316,10 +321,11 @@ pub fn check_project_with_overrides(
             )
         })?
     };
-    check_source_text_with_project_modules_and_overrides(
+    check_source_text_with_module_identity_and_overrides(
         &project.main,
         &source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_import_roots,
         &context.external_modules,
         &source_overrides,
@@ -664,7 +670,7 @@ source = "registry+nomo-lang/cli"
                 ),
             )
             .unwrap();
-            fs::write(dir.join("src/main.nomo"), "package app.main\n").unwrap();
+            fs::write(dir.join("src/main.nomo"), format!("package {name}\n")).unwrap();
         }
 
         let workspace = discover_workspace(&app.join("src/main.nomo")).unwrap();
@@ -698,7 +704,11 @@ source = "registry+nomo-lang/cli"
         let project_root = root.join("fallback-demo");
         fs::create_dir_all(project_root.join("src")).unwrap();
         fs::write(project_root.join("nomo.toml"), "[dependencies]\n").unwrap();
-        fs::write(project_root.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(
+            project_root.join("src/main.nomo"),
+            "package fallback_demo\n",
+        )
+        .unwrap();
 
         let project = discover_project(&project_root).unwrap();
 
@@ -766,7 +776,7 @@ source = "registry+nomo-lang/cli"
             fs::remove_dir_all(&root).unwrap();
         }
         fs::create_dir_all(root.join("src")).unwrap();
-        fs::write(root.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(root.join("src/main.nomo"), "package missing_manifest\n").unwrap();
 
         let err = discover_project(&root).unwrap_err();
 
@@ -782,7 +792,7 @@ source = "registry+nomo-lang/cli"
         }
         fs::create_dir_all(&root).unwrap();
         let source = root.join("main.nomo");
-        fs::write(&source, "package app.main\n").unwrap();
+        fs::write(&source, "package standalone_source\n").unwrap();
 
         let err = discover_project(&source).unwrap_err();
 
@@ -801,13 +811,13 @@ source = "registry+nomo-lang/cli"
         let project = create_project(&root, "args-demo").unwrap();
         fs::write(
             project.root.join("src/main.nomo"),
-            r#"package app.main
+            r#"package args_demo
 
 import std.env
 import std.io
 import std.array
 
-fn main() -> void {
+fn main() {
     let args: Array<string> = env.args()
     let size: u64 = args.len()
     let status: string = if size == 2 {
@@ -836,7 +846,7 @@ fn main() -> void {
         let project = create_project(&root, "module-demo").unwrap();
         fs::write(
             project.root.join("src/math.nomo"),
-            "package app.math\n\npub fn add() -> i64 {\n    return 1\n}\n",
+            "package module_demo.math\n\npub fn add() -> i64 {\n    return 1\n}\n",
         )
         .unwrap();
 
@@ -849,22 +859,31 @@ fn main() -> void {
         .unwrap();
         fs::write(
             dependency.join("src/path/main.nomo"),
-            "package local_utils.path\n\npub fn join() -> i64 {\n    return 1\n}\n",
+            "package utils.path\n\npub fn join() -> i64 {\n    return 1\n}\n",
         )
         .unwrap();
 
         let context = ProjectModuleContext {
             local_source_root: project.root.join("src"),
+            local_identity: ModulePackageIdentity {
+                module_root: "module_demo".to_string(),
+                canonical_package: "local/module-demo".to_string(),
+            },
             external_import_roots: vec!["local_utils".to_string()],
             external_modules: vec![ExternalModule {
                 import_root: "local_utils".to_string(),
                 source_import_root: "utils".to_string(),
                 source_root: dependency.join("src"),
+                canonical_package: "local/utils".to_string(),
             }],
         };
 
         assert_eq!(
-            resolve_module_source_path(&context, "app", &["app".to_string(), "math".to_string()]),
+            resolve_module_source_path(
+                &context,
+                "module_demo",
+                &["module_demo".to_string(), "math".to_string()]
+            ),
             Some(project.root.join("src/math.nomo"))
         );
         assert_eq!(
@@ -892,23 +911,23 @@ fn main() -> void {
         let project = create_project(&root, "module-graph-demo").unwrap();
         fs::write(
             &project.main,
-            "package app.main\n\nimport app.math\n\nfn main() -> void {\n}\n",
+            "package module_graph_demo\n\nimport module_graph_demo.math\n\nfn main() {\n}\n",
         )
         .unwrap();
         fs::write(
             project.root.join("src/math.nomo"),
-            "package app.math\n\nimport app.util\n\npub fn math() -> i64 {\n    return util()\n}\n",
+            "package module_graph_demo.math\n\nimport module_graph_demo.util\n\npub fn math() -> i64 {\n    return util()\n}\n",
         )
         .unwrap();
         fs::write(
             project.root.join("src/util.nomo"),
-            "package app.util\n\npub fn util() -> i64 {\n    return 1\n}\n",
+            "package module_graph_demo.util\n\npub fn util() -> i64 {\n    return 1\n}\n",
         )
         .unwrap();
 
         let graph = project_module_graph(&project).unwrap();
 
-        assert_eq!(graph.root().dotted(), "app.main");
+        assert_eq!(graph.root().dotted(), "module_graph_demo");
         assert_eq!(graph.module_count(), 3);
         assert_eq!(
             graph
@@ -916,9 +935,16 @@ fn main() -> void {
                 .iter()
                 .map(ModuleId::dotted)
                 .collect::<Vec<_>>(),
-            vec!["app.util", "app.math", "app.main"]
+            vec![
+                "module_graph_demo.util",
+                "module_graph_demo.math",
+                "module_graph_demo"
+            ]
         );
-        let math = ModuleId::new(vec!["app".to_string(), "math".to_string()]);
+        let math = ModuleId::with_canonical_package(
+            "local/module-graph-demo",
+            vec!["module_graph_demo".to_string(), "math".to_string()],
+        );
         let math_node = graph.module(&math).unwrap();
         assert_eq!(math_node.source_path, project.root.join("src/math.nomo"));
         assert_eq!(
@@ -927,14 +953,14 @@ fn main() -> void {
                 .iter()
                 .map(ModuleId::dotted)
                 .collect::<Vec<_>>(),
-            vec!["app.util"]
+            vec!["module_graph_demo.util"]
         );
         assert_eq!(
             graph
                 .dependencies(&math)
                 .map(ModuleId::dotted)
                 .collect::<Vec<_>>(),
-            vec!["app.util"]
+            vec!["module_graph_demo.util"]
         );
         fs::remove_dir_all(&root).unwrap();
     }

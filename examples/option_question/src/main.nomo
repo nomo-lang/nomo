@@ -1,4 +1,4 @@
-package app.main
+package option_question
 
 import std.io
 
@@ -15,7 +15,7 @@ fn label(flag: bool) -> Option<string> {
     return Some(text)
 }
 
-fn main() -> void {
+fn main() {
     let some: Option<string> = label(true)
     let none: Option<string> = label(false)
     let message: string = match some {

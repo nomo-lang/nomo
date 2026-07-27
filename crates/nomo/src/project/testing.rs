@@ -3,7 +3,7 @@ use super::{
     configure_c_compile_command, package_id, project_ffi_link_metadata_with_options,
     project_module_context_with_options,
 };
-use crate::compiler::compile_source_text_to_c_with_project_modules;
+use crate::compiler::compile_source_text_to_c_with_module_identity;
 use crate::diagnostic::Diagnostic;
 use crate::{lexer, parser};
 use nomo_manifest::{FfiLinkMetadata, parse_manifest_at_root};
@@ -175,10 +175,11 @@ fn run_single_project_test(
     bin_dir: &Path,
 ) -> Result<(), String> {
     let runner_source = test_runner_source(&test.source, &test.function_name);
-    let c = compile_source_text_to_c_with_project_modules(
+    let c = compile_source_text_to_c_with_module_identity(
         &test.source_path,
         &runner_source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_import_roots,
         &context.external_modules,
     )

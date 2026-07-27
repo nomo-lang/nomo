@@ -1,4 +1,4 @@
-package app.main
+package ffi_typed_handle
 
 import std.io
 
@@ -8,7 +8,7 @@ extern "C" {
     fn nomo_file_open() -> Owned<FileHandle>
     fn nomo_file_try_open(should_open: bool) -> Nullable<Owned<FileHandle>>
     fn nomo_file_marker(handle: Borrowed<FileHandle>) -> i32
-    fn nomo_file_close(handle: Owned<FileHandle>) -> void
+    fn nomo_file_close(handle: Owned<FileHandle>)
     fn nomo_apply_callback(value: i32, callback: __nomo_extern_c_callback<i32, i32>) -> i32
 }
 
@@ -40,13 +40,13 @@ fn marker(handle: Borrowed<FileHandle>) -> i32 {
     }
 }
 
-fn close(handle: Owned<FileHandle>) -> void {
+fn close(handle: Owned<FileHandle>) {
     unsafe {
         nomo_file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let missing: Nullable<Owned<FileHandle>> = try_open(false)
     let missing_status: string = if missing.is_null() {
         "null ok"

@@ -1,10 +1,10 @@
-package app.main
+package deps_vendor
 
 import local_utils.math
 import remote_label.text
 import std.io
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(40, 2)
     if total == 42 {
         io.println(vendor_label())

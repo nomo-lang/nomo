@@ -1,5 +1,5 @@
 //! Durable Agent checkpoint storage backed by the bundled std.sqlite runtime.
-package sqlite_agent_memory.main
+package sqlite_agent_memory
 
 import std.array.Array
 import std.env
@@ -33,7 +33,7 @@ fn write_checkpoint(path: string) -> Result<void, SqliteError> {
     return Ok(void)
 }
 
-fn print_checkpoint(row: SqliteRow) -> void {
+fn print_checkpoint(row: SqliteRow) {
     for column in row.columns {
         match column.value {
             SqliteValue.Text(value) => {

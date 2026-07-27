@@ -1,4 +1,4 @@
-package app.main
+package concurrent_openai_compatible
 
 import std.array
 import std.env
@@ -51,7 +51,7 @@ fn run_requests(endpoint: string) -> Result<void, TaskError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let endpoint: Option<string> = env.get("NOMO_OPENAI_BASE_URL")
     match endpoint {
         Some(value) => {

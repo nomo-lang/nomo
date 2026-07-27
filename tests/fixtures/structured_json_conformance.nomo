@@ -1,10 +1,10 @@
-package structured_json_conformance.main
+package structured_json_conformance
 
 import std.array.Array
 import std.io
 import std.json
 
-fn print_kind(value: JsonValue) -> void {
+fn print_kind(value: JsonValue) {
     match json.kind(value) {
         JsonKind.Null => {
             io.println("null")
@@ -27,7 +27,7 @@ fn print_kind(value: JsonValue) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let input: string = " \t[null,true,1E+2,\"A\\n\\\"\\\\😀\",[],{}]\r\n"
     let parsed: Result<JsonValue, JsonError> = json.parse(input)
     match parsed {

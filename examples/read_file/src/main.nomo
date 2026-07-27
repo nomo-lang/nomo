@@ -1,4 +1,4 @@
-package app.main
+package read_file
 
 import std.env
 import std.fs
@@ -10,7 +10,7 @@ fn load(path: string) -> Result<string, FsError> {
     return Ok(text)
 }
 
-fn main() -> void {
+fn main() {
     let file_path: string = path.join(env.temp_dir(), "nomo-read-file-example.txt")
     let write_result: Result<void, FsError> = fs.write_string(file_path, "file ok")
     let read_result: Result<string, FsError> = match write_result {

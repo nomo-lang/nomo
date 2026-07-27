@@ -1,4 +1,4 @@
-package mcp_stdio_blocking.main
+package mcp_stdio_blocking
 
 import std.array.Array
 import std.env
@@ -232,7 +232,7 @@ fn run(program: string) -> Result<void, McpExampleError> {
     return Ok(void)
 }
 
-fn print_error(error: McpExampleError) -> void {
+fn print_error(error: McpExampleError) {
     match error {
         McpExampleError.Process(value) => {
             io.println("process error", value.code, value.message)
@@ -249,7 +249,7 @@ fn print_error(error: McpExampleError) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     match env.get("NOMO_MCP_FIXTURE") {
         None => {
             io.println("set NOMO_MCP_FIXTURE to an MCP stdio server executable")

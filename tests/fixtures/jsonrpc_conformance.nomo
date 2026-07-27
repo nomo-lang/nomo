@@ -1,11 +1,11 @@
-package jsonrpc_conformance.main
+package jsonrpc_conformance
 
 import std.array.Array
 import std.io
 import std.json
 import std.jsonrpc
 
-fn print_kind(message: JsonRpcMessage) -> void {
+fn print_kind(message: JsonRpcMessage) {
     match jsonrpc.kind(message) {
         JsonRpcMessageKind.Request => {
             io.println("request")
@@ -35,7 +35,6 @@ fn run() -> Result<void, JsonRpcProtocolError> {
         io.println(json.stringify(jsonrpc.value(message)))
     }
     jsonrpc.finish(second.decoder)?
-
     let id: JsonValue = json.from_i64(7)
     let no_value: Option<JsonValue> = None
     let request: JsonRpcMessage = jsonrpc.request(id, "tools/list", no_value)?
@@ -47,7 +46,7 @@ fn run() -> Result<void, JsonRpcProtocolError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     match run() {
         Ok(done) => {
         }

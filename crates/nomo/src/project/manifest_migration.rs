@@ -325,7 +325,7 @@ mod tests {
             "[package]\nname = \"cli\"\nnamespace.workspace = true\nversion.workspace = true\nedition.workspace = true\n",
         )
         .unwrap();
-        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(app.join("src/main.nomo"), "package cli\n").unwrap();
 
         let check = migrate_project_manifests(&root, true).unwrap_err();
         assert!(check.contains("migration required"), "{check}");

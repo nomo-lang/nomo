@@ -1,7 +1,7 @@
 // Derived line-by-line from the Computer Language Benchmarks Game n-body C
 // gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
 // BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
-package benchmarksgame.n_body
+package benchmarksgame_n_body
 
 import std.array
 import std.env
@@ -74,7 +74,7 @@ fn format_fixed_9(value: f64) -> string {
     }
 }
 
-fn offset_momentum(mut bodies: Array<Body>) -> void {
+fn offset_momentum(mut bodies: Array<Body>) {
     let mut px: f64 = 0.0
     let mut py: f64 = 0.0
     let mut pz: f64 = 0.0
@@ -110,7 +110,7 @@ fn energy(bodies: Array<Body>) -> f64 {
     return value
 }
 
-fn advance(mut bodies: Array<Body>, dt: f64) -> void {
+fn advance(mut bodies: Array<Body>, dt: f64) {
     let count: u64 = bodies.len()
     for let i: u64 = 0; i < count; i++ {
         for let j: u64 = i + 1; j < count; j++ {
@@ -142,7 +142,7 @@ fn advance(mut bodies: Array<Body>, dt: f64) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let mut bodies: Array<Body> = Array.new<Body>()
     bodies.push(Body { x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: SOLAR_MASS })
     bodies.push(Body { x: 4.84143144246472090, y: -1.16032004402742839, z: -0.103622044471123109, vx: 0.00166007664274403694 * DAYS_PER_YEAR, vy: 0.00769901118419740425 * DAYS_PER_YEAR, vz: -0.0000690460016972063023 * DAYS_PER_YEAR, mass: 0.000954791938424326609 * SOLAR_MASS })

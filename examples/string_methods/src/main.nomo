@@ -1,9 +1,9 @@
-package app.main
+package string_methods
 
 import std.io
 import std.string
 
-fn main() -> void {
+fn main() {
     let prefix: string = "string "
     let message: string = prefix.concat("methods ok")
     let output: string = if message.len() == 17 {

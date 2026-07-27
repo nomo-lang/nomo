@@ -15,7 +15,7 @@ pub fn len<T>(self: Array<T>) -> u64 {
 }
 
 /// Appends an element to an array.
-pub fn push<T>(mut self: Array<T>, value: T) -> void {
+pub fn push<T>(mut self: Array<T>, value: T) {
     self.push(value)
 }
 
@@ -25,12 +25,12 @@ pub fn get<T>(self: Array<T>, index: u64) -> Option<T> {
 }
 
 /// Replaces an element at an index.
-pub fn set<T>(mut self: Array<T>, index: u64, value: T) -> void {
+pub fn set<T>(mut self: Array<T>, index: u64, value: T) {
     self.set(index, value)
 }
 
 /// Inserts an element at an index.
-pub fn insert<T>(mut self: Array<T>, index: u64, value: T) -> void {
+pub fn insert<T>(mut self: Array<T>, index: u64, value: T) {
     self.insert(index, value)
 }
 
@@ -45,7 +45,7 @@ pub fn remove<T>(mut self: Array<T>, index: u64) -> Option<T> {
 }
 
 /// Removes all elements from an array.
-pub fn clear<T>(mut self: Array<T>) -> void {
+pub fn clear<T>(mut self: Array<T>) {
     self.clear()
 }
 

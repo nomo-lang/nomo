@@ -417,17 +417,17 @@ mod tests {
         .unwrap();
         fs::write(
             app.join("src/main.nomo"),
-            "package app.main\n\npub fn root_api() -> i64 {\n    return 0\n}\n",
+            "package app\n\npub fn root_api() -> i64 {\n    return 0\n}\n",
         )
         .unwrap();
         fs::write(
             utils.join("src/main.nomo"),
-            "package utils.main\n\n/// Exported utility.\npub fn exposed() -> i64 {\n    return 1\n}\n\nfn hidden() -> i64 {\n    return 2\n}\n",
+            "package utils\n\n/// Exported utility.\npub fn exposed() -> i64 {\n    return 1\n}\n\nfn hidden() -> i64 {\n    return 2\n}\n",
         )
         .unwrap();
         fs::write(
             core.join("src/main.nomo"),
-            "package core.main\n\npub struct Value {\n    pub raw: i64\n    secret: i64\n}\n",
+            "package core\n\npub struct Value {\n    pub raw: i64\n    secret: i64\n}\n",
         )
         .unwrap();
 
@@ -505,7 +505,7 @@ mod tests {
             "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.8.0\" }\n",
         )
         .unwrap();
-        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
 
         let project = discover_project(&app).unwrap();
         let graph = project_package_graph(&project).unwrap();
@@ -550,13 +550,13 @@ mod tests {
             "[package]\nnamespace = \"fynn\"\nname = \"core\"\nversion = \"0.2.0\"\nedition = \"2026\"\n",
         )
         .unwrap();
-        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
         fs::write(
             utils.join("src/main.nomo"),
-            "package utils.main\n\npub fn value() -> i64 {\n    return 4\n}\n",
+            "package utils\n\npub fn value() -> i64 {\n    return 4\n}\n",
         )
         .unwrap();
-        fs::write(core.join("src/main.nomo"), "package core.main\n").unwrap();
+        fs::write(core.join("src/main.nomo"), "package core\n").unwrap();
 
         let project = discover_project(&app).unwrap();
         resolve_project_dependencies(&project).unwrap();

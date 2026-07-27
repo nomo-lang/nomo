@@ -1,9 +1,9 @@
-package app.main
+package array_swap
 
 import std.array
 import std.io
 
-fn swap(mut items: Array<i32>, i: u64, j: u64) -> void {
+fn swap(mut items: Array<i32>, i: u64, j: u64) {
     let a: Option<i32> = items.get(i)
     let b: Option<i32> = items.get(j)
     match a {
@@ -24,7 +24,7 @@ fn swap(mut items: Array<i32>, i: u64, j: u64) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     items.push(2)

@@ -1,4 +1,4 @@
-package calc.main
+package calc
 
-fn main() -> void {
+fn main() {
 }

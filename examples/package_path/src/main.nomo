@@ -1,4 +1,4 @@
-package tools.greeter
+package package_path
 
 import std.io
 
@@ -6,6 +6,6 @@ fn label() -> string {
     return "package path ok"
 }
 
-fn main() -> void {
+fn main() {
     io.println(label())
 }

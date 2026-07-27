@@ -1,4 +1,4 @@
-package app.main
+package async_bounded_channel_benchmark
 
 import std.io
 import std.result
@@ -12,7 +12,7 @@ fn make_channel() -> Channel<u64> {
     }
 }
 
-suspend fn producer(channel_value: Channel<u64>) -> void {
+suspend fn producer(channel_value: Channel<u64>) {
     let sent_00: Result<void, ChannelSendError<u64>> = task.send(channel_value, 0)
     let sent_01: Result<void, ChannelSendError<u64>> = task.send(channel_value, 1)
     let sent_02: Result<void, ChannelSendError<u64>> = task.send(channel_value, 2)
@@ -47,7 +47,7 @@ suspend fn producer(channel_value: Channel<u64>) -> void {
     let sent_31: Result<void, ChannelSendError<u64>> = task.send(channel_value, 31)
 }
 
-suspend fn consumer(channel_value: Channel<u64>) -> void {
+suspend fn consumer(channel_value: Channel<u64>) {
     task.yield_now()
     let value_00: Option<u64> = task.receive(channel_value)
     let value_01: Option<u64> = task.receive(channel_value)
@@ -83,7 +83,7 @@ suspend fn consumer(channel_value: Channel<u64>) -> void {
     let value_31: Option<u64> = task.receive(channel_value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<u64> = make_channel()
     task.scope {
         let producer_task = task.spawn producer(channel_value)

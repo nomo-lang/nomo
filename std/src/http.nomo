@@ -121,12 +121,12 @@ pub suspend fn next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Opti
 }
 
 /// Cooperatively cancels an unfinished response stream.
-pub fn cancel_stream(stream: HttpStream) -> void {
+pub fn cancel_stream(stream: HttpStream) {
     http.cancel_stream(stream)
 }
 
 /// Closes a completed or abandoned response stream.
-pub fn close_stream(stream: HttpStream) -> void {
+pub fn close_stream(stream: HttpStream) {
     http.close_stream(stream)
 }
 
@@ -177,12 +177,12 @@ pub fn next_sse_blocking(stream: BlockingHttpStream, max_event_bytes: u64) -> Re
 }
 
 /// Cooperatively cancels an unfinished blocking response stream.
-pub fn cancel_stream_blocking(stream: BlockingHttpStream) -> void {
+pub fn cancel_stream_blocking(stream: BlockingHttpStream) {
     http.cancel_stream_blocking(stream)
 }
 
 /// Closes a completed or abandoned blocking response stream.
-pub fn close_stream_blocking(stream: BlockingHttpStream) -> void {
+pub fn close_stream_blocking(stream: BlockingHttpStream) {
     http.close_stream_blocking(stream)
 }
 
@@ -205,11 +205,11 @@ pub fn respond_string(exchange: HttpExchange, status: i64, body: string) -> Resu
 }
 
 /// Closes an HTTP server.
-pub fn close_server(server: HttpServer) -> void {
+pub fn close_server(server: HttpServer) {
     http.close_server(server)
 }
 
 /// Closes an accepted HTTP exchange.
-pub fn close_exchange(exchange: HttpExchange) -> void {
+pub fn close_exchange(exchange: HttpExchange) {
     http.close_exchange(exchange)
 }

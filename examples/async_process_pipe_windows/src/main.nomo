@@ -1,4 +1,4 @@
-package async_process_pipe_windows.main
+package async_process_pipe_windows
 
 import std.array.Array
 import std.env
@@ -27,7 +27,7 @@ fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChi
     }
 }
 
-fn require_void(value: Result<void, ProcessControlError>) -> void {
+fn require_void(value: Result<void, ProcessControlError>) {
     match value {
         Ok(done) => {
         }
@@ -37,7 +37,7 @@ fn require_void(value: Result<void, ProcessControlError>) -> void {
     }
 }
 
-fn print_event(value: Result<ProcessEvent, ProcessControlError>) -> void {
+fn print_event(value: Result<ProcessEvent, ProcessControlError>) {
     match value {
         Ok(event) => {
             match event {
@@ -68,7 +68,7 @@ fn command(program: string) -> ProcessCommand {
     return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 15000)
     let child: ProcessChild = require_child(started)

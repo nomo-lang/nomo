@@ -1,10 +1,10 @@
-package app.main
+package array_enum
 
 import std.array
 import std.io
 import std.option
 
-fn main() -> void {
+fn main() {
     let mut values: Array<Option<i32>> = Array.new<Option<i32>>()
     values.push(Some(7))
     values.push(None)

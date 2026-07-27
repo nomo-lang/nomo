@@ -131,6 +131,12 @@ pub struct TypeRef {
     pub args: Vec<TypeRef>,
 }
 
+impl TypeRef {
+    pub fn is_void(&self) -> bool {
+        self.path.as_slice() == ["void"] && self.args.is_empty()
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TypeParamBound {
     pub parameter: String,

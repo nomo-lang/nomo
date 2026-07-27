@@ -5,24 +5,24 @@ import std.fmt
 import std.io
 
 /// Formats values through `std.fmt` and writes them to standard output.
-pub fn print(value: string) -> void {
+pub fn print(value: string) {
     io.print(value)
 }
 
 /// Formats values through `std.fmt`, writes them to standard output, and
 /// appends a newline.
-pub fn println(value: string) -> void {
+pub fn println(value: string) {
     io.println(value)
 }
 
 /// Formats values through `std.fmt` and writes them to standard error.
-pub fn eprint(value: string) -> void {
+pub fn eprint(value: string) {
     io.eprint(value)
 }
 
 /// Formats values through `std.fmt`, writes them to standard error, and
 /// appends a newline.
-pub fn eprintln(value: string) -> void {
+pub fn eprintln(value: string) {
     io.eprintln(value)
 }
 

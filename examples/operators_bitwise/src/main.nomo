@@ -1,9 +1,9 @@
-package app.main
+package operators_bitwise
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let masked: i64 = 7 & 3 | 8 ^ 2 << 1
     let cleared: i64 = masked &^ 3
     let shifted: i64 = cleared >> 2

@@ -1,9 +1,9 @@
-package app.main
+package array_reassign
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut left: Array<i32> = Array.new<i32>()
     left.push(1)
     let mut right: Array<i32> = Array.new<i32>()

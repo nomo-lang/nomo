@@ -1,4 +1,4 @@
-use crate::compiler::build_module_graph_with_overrides;
+use crate::compiler::build_module_graph_with_module_identity_and_overrides;
 use crate::diagnostic::Diagnostic;
 use crate::project::{Project, project_module_context, source_overrides_with_canonical_aliases};
 use nomo_lsp_bridge::{public_symbols_for_text, symbols_for_text};
@@ -89,10 +89,11 @@ pub(super) fn accessible_symbols_for_document(
             "",
         )
     })?;
-    let graph = build_module_graph_with_overrides(
+    let graph = build_module_graph_with_module_identity_and_overrides(
         path,
         source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_modules,
         &source_overrides,
     )?;

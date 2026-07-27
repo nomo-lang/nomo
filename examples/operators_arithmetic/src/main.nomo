@@ -1,9 +1,9 @@
-package app.main
+package operators_arithmetic
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let total: i64 = (12 + 6) * 2 - 9 / 3 % 2
     let negated: i64 = -total
     io.println(num.to_string(total))

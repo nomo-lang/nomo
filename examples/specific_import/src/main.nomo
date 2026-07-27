@@ -1,4 +1,4 @@
-package app.main
+package specific_import
 
 import std.env.temp_dir
 import std.fs.open
@@ -12,7 +12,7 @@ fn close_and_label(file: File) -> string {
     return "specific import ok"
 }
 
-fn main() -> void {
+fn main() {
     let file_path: string = join(temp_dir(), "nomo-specific-import-example.txt")
     let write_result: Result<void, FsError> = write_string(file_path, "ok")
     let read_result: Result<string, FsError> = match write_result {

@@ -1,8 +1,8 @@
-package app.main
+package operators_logical
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let failed: bool = false
     let ready: bool = true
     let cached: bool = false

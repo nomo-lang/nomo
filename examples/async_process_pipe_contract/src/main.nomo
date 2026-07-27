@@ -1,10 +1,10 @@
-package async_process_pipe_contract.main
+package async_process_pipe_contract
 
 import std.array.Array
 import std.io
 import std.process
 
-fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+fn report(started: Result<ProcessChild, ProcessControlError>) {
     match started {
         Ok(child) => {
             process.close_child(child)
@@ -16,7 +16,7 @@ fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let args: Array<string> = Array.new<string>()
     let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     let command: ProcessCommand = ProcessCommand { program: "nomo-process-fixture", args: args, cwd: None, env: environment, inherit_env: true }

@@ -1,12 +1,12 @@
-package app.main
+package task_spawn_complete
 
 import std.io
 import std.task
 
-suspend fn child() -> void {
+suspend fn child() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child_0 = task.spawn child()
         let child_1 = task.spawn child()

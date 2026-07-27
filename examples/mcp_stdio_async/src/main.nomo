@@ -1,4 +1,4 @@
-package mcp_stdio_async.main
+package mcp_stdio_async
 
 import std.array.Array
 import std.debug
@@ -107,7 +107,7 @@ fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChi
     }
 }
 
-fn require_control(value: Result<void, ProcessControlError>) -> void {
+fn require_control(value: Result<void, ProcessControlError>) {
     match value {
         Ok(done) => {
             return
@@ -151,7 +151,7 @@ fn require_decoder(value: Result<JsonRpcDecoder, JsonRpcProtocolError>) -> JsonR
     }
 }
 
-fn require_finished(value: Result<void, JsonRpcProtocolError>) -> void {
+fn require_finished(value: Result<void, JsonRpcProtocolError>) {
     match value {
         Ok(done) => {
             return
@@ -324,7 +324,7 @@ fn mcp_command(program: string) -> ProcessCommand {
     return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let program: string = require_fixture()
     let command: ProcessCommand = mcp_command(program)
     let started: Result<ProcessChild, ProcessControlError> = process.start(command, 5000)

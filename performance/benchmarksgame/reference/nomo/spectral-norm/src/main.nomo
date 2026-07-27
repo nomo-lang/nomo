@@ -1,7 +1,7 @@
 // Derived line-by-line from the Computer Language Benchmarks Game
 // spectral-norm C gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
 // BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
-package benchmarksgame.spectral_norm
+package benchmarksgame_spectral_norm
 
 import std.array
 import std.env
@@ -63,7 +63,7 @@ fn eval_a(i: u64, j: u64) -> f64 {
     return 1.0 / (sum * (sum + 1) / 2 + i + 1) as f64
 }
 
-fn eval_a_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
+fn eval_a_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) {
     for let i: u64 = 0; i < n; i++ {
         au[i] = 0.0
         for let j: u64 = 0; j < n; j++ {
@@ -72,7 +72,7 @@ fn eval_a_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
     }
 }
 
-fn eval_at_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
+fn eval_at_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) {
     for let i: u64 = 0; i < n; i++ {
         au[i] = 0.0
         for let j: u64 = 0; j < n; j++ {
@@ -81,7 +81,7 @@ fn eval_at_times_u(n: u64, u: Array<f64>, mut au: Array<f64>) -> void {
     }
 }
 
-fn eval_ata_times_u(n: u64, u: Array<f64>, mut atau: Array<f64>) -> void {
+fn eval_ata_times_u(n: u64, u: Array<f64>, mut atau: Array<f64>) {
     let mut temporary: Array<f64> = Array.new<f64>()
     for let i: u64 = 0; i < n; i++ {
         temporary.push(0.0)
@@ -90,7 +90,7 @@ fn eval_ata_times_u(n: u64, u: Array<f64>, mut atau: Array<f64>) -> void {
     eval_at_times_u(n, temporary, mut atau)
 }
 
-fn main() -> void {
+fn main() {
     let n: u64 = input_size(100)
     let mut u: Array<f64> = Array.new<f64>()
     let mut v: Array<f64> = Array.new<f64>()

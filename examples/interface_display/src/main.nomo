@@ -1,4 +1,4 @@
-package app.main
+package interface_display
 
 import std.io
 
@@ -16,11 +16,11 @@ impl Display for User {
     }
 }
 
-fn display<T: Display>(value: T) -> void {
+fn display<T: Display>(value: T) {
     io.println(value.to_string())
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "interface display ok" }
     display<User>(user)
 }

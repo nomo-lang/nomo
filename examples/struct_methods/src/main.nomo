@@ -1,4 +1,4 @@
-package app.main
+package struct_methods
 
 import std.io
 
@@ -12,7 +12,7 @@ impl User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { email: "a@nomo.dev" }
     let email: string = user.get_email()
     io.println(email)

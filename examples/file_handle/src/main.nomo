@@ -1,4 +1,4 @@
-package app.main
+package file_handle
 
 import std.env
 import std.fs
@@ -10,7 +10,7 @@ fn close_and_label(file: File) -> string {
     return "file handle ok"
 }
 
-fn main() -> void {
+fn main() {
     let file_path: string = path.join(env.temp_dir(), "nomo-file-handle-example.txt")
     let write_result: Result<void, FsError> = fs.write_string(file_path, "file handle ok")
     let open_result: Result<File, FsError> = match write_result {

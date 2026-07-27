@@ -1,4 +1,4 @@
-package app.main
+package ffi_puts
 
 import std.ffi
 
@@ -6,7 +6,7 @@ extern "C" {
     fn puts(message: CString) -> i32
 }
 
-fn main() -> void {
+fn main() {
     let message: CString = CString.from_string("ffi puts ok")
     unsafe {
         puts(message)

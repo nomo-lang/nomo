@@ -1,4 +1,4 @@
-package app.main
+package generic_function
 
 import std.io
 
@@ -6,7 +6,7 @@ fn identity<T>(value: T) -> T {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let number: i32 = identity<i32>(7)
     let label: string = identity<string>("generic function ok")
     let message: string = if number == 7 {

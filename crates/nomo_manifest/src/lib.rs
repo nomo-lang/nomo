@@ -315,22 +315,27 @@ pub struct PackageMetadata {
 /// legacy CamelCase names so migration can be deterministic.
 pub fn package_name_to_module_root(name: &str) -> Result<String, String> {
     let mut root = String::new();
-    let mut previous_was_lower_or_digit = false;
-    for ch in name.chars() {
+    let characters = name.chars().collect::<Vec<_>>();
+    for (index, ch) in characters.iter().copied().enumerate() {
         if ch.is_ascii_uppercase() {
-            if previous_was_lower_or_digit && !root.ends_with('_') {
+            let previous = index.checked_sub(1).and_then(|item| characters.get(item));
+            let next = characters.get(index + 1);
+            let starts_word = previous.is_some_and(|item| {
+                item.is_ascii_lowercase()
+                    || item.is_ascii_digit()
+                    || (item.is_ascii_uppercase()
+                        && next.is_some_and(|next| next.is_ascii_lowercase()))
+            });
+            if starts_word && !root.ends_with('_') {
                 root.push('_');
             }
             root.push(ch.to_ascii_lowercase());
-            previous_was_lower_or_digit = false;
         } else if ch.is_ascii_lowercase() || ch.is_ascii_digit() {
             root.push(ch);
-            previous_was_lower_or_digit = true;
         } else if ch == '-' || ch == '_' {
             if !root.is_empty() && !root.ends_with('_') {
                 root.push('_');
             }
-            previous_was_lower_or_digit = false;
         } else {
             return Err(format!(
                 "package name `{name}` cannot derive a Nomo module root"
@@ -338,12 +343,53 @@ pub fn package_name_to_module_root(name: &str) -> Result<String, String> {
         }
     }
     let root = root.trim_matches('_');
-    if root.is_empty() || validate_dependency_alias(root).is_err() {
+    if root.is_empty()
+        || validate_dependency_alias(root).is_err()
+        || is_nomo_reserved_identifier(root)
+    {
         return Err(format!(
             "package name `{name}` cannot derive a Nomo module root"
         ));
     }
     Ok(root.to_string())
+}
+
+fn is_nomo_reserved_identifier(value: &str) -> bool {
+    matches!(
+        value,
+        "package"
+            | "import"
+            | "pub"
+            | "impl"
+            | "interface"
+            | "unsafe"
+            | "extern"
+            | "suspend"
+            | "fn"
+            | "struct"
+            | "enum"
+            | "if"
+            | "else"
+            | "match"
+            | "panic"
+            | "as"
+            | "let"
+            | "mut"
+            | "return"
+            | "void"
+            | "true"
+            | "false"
+            | "for"
+            | "in"
+            | "break"
+            | "continue"
+            | "defer"
+            | "const"
+            | "export"
+            | "go"
+            | "chan"
+            | "null"
+    )
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
@@ -2302,7 +2348,12 @@ mod module_root_tests {
             package_name_to_module_root("HelloWorld").unwrap(),
             "hello_world"
         );
+        assert_eq!(
+            package_name_to_module_root("HTTPServer").unwrap(),
+            "http_server"
+        );
         assert!(package_name_to_module_root("hello world").is_err());
+        assert!(package_name_to_module_root("const").is_err());
     }
 }
 

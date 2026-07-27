@@ -1,4 +1,4 @@
-package app.main
+package publication_move_probe
 
 import std.array
 import std.io
@@ -23,10 +23,7 @@ suspend fn launch(message: AgentMessage) -> string {
     }
 }
 
-suspend fn main() -> void {
-    let content: string = launch(AgentMessage {
-        content: "publication",
-        tags: ["agent", "task"]
-    })
+suspend fn main() {
+    let content: string = launch(AgentMessage { content: "publication", tags: ["agent", "task"] })
     io.println(content)
 }

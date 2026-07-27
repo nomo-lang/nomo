@@ -1,4 +1,4 @@
-package openai_compatible.main
+package openai_compatible
 
 import std.array.Array
 import std.env
@@ -6,7 +6,7 @@ import std.http
 import std.io
 import std.string.concat
 
-fn print_fixture_header(headers: Array<HttpHeader>) -> void {
+fn print_fixture_header(headers: Array<HttpHeader>) {
     for header in headers {
         if header.name == "X-Nomo-Fixture" {
             io.println(header.value)
@@ -28,7 +28,7 @@ fn request_completion(endpoint: string, token: string) -> Result<void, HttpError
     return Ok(void)
 }
 
-fn run_with_endpoint(endpoint: string) -> void {
+fn run_with_endpoint(endpoint: string) {
     let token: Option<string> = env.get("NOMO_OPENAI_API_KEY")
     match token {
         Some(value) => {
@@ -47,7 +47,7 @@ fn run_with_endpoint(endpoint: string) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let endpoint: Option<string> = env.get("NOMO_OPENAI_BASE_URL")
     match endpoint {
         Some(value) => {

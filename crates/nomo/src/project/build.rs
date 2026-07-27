@@ -3,7 +3,7 @@ use super::{
     project_ffi_link_metadata_for_target_with_options,
     project_module_context_for_target_with_options,
 };
-use crate::compiler::compile_source_to_c_with_project_modules_for_target;
+use crate::compiler::compile_source_to_c_with_module_identity_for_target;
 use crate::incremental::{PersistentQueryCache, project_query_key};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::TargetTriple;
@@ -78,9 +78,10 @@ fn build_project_impl(
     let c = match cache.get::<String>(&cache_key) {
         Some(cached) => cached,
         None => {
-            let generated = compile_source_to_c_with_project_modules_for_target(
+            let generated = compile_source_to_c_with_module_identity_for_target(
                 &project.main,
-                Some(&context.local_source_root),
+                &context.local_source_root,
+                &context.local_identity,
                 &context.external_import_roots,
                 &context.external_modules,
                 target,

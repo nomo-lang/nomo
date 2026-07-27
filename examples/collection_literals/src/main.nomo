@@ -1,10 +1,10 @@
-package app.main
+package collection_literals
 
 import std.array
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let values = [1, 2, 3]
     let mut matrix = [[1, 2], [3, 4]]
     let snapshot = matrix

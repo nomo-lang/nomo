@@ -41,13 +41,13 @@ pub fn format_duration(value: Duration) -> string {
 /// Blocks the current OS thread for a duration.
 ///
 /// Suspend call graphs reject this compatibility API with E0891.
-pub fn sleep(value: Duration) -> void {
+pub fn sleep(value: Duration) {
     time.sleep(value)
 }
 
 /// Blocks the current OS thread for a signed millisecond count.
 ///
 /// Suspend call graphs reject this compatibility API with E0891.
-pub fn sleep_millis(value: i64) -> void {
+pub fn sleep_millis(value: i64) {
     time.sleep_millis(value)
 }

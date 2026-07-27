@@ -1,4 +1,4 @@
-package structured_json.main
+package structured_json
 
 import std.array.Array
 import std.io
@@ -19,7 +19,7 @@ fn request_body() -> Result<JsonValue, JsonError> {
     return json.from_object(request)
 }
 
-fn print_completion(body: string) -> void {
+fn print_completion(body: string) {
     let parsed: Result<JsonValue, JsonError> = json.parse(body)
     match parsed {
         Err(err) => {
@@ -79,7 +79,7 @@ fn print_completion(body: string) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let request: Result<JsonValue, JsonError> = request_body()
     match request {
         Err(err) => {

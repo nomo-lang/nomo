@@ -1,10 +1,10 @@
-package app.main
+package args
 
 import std.env
 import std.io
 import std.array
 
-fn main() -> void {
+fn main() {
     let args: Array<string> = env.args()
     let first: Option<string> = args.get(1)
     let message: string = match first {

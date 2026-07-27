@@ -1,4 +1,4 @@
-package app.main
+package result_chain
 
 import std.io
 import std.result
@@ -16,7 +16,7 @@ fn identity(value: string) -> string {
     return value
 }
 
-fn consume(value: string) -> void {
+fn consume(value: string) {
 }
 
 fn maybe_label(flag: bool) -> Result<Option<string>, string> {
@@ -128,7 +128,7 @@ fn decorate_label(flag: bool) -> Result<string, string> {
     return Ok(identity(resolved))
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<string, string> = decorate_label(false)
     let message: string = match result {
         Ok(text) => text

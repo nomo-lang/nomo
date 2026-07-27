@@ -1,21 +1,21 @@
-package app.main
+package async_structured_explicit_cancel
 
 import std.io
 import std.result
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn slow_child("managed")
         let gate_task = task.spawn gate()

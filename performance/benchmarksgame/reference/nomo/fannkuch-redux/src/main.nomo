@@ -1,7 +1,7 @@
 // Derived line-by-line from the Computer Language Benchmarks Game
 // fannkuch-redux C gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
 // BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
-package benchmarksgame.fannkuch_redux
+package benchmarksgame_fannkuch_redux
 
 import std.array
 import std.env
@@ -96,7 +96,7 @@ fn fannkuch(n: u64) -> u64 {
     return flips_count
 }
 
-fn main() -> void {
+fn main() {
     let n: u64 = input_size(7)
     let flips: u64 = fannkuch(n)
     io.println(fmt.format("Pfannkuchen({}) = {}", n, flips))

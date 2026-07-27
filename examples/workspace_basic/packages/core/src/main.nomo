@@ -1,12 +1,12 @@
-package core.main
+package core
 
 import core.math
 import std.testing
 
 #[test]
-fn core_adds_numbers() -> void {
+fn core_adds_numbers() {
     testing.assert_equal(add(2, 3), 5)
 }
 
-fn main() -> void {
+fn main() {
 }

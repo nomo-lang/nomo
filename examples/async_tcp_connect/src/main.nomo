@@ -1,10 +1,10 @@
-package async_tcp_connect.main
+package async_tcp_connect
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Ok(stream) => {
             io.println("connected")
@@ -16,7 +16,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("example.invalid", 443, 250)
     report(result)
 }

@@ -1,4 +1,4 @@
-package app.main
+package newline_dot
 
 import std.io
 import std.string
@@ -13,7 +13,7 @@ fn parse() -> Result<string, string> {
     return Result.Ok(make_message())
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<string, string> = parse()
     let message: string = match result {
         Ok(text) => text

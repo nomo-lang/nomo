@@ -1,9 +1,9 @@
-package app.main
+package std_json
 
 import std.io
 import std.json
 
-fn main() -> void {
+fn main() {
     let parsed: Result<JsonValue, JsonError> = json.parse("{\"lang\":\"nomo\",\"versions\":[1,true,null]}")
     match parsed {
         Ok(value) => {

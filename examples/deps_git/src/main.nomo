@@ -1,9 +1,9 @@
-package app.main
+package deps_git
 
 import calc.math
 import std.io
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(20, 22)
     if total == 42 {
         io.println(git_label())

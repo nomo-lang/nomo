@@ -1,4 +1,4 @@
-package app.main
+package cron_schedule
 
 import std.cron
 import std.fmt
@@ -6,7 +6,7 @@ import std.io
 import std.math
 import std.time
 
-fn wait_until(deadline_millis: i64, max_slice_millis: i64) -> void {
+fn wait_until(deadline_millis: i64, max_slice_millis: i64) {
     if max_slice_millis <= 0 {
         panic("timer slice must be positive")
     } else {
@@ -35,7 +35,7 @@ fn run() -> Result<void, CronError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, CronError> = run()
     match result {
         Ok(value) => {

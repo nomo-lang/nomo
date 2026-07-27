@@ -1,8 +1,8 @@
-package app.main
+package io_stderr
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.println("stdout ok")
     io.eprintln("stderr ok")
 }

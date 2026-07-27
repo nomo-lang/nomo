@@ -1,4 +1,4 @@
-package app.main
+package specific_array_new
 
 import std.array.get
 import std.array.len
@@ -7,7 +7,7 @@ import std.array.push
 import std.array.set
 import std.io.println
 
-fn main() -> void {
+fn main() {
     let mut items = new<i32>()
     items.push(7)
     items.set(0, 8)

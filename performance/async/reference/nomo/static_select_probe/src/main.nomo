@@ -1,4 +1,4 @@
-package app.main
+package static_select_probe
 
 import std.io
 import std.result
@@ -13,12 +13,12 @@ fn make_channel() -> Channel<u64> {
     }
 }
 
-suspend fn publish(channel_value: Channel<u64>) -> void {
+suspend fn publish(channel_value: Channel<u64>) {
     task.yield_now()
     let sent: Result<void, ChannelSendError<u64>> = task.send(channel_value, 7)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let idle_channel: Channel<u64> = make_channel()
     let ready_channel: Channel<u64> = make_channel()
     task.scope {

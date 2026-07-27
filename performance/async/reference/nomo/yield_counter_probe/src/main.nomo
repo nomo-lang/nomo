@@ -1,4 +1,4 @@
-package app.main
+package yield_counter_probe
 
 import std.io
 import std.task
@@ -10,7 +10,7 @@ suspend fn yield_once(result: string) -> string {
     return result
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     io.println("before")
     let result: string = yield_once("after")
     task.yield_now()

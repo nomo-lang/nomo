@@ -585,6 +585,7 @@ suspend fn main() -> void {
         "CancelIoEx",
         "SO_UPDATE_CONNECT_CONTEXT",
         "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
+        "nomo_async_io_handle_associate_reactor",
         "Windows hostname resolution remains a later P2-TCP-D slice",
     ] {
         assert!(c.contains(helper), "missing generated helper {helper}");
@@ -597,7 +598,11 @@ suspend fn main() -> void {
     assert!(!c.contains("pthread_create"));
     assert!(!c.contains("nomo_async_resolver_submit"));
     assert!(!c.contains("getaddrinfo("));
-    assert!(!c.contains("nomo_string_literal(\"127.0.0.1\")"));
+    assert!(c.contains(
+        "nomo_string nomo_async_tcp_connect_host_0 = nomo_string_literal(\"127.0.0.1\");"
+    ));
+    assert!(c.contains("nomo_async_tcp_connect_host_0, 9, 100, context"));
+    assert!(c.contains("nomo_string_release(nomo_async_tcp_connect_host_0);"));
 }
 
 #[test]
@@ -699,6 +704,7 @@ fn main() -> void {
         "OVERLAPPED",
         "CancelIoEx",
         "nomo_async_reactor_detach_buffer",
+        "nomo_async_io_handle_associate_reactor",
         "NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u",
         "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
     ] {
@@ -706,7 +712,11 @@ fn main() -> void {
     }
     assert!(!c.contains("async TCP read is not available on the Windows preview backend"));
     assert!(!c.contains("async TCP string write is not available on the Windows preview backend"));
-    assert!(!c.contains("nomo_string_literal(\"secret\")"));
+    assert!(
+        c.contains("nomo_string nomo_async_tcp_io_payload_1 = nomo_string_literal(\"secret\");")
+    );
+    assert!(c.contains("nomo_async_tcp_io_payload_1, 100, context"));
+    assert!(c.contains("nomo_string_release(nomo_async_tcp_io_payload_1);"));
 }
 
 #[test]

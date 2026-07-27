@@ -72,7 +72,8 @@ pub struct UdpDatagram {
 ///
 /// Numeric addresses use the platform reactor directly. Hostnames use the
 /// toolchain's bounded resolver worker and return completion to the owner
-/// executor through epoll, kqueue, or IOCP.
+/// executor through epoll, kqueue, or IOCP. Browser WASM returns `Unsupported`
+/// before evaluating operands when no raw-TCP host capability exists.
 pub suspend fn connect(host: string, port: i64, timeout_millis: u64) -> Result<TcpStream, NetError> {
     return net.connect(host, port, timeout_millis)
 }

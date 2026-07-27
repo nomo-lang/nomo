@@ -92,6 +92,12 @@ monotonic deadline bounded to 15 minutes. A zero hostname timeout returns
 inline without initializing the pool or reactor.
 `TcpStream` remains bound to its owner executor and is Local/!Send.
 
+The browser WASM sandbox does not expose raw TCP. It returns
+`NetErrorKind.Unsupported` before evaluating any `net.connect` host, port, or
+timeout operand, so rejected capability calls cannot execute or diagnose
+operand secrets. A future host-driven adapter must preserve the same typed,
+bounded contract.
+
 Each stream permits one pending read and one pending write; another operation
 in the same direction returns `Busy`. `read` returns one `Array<u32>` byte
 chunk, `read_string` validates one UTF-8 chunk, and neither reads to EOF. Each

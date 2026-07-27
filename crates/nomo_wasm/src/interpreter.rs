@@ -386,6 +386,9 @@ impl<'a> Interpreter<'a> {
         if name.starts_with("__nomo_process_") {
             return Err(RuntimeError::capability("process"));
         }
+        if name == "__nomo_net_connect_async" {
+            return Ok(net_runtime_unavailable_result());
+        }
         if name == "__nomo_task_publication_move" {
             return args
                 .first()
@@ -1641,6 +1644,30 @@ fn task_runtime_unavailable_result() -> Value {
                     Value::String(
                         "native tasks are unavailable in the browser sandbox".to_string(),
                     ),
+                ),
+            ]),
+        })),
+    }
+}
+
+fn net_runtime_unavailable_result() -> Value {
+    Value::Enum {
+        name: "Result".to_string(),
+        variant: "Err".to_string(),
+        payload: Some(Box::new(Value::Struct {
+            name: "NetError".to_string(),
+            fields: HashMap::from([
+                (
+                    "kind".to_string(),
+                    Value::Enum {
+                        name: "NetErrorKind".to_string(),
+                        variant: "Unsupported".to_string(),
+                        payload: None,
+                    },
+                ),
+                (
+                    "message".to_string(),
+                    Value::String("raw TCP is unavailable in the browser sandbox".to_string()),
                 ),
             ]),
         })),

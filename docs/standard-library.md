@@ -926,9 +926,13 @@ authority. `close` is idempotent against stale generations.
 P2-TCP-B/C/D execute read/write and bounded hostname resolution natively on
 Linux, macOS, and Windows. Windows cancellation moves any in-flight payload
 ownership into stable reactor storage, calls `CancelIoEx`, and drains late
-completions before shutdown. Browser raw TCP remains a later focused
-capability. A dedicated `shutdown_write` half-close operation is not part of
-P2-TCP-B; callers must use `close` until that focused lifecycle slice lands.
+completions before shutdown. Because the browser WASM sandbox has no raw-TCP
+host capability, P2-TCP-E returns `NetErrorKind.Unsupported` before evaluating
+the `net.connect` host, port, or timeout operands. Applications branch on
+`kind`; the generic secret-safe message is not a parsing contract. A future
+host-driven raw-TCP adapter remains a focused capability. A dedicated
+`shutdown_write` half-close operation is not part of P2-TCP-B; callers must use
+`close` until that focused lifecycle slice lands.
 
 For the preview migration window, `connect_blocking`,
 `read_to_string_blocking`, and `write_string_blocking` retain the old blocking

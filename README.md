@@ -799,7 +799,9 @@ completion to the owner IOCP. Reads and writes are limited to 1 MiB, timeouts to
 to 64 KiB per executor poll for fairness. Windows cancellation detaches
 pending payload storage from the coroutine frame while `OVERLAPPED` remains in
 the stable reactor table, requests `CancelIoEx`, and drains late completions
-before reactor shutdown.
+before reactor shutdown. The browser WASM sandbox has no raw-TCP host
+capability, so `net.connect` returns `NetErrorKind.Unsupported` before
+evaluating its host, port, or timeout operands.
 
 The preview blocking client names are `net.connect_blocking`,
 `TcpStream.read_to_string_blocking`, and

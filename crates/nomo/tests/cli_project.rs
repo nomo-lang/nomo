@@ -14944,7 +14944,7 @@ fn mcp_stdio_example_completes_two_jsonrpc_exchanges() {
     let root = temp_test_root("mcp-stdio-example");
     reset_dir(&root);
     let fixture_binary = build_controlled_process_fixture(&root);
-    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp_stdio");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp_stdio_blocking");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("run")
@@ -15015,11 +15015,11 @@ fn print_event(event: ProcessEvent) -> bool {
     return done
 }
 
-fn write_message(child: ProcessChild, message: string) -> Result<void, ProcessControlError> {
-    process.write_stdin(child, message)?
+fn write_message(child: BlockingProcessChild, message: string) -> Result<void, ProcessControlError> {
+    process.write_stdin_blocking(child, message)?
     let mut flushed: bool = false
     for !flushed {
-        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        let event: ProcessEvent = process.next_event_blocking(child, 4096, 5000)?
         match event {
             ProcessEvent.StdinFlushed => {
                 flushed = true
@@ -15045,13 +15045,13 @@ fn run_inherited_environment(program: string) -> Result<void, ProcessControlErro
     let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     environment.push(ProcessEnv { name: "VISIBLE", value: "overridden-value" })
     let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
-    let child: ProcessChild = process.start(command)?
-    defer process.close_child(child)
-    process.close_stdin(child)?
-    process.close_stdin(child)?
+    let child: BlockingProcessChild = process.start_blocking(command)?
+    defer process.close_child_blocking(child)
+    process.close_stdin_blocking(child)?
+    process.close_stdin_blocking(child)?
     let mut done: bool = false
     for !done {
-        done = print_event(process.next_event(child, 4096, 15000)?)
+        done = print_event(process.next_event_blocking(child, 4096, 15000)?)
     }
     return Ok(void)
 }
@@ -15064,9 +15064,9 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     environment.push(ProcessEnv { name: "VISIBLE", value: "child-value" })
     let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: Some(cwd), env: environment, inherit_env: false }
-    let child: ProcessChild = process.start(command)?
-    defer process.close_child(child)
-    let initial: Option<ProcessExit> = process.try_wait(child)?
+    let child: BlockingProcessChild = process.start_blocking(command)?
+    defer process.close_child_blocking(child)
+    let initial: Option<ProcessExit> = process.try_wait_blocking(child)?
     match initial {
         Some(status) => {
             io.println("unexpected-exit", status.code)
@@ -15077,13 +15077,13 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     }
     write_message(child, "first message\n")?
     write_message(child, "second message\n")?
-    process.close_stdin(child)?
-    process.close_stdin(child)?
+    process.close_stdin_blocking(child)?
+    process.close_stdin_blocking(child)?
     let mut done: bool = false
     for !done {
-        done = print_event(process.next_event(child, 4096, 15000)?)
+        done = print_event(process.next_event_blocking(child, 4096, 15000)?)
     }
-    let final_status: Option<ProcessExit> = process.try_wait(child)?
+    let final_status: Option<ProcessExit> = process.try_wait_blocking(child)?
     match final_status {
         Some(status) => {
             io.println("wait", status.code, status.signal)
@@ -15092,9 +15092,9 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
             io.println("wait missing")
         }
     }
-    process.terminate(child)?
-    process.terminate(child)?
-    let after_exit: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 100)
+    process.terminate_blocking(child)?
+    process.terminate_blocking(child)?
+    let after_exit: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 4096, 100)
     match after_exit {
         Ok(event) => {
             io.println("after-exit unexpected")
@@ -15103,9 +15103,9 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
             io.println("after-exit", error.code)
         }
     }
-    let copied: ProcessChild = child
-    process.close_child(child)
-    process.close_child(copied)
+    let copied: BlockingProcessChild = child
+    process.close_child_blocking(child)
+    process.close_child_blocking(copied)
     run_inherited_environment(program)?
     return Ok(void)
 }
@@ -15230,14 +15230,14 @@ fn report_void(label: string, result: Result<void, ProcessControlError>) -> void
 }
 
 fn run_timeout(program: string) -> Result<void, ProcessControlError> {
-    let child: ProcessChild = process.start(command(program, "stall"))?
-    defer process.close_child(child)
+    let child: BlockingProcessChild = process.start_blocking(command(program, "stall"))?
+    defer process.close_child_blocking(child)
     let mut payload: string = "x"
     for let index: u64 = 0; index < 20; index++ {
         payload = string.concat(payload, payload)
     }
-    process.write_stdin(child, payload)?
-    let timed: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 50)
+    process.write_stdin_blocking(child, payload)?
+    let timed: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 4096, 50)
     match timed {
         Ok(event) => {
             io.println("timeout unexpected")
@@ -15246,7 +15246,7 @@ fn run_timeout(program: string) -> Result<void, ProcessControlError> {
             io.println("timeout", error.code)
         }
     }
-    let observed: Option<ProcessExit> = process.try_wait(child)?
+    let observed: Option<ProcessExit> = process.try_wait_blocking(child)?
     match observed {
         Some(status) => {
             io.println("timeout exited", status.code)
@@ -15255,28 +15255,28 @@ fn run_timeout(program: string) -> Result<void, ProcessControlError> {
             io.println("timeout usable")
         }
     }
-    report_void("pending-close", process.close_stdin(child))
-    report_void("pending-busy", process.write_stdin(child, "again"))
-    report_void("too-large", process.write_stdin(child, string.concat(payload, "x")))
-    process.terminate(child)?
-    process.terminate(child)?
-    process.close_child(child)
-    process.close_child(child)
+    report_void("pending-close", process.close_stdin_blocking(child))
+    report_void("pending-busy", process.write_stdin_blocking(child, "again"))
+    report_void("too-large", process.write_stdin_blocking(child, string.concat(payload, "x")))
+    process.terminate_blocking(child)?
+    process.terminate_blocking(child)?
+    process.close_child_blocking(child)
+    process.close_child_blocking(child)
     io.println("terminate idempotent")
     return Ok(void)
 }
 
 fn run_pressure(program: string) -> Result<void, ProcessControlError> {
-    let child: ProcessChild = process.start(command(program, "pressure"))?
-    defer process.close_child(child)
-    process.close_stdin(child)?
+    let child: BlockingProcessChild = process.start_blocking(command(program, "pressure"))?
+    defer process.close_child_blocking(child)
+    process.close_stdin_blocking(child)?
     let mut stdout_bytes: u64 = 0
     let mut stderr_bytes: u64 = 0
     let mut stdout_text: string = ""
     let mut stderr_text: string = ""
     let mut done: bool = false
     for !done {
-        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        let event: ProcessEvent = process.next_event_blocking(child, 4096, 5000)?
         match event {
             ProcessEvent.StdinFlushed => {
             }
@@ -15305,14 +15305,14 @@ fn run_pressure(program: string) -> Result<void, ProcessControlError> {
 }
 
 fn run_split_utf8(program: string) -> Result<void, ProcessControlError> {
-    let child: ProcessChild = process.start(command(program, "split-utf8"))?
-    defer process.close_child(child)
-    process.close_stdin(child)?
+    let child: BlockingProcessChild = process.start_blocking(command(program, "split-utf8"))?
+    defer process.close_child_blocking(child)
+    process.close_stdin_blocking(child)?
     let mut bytes: u64 = 0
     let mut saw_scalar: bool = false
     let mut done: bool = false
     for !done {
-        let event: ProcessEvent = process.next_event(child, 4, 5000)?
+        let event: ProcessEvent = process.next_event_blocking(child, 4, 5000)?
         match event {
             ProcessEvent.StdinFlushed => {
             }
@@ -15333,10 +15333,10 @@ fn run_split_utf8(program: string) -> Result<void, ProcessControlError> {
 }
 
 fn run_invalid_utf8(program: string) -> void {
-    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "invalid-utf8"))
+    let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "invalid-utf8"))
     match started {
         Ok(child) => {
-            let event: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+            let event: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 4096, 5000)
             match event {
                 Ok(value) => {
                     io.println("protocol unexpected")
@@ -15345,7 +15345,7 @@ fn run_invalid_utf8(program: string) -> void {
                     io.println("protocol", error.code)
                 }
             }
-            let stale: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait(child)
+            let stale: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait_blocking(child)
             match stale {
                 Ok(value) => {
                     io.println("stale unexpected")
@@ -15354,8 +15354,8 @@ fn run_invalid_utf8(program: string) -> void {
                     io.println("stale", error.code)
                 }
             }
-            process.close_child(child)
-            process.close_child(child)
+            process.close_child_blocking(child)
+            process.close_child_blocking(child)
         }
         Err(error) => {
             io.println("protocol start", error.code)
@@ -15364,10 +15364,10 @@ fn run_invalid_utf8(program: string) -> void {
 }
 
 fn run_secret_output(program: string) -> void {
-    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "secret-output"))
+    let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "secret-output"))
     match started {
         Ok(child) => {
-            let closed: Result<void, ProcessControlError> = process.close_stdin(child)
+            let closed: Result<void, ProcessControlError> = process.close_stdin_blocking(child)
             match closed {
                 Ok(done) => {
                 }
@@ -15377,7 +15377,7 @@ fn run_secret_output(program: string) -> void {
             }
             let mut done: bool = false
             for !done {
-                let next: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+                let next: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 4096, 5000)
                 match next {
                     Ok(event) => {
                         match event {
@@ -15399,8 +15399,8 @@ fn run_secret_output(program: string) -> void {
                     }
                 }
             }
-            process.close_child(child)
-            process.close_child(child)
+            process.close_child_blocking(child)
+            process.close_child_blocking(child)
         }
         Err(error) => {
             io.println("secret-output start", error.code, error.message)
@@ -15409,9 +15409,9 @@ fn run_secret_output(program: string) -> void {
 }
 
 fn run_bounds(program: string) -> Result<void, ProcessControlError> {
-    let child: ProcessChild = process.start(command(program, "hold"))?
-    defer process.close_child(child)
-    let small: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 3, 100)
+    let child: BlockingProcessChild = process.start_blocking(command(program, "hold"))?
+    defer process.close_child_blocking(child)
+    let small: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 3, 100)
     match small {
         Ok(event) => {
             io.println("small unexpected")
@@ -15420,7 +15420,7 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
             io.println("small", error.code)
         }
     }
-    let zero: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 0)
+    let zero: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 4096, 0)
     match zero {
         Ok(event) => {
             io.println("zero unexpected")
@@ -15429,7 +15429,7 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
             io.println("zero", error.code)
         }
     }
-    let maximum: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 1048576, 10)
+    let maximum: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 1048576, 10)
     match maximum {
         Ok(event) => {
             io.println("maximum unexpected")
@@ -15438,7 +15438,7 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
             io.println("maximum", error.code)
         }
     }
-    let above: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 1048577, 10)
+    let above: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 1048577, 10)
     match above {
         Ok(event) => {
             io.println("above unexpected")
@@ -15447,18 +15447,18 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
             io.println("above", error.code)
         }
     }
-    process.terminate(child)?
+    process.terminate_blocking(child)?
     return Ok(void)
 }
 
 fn run_close_reaps(program: string) -> void {
-    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "hold"))
+    let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "hold"))
     match started {
         Ok(child) => {
-            let copied: ProcessChild = child
-            process.close_child(child)
-            process.close_child(copied)
-            let stale: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait(copied)
+            let copied: BlockingProcessChild = child
+            process.close_child_blocking(child)
+            process.close_child_blocking(copied)
+            let stale: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait_blocking(copied)
             match stale {
                 Ok(value) => {
                     io.println("close-reaped unexpected")
@@ -15486,11 +15486,11 @@ fn run_command_secret_errors(program: string) -> void {
         env: invalid_environment,
         inherit_env: true
     }
-    let invalid_started: Result<ProcessChild, ProcessControlError> = process.start(invalid)
+    let invalid_started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(invalid)
     match invalid_started {
         Ok(child) => {
             io.println("invalid-name unexpected")
-            process.close_child(child)
+            process.close_child_blocking(child)
         }
         Err(error) => {
             io.println("invalid-name", error.code, error.message)
@@ -15508,11 +15508,11 @@ fn run_command_secret_errors(program: string) -> void {
         env: duplicate_environment,
         inherit_env: true
     }
-    let duplicate_started: Result<ProcessChild, ProcessControlError> = process.start(duplicate)
+    let duplicate_started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(duplicate)
     match duplicate_started {
         Ok(child) => {
             io.println("duplicate unexpected")
-            process.close_child(child)
+            process.close_child_blocking(child)
         }
         Err(error) => {
             io.println("duplicate", error.code, error.message)
@@ -15521,10 +15521,10 @@ fn run_command_secret_errors(program: string) -> void {
 }
 
 fn run_stdin_secret_error(program: string) -> Result<void, ProcessControlError> {
-    let child: ProcessChild = process.start(command(program, "hold"))?
-    defer process.close_child(child)
-    process.close_stdin(child)?
-    let rejected: Result<void, ProcessControlError> = process.write_stdin(child, "stdin-secret-token")
+    let child: BlockingProcessChild = process.start_blocking(command(program, "hold"))?
+    defer process.close_child_blocking(child)
+    process.close_stdin_blocking(child)?
+    let rejected: Result<void, ProcessControlError> = process.write_stdin_blocking(child, "stdin-secret-token")
     match rejected {
         Ok(done) => {
             io.println("stdin-secret unexpected")
@@ -15537,11 +15537,11 @@ fn run_stdin_secret_error(program: string) -> Result<void, ProcessControlError> 
 }
 
 fn run_missing(program: string) -> void {
-    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "echo"))
+    let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "echo"))
     match started {
         Ok(child) => {
             io.println("missing unexpected")
-            process.close_child(child)
+            process.close_child_blocking(child)
         }
         Err(error) => {
             io.println("missing", error.code, error.message)
@@ -15732,6 +15732,107 @@ fn main() -> void {
     );
 
     server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn async_process_pipe_contract_is_ready_unsupported_without_blocking_runtime() {
+    let root = temp_test_root("async-process-pipe-contract");
+    reset_dir(&root);
+    let project = root.join("async_process_pipe_contract");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_process_pipe_contract\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_process_pipe_contract.main
+
+import std.array.Array
+import std.io
+import std.process
+
+fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+    match started {
+        Ok(child) => {
+            process.close_child(child)
+            io.println("unexpected")
+        }
+        Err(error) => {
+            io.println(error.code, error.message)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let args: Array<string> = Array.new<string>()
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    let command: ProcessCommand = ProcessCommand {
+        program: "process-command-secret-sentinel",
+        args: args,
+        cwd: None,
+        env: environment,
+        inherit_env: true
+    }
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command, 100)
+    report(started)
+}
+"#,
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(
+        stdout,
+        "unsupported async process pipes are not available in this runtime slice\n"
+    );
+    assert!(!stdout.contains("process-command-secret-sentinel"));
+    assert!(output.stderr.is_empty());
+
+    let target = nomo::target::TargetTriple::host().unwrap();
+    let build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .arg("--target")
+        .arg(target.to_string())
+        .output()
+        .unwrap();
+    assert!(
+        build.status.success(),
+        "{}",
+        String::from_utf8_lossy(&build.stderr)
+    );
+    let c_path = project
+        .join("build")
+        .join(target.to_string())
+        .join("c/main.c");
+    let c = fs::read_to_string(c_path).unwrap();
+    for symbol in [
+        "nomo_async_process_spawn_start",
+        "nomo_async_process_spawn_resume",
+        "nomo_async_process_cancel",
+        "nomo_async_process_command_",
+    ] {
+        assert!(c.contains(symbol), "missing {symbol}");
+    }
+    assert!(!c.contains("nomo_process_control_states"));
+    assert!(!c.contains("pthread_create"));
+    assert!(!c.contains("CreateThread"));
+
     fs::remove_dir_all(&root).unwrap();
 }
 

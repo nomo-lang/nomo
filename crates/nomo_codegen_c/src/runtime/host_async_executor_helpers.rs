@@ -8,6 +8,7 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
                     || expr_is_async_sleep(expr)
                     || expr_is_async_tcp_connect(expr)
                     || expr_is_async_tcp_io(expr)
+                    || expr_is_async_process(expr)
                     || expr_is_async_channel_send(expr)
                     || expr_is_async_channel_receive(expr)
                     || expr_is_async_check_cancelled(expr)
@@ -155,6 +156,15 @@ fn expr_is_async_tcp_io(expr: &ValueExpr) -> bool {
                     | BUILTIN_TCP_STREAM_WRITE_EXPR
                     | BUILTIN_TCP_STREAM_WRITE_STRING_EXPR
             ) && args.len() == 3
+    )
+}
+
+fn expr_is_async_process(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if (name == BUILTIN_PROCESS_START_EXPR && args.len() == 2)
+                || (name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3)
     )
 }
 
@@ -318,6 +328,58 @@ fn statement_async_tcp_connect(statement: &Statement) -> Option<AsyncTcpConnect<
         host,
         port,
         timeout_millis,
+        binding,
+        value_type,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncProcessKind {
+    Start,
+    NextEvent,
+}
+
+impl AsyncProcessKind {
+    fn start_function(self) -> &'static str {
+        match self {
+            Self::Start => "nomo_async_process_spawn_start",
+            Self::NextEvent => "nomo_async_process_event_start",
+        }
+    }
+
+    fn resume_function(self) -> &'static str {
+        match self {
+            Self::Start => "nomo_async_process_spawn_resume",
+            Self::NextEvent => "nomo_async_process_event_resume",
+        }
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncProcessOperation<'a> {
+    kind: AsyncProcessKind,
+    args: &'a [ValueExpr],
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_async_process(statement: &Statement) -> Option<AsyncProcessOperation<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    let kind = match (name.as_str(), args.len()) {
+        (BUILTIN_PROCESS_START_EXPR, 2) => AsyncProcessKind::Start,
+        (BUILTIN_PROCESS_NEXT_EVENT_EXPR, 3) => AsyncProcessKind::NextEvent,
+        _ => return None,
+    };
+    Some(AsyncProcessOperation {
+        kind,
+        args,
         binding,
         value_type,
     })
@@ -636,6 +698,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
         || statement_async_sleep(statement).is_some()
         || statement_async_tcp_connect(statement).is_some()
         || statement_async_tcp_io(statement).is_some()
+        || statement_async_process(statement).is_some()
         || statement_async_channel_send(statement).is_some()
         || statement_async_channel_receive(statement).is_some()
         || statement_task_select(statement).is_some()
@@ -818,6 +881,26 @@ fn async_tcp_io_payload_temp(index: usize) -> String {
 
 fn async_tcp_io_start_status_temp(index: usize) -> String {
     format!("nomo_async_tcp_io_start_status_{index}")
+}
+
+fn async_process_registration_field(index: usize) -> String {
+    format!("nomo_async_process_registration_{index}")
+}
+
+fn async_process_result_field(index: usize) -> String {
+    format!("nomo_async_process_result_{index}")
+}
+
+fn async_process_result_owned_field(index: usize) -> String {
+    format!("nomo_async_process_result_owned_{index}")
+}
+
+fn async_process_command_temp(index: usize) -> String {
+    format!("nomo_async_process_command_{index}")
+}
+
+fn async_process_start_status_temp(index: usize) -> String {
+    format!("nomo_async_process_start_status_{index}")
 }
 
 fn async_join_result_field(index: usize) -> String {
@@ -1042,6 +1125,17 @@ fn emit_async_frame_type(
             out.push_str(&async_tcp_io_result_field(index));
             out.push_str(";\n    uint8_t ");
             out.push_str(&async_tcp_io_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if let Some(operation) = statement_async_process(statement) {
+            out.push_str("    nomo_async_process_registration ");
+            out.push_str(&async_process_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(operation.value_type));
+            out.push(' ');
+            out.push_str(&async_process_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_process_result_owned_field(index));
             out.push_str(";\n");
         }
         if statement_structured_join(statement).is_some() {
@@ -1436,6 +1530,57 @@ fn emit_async_tcp_io_result_binding(
     }
 }
 
+fn emit_async_process_result_binding(
+    out: &mut String,
+    index: usize,
+    operation: AsyncProcessOperation<'_>,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    if let Some(frame_local) = frame_locals
+        .iter()
+        .find(|local| local.declaration_index == index)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_value_field(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_process_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_frame_owned_field(operation.binding));
+            out.push_str(" = frame->");
+            out.push_str(&async_process_result_owned_field(index));
+            out.push_str(";\n");
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_process_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        emit_async_frame_alias(out, frame_local, indent);
+    } else {
+        write_indent(out, indent);
+        out.push_str(&c_type(operation.value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_process_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_process_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        if let Some(local) = local_array(operation.binding, operation.value_type) {
+            local_owned.push(local);
+        }
+    }
+}
+
 fn emit_async_tcp_connect_cancellations(out: &mut String, function: &Function, indent: usize) {
     for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_tcp_connect(statement).is_none() {
@@ -1456,6 +1601,18 @@ fn emit_async_tcp_io_cancellations(out: &mut String, function: &Function, indent
         write_indent(out, indent);
         out.push_str("nomo_async_tcp_io_cancel(&frame->");
         out.push_str(&async_tcp_io_registration_field(index));
+        out.push_str(", context);\n");
+    }
+}
+
+fn emit_async_process_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_process(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_process_cancel(&frame->");
+        out.push_str(&async_process_registration_field(index));
         out.push_str(", context);\n");
     }
 }
@@ -1699,6 +1856,7 @@ fn emit_async_deadline_failure(
     emit_async_channel_cancellations(out, function, indent);
     emit_async_tcp_connect_cancellations(out, function, indent);
     emit_async_tcp_io_cancellations(out, function, indent);
+    emit_async_process_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1794,6 +1952,7 @@ fn emit_async_child_failure_propagation(
     emit_async_channel_cancellations(out, function, indent + 1);
     emit_async_tcp_connect_cancellations(out, function, indent + 1);
     emit_async_tcp_io_cancellations(out, function, indent + 1);
+    emit_async_process_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -1882,6 +2041,7 @@ fn emit_async_cancel_function(
     emit_async_channel_cancellations(out, function, 1);
     emit_async_tcp_connect_cancellations(out, function, 1);
     emit_async_tcp_io_cancellations(out, function, 1);
+    emit_async_process_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
@@ -3839,6 +3999,7 @@ pub(super) fn emit_async_function(
             let sleep = statement_async_sleep(statement);
             let tcp_connect = statement_async_tcp_connect(statement);
             let tcp_io = statement_async_tcp_io(statement);
+            let process = statement_async_process(statement);
             let channel_send = statement_async_channel_send(statement);
             let channel_receive = statement_async_channel_receive(statement);
             let select = statement_task_select(statement);
@@ -3919,6 +4080,26 @@ pub(super) fn emit_async_function(
                         3,
                     );
                 }
+            }
+            if let Some(operation) = process
+                && operation.kind == AsyncProcessKind::Start
+            {
+                let command_temp = async_process_command_temp(index);
+                let command_type = ValueType::Struct("ProcessCommand".to_string(), Vec::new());
+                out.push_str("            ");
+                out.push_str(&c_type(&command_type));
+                out.push(' ');
+                out.push_str(&command_temp);
+                out.push_str(" = ");
+                emit_expr(out, &operation.args[0]);
+                out.push_str(";\n");
+                emit_value_retain_value_if_needed(
+                    out,
+                    &command_temp,
+                    &command_type,
+                    &operation.args[0],
+                    3,
+                );
             }
             let moved_to_frame = frame_locals
                 .iter()
@@ -4016,6 +4197,50 @@ pub(super) fn emit_async_function(
                 );
                 out.push_str("            frame->");
                 out.push_str(&async_tcp_io_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+                out.push_str("            goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+            } else if let Some(operation) = process {
+                let start_status = async_process_start_status_temp(index);
+                out.push_str("            nomo_async_poll ");
+                out.push_str(&start_status);
+                out.push_str(" = ");
+                out.push_str(operation.kind.start_function());
+                out.push_str("(&frame->");
+                out.push_str(&async_process_registration_field(index));
+                out.push_str(", ");
+                if operation.kind == AsyncProcessKind::Start {
+                    out.push_str(&async_process_command_temp(index));
+                    out.push_str(", ");
+                    emit_expr(out, &operation.args[1]);
+                } else {
+                    emit_expr(out, &operation.args[0]);
+                    out.push_str(", ");
+                    emit_expr(out, &operation.args[1]);
+                    out.push_str(", ");
+                    emit_expr(out, &operation.args[2]);
+                }
+                out.push_str(", context, &frame->");
+                out.push_str(&async_process_result_field(index));
+                out.push_str(");\n");
+                if operation.kind == AsyncProcessKind::Start {
+                    emit_value_release_in_place(
+                        out,
+                        &ValueType::Struct("ProcessCommand".to_string(), Vec::new()),
+                        &async_process_command_temp(index),
+                        3,
+                    );
+                }
+                out.push_str("            if (");
+                out.push_str(&start_status);
+                out.push_str(
+                    " == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_process_result_owned_field(index));
                 out.push_str(" = 1u;\n");
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
@@ -4187,6 +4412,22 @@ pub(super) fn emit_async_function(
                 out.push_str(&async_tcp_io_result_owned_field(index));
                 out.push_str(" = 1u;\n");
             }
+            if let Some(operation) = process {
+                out.push_str("            if (");
+                out.push_str(operation.kind.resume_function());
+                out.push_str("(&frame->");
+                out.push_str(&async_process_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_process_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_process_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
             if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_resume(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -4279,6 +4520,7 @@ pub(super) fn emit_async_function(
             if sleep.is_some()
                 || tcp_connect.is_some()
                 || tcp_io.is_some()
+                || process.is_some()
                 || channel_send.is_some()
                 || channel_receive.is_some()
                 || call.is_some()
@@ -4392,6 +4634,16 @@ pub(super) fn emit_async_function(
             }
             if let Some(operation) = tcp_io {
                 emit_async_tcp_io_result_binding(
+                    out,
+                    index,
+                    operation,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
+            }
+            if let Some(operation) = process {
+                emit_async_process_result_binding(
                     out,
                     index,
                     operation,
@@ -4736,6 +4988,15 @@ pub(super) fn emit_async_function(
         out.push_str(", frame->context);\n    }\n");
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_process(statement).is_none() {
+            continue;
+        }
+        out.push_str("    if (frame->context != NULL) {\n");
+        out.push_str("        nomo_async_process_cancel(&frame->");
+        out.push_str(&async_process_registration_field(index));
+        out.push_str(", frame->context);\n    }\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_tcp_io(statement).is_none() {
             continue;
         }
@@ -4779,6 +5040,18 @@ pub(super) fn emit_async_function(
             operation.value_type,
             &async_tcp_io_result_owned_field(index),
             &async_tcp_io_result_field(index),
+            1,
+        );
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(operation) = statement_async_process(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            operation.value_type,
+            &async_process_result_owned_field(index),
+            &async_process_result_field(index),
             1,
         );
     }

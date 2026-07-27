@@ -456,11 +456,19 @@ fn collect_process_call_enums(
             | BUILTIN_PROCESS_TRY_WAIT_EXPR
             | BUILTIN_PROCESS_TERMINATE_EXPR
             | BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+            | BUILTIN_PROCESS_START_BLOCKING_EXPR
+            | BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR
+            | BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR
+            | BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR
+            | BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR
+            | BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR
+            | BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR
     ) {
         return;
     }
     let control_error = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
     let child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
+    let blocking_child = ValueType::Struct("BlockingProcessChild".to_string(), Vec::new());
     let exit = ValueType::Struct("ProcessExit".to_string(), Vec::new());
     let event = ValueType::Enum("ProcessEvent".to_string(), Vec::new());
     let exit_option = ValueType::Enum("Option".to_string(), vec![exit.clone()]);
@@ -468,6 +476,12 @@ fn collect_process_call_enums(
     push_enum_instance(seen, out, "ProcessEvent", &[]);
     push_enum_instance(seen, out, "Option", &[exit]);
     push_enum_instance(seen, out, "Result", &[child, control_error.clone()]);
+    push_enum_instance(
+        seen,
+        out,
+        "Result",
+        &[blocking_child, control_error.clone()],
+    );
     push_enum_instance(
         seen,
         out,

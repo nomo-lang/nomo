@@ -90,6 +90,10 @@ frame drop 前转移 payload storage，shutdown 会 drain late completion。
 browser fixture 会验证 typed `Unsupported` capability rejection 发生在
 host、port 或 timeout operand 求值前。HTTP/SSE 与 process-pipe registration
 仍等待各自的聚焦小切片。这是 correctness/lifecycle 证据，不是跨语言性能声明。
+P2-PROC-A 现已版本化 `process_pipe_contract`：它固定 suspend
+start/resume/frame ABI，并证明原生占位路径返回 `unsupported` 时不会发出阻塞
+注册表或辅助线程。该 workload 在 P2-PROC-B 提供真实 Unix 注册和生命周期
+计数器之前继续保持禁用。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

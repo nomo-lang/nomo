@@ -1,0 +1,35 @@
+package process_pipe_contract.main
+
+import std.array.Array
+import std.io
+import std.process
+
+suspend fn pull(child: ProcessChild) -> void {
+    let event: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 100)
+}
+
+fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+    match started {
+        Ok(child) => {
+            process.close_child(child)
+            io.println("process-pipe ready")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let args: Array<string> = Array.new<string>()
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    let command: ProcessCommand = ProcessCommand {
+        program: "process-pipe-benchmark-fixture",
+        args: args,
+        cwd: None,
+        env: environment,
+        inherit_env: false
+    }
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command, 100)
+    report(started)
+}

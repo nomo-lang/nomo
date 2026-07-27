@@ -545,8 +545,8 @@ fn emits_cross_platform_controlled_process_runtime() {
     assert!(c.contains("\"invalid_request\""));
     assert!(c.contains("\"timeout\""));
     assert!(c.contains("\"protocol\""));
-    assert!(c.contains("nomo_fn___nomo_process_start"));
-    assert!(c.contains("nomo_fn___nomo_process_next_event"));
+    assert!(c.contains("nomo_fn___nomo_process_start_blocking"));
+    assert!(c.contains("nomo_fn___nomo_process_next_event_blocking"));
     assert!(!c.contains("@PROCESS_"));
     assert!(!c.contains("@START_"));
     assert!(!c.contains("@EVENT_"));

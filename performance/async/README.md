@@ -114,6 +114,11 @@ rejection before host, port, or timeout operand evaluation. The cross-language
 defines a fair server and connection matrix. HTTP/SSE and process-pipe
 registrations remain disabled until their focused slices land. This is
 correctness and lifecycle evidence, not a cross-language performance claim.
+P2-PROC-A now versions `process_pipe_contract`: it fixes the suspend
+start/resume/frame ABI and proves the native placeholder returns
+`unsupported` without emitting the blocking registry or helper threads. The
+workload stays disabled until P2-PROC-B supplies real Unix registrations and
+lifecycle counters.
 
 ## Run
 

@@ -630,6 +630,134 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn async_process_intrinsics_lower_to_ready_owner_affine_state_machine_abi() {
+    let source = r#"package app.main
+
+import std.process
+import std.result
+
+suspend fn launch(command: ProcessCommand) -> void {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command, 100)
+}
+
+suspend fn pull(child: ProcessChild) -> void {
+    let event: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 100)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let launch = program
+        .functions
+        .iter()
+        .find(|function| function.name == "launch")
+        .unwrap();
+    assert!(matches!(
+        &launch.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == BUILTIN_PROCESS_START_EXPR && args.len() == 2
+    ));
+    let pull = program
+        .functions
+        .iter()
+        .find(|function| function.name == "pull")
+        .unwrap();
+    assert!(matches!(
+        &pull.body[0],
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    for expected in [
+        "nomo_async_process_registration",
+        "nomo_async_process_spawn_start",
+        "nomo_async_process_spawn_resume",
+        "nomo_async_process_event_start",
+        "nomo_async_process_event_resume",
+        "nomo_async_process_cancel",
+        "async process pipes are not available in this runtime slice",
+        "nomo_async_process_command_0",
+    ] {
+        assert!(c.contains(expected), "missing generated helper {expected}");
+    }
+    assert!(c.contains("nomo_async_process_result_owned_0 = 1u"));
+    assert!(!c.contains("nomo_process_control_states"));
+    assert!(!c.contains("pthread_create"));
+    assert!(!c.contains("CreateThread"));
+
+    for target in [
+        "x86_64-unknown-linux-gnu",
+        "aarch64-apple-darwin",
+        "x86_64-pc-windows-msvc",
+    ] {
+        let target = target.parse::<nomo_target::TargetTriple>().unwrap();
+        let target_c = codegen::emit_c_for_target(&program, &target);
+        assert!(target_c.contains("nomo_async_process_spawn_start"));
+        assert!(target_c.contains("nomo_async_process_event_start"));
+        assert!(!target_c.contains("nomo_process_control_states"));
+        assert!(!target_c.contains("pthread_create"));
+        assert!(!target_c.contains("CreateThread"));
+    }
+}
+
+#[test]
+fn rejects_async_process_start_from_synchronous_function() {
+    let source = r#"package app.main
+
+import std.process
+import std.result
+
+fn launch(command_secret_sentinel: ProcessCommand) -> void {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command_secret_sentinel, 100)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0870", "{error:?}");
+    assert!(error.message.contains("suspend function"));
+    assert_eq!(error.text, "process.start(...)");
+    assert!(!error.message.contains("command_secret_sentinel"));
+    assert!(!error.text.contains("command_secret_sentinel"));
+}
+
+#[test]
+fn rejects_blocking_process_migration_api_from_suspend_without_arguments() {
+    let source = r#"package app.main
+
+import std.process
+
+suspend fn launch(command: ProcessCommand) -> void {
+    let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command)
+}
+
+fn main() -> void {
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+    assert_eq!(error.code, "E0891", "{error:?}");
+    assert!(error.message.contains("launch -> process.start_blocking"));
+    assert_eq!(error.text, "process.start_blocking(...)");
+}
+
+#[test]
 fn rejects_question_propagation_directly_on_async_tcp_connect_in_the_first_slice() {
     let source = r#"package app.main
 
@@ -1755,6 +1883,33 @@ suspend fn main() -> void {
     assert_eq!(nested_error.code, "E0883");
     assert!(nested_error.message.contains("Envelope.file"));
     assert!(nested_error.message.contains("Local/!Send type `File`"));
+
+    let process = r#"package app.main
+
+import std.process
+import std.task
+
+suspend fn worker(child: ProcessChild) -> void {
+    task.yield_now()
+}
+
+suspend fn launch(child: ProcessChild) -> void {
+    task.scope {
+        let task_value = task.spawn worker(child)
+        let joined: Result<void, TaskError> = task.join(task_value)
+    }
+}
+
+suspend fn main() -> void {
+}
+"#;
+    let process_error = parse_inline(process).unwrap_err();
+    assert_eq!(process_error.code, "E0880");
+    assert!(
+        process_error
+            .message
+            .contains("Local/!Send type `ProcessChild`")
+    );
 }
 
 #[test]
@@ -2749,6 +2904,23 @@ suspend fn main() -> void {
     assert!(error.message.contains("task.channel element"));
     assert!(error.message.contains("TcpStream"));
     assert!(error.message.contains("Local/!Send"));
+
+    let process = r#"package app.main
+
+import std.process
+import std.task
+
+suspend fn main() -> void {
+    let created: Result<Channel<ProcessChild>, ChannelError> = task.channel<ProcessChild>(1)
+}
+"#;
+
+    let process_error = parse_inline(process).unwrap_err();
+
+    assert_eq!(process_error.code, "E0880");
+    assert!(process_error.message.contains("task.channel element"));
+    assert!(process_error.message.contains("ProcessChild"));
+    assert!(process_error.message.contains("Local/!Send"));
 }
 
 #[test]

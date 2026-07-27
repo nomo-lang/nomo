@@ -1,15 +1,15 @@
-package process_controlled.main
+package process_controlled_blocking.main
 
 import std.array.Array
 import std.env
 import std.io
 import std.process
 
-fn consume_until_flush(child: ProcessChild, payload: string) -> Result<void, ProcessControlError> {
-    process.write_stdin(child, payload)?
+fn consume_until_flush(child: BlockingProcessChild, payload: string) -> Result<void, ProcessControlError> {
+    process.write_stdin_blocking(child, payload)?
     let mut flushed: bool = false
     for !flushed {
-        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        let event: ProcessEvent = process.next_event_blocking(child, 4096, 5000)?
         match event {
             ProcessEvent.StdinFlushed => {
                 flushed = true
@@ -33,14 +33,14 @@ fn run_fixture(program: string) -> Result<void, ProcessControlError> {
     let args: Array<string> = Array.new<string>()
     let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
-    let child: ProcessChild = process.start(command)?
-    defer process.close_child(child)
+    let child: BlockingProcessChild = process.start_blocking(command)?
+    defer process.close_child_blocking(child)
     consume_until_flush(child, "first message\n")?
     consume_until_flush(child, "second message\n")?
-    process.close_stdin(child)?
+    process.close_stdin_blocking(child)?
     let mut done: bool = false
     for !done {
-        let event: ProcessEvent = process.next_event(child, 4096, 5000)?
+        let event: ProcessEvent = process.next_event_blocking(child, 4096, 5000)?
         match event {
             ProcessEvent.StdinFlushed => {
             }

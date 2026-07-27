@@ -115,6 +115,7 @@ pub(super) fn standard_struct_names(
         names.push(("NumError".to_string(), 0));
     }
     if needs.process {
+        names.push(("BlockingProcessChild".to_string(), 0));
         names.push(("ProcessChild".to_string(), 0));
         names.push(("ProcessCommand".to_string(), 0));
         names.push(("ProcessControlError".to_string(), 0));
@@ -688,6 +689,21 @@ pub(super) fn inject_standard_types(
         structs.push(StructType {
             package: "std.process".to_string(),
             name: "ProcessChild".to_string(),
+            type_params: Vec::new(),
+            fields: vec![StructField {
+                name: "handle".to_string(),
+                value_type: ValueType::U64,
+            }],
+        });
+    }
+    if needs.process
+        && !structs
+            .iter()
+            .any(|item| item.name == "BlockingProcessChild")
+    {
+        structs.push(StructType {
+            package: "std.process".to_string(),
+            name: "BlockingProcessChild".to_string(),
             type_params: Vec::new(),
             fields: vec![StructField {
                 name: "handle".to_string(),

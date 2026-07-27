@@ -331,6 +331,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         emit_current_thread_executor(&mut out, target);
         out.push('\n');
     }
+    if uses_async_process_surface(program) {
+        emit_async_process_helpers(&mut out, uses_async_process_suspend(program));
+        out.push('\n');
+    }
     if uses_async_net_connect(program) {
         emit_async_resolver_pool_helpers(&mut out, target);
         out.push('\n');

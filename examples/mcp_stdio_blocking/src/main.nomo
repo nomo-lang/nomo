@@ -1,4 +1,4 @@
-package mcp_stdio.main
+package mcp_stdio_blocking.main
 
 import std.array.Array
 import std.env
@@ -62,23 +62,23 @@ fn finish_decoder(decoder_value: JsonRpcDecoder) -> Result<void, McpExampleError
     return raw.map_err(from_protocol)
 }
 
-fn start_child(command: ProcessCommand) -> Result<ProcessChild, McpExampleError> {
-    let raw: Result<ProcessChild, ProcessControlError> = process.start(command)
+fn start_child(command: ProcessCommand) -> Result<BlockingProcessChild, McpExampleError> {
+    let raw: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command)
     return raw.map_err(from_process)
 }
 
-fn write_child(child: ProcessChild, text: string) -> Result<void, McpExampleError> {
-    let raw: Result<void, ProcessControlError> = process.write_stdin(child, text)
+fn write_child(child: BlockingProcessChild, text: string) -> Result<void, McpExampleError> {
+    let raw: Result<void, ProcessControlError> = process.write_stdin_blocking(child, text)
     return raw.map_err(from_process)
 }
 
-fn next_child(child: ProcessChild) -> Result<ProcessEvent, McpExampleError> {
-    let raw: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 65536, 5000)
+fn next_child(child: BlockingProcessChild) -> Result<ProcessEvent, McpExampleError> {
+    let raw: Result<ProcessEvent, ProcessControlError> = process.next_event_blocking(child, 65536, 5000)
     return raw.map_err(from_process)
 }
 
-fn close_child_input(child: ProcessChild) -> Result<void, McpExampleError> {
-    let raw: Result<void, ProcessControlError> = process.close_stdin(child)
+fn close_child_input(child: BlockingProcessChild) -> Result<void, McpExampleError> {
+    let raw: Result<void, ProcessControlError> = process.close_stdin_blocking(child)
     return raw.map_err(from_process)
 }
 
@@ -162,7 +162,7 @@ fn observe_message(message: JsonRpcMessage, expected_id: string) -> bool {
     return false
 }
 
-fn exchange(child: ProcessChild, decoder_value: JsonRpcDecoder, request: JsonRpcMessage, expected_id: string) -> Result<JsonRpcDecoder, McpExampleError> {
+fn exchange(child: BlockingProcessChild, decoder_value: JsonRpcDecoder, request: JsonRpcMessage, expected_id: string) -> Result<JsonRpcDecoder, McpExampleError> {
     let encoded: string = encode_message(request)?
     write_child(child, encoded)?
     let mut decoder_state: JsonRpcDecoder = decoder_value
@@ -198,8 +198,8 @@ fn run(program: string) -> Result<void, McpExampleError> {
     args.push("mcp")
     let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     let command: ProcessCommand = ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
-    let child: ProcessChild = start_child(command)?
-    defer process.close_child(child)
+    let child: BlockingProcessChild = start_child(command)?
+    defer process.close_child_blocking(child)
     let mut decoder_state: JsonRpcDecoder = new_decoder()?
     decoder_state = exchange(child, decoder_state, initialize_request()?, "1")?
     decoder_state = exchange(child, decoder_state, tools_list_request()?, "2")?

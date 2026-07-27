@@ -491,6 +491,30 @@ pub(super) fn uses_process_control(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_async_process_surface(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_async_process_surface_call))
+    })
+}
+
+pub(super) fn uses_async_process_suspend(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function.body.iter().any(|statement| {
+            statement_contains_expr(statement, |expr| {
+                matches!(
+                    expr,
+                    ValueExpr::Call { name, args }
+                        if (name == BUILTIN_PROCESS_START_EXPR && args.len() == 2)
+                            || (name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3)
+                )
+            })
+        })
+    })
+}
+
 pub(super) fn uses_task_runtime(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function

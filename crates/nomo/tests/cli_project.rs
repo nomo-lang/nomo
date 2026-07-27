@@ -15632,9 +15632,9 @@ fn nomo_run_executes_std_net_tcp_stream_helpers() {
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
         let (mut stream, _) = listener.accept().unwrap();
-        let mut request = [0_u8; 4];
-        stream.read_exact(&mut request).unwrap();
-        assert_eq!(&request, b"ping");
+        let mut request = Vec::new();
+        stream.read_to_end(&mut request).unwrap();
+        assert_eq!(request, b"ping");
         stream.write_all(b"pong").unwrap();
     });
 
@@ -15655,6 +15655,7 @@ import std.net
 fn request() -> Result<string, NetError> {
     let stream: TcpStream = net.connect_blocking("127.0.0.1", __PORT__)?
     stream.write_string_blocking("ping")?
+    stream.shutdown_write()?
     let text: string = stream.read_to_string_blocking()?
     stream.close()
     return Ok(text)
@@ -15997,6 +15998,191 @@ suspend fn main() -> void {
     }
 
     server.join().unwrap();
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn owner_affine_async_tcp_shutdown_write_preserves_reads_and_is_idempotent() {
+    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let port = listener.local_addr().unwrap().port();
+    let server = std::thread::spawn(move || {
+        let (mut first, _) = listener.accept().unwrap();
+        first
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut first_request = Vec::new();
+        first.read_to_end(&mut first_request).unwrap();
+        first.write_all(b"reply").unwrap();
+        first.flush().unwrap();
+        first.shutdown(Shutdown::Write).unwrap();
+
+        let (mut second, _) = listener.accept().unwrap();
+        second
+            .set_read_timeout(Some(Duration::from_secs(5)))
+            .unwrap();
+        let mut second_request = Vec::new();
+        second.read_to_end(&mut second_request).unwrap();
+        second.write_all(b"again").unwrap();
+        second.flush().unwrap();
+        second.shutdown(Shutdown::Write).unwrap();
+
+        (first_request, second_request)
+    });
+
+    let root = temp_test_root("async-tcp-shutdown-write");
+    reset_dir(&root);
+    let project = root.join("async_tcp_shutdown_write");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_tcp_shutdown_write\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    let source = r#"package async_tcp_shutdown_write.main
+
+import std.io
+import std.net
+import std.result
+
+fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
+    return match result {
+        Result.Ok(stream) => stream
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn require_void(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+        }
+        Result.Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_text(result: Result<TcpTextChunk, NetError>) -> TcpTextChunk {
+    return match result {
+        Result.Ok(chunk) => chunk
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+fn report_closed(result: Result<void, NetError>) -> void {
+    match result {
+        Result.Ok(value) => {
+            panic("write unexpectedly succeeded")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Closed = error.kind {
+                io.println("closed")
+            } else {
+                panic(error.message)
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 5000)
+    let stream: TcpStream = require_stream(connected)
+    let stale: TcpStream = stream
+
+    let wrote: Result<void, NetError> = stream.write_string("request", 5000)
+    require_void(wrote)
+    let first_shutdown: Result<void, NetError> = stream.shutdown_write()
+    require_void(first_shutdown)
+    let second_shutdown: Result<void, NetError> = stream.shutdown_write()
+    require_void(second_shutdown)
+    let rejected_write: Result<void, NetError> = stream.write_string("not-sent", 5000)
+    report_closed(rejected_write)
+
+    let reply_result: Result<TcpTextChunk, NetError> = stream.read_string(5, 5000)
+    let reply: TcpTextChunk = require_text(reply_result)
+    io.println(reply.data)
+    let eof_result: Result<TcpTextChunk, NetError> = stream.read_string(1, 5000)
+    let eof: TcpTextChunk = require_text(eof_result)
+    io.println(eof.eof)
+
+    stream.close()
+
+    let reconnected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 5000)
+    let fresh: TcpStream = require_stream(reconnected)
+    let stale_shutdown: Result<void, NetError> = stale.shutdown_write()
+    report_closed(stale_shutdown)
+
+    let fresh_write: Result<void, NetError> = fresh.write_string("second", 5000)
+    require_void(fresh_write)
+    let fresh_shutdown: Result<void, NetError> = fresh.shutdown_write()
+    require_void(fresh_shutdown)
+    let fresh_reply_result: Result<TcpTextChunk, NetError> = fresh.read_string(5, 5000)
+    let fresh_reply: TcpTextChunk = require_text(fresh_reply_result)
+    io.println(fresh_reply.data)
+    let fresh_eof_result: Result<TcpTextChunk, NetError> = fresh.read_string(1, 5000)
+    let fresh_eof: TcpTextChunk = require_text(fresh_eof_result)
+    io.println(fresh_eof.eof)
+    fresh.close()
+}
+"#
+    .replace("__PORT__", &port.to_string());
+    fs::write(project.join("src/main.nomo"), source).unwrap();
+    let metrics = root.join("async-tcp-shutdown-write-metrics.json");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "closed\nreply\ntrue\nclosed\nagain\ntrue\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        server.join().unwrap(),
+        (b"request".to_vec(), b"second".to_vec())
+    );
+
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("reactor_errors", 0u64),
+        ("live_reactor_registrations", 0),
+        ("live_timers", 0),
+        ("io_connect_starts", 2),
+        ("io_read_starts", 4),
+        ("io_write_starts", 3),
+        ("io_timeouts", 0),
+        ("io_cancellations", 0),
+        ("io_errors", 0),
+        ("live_io_handles", 0),
+        ("peak_live_io_handles", 1),
+        ("live_io_operations", 0),
+        ("peak_live_io_operations", 1),
+        ("retained_io_bytes", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert_eq!(
+        metrics["counters"]["reactor_registrations"],
+        metrics["counters"]["reactor_deregistrations"],
+        "reactor registration leak in:\n{metrics}"
+    );
+
     fs::remove_dir_all(&root).unwrap();
 }
 

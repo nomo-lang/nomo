@@ -863,6 +863,7 @@ TcpStream.read(max_bytes: u64, timeout_millis: u64) -> Result<TcpChunk, NetError
 TcpStream.read_string(max_bytes: u64, timeout_millis: u64) -> Result<TcpTextChunk, NetError>
 TcpStream.write(data: Array<u32>, timeout_millis: u64) -> Result<void, NetError>
 TcpStream.write_string(content: string, timeout_millis: u64) -> Result<void, NetError>
+TcpStream.shutdown_write() -> Result<void, NetError>
 TcpStream.close() -> void
 
 net.connect_blocking(host: string, port: i64) -> Result<TcpStream, NetError>
@@ -909,6 +910,14 @@ against stale copies. The runtime exports exact connect/read/write, readiness,
 timeout/cancellation/error, live-operation, live-handle, and retained-byte
 counters. See `examples/async_tcp_io`.
 
+`shutdown_write` performs a synchronous native half-close without registering
+with the reactor or allocating an operation frame. A pending write returns
+`Busy` and continues unchanged. Success is idempotent, preserves the read
+direction, and makes later async writes return `Closed`; stale or fully closed
+streams also return `Closed`. A platform half-close failure returns `Write`
+without changing the owner-table state. Final `close` still releases the full
+socket and remains idempotent.
+
 Resolver saturation returns `NetErrorKind.Limit`; lookup failure returns
 `Resolve`. Error messages are fixed categories and never copy the hostname.
 Cancellation removes a queued lookup immediately. A lookup already executing
@@ -930,9 +939,9 @@ completions before shutdown. Because the browser WASM sandbox has no raw-TCP
 host capability, P2-TCP-E returns `NetErrorKind.Unsupported` before evaluating
 the `net.connect` host, port, or timeout operands. Applications branch on
 `kind`; the generic secret-safe message is not a parsing contract. A future
-host-driven raw-TCP adapter remains a focused capability. A dedicated
-`shutdown_write` half-close operation is not part of P2-TCP-B; callers must use
-`close` until that focused lifecycle slice lands.
+host-driven raw-TCP adapter remains a focused capability. P2-TCP-F provides
+native `shutdown_write` on Linux, macOS, and Windows; the browser sandbox
+cannot construct a raw `TcpStream`.
 
 For the preview migration window, `connect_blocking`,
 `read_to_string_blocking`, and `write_string_blocking` retain the old blocking

@@ -386,7 +386,10 @@ impl<'a> Interpreter<'a> {
         if name.starts_with("__nomo_process_") {
             return Err(RuntimeError::capability("process"));
         }
-        if name == "__nomo_net_connect_async" {
+        if matches!(
+            name,
+            "__nomo_net_connect_async" | "__nomo_tcp_stream_shutdown_write"
+        ) {
             return Ok(net_runtime_unavailable_result());
         }
         if name == "__nomo_task_publication_move" {

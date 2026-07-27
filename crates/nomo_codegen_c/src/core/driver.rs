@@ -153,6 +153,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         || uses_tcp_listener_accept(program)
         || uses_tcp_stream_read_to_string(program)
         || uses_tcp_stream_write_string(program)
+        || uses_tcp_stream_shutdown_write(program)
         || uses_udp_socket_recv_from_string(program)
         || uses_udp_socket_send_to_string(program)
     {
@@ -185,6 +186,10 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
     }
     if uses_tcp_stream_write_string(program) {
         emit_tcp_stream_write_string_helper(&mut out);
+        out.push('\n');
+    }
+    if uses_tcp_stream_shutdown_write(program) {
+        emit_tcp_stream_shutdown_write_helper(&mut out);
         out.push('\n');
     }
     if uses_tcp_stream_close(program) {

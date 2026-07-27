@@ -74,6 +74,8 @@ suspend fn main() -> void {
 suspend fn exchange(stream: TcpStream) -> void {
     let wrote: Result<void, NetError> =
         stream.write_string("ping", 1000)
+    let shutdown: Result<void, NetError> =
+        stream.shutdown_write()
     let received: Result<TcpTextChunk, NetError> =
         stream.read_string(4096, 1000)
 }
@@ -107,6 +109,13 @@ either complete the whole payload or return an error. Timeout and structured
 cancellation remove the registration and retained buffer while leaving the
 stream reusable unless it is closed.
 
+`shutdown_write` is a synchronous, allocation-free write half-close. It never
+cancels a pending write: that conflict returns `Busy`. A successful call is
+idempotent, leaves reads available, and makes later writes return `Closed`.
+Stale or fully closed handles also return `Closed`; a native failure returns
+`Write` without changing the write-half state. Final `close` remains the
+terminal idempotent cleanup path.
+
 A saturated resolver queue returns `Limit`, and lookup failure returns
 `Resolve`; neither diagnostic copies the hostname. Queued cancellation removes
 the job immediately. Cancellation of an in-progress system resolver call is
@@ -124,9 +133,8 @@ The preview blocking names are
 `write_string_blocking`; reaching them from a suspend call graph reports
 E0891. This stackless slice binds each complete `Result` as shown above;
 placing `?` directly on these I/O operations remains an E0876 limitation
-until the general suspend-question lowering slice lands. P2-TCP-B does not
-yet expose a `shutdown_write` half-close; use `close` until that dedicated
-lifecycle slice lands. See
+until the general suspend-question lowering slice lands. P2-TCP-F implements
+`shutdown_write` through `SHUT_WR` on Unix and `SD_SEND` on Windows. See
 [`examples/async_tcp_io`](../examples/async_tcp_io).
 
 The first structured-concurrency slice uses an explicit lexical scope and

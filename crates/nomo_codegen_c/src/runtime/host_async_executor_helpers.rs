@@ -2571,6 +2571,7 @@ typedef struct {
     uint8_t occupied;
     uint8_t read_busy;
     uint8_t write_busy;
+    uint8_t write_shutdown;
     uint8_t reactor_associated;
 } nomo_async_io_handle_slot;
 
@@ -2689,6 +2690,7 @@ static int nomo_async_io_handle_insert(
     slot->occupied = 1u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->write_shutdown = 0u;
     slot->reactor_associated = 0u;
     *slot_out = selected;
     *generation_out = slot->generation;
@@ -2760,6 +2762,10 @@ static int nomo_async_io_handle_acquire(
     uint8_t *busy = direction == NOMO_ASYNC_IO_DIRECTION_READ
         ? &slot->read_busy
         : &slot->write_busy;
+    if (direction == NOMO_ASYNC_IO_DIRECTION_WRITE
+        && slot->write_shutdown != 0u) {
+        return 3;
+    }
     if (*busy != 0u) {
         return 2;
     }
@@ -2786,6 +2792,44 @@ static void nomo_async_io_handle_release(
     *busy = 0u;
 }
 
+static int nomo_async_io_handle_shutdown_write(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return 1;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return 1;
+    }
+    if (slot->write_busy != 0u) {
+        return 2;
+    }
+    if (slot->write_shutdown != 0u) {
+        return 0;
+    }
+    if (shutdown(slot->handle, NOMO_SOCKET_SHUTDOWN_WRITE) != 0) {
+        context->io_errors += 1u;
+        return 3;
+    }
+    slot->write_shutdown = 1u;
+    return 0;
+}
+
+static int nomo_async_io_handle_shutdown_write_callback(
+    void *raw_context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    return nomo_async_io_handle_shutdown_write(
+        (nomo_async_context *)raw_context,
+        slot_index,
+        generation
+    );
+}
+
 static void nomo_async_io_handle_close(
     nomo_async_context *context,
     uint32_t slot_index,
@@ -2803,6 +2847,7 @@ static void nomo_async_io_handle_close(
     slot->occupied = 0u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->write_shutdown = 0u;
     slot->reactor_associated = 0u;
     slot->generation += 1u;
     if (slot->generation == 0u) {

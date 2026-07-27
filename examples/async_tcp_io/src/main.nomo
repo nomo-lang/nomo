@@ -60,6 +60,8 @@ suspend fn main() -> void {
     let stream: TcpStream = require_stream(connected)
     let wrote: Result<void, NetError> = stream.write_string("hello from Nomo", 1000)
     require_write(wrote)
+    let shutdown: Result<void, NetError> = stream.shutdown_write()
+    require_write(shutdown)
     let received: Result<TcpTextChunk, NetError> = stream.read_string(4096, 1000)
     print_chunk(received)
     stream.close()

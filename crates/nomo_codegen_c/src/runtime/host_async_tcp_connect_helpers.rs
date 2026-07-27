@@ -26,6 +26,7 @@ pub(super) fn emit_async_net_connect_helpers(out: &mut String, target: &nomo_tar
     let handle_member = c_member_ident("handle");
     let owner_member = c_member_ident("owner");
     let close_fn_member = c_member_ident("close_fn");
+    let shutdown_write_fn_member = c_member_ident("shutdown_write_fn");
     let slot_member = c_member_ident("slot");
     let generation_member = c_member_ident("generation");
     let ok_payload = c_payload_ident("Ok");
@@ -92,6 +93,8 @@ pub(super) fn emit_async_net_connect_helpers(out: &mut String, target: &nomo_tar
     out.push_str(" = context, .");
     out.push_str(&close_fn_member);
     out.push_str(" = nomo_async_io_handle_close_callback, .");
+    out.push_str(&shutdown_write_fn_member);
+    out.push_str(" = nomo_async_io_handle_shutdown_write_callback, .");
     out.push_str(&slot_member);
     out.push_str(" = slot, .");
     out.push_str(&generation_member);

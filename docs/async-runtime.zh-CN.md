@@ -66,6 +66,8 @@ suspend fn main() -> void {
 suspend fn exchange(stream: TcpStream) -> void {
     let wrote: Result<void, NetError> =
         stream.write_string("ping", 1000)
+    let shutdown: Result<void, NetError> =
+        stream.shutdown_write()
     let received: Result<TcpTextChunk, NetError> =
         stream.read_string(4096, 1000)
 }
@@ -96,6 +98,12 @@ one-shot readiness 保留未发送后缀，每次 executor poll 最多推进 64 
 cancellation 会清除 registration 和 retained buffer；除非显式 close，
 stream 仍可复用。
 
+`shutdown_write` 是同步、零分配的 write half-close。它绝不取消 pending write；
+发生冲突时返回 `Busy`。成功调用保持幂等、保留 read，并使后续 write 返回
+`Closed`。stale 或完全关闭的 handle 也返回 `Closed`；native failure 返回
+`Write`，且不改变 write-half state。最终 `close` 仍是 terminal、幂等的清理
+路径。
+
 resolver 容量用尽返回 `Limit`，解析失败返回 `Resolve`；两者的诊断都不会
 复制 hostname。queued job 可立即取消；已经进入系统 resolver 的调用采用
 cooperative cancellation：调用者进入终态，但 executor shutdown 会等待
@@ -110,8 +118,8 @@ P2-TCP-C 的单 worker 聚焦切片，不是 RFC 0032 的通用 blocking pool。
 `write_string_blocking`；suspend 调用图到达这些 API 时报告 E0891。
 当前 stackless 小切片需要像上例一样绑定每个完整 `Result`；在通用的
 suspend-question lowering 落地前，直接对这些 I/O 操作使用 `?` 仍会报告
-E0876。P2-TCP-B 尚未提供 `shutdown_write` 半关闭操作；在该独立生命周期
-切片落地前请使用 `close`。示例见
+E0876。P2-TCP-F 在 Unix 通过 `SHUT_WR`、在 Windows 通过 `SD_SEND` 实现
+`shutdown_write`。示例见
 [`examples/async_tcp_io`](../examples/async_tcp_io)。
 
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：

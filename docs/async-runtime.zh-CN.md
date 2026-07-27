@@ -535,7 +535,7 @@ performance claim 资格。
 - 兼容 C99 与 browser WASM，并继续覆盖 Linux、macOS/BSD 和 Windows reactor；
 - 固定版本、公平 workload 的 Nomo 与 Go 对比，不能通过削弱对照来达标。
 
-P0/P1/P3 控制组与原始证据格式位于
+P0/P1/P2/P3 控制组与原始证据格式位于
 [`performance/async`](../performance/async/README.zh-CN.md)，当前小切片的可运行
 示例位于 [`examples/async_yield`](../examples/async_yield) 与
 [`examples/async_timer`](../examples/async_timer)，以及

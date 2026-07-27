@@ -606,7 +606,7 @@ Later slices must still prove, rather than assume:
 - fair, version-pinned Nomo-versus-Go measurements without weakening either
   workload.
 
-The P0/P1/P3 controls and raw evidence format live in
+The P0/P1/P2/P3 controls and raw evidence format live in
 [`performance/async`](../performance/async/README.md). Runnable examples are
 [`examples/async_yield`](../examples/async_yield) and
 [`examples/async_timer`](../examples/async_timer), plus

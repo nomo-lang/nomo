@@ -91,15 +91,31 @@ def nearest_rank(values: list[int], percentile: float) -> int:
     return ordered[index]
 
 
-def summarize_samples(samples: list[dict[str, int | None]]) -> dict[str, Any]:
+def summarize_samples(
+    samples: list[dict[str, int | None]],
+    operations_per_run: int = 1,
+    result_schema: int = 1,
+) -> dict[str, Any]:
     walls = [int(sample["wall_ns"]) for sample in samples]
+    user_cpu = [int(sample["user_cpu_ns"]) for sample in samples]
+    system_cpu = [int(sample["system_cpu_ns"]) for sample in samples]
     rss_values = [
         int(sample["peak_rss_bytes"])
         for sample in samples
         if sample["peak_rss_bytes"] is not None
     ]
+    fd_values = [
+        int(sample["peak_fd_count"])
+        for sample in samples
+        if sample.get("peak_fd_count") is not None
+    ]
+    thread_values = [
+        int(sample["peak_thread_count"])
+        for sample in samples
+        if sample.get("peak_thread_count") is not None
+    ]
     median = int(statistics.median(walls))
-    return {
+    summary = {
         "runs": len(samples),
         "wall_median_ns": median,
         "wall_p50_ns": nearest_rank(walls, 0.50),
@@ -110,14 +126,32 @@ def summarize_samples(samples: list[dict[str, int | None]]) -> dict[str, Any]:
         else 0.0,
         "peak_rss_bytes": max(rss_values) if rss_values else None,
     }
+    if result_schema >= 2:
+        summary.update(
+            {
+                "operations_per_run": operations_per_run,
+                "operations_per_second": round(
+                    operations_per_run * 1_000_000_000 / median,
+                    3,
+                )
+                if median
+                else 0.0,
+                "user_cpu_median_ns": int(statistics.median(user_cpu)),
+                "system_cpu_median_ns": int(statistics.median(system_cpu)),
+                "peak_fd_count": max(fd_values) if fd_values else None,
+                "peak_thread_count": max(thread_values) if thread_values else None,
+            }
+        )
+    return summary
 
 
 def validate_result(result: dict[str, Any], minimum_runs: int) -> None:
-    if result.get("schema") != 1 or result.get("suite") != "nomo-async-runtime":
-        raise HarnessError("result identity does not match schema version 1")
+    schema = result.get("schema")
+    if schema not in (1, 2) or result.get("suite") != "nomo-async-runtime":
+        raise HarnessError("result identity does not match a supported schema")
     claims = result.get("claims", {})
     if claims.get("performance_claim_allowed") is not False:
-        raise HarnessError("pre-reactor result must not allow a performance claim")
+        raise HarnessError("async benchmark result must not allow a performance claim")
     workloads = result.get("workloads", [])
     ids = [workload.get("id") for workload in workloads]
     if len(ids) != len(set(ids)):
@@ -146,6 +180,26 @@ def validate_result(result: dict[str, Any], minimum_runs: int) -> None:
                     raise HarnessError(
                         f"{workload.get('id')} {name} has invalid {field}"
                     )
+            if schema == 2:
+                for sample in samples:
+                    for field in ("peak_fd_count", "peak_thread_count"):
+                        if field not in sample:
+                            raise HarnessError(
+                                f"{workload.get('id')} {name} is missing {field}"
+                            )
+                summary = implementation.get("summary", {})
+                for field in (
+                    "operations_per_run",
+                    "operations_per_second",
+                    "user_cpu_median_ns",
+                    "system_cpu_median_ns",
+                    "peak_fd_count",
+                    "peak_thread_count",
+                ):
+                    if field not in summary:
+                        raise HarnessError(
+                            f"{workload.get('id')} {name} summary is missing {field}"
+                        )
 
 
 def memory_bytes() -> int | None:
@@ -203,6 +257,11 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
     phase = manifest.get("phase")
     if phase not in phase_order:
         raise HarnessError(f"unsupported async benchmark phase: {phase}")
+    result_schema_version = int(manifest.get("result_schema_version", 1))
+    if result_schema_version not in (1, 2):
+        raise HarnessError("unsupported async benchmark result schema")
+    if result_schema_version == 2 and phase_order[phase] < phase_order["P2"]:
+        raise HarnessError("result schema 2 requires a P2 or later manifest")
     defaults = manifest.get("defaults", {})
     if int(defaults.get("measured_runs", 0)) < 5:
         raise HarnessError("manifest must require at least five measured runs")
@@ -248,6 +307,30 @@ def validate_manifest(manifest: dict[str, Any]) -> None:
         ):
             raise HarnessError(
                 f"workload {workload.get('id')} expected output must be text"
+            )
+        operations_per_run = workload.get("operations_per_run", 1)
+        if type(operations_per_run) is not int or operations_per_run < 1:
+            raise HarnessError(
+                f"workload {workload.get('id')} has invalid operations_per_run"
+            )
+        resource_limits = workload.get("resource_limits", {})
+        for field in (
+            "requested_cpu_cores",
+            "address_space_limit_bytes",
+            "peak_rss_budget_bytes",
+        ):
+            value = resource_limits.get(field)
+            if value is not None and (type(value) is not int or value < 1):
+                raise HarnessError(
+                    f"workload {workload.get('id')} has invalid {field}"
+                )
+        fixture = workload.get("fixture")
+        if fixture is not None and (
+            not isinstance(fixture.get("source"), str)
+            or not isinstance(fixture.get("environment"), str)
+        ):
+            raise HarnessError(
+                f"workload {workload.get('id')} has an invalid fixture"
             )
     if phase == "P1" and not any(
         workload.get("enabled") and workload.get("kind") == "runtime_counter_gate"
@@ -338,6 +421,18 @@ def validate_runtime_counter_payload(
             raise HarnessError(
                 f"runtime counter {name} expected {value}, found {counters.get(name)}"
             )
+    for name, value in expected.get("counter_minimums", {}).items():
+        actual = counters.get(name)
+        if actual is None or actual < value:
+            raise HarnessError(
+                f"runtime counter {name} expected at least {value}, found {actual}"
+            )
+    for name, value in expected.get("counter_maximums", {}).items():
+        actual = counters.get(name)
+        if actual is None or actual > value:
+            raise HarnessError(
+                f"runtime counter {name} expected at most {value}, found {actual}"
+            )
     missing_unavailable = sorted(
         set(expected.get("unavailable", [])).difference(unavailable)
     )
@@ -388,7 +483,7 @@ def build_go_project(
     environment: dict[str, str],
     timeout_seconds: float,
 ) -> tuple[Path, str]:
-    executable = temporary_root / "go-ready-call-control"
+    executable = temporary_root / f"go-{source.name}"
     env = os.environ.copy()
     env.update(environment)
     env["GOCACHE"] = str(temporary_root / "go-build-cache")
@@ -401,6 +496,112 @@ def build_go_project(
         timeout_seconds=timeout_seconds,
     )
     return executable, sha256_tree(source)
+
+
+def build_fixture(
+    c_compiler: Path,
+    manifest_root: Path,
+    fixture: dict[str, Any],
+    temporary_root: Path,
+    timeout_seconds: float,
+) -> tuple[Path, dict[str, Any]]:
+    source = (manifest_root / fixture["source"]).resolve()
+    if not source.is_file():
+        raise HarnessError(f"fixture source does not exist: {source}")
+    executable = temporary_root / f"fixture-{source.parent.name}"
+    run_checked(
+        [
+            str(c_compiler),
+            "-std=c99",
+            *[str(flag) for flag in fixture.get("build_flags", [])],
+            str(source),
+            "-o",
+            str(executable),
+        ],
+        timeout_seconds=timeout_seconds,
+    )
+    return executable, {
+        "source": str(source.relative_to(REPOSITORY_ROOT)),
+        "source_sha256": sha256_file(source),
+        "binary_sha256": sha256_file(executable),
+        "environment": fixture["environment"],
+    }
+
+
+def child_setup(resource_limits: dict[str, Any]):
+    requested_cpu_cores = resource_limits.get("requested_cpu_cores")
+    address_space_limit = resource_limits.get("address_space_limit_bytes")
+    limit_platforms = resource_limits.get(
+        "address_space_limit_platforms",
+        ["Linux"],
+    )
+    enforce_affinity = (
+        requested_cpu_cores == 1
+        and platform.system() == "Linux"
+        and hasattr(os, "sched_setaffinity")
+    )
+    enforce_address_space = (
+        address_space_limit is not None and platform.system() in limit_platforms
+    )
+    if not enforce_affinity and not enforce_address_space:
+        return None
+
+    def apply() -> None:
+        if enforce_affinity:
+            available = sorted(os.sched_getaffinity(0))
+            if not available:
+                raise OSError("no CPU is available for benchmark affinity")
+            os.sched_setaffinity(0, {available[0]})
+        if enforce_address_space:
+            resource.setrlimit(
+                resource.RLIMIT_AS,
+                (int(address_space_limit), int(address_space_limit)),
+            )
+
+    return apply
+
+
+def resource_control_metadata(resource_limits: dict[str, Any]) -> dict[str, Any]:
+    requested_cpu_cores = resource_limits.get("requested_cpu_cores")
+    address_space_limit = resource_limits.get("address_space_limit_bytes")
+    address_space_platforms = resource_limits.get(
+        "address_space_limit_platforms",
+        ["Linux"],
+    )
+    return {
+        "requested_cpu_cores": requested_cpu_cores,
+        "affinity_enforced": bool(
+            requested_cpu_cores == 1
+            and platform.system() == "Linux"
+            and hasattr(os, "sched_setaffinity")
+        ),
+        "address_space_limit_bytes": address_space_limit,
+        "address_space_limit_enforced": bool(
+            address_space_limit is not None
+            and platform.system() in address_space_platforms
+        ),
+        "peak_rss_budget_bytes": resource_limits.get("peak_rss_budget_bytes"),
+    }
+
+
+def linux_process_observation(pid: int) -> tuple[int | None, int | None]:
+    if platform.system() != "Linux":
+        return None, None
+    fd_count = None
+    thread_count = None
+    try:
+        fd_count = len(list(Path(f"/proc/{pid}/fd").iterdir()))
+    except (FileNotFoundError, PermissionError, ProcessLookupError):
+        pass
+    try:
+        status = Path(f"/proc/{pid}/status").read_text(encoding="utf-8")
+        for line in status.splitlines():
+            if line.startswith("Threads:"):
+                thread_count = int(line.split(":", 1)[1].strip())
+                break
+    except (FileNotFoundError, PermissionError, ProcessLookupError, ValueError):
+        pass
+    return fd_count, thread_count
 
 
 def scan_static_gate(main_c: Path, snapshot: dict[str, Any]) -> dict[str, Any]:
@@ -446,19 +647,33 @@ def timed_run(
     expected_stderr: bytes,
     expected_exit_code: int,
     timeout_seconds: float,
+    *,
+    env: dict[str, str] | None = None,
+    resource_limits: dict[str, Any] | None = None,
+    result_schema: int = 1,
 ) -> tuple[dict[str, int | None], bytes]:
+    limits = resource_limits or {}
     with tempfile.TemporaryFile() as stdout_file, tempfile.TemporaryFile() as stderr_file:
         started = time.perf_counter_ns()
         process = subprocess.Popen(
             command,
+            env=env,
             stdout=stdout_file,
             stderr=stderr_file,
             start_new_session=True,
+            preexec_fn=child_setup(limits),
         )
         deadline = time.monotonic() + timeout_seconds
         usage = None
         status = None
+        peak_fd_count = None
+        peak_thread_count = None
         while time.monotonic() < deadline:
+            fd_count, thread_count = linux_process_observation(process.pid)
+            if fd_count is not None:
+                peak_fd_count = max(peak_fd_count or 0, fd_count)
+            if thread_count is not None:
+                peak_thread_count = max(peak_thread_count or 0, thread_count)
             waited_pid, waited_status, waited_usage = os.wait4(process.pid, os.WNOHANG)
             if waited_pid == process.pid:
                 status = waited_status
@@ -504,15 +719,22 @@ def timed_run(
             f"expected {expected_stderr!r}, found {stderr!r}"
         )
     rss_scale = 1024 if platform.system() == "Linux" else 1
-    return (
-        {
-            "wall_ns": elapsed,
-            "user_cpu_ns": max(0, int(usage.ru_utime * 1_000_000_000)),
-            "system_cpu_ns": max(0, int(usage.ru_stime * 1_000_000_000)),
-            "peak_rss_bytes": max(0, int(usage.ru_maxrss * rss_scale)),
-        },
-        stdout,
-    )
+    sample = {
+        "wall_ns": elapsed,
+        "user_cpu_ns": max(0, int(usage.ru_utime * 1_000_000_000)),
+        "system_cpu_ns": max(0, int(usage.ru_stime * 1_000_000_000)),
+        "peak_rss_bytes": max(0, int(usage.ru_maxrss * rss_scale)),
+    }
+    if result_schema >= 2:
+        sample["peak_fd_count"] = peak_fd_count
+        sample["peak_thread_count"] = peak_thread_count
+    rss_budget = limits.get("peak_rss_budget_bytes")
+    if rss_budget is not None and sample["peak_rss_bytes"] > rss_budget:
+        raise HarnessError(
+            f"peak RSS budget exceeded for {' '.join(command)}: "
+            f"limit {rss_budget}, found {sample['peak_rss_bytes']}"
+        )
+    return sample, stdout
 
 
 def measure_implementation(
@@ -524,14 +746,22 @@ def measure_implementation(
     warmup_runs: int,
     measured_runs: int,
     timeout_seconds: float,
+    *,
+    env: dict[str, str] | None = None,
+    resource_limits: dict[str, Any] | None = None,
+    operations_per_run: int = 1,
+    result_schema: int = 1,
 ) -> dict[str, Any]:
+    limits = resource_limits or {}
     for _ in range(warmup_runs):
         completed = subprocess.run(
             [str(executable)],
+            env=env,
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
             timeout=timeout_seconds,
             check=False,
+            preexec_fn=child_setup(limits),
         )
         if (
             completed.returncode != expected_exit_code
@@ -548,6 +778,9 @@ def measure_implementation(
             expected_stderr,
             expected_exit_code,
             timeout_seconds,
+            env=env,
+            resource_limits=limits,
+            result_schema=result_schema,
         )
         samples.append(sample)
     return {
@@ -555,7 +788,61 @@ def measure_implementation(
         "binary_sha256": sha256_file(executable),
         "stdout_sha256": sha256_bytes(stdout),
         "samples": samples,
-        "summary": summarize_samples(samples),
+        "summary": summarize_samples(
+            samples,
+            operations_per_run,
+            result_schema,
+        ),
+    }
+
+
+def compare_implementations(
+    implementations: dict[str, dict[str, Any]],
+    *,
+    fixture: dict[str, Any] | None,
+    resource_limits: dict[str, Any],
+    note: str,
+) -> dict[str, Any]:
+    if "nomo" not in implementations or "go" not in implementations:
+        return {
+            "performed": False,
+            "reason": note,
+        }
+    nomo = implementations["nomo"]["summary"]
+    go = implementations["go"]["summary"]
+    nomo_rss = nomo.get("peak_rss_bytes")
+    go_rss = go.get("peak_rss_bytes")
+    same_output = (
+        implementations["nomo"]["stdout_sha256"]
+        == implementations["go"]["stdout_sha256"]
+    )
+    if not same_output:
+        raise HarnessError("Nomo and Go benchmark output bytes differ")
+    return {
+        "performed": True,
+        "claim_allowed": False,
+        "reason": note,
+        "same_output_bytes": same_output,
+        "nomo_over_go": {
+            "throughput_ratio": round(
+                float(nomo["operations_per_second"])
+                / float(go["operations_per_second"]),
+                6,
+            )
+            if go["operations_per_second"]
+            else None,
+            "p99_wall_ratio": round(
+                float(nomo["wall_p99_ns"]) / float(go["wall_p99_ns"]),
+                6,
+            )
+            if go["wall_p99_ns"]
+            else None,
+            "peak_rss_ratio": round(float(nomo_rss) / float(go_rss), 6)
+            if nomo_rss is not None and go_rss
+            else None,
+        },
+        "resource_controls": resource_control_metadata(resource_limits),
+        "fixture": fixture,
     }
 
 
@@ -569,17 +856,21 @@ def probe_runtime_counters(
     catalog: dict[str, Any],
     temporary_root: Path,
     timeout_seconds: float,
+    *,
+    env: dict[str, str] | None = None,
+    resource_limits: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     metrics_path = temporary_root / f"{workload_id}-runtime-counters.json"
-    env = os.environ.copy()
-    env["NOMO_ASYNC_METRICS_PATH"] = str(metrics_path)
+    probe_env = (env or os.environ).copy()
+    probe_env["NOMO_ASYNC_METRICS_PATH"] = str(metrics_path)
     completed = subprocess.run(
         [str(executable)],
-        env=env,
+        env=probe_env,
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
         timeout=timeout_seconds,
         check=False,
+        preexec_fn=child_setup(resource_limits or {}),
     )
     if completed.returncode != expected_exit_code:
         raise HarnessError(
@@ -667,6 +958,19 @@ def main() -> int:
     counter_catalog_path = manifest_root / manifest["counter_catalog"]
     counter_catalog = json.loads(counter_catalog_path.read_text(encoding="utf-8"))
     validate_counter_catalog(counter_catalog)
+    result_schema = int(manifest.get("result_schema_version", 1))
+    result_schema_path = manifest_root / manifest["result_schema"]
+    result_schema_document = json.loads(result_schema_path.read_text(encoding="utf-8"))
+    declared_schema = (
+        result_schema_document.get("properties", {})
+        .get("schema", {})
+        .get("const")
+    )
+    if declared_schema != result_schema:
+        raise HarnessError(
+            f"result schema document declares {declared_schema}, "
+            f"manifest requires {result_schema}"
+        )
     dirty_status = repository_status()
     dirty = bool(dirty_status)
     if args.require_clean and dirty:
@@ -712,6 +1016,27 @@ def main() -> int:
                 results.append(workload_result_unavailable(workload))
                 continue
 
+            resource_limits = dict(workload.get("resource_limits", {}))
+            operations_per_run = int(workload.get("operations_per_run", 1))
+            runtime_env = os.environ.copy()
+            runtime_env.update(
+                {
+                    str(name): str(value)
+                    for name, value in workload.get("environment", {}).items()
+                }
+            )
+            fixture_metadata = None
+            if "fixture" in workload:
+                fixture_executable, fixture_metadata = build_fixture(
+                    c_compiler,
+                    manifest_root,
+                    workload["fixture"],
+                    temporary_root,
+                    timeout_seconds,
+                )
+                runtime_env[workload["fixture"]["environment"]] = str(
+                    fixture_executable
+                )
             nomo_source = manifest_root / workload["nomo_project"]
             nomo_executable, main_c, nomo_source_sha = build_nomo_project(
                 nomo,
@@ -736,6 +1061,10 @@ def main() -> int:
                     warmup_runs,
                     measured_runs,
                     timeout_seconds,
+                    env=runtime_env,
+                    resource_limits=resource_limits,
+                    operations_per_run=operations_per_run,
+                    result_schema=result_schema,
                 )
             }
             runtime_counters = snapshot["runtime_counters"]
@@ -750,6 +1079,8 @@ def main() -> int:
                     counter_catalog,
                     temporary_root,
                     timeout_seconds,
+                    env=runtime_env,
+                    resource_limits=resource_limits,
                 )
 
             if "go_project" in workload:
@@ -762,6 +1093,16 @@ def main() -> int:
                     dict(manifest["toolchains"]["go"]["environment"]),
                     timeout_seconds,
                 )
+                go_runtime_env = runtime_env.copy()
+                if result_schema >= 2:
+                    go_runtime_env.update(
+                        {
+                            str(name): str(value)
+                            for name, value in manifest["toolchains"]["go"][
+                                "environment"
+                            ].items()
+                        }
+                    )
                 implementations["go"] = measure_implementation(
                     go_executable,
                     go_source_sha,
@@ -771,8 +1112,28 @@ def main() -> int:
                     warmup_runs,
                     measured_runs,
                     timeout_seconds,
+                    env=go_runtime_env,
+                    resource_limits=resource_limits,
+                    operations_per_run=operations_per_run,
+                    result_schema=result_schema,
                 )
 
+            comparison_note = workload.get(
+                "note",
+                "This evidence does not authorize a cross-language performance claim",
+            )
+            if result_schema >= 2:
+                comparison = compare_implementations(
+                    implementations,
+                    fixture=fixture_metadata,
+                    resource_limits=resource_limits,
+                    note=comparison_note,
+                )
+            else:
+                comparison = {
+                    "performed": False,
+                    "reason": comparison_note,
+                }
             results.append(
                 {
                     "id": workload["id"],
@@ -783,18 +1144,12 @@ def main() -> int:
                     "implementations": implementations,
                     "static_gate": static_gate,
                     "runtime_counters": runtime_counters,
-                    "comparison": {
-                        "performed": False,
-                        "reason": workload.get(
-                            "note",
-                            "P0 zero-cost gate has no cross-language performance claim",
-                        ),
-                    },
+                    "comparison": comparison,
                 }
             )
 
     result = {
-        "schema": 1,
+        "schema": result_schema,
         "suite": manifest["suite"],
         "phase": manifest["phase"],
         "generated_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -813,10 +1168,12 @@ def main() -> int:
             **defaults,
             "warmup_runs": warmup_runs,
             "measured_runs": measured_runs,
+            "result_schema_sha256": sha256_file(result_schema_path),
             "resource_note": (
                 f"{manifest['phase']} controls record per-process wall, CPU, and "
-                "POSIX wait4 peak RSS. Steady RSS and non-POSIX collectors arrive "
-                "with later async workloads."
+                "POSIX wait4 peak RSS. Result schema 2 additionally samples Linux "
+                "peak fd/thread counts and enforces declared affinity, address-space, "
+                "and peak-RSS controls."
             ),
         },
         "workloads": results,

@@ -1,0 +1,142 @@
+package process_pipe.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+struct ExchangeState {
+    flushed: bool
+    stdout_seen: bool
+    stderr_seen: bool
+}
+
+fn fixture_program(value: Option<string>) -> string {
+    match value {
+        Some(program) => {
+            return program
+        }
+        None => {
+            panic("missing controlled process fixture")
+        }
+    }
+}
+
+fn pipe_command(program: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("pipe")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_void(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_event(value: Result<ProcessEvent, ProcessControlError>) -> ProcessEvent {
+    match value {
+        Ok(event) => {
+            return event
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn advance_exchange(state: ExchangeState, event: ProcessEvent) -> ExchangeState {
+    match event {
+        ProcessEvent.StdinFlushed => {
+            return ExchangeState { flushed: true, stdout_seen: state.stdout_seen, stderr_seen: state.stderr_seen }
+        }
+        ProcessEvent.Stdout(text) => {
+            if text == "O:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n" {
+                io.print("")
+            } else {
+                panic("unexpected stdout payload")
+            }
+            return ExchangeState { flushed: state.flushed, stdout_seen: true, stderr_seen: state.stderr_seen }
+        }
+        ProcessEvent.Stderr(text) => {
+            if text == "E:abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n" {
+                io.print("")
+            } else {
+                panic("unexpected stderr payload")
+            }
+            return ExchangeState { flushed: state.flushed, stdout_seen: state.stdout_seen, stderr_seen: true }
+        }
+        ProcessEvent.Exited(status) => {
+            panic("controlled child exited before the exchange completed")
+        }
+    }
+}
+
+suspend fn exchange(child: ProcessChild) -> void {
+    let written: Result<void, ProcessControlError> = process.write_stdin(child, "abcdefghijklmnopqrstuvwxyz0123456789ABCDEFGHIJKLMNOPQRSTUVWXYZ\n")
+    require_void(written)
+    let mut state: ExchangeState = ExchangeState { flushed: false, stdout_seen: false, stderr_seen: false }
+    for !state.flushed || !state.stdout_seen || !state.stderr_seen {
+        let pending: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+        let event: ProcessEvent = require_event(pending)
+        state = advance_exchange(state, event)
+    }
+}
+
+fn require_exit(event: ProcessEvent) -> void {
+    match event {
+        ProcessEvent.StdinFlushed => {
+            panic("unexpected stdin event after close")
+        }
+        ProcessEvent.Stdout(text) => {
+            panic("unexpected stdout after final exchange")
+        }
+        ProcessEvent.Stderr(text) => {
+            panic("unexpected stderr after final exchange")
+        }
+        ProcessEvent.Exited(status) => {
+            if status.code != 0 {
+                panic("controlled process failed")
+            } else {
+                io.print("")
+            }
+        }
+    }
+}
+
+suspend fn finish(child: ProcessChild) -> void {
+    let pending: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+    require_exit(require_event(pending))
+}
+
+suspend fn main() -> void {
+    let program: string = fixture_program(env.get("NOMO_PROCESS_FIXTURE"))
+    let started: Result<ProcessChild, ProcessControlError> = process.start(pipe_command(program), 5000)
+    let child: ProcessChild = require_child(started)
+    let mut remaining: u64 = 256
+    for remaining > 0 {
+        exchange(child)
+        remaining = remaining - 1
+    }
+    let closed: Result<void, ProcessControlError> = process.close_stdin(child)
+    require_void(closed)
+    finish(child)
+    process.close_child(child)
+    io.println("process-pipe", 256, 63)
+}

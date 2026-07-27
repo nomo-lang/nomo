@@ -1,0 +1,159 @@
+// Derived line-by-line from the Computer Language Benchmarks Game n-body C
+// gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
+// BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
+package benchmarksgame.n_body
+
+import std.array
+import std.env
+import std.io
+import std.math
+import std.num
+import std.string
+
+const PI: f64 = 3.141592653589793
+
+const SOLAR_MASS: f64 = 39.47841760435743
+
+const DAYS_PER_YEAR: f64 = 365.24
+
+struct Body {
+    x: f64
+    y: f64
+    z: f64
+    vx: f64
+    vy: f64
+    vz: f64
+    mass: f64
+}
+
+fn input_size(default_value: u64) -> u64 {
+    let args: Array<string> = env.args()
+    let value: Option<string> = args.get(1)
+    return match value {
+        Some(text) => match num.parse_u64(text) {
+            Ok(parsed) => parsed
+            Err(error) => panic(error.message)
+        }
+        None => default_value
+    }
+}
+
+// Benchmark-private fixed-point rendering. This deliberately does not extend
+// std.fmt. The rounded fractional value is below 1e9 and therefore exactly
+// representable as an integer-valued f64 for num.to_string.
+fn format_fixed_9(value: f64) -> string {
+    let negative: bool = value < 0.0
+    let magnitude: f64 = if negative {
+        -value
+    } else {
+        value
+    }
+    let base_whole: f64 = math.floor(magnitude)
+    let rounded_fraction: f64 = math.round((magnitude - base_whole) * 1000000000.0)
+    let carried: bool = rounded_fraction >= 1000000000.0
+    let whole: f64 = if carried {
+        base_whole + 1.0
+    } else {
+        base_whole
+    }
+    let fraction: f64 = if carried {
+        0.0
+    } else {
+        rounded_fraction
+    }
+    let mut digits: string = num.to_string(fraction)
+    for string.len(digits) < 9 {
+        digits = string.concat("0", digits)
+    }
+    let integral: string = string.concat(num.to_string(whole), ".")
+    let rendered: string = string.concat(integral, digits)
+    return if negative {
+        string.concat("-", rendered)
+    } else {
+        rendered
+    }
+}
+
+fn offset_momentum(mut bodies: Array<Body>) -> void {
+    let mut px: f64 = 0.0
+    let mut py: f64 = 0.0
+    let mut pz: f64 = 0.0
+    for let i: u64 = 0; i < bodies.len(); i++ {
+        let body: Body = bodies[i]
+        px += body.vx * body.mass
+        py += body.vy * body.mass
+        pz += body.vz * body.mass
+    }
+    let mut sun: Body = bodies[0]
+    sun.vx = -px / SOLAR_MASS
+    sun.vy = -py / SOLAR_MASS
+    sun.vz = -pz / SOLAR_MASS
+    bodies[0] = sun
+}
+
+fn energy(bodies: Array<Body>) -> f64 {
+    let mut value: f64 = 0.0
+    let count: u64 = bodies.len()
+    for let i: u64 = 0; i < count; i++ {
+        let body: Body = bodies[i]
+        let square: f64 = body.vx * body.vx + body.vy * body.vy + body.vz * body.vz
+        value += 0.5 * body.mass * square
+        for let j: u64 = i + 1; j < count; j++ {
+            let other: Body = bodies[j]
+            let dx: f64 = body.x - other.x
+            let dy: f64 = body.y - other.y
+            let dz: f64 = body.z - other.z
+            let distance_squared: f64 = dx * dx + dy * dy + dz * dz
+            value -= body.mass * other.mass / math.sqrt(distance_squared)
+        }
+    }
+    return value
+}
+
+fn advance(mut bodies: Array<Body>, dt: f64) -> void {
+    let count: u64 = bodies.len()
+    for let i: u64 = 0; i < count; i++ {
+        for let j: u64 = i + 1; j < count; j++ {
+            let mut body: Body = bodies[i]
+            let mut other: Body = bodies[j]
+            let dx: f64 = body.x - other.x
+            let dy: f64 = body.y - other.y
+            let dz: f64 = body.z - other.z
+            let distance_squared: f64 = dx * dx + dy * dy + dz * dz
+            let magnitude: f64 = dt / (distance_squared * math.sqrt(distance_squared))
+            let other_mass: f64 = other.mass * magnitude
+            body.vx -= dx * other_mass
+            body.vy -= dy * other_mass
+            body.vz -= dz * other_mass
+            let body_mass: f64 = body.mass * magnitude
+            other.vx += dx * body_mass
+            other.vy += dy * body_mass
+            other.vz += dz * body_mass
+            bodies[i] = body
+            bodies[j] = other
+        }
+    }
+    for let i: u64 = 0; i < count; i++ {
+        let mut body: Body = bodies[i]
+        body.x += body.vx * dt
+        body.y += body.vy * dt
+        body.z += body.vz * dt
+        bodies[i] = body
+    }
+}
+
+fn main() -> void {
+    let mut bodies: Array<Body> = Array.new<Body>()
+    bodies.push(Body { x: 0.0, y: 0.0, z: 0.0, vx: 0.0, vy: 0.0, vz: 0.0, mass: SOLAR_MASS })
+    bodies.push(Body { x: 4.84143144246472090, y: -1.16032004402742839, z: -0.103622044471123109, vx: 0.00166007664274403694 * DAYS_PER_YEAR, vy: 0.00769901118419740425 * DAYS_PER_YEAR, vz: -0.0000690460016972063023 * DAYS_PER_YEAR, mass: 0.000954791938424326609 * SOLAR_MASS })
+    bodies.push(Body { x: 8.34336671824457987, y: 4.12479856412430479, z: -0.403523417114321381, vx: -0.00276742510726862411 * DAYS_PER_YEAR, vy: 0.00499852801234917238 * DAYS_PER_YEAR, vz: 0.000023041729757633929 * DAYS_PER_YEAR, mass: 0.000285885980666130812 * SOLAR_MASS })
+    bodies.push(Body { x: 12.8943695621391310, y: -15.1111514016986312, z: -0.223307579892655734, vx: 0.00296460137564761618 * DAYS_PER_YEAR, vy: 0.00237847173959480950 * DAYS_PER_YEAR, vz: -0.0000296589568540237558 * DAYS_PER_YEAR, mass: 0.0000436624404335156298 * SOLAR_MASS })
+    bodies.push(Body { x: 15.3796971148509165, y: -25.9193146099879641, z: 0.179258772950371181, vx: 0.00268067772490389322 * DAYS_PER_YEAR, vy: 0.00162824170038242295 * DAYS_PER_YEAR, vz: -0.0000951592254519715870 * DAYS_PER_YEAR, mass: 0.0000515138902046611451 * SOLAR_MASS })
+    offset_momentum(mut bodies)
+    io.println(format_fixed_9(energy(bodies)))
+    let iterations: u64 = input_size(1000)
+    for let i: u64 = 0; i < iterations; i++ {
+        advance(mut bodies, 0.01)
+    }
+    io.println(format_fixed_9(energy(bodies)))
+}

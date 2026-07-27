@@ -1,0 +1,103 @@
+// Derived line-by-line from the Computer Language Benchmarks Game
+// fannkuch-redux C gcc #8 and Go #8 programs. See ../../../../SOURCES.md.
+// BSD-3-Clause; no FFI, threads, suspend, SIMD, or unchecked indexing.
+package benchmarksgame.fannkuch_redux
+
+import std.array
+import std.env
+import std.fmt
+import std.io
+import std.num
+
+fn input_size(default_value: u64) -> u64 {
+    let args: Array<string> = env.args()
+    let value: Option<string> = args.get(1)
+    return match value {
+        Some(text) => match num.parse_u64(text) {
+            Ok(parsed) => parsed
+            Err(error) => panic(error.message)
+        }
+        None => default_value
+    }
+}
+
+fn fannkuch(n: u64) -> u64 {
+    let mut perm1: Array<u64> = Array.new<u64>()
+    let mut perm: Array<u64> = Array.new<u64>()
+    let mut count: Array<u64> = Array.new<u64>()
+    for let index: u64 = 0; index < n; index++ {
+        perm1.push(index)
+        perm.push(0)
+        count.push(0)
+    }
+    let mut flips_count: u64 = 0
+    let mut permutation_index: u64 = 0
+    let mut checksum: i64 = 0
+    let mut r: u64 = n
+    let mut done: bool = false
+    for !done {
+        let mut i: u64 = 0
+        for r != 1 {
+            count[r - 1] = r
+            r -= 1
+        }
+        for i < n {
+            perm[i] = perm1[i]
+            i += 1
+        }
+        // Count flips and update max and checksum.
+        let mut flips: u64 = 0
+        let mut k: u64 = perm[0]
+        for k != 0 {
+            i = 0
+            for 2 * i < k {
+                let temporary: u64 = perm[i]
+                perm[i] = perm[k - i]
+                perm[k - i] = temporary
+                i += 1
+            }
+            k = perm[0]
+            flips += 1
+        }
+        flips_count = if flips > flips_count {
+            flips
+        } else {
+            flips_count
+        }
+        checksum = if permutation_index & 1 as u64 == 0 {
+            checksum + flips as i64
+        } else {
+            checksum - flips as i64
+        }
+        // Use incremental change to generate another permutation.
+        let mut more: bool = true
+        for more && r < n {
+            let first: u64 = perm1[0]
+            i = 0
+            for i < r {
+                let next: u64 = i + 1
+                perm1[i] = perm1[next]
+                i = next
+            }
+            perm1[r] = first
+            count[r] = count[r] - 1
+            let remaining: u64 = count[r]
+            r = if remaining > 0 {
+                r
+            } else {
+                r + 1
+            }
+            more = remaining == 0
+        }
+        done = r == n
+        permutation_index += 1
+    }
+    io.println(checksum)
+    return flips_count
+}
+
+fn main() -> void {
+    let n: u64 = input_size(7)
+    let flips: u64 = fannkuch(n)
+    io.println(fmt.format("Pfannkuchen({}) = {}", n, flips))
+}

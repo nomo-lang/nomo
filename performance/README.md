@@ -12,3 +12,8 @@ The versioned async-runtime evidence contract lives in
 [`performance/async/`](async/README.md), with a
 [Chinese guide](async/README.zh-CN.md). P0 validates the zero-cost and harness
 pipeline only; it makes no Nomo-versus-Go performance claim.
+
+The [Benchmarks Game CPU baseline](benchmarksgame/README.md) provides three
+naive, single-thread scalar Nomo/C/Go comparisons with correctness fixtures,
+full command and artifact provenance, and an exploratory-only local result
+contract.

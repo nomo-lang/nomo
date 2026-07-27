@@ -62,6 +62,19 @@ jobs:
         run: cargo build --locked --release --bin nomo
       - name: Test async benchmark harness
         run: python3 -m unittest discover -s scripts/tests
+      - name: Run Benchmarks Game small-input correctness gate
+        run: >-
+          python3 scripts/benchmarksgame.py
+          --mode correctness
+          --nomo target/release/nomo
+          --require-clean
+          --output performance/results/benchmarksgame-pr-correctness.json
+      - name: Upload Benchmarks Game correctness evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-benchmarksgame-pr-correctness
+          path: performance/results/benchmarksgame-pr-correctness.json
+          if-no-files-found: error
       - name: Run P0 async zero-cost and reference controls
         run: >-
           python3 scripts/async_benchmark.py

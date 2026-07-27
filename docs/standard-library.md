@@ -333,10 +333,13 @@ traffic. Immutable top-level locals with frame-safe transitive value fields can
 live across suspension: only live values enter frames, and managed ARC/COW
 fields use ownership bits so child-first normal completion and explicit early
 root drop are idempotent. Immutable frame-safe parameters evaluate once and
-managed results move before child drop. Mutable parameters/locals, resource
-handles or wrappers containing them, recursive suspension, suspending argument
-expressions, `?` outside the structured form below, and panic nested in another
-expression remain E0876 until their cleanup paths land. A direct top-level
+managed results move before child drop. One flat non-nested `for condition`
+may carry owned mutable locals declared before the loop across direct
+suspension points; replacement retains the new value before dropping the old
+frame slot. Mutable parameters, mutable locals outside that loop, unrecognized
+resource handles, recursive suspension, suspending argument expressions, `?`
+outside the structured form below, and panic nested in another expression
+remain E0876 until their cleanup paths land. A direct top-level
 language `panic(message)` or `debug.panic(message)` statement uses the
 structured panic path described below. Browser WASM
 treats yield as a bounded cooperative boundary; sleep returns
@@ -670,9 +673,11 @@ Native C and browser WASM implement the same pure codec. The module does not
 launch processes itself. Compose it with the shell-free `std.process`
 controlled API, write only encoded messages to child stdin, feed only stdout
 to the decoder, and route stderr separately as logs. See
-`examples/mcp_stdio_blocking`
-for a two-request MCP client that handles fragmented/coalesced output and
-correlates response ids without application-side C FFI.
+`examples/mcp_stdio_async` for a two-request owner-affine MCP client that uses
+RFC 0039 loop-carried decoder state to handle fragmented/coalesced output and
+correlate response ids without blocking an executor or using application-side
+C FFI. `examples/mcp_stdio_blocking` remains the explicit preview migration
+example.
 
 `std.regex` provides compiled regular expression helpers:
 
@@ -902,8 +907,9 @@ blocking migration.
 See `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for native owner-affine stdin/output/exit,
 `examples/async_process_pipe_windows` for the corresponding IOCP path,
-and `examples/process_controlled_blocking` for two queued stdin messages and
-multiplexed output/exit handling.
+`examples/mcp_stdio_async` for incremental JSON-RPC composition, and
+`examples/process_controlled_blocking` for two queued stdin messages and
+multiplexed compatibility handling.
 
 `std.net` provides the first owner-affine async TCP client slice plus explicit
 blocking compatibility helpers:

@@ -83,13 +83,28 @@ pub(super) fn ordered_async_functions<'a>(
             visiting.insert(function.name.clone()),
             "recursive suspend call graphs must be rejected before C code generation"
         );
-        for statement in &function.body {
-            let callee = statement_async_call(statement, async_names)
-                .map(|call| call.callee)
-                .or_else(|| statement_structured_spawn(statement).map(|spawn| spawn.callee));
-            if let Some(child) = callee.and_then(|callee| functions.get(callee)) {
-                visit(child, functions, async_names, visiting, visited, ordered);
-            }
+        let mut callees = functions
+            .values()
+            .copied()
+            .filter(|candidate| async_names.contains(&candidate.name))
+            .filter(|candidate| {
+                function.body.iter().any(|statement| {
+                    statement_contains_expr(statement, |expr| {
+                        matches!(
+                            expr,
+                            ValueExpr::Call { name, .. }
+                                if name == &candidate.name
+                                    || name
+                                        .strip_prefix(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)
+                                        .is_some_and(|target| target == candidate.name)
+                        )
+                    })
+                })
+            })
+            .collect::<Vec<_>>();
+        callees.sort_by(|left, right| left.name.cmp(&right.name));
+        for child in callees {
+            visit(child, functions, async_names, visiting, visited, ordered);
         }
         visiting.remove(&function.name);
         visited.insert(function.name.clone());
@@ -693,6 +708,117 @@ fn statement_async_call<'a>(
     }
 }
 
+#[derive(Debug, Clone)]
+enum AsyncLoopMarker {
+    Condition {
+        loop_id: usize,
+        condition: ValueExpr,
+    },
+    Backedge {
+        loop_id: usize,
+        condition_index: usize,
+        body_start: usize,
+    },
+}
+
+#[derive(Debug, Clone)]
+struct AsyncLoopPlan {
+    function: Function,
+    markers: BTreeMap<usize, AsyncLoopMarker>,
+}
+
+impl AsyncLoopPlan {
+    fn lower(function: &Function, async_names: &BTreeSet<String>) -> Self {
+        let mut body = Vec::with_capacity(function.body.len());
+        let mut markers = BTreeMap::new();
+        let mut next_loop_id = 0usize;
+
+        for statement in &function.body {
+            let Statement::Loop {
+                kind: LoopKind::While(condition),
+                body: loop_body,
+            } = statement
+            else {
+                body.push(statement.clone());
+                continue;
+            };
+            if !loop_body
+                .iter()
+                .any(|statement| statement_contains_async_suspend(statement, async_names))
+            {
+                body.push(statement.clone());
+                continue;
+            }
+
+            let loop_id = next_loop_id;
+            next_loop_id += 1;
+            let condition_index = body.len();
+            body.push(Statement::Expr(condition.clone()));
+            markers.insert(
+                condition_index,
+                AsyncLoopMarker::Condition {
+                    loop_id,
+                    condition: condition.clone(),
+                },
+            );
+            let body_start = body.len();
+            body.extend(loop_body.iter().cloned());
+            let backedge_index = body.len();
+            // Keep the condition expression on the synthetic backedge so the
+            // existing linear liveness scan sees its loop-carried uses after
+            // every suspension in the body. The emitter consumes this marker
+            // without evaluating the placeholder a second time.
+            body.push(Statement::Expr(condition.clone()));
+            markers.insert(
+                backedge_index,
+                AsyncLoopMarker::Backedge {
+                    loop_id,
+                    condition_index,
+                    body_start,
+                },
+            );
+        }
+
+        let mut function = function.clone();
+        function.body = body;
+        Self { function, markers }
+    }
+
+    fn first_condition_index(&self) -> Option<usize> {
+        self.markers.iter().find_map(|(index, marker)| {
+            matches!(marker, AsyncLoopMarker::Condition { .. }).then_some(*index)
+        })
+    }
+
+    fn loop_body_bounds(&self, statement_index: usize) -> Option<(usize, usize)> {
+        self.markers.iter().find_map(|(backedge_index, marker)| {
+            let AsyncLoopMarker::Backedge { body_start, .. } = marker else {
+                return None;
+            };
+            (*body_start <= statement_index && statement_index < *backedge_index)
+                .then_some((*body_start, *backedge_index))
+        })
+    }
+}
+
+fn statement_contains_async_suspend(statement: &Statement, async_names: &BTreeSet<String>) -> bool {
+    statement_task_select(statement).is_some()
+        || statement_contains_expr(statement, |expr| {
+            expr_is_async_yield(expr)
+                || expr_is_async_sleep(expr)
+                || expr_is_async_tcp_connect(expr)
+                || expr_is_async_tcp_io(expr)
+                || expr_is_async_process(expr)
+                || expr_is_async_channel_send(expr)
+                || expr_is_async_channel_receive(expr)
+                || expr_is_async_check_cancelled(expr)
+                || expr_is_async_deadline_enter(expr)
+                || expr_is_structured_join(expr)
+                || expr_is_structured_cancel(expr)
+                || matches!(expr, ValueExpr::Call { name, .. } if async_names.contains(name))
+        })
+}
+
 fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<String>) -> bool {
     statement_is_async_yield(statement)
         || statement_async_sleep(statement).is_some()
@@ -770,7 +896,49 @@ fn task_select_arm_bodies_use_binding(statement: &Statement, binding: &str) -> b
 }
 
 fn statement_uses_binding(statement: &Statement, binding: &str) -> bool {
-    statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+    match statement {
+        Statement::Assign { name, .. } if name == binding => true,
+        Statement::AssignField { base, .. } if base == binding => true,
+        Statement::ArrayIndexAssign { root, .. } if root == binding => true,
+        Statement::LetIf {
+            body, else_body, ..
+        }
+        | Statement::If {
+            body, else_body, ..
+        } => {
+            body.iter()
+                .any(|statement| statement_uses_binding(statement, binding))
+                || else_body
+                    .iter()
+                    .any(|statement| statement_uses_binding(statement, binding))
+                || statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+        }
+        Statement::LetMatch { arms, .. } | Statement::Match { arms, .. } => {
+            arms.iter().any(|arm| {
+                arm.body
+                    .iter()
+                    .any(|statement| statement_uses_binding(statement, binding))
+            }) || statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+        }
+        Statement::LetElse { else_body, .. } => {
+            else_body
+                .iter()
+                .any(|statement| statement_uses_binding(statement, binding))
+                || statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+        }
+        Statement::IfLet {
+            body, else_body, ..
+        } => {
+            body.iter()
+                .any(|statement| statement_uses_binding(statement, binding))
+                || else_body.as_ref().is_some_and(|body| {
+                    body.iter()
+                        .any(|statement| statement_uses_binding(statement, binding))
+                })
+                || statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding))
+        }
+        _ => statement_contains_expr(statement, |expr| expr_uses_binding(expr, binding)),
+    }
 }
 
 fn expr_uses_binding(expr: &ValueExpr, binding: &str) -> bool {
@@ -1201,6 +1369,48 @@ fn emit_async_frame_store(out: &mut String, local: &AsyncFrameLocal, indent: usi
     }
 }
 
+fn emit_async_frame_assignment(
+    out: &mut String,
+    local: &AsyncFrameLocal,
+    value: &ValueExpr,
+    statement_index: usize,
+    indent: usize,
+) {
+    let temporary = format!(
+        "nomo_async_assign_{}_{}",
+        c_var_ident(&local.name),
+        statement_index
+    );
+    write_indent(out, indent);
+    out.push_str(&c_type(&local.value_type));
+    out.push(' ');
+    out.push_str(&temporary);
+    out.push_str(" = ");
+    emit_expr(out, value);
+    out.push_str(";\n");
+    emit_value_retain_value_if_needed(out, &temporary, &local.value_type, value, indent);
+    if value_type_needs_release(&local.value_type) {
+        emit_async_frame_field_drop(out, local, indent);
+    }
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&async_frame_value_field(&local.name));
+    out.push_str(" = ");
+    out.push_str(&temporary);
+    out.push_str(";\n");
+    if value_type_needs_release(&local.value_type) {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_owned_field(&local.name));
+        out.push_str(" = 1u;\n");
+    }
+    write_indent(out, indent);
+    out.push_str(&c_var_ident(&local.name));
+    out.push_str(" = frame->");
+    out.push_str(&async_frame_value_field(&local.name));
+    out.push_str(";\n");
+}
+
 fn emit_async_frame_alias(out: &mut String, local: &AsyncFrameLocal, indent: usize) {
     write_indent(out, indent);
     out.push_str(&c_type(&local.value_type));
@@ -1273,6 +1483,12 @@ fn emit_async_child_init(
 ) {
     debug_assert_eq!(call.args.len(), callee.params.len());
     let child = async_child_field(index);
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&child);
+    out.push_str(" = (");
+    out.push_str(&async_frame_ident(call.callee));
+    out.push_str("){0};\n");
     for (argument, parameter) in call.args.iter().zip(&callee.params) {
         let field = async_parameter_field(&parameter.name);
         write_indent(out, indent);
@@ -3882,7 +4098,19 @@ pub(super) fn emit_async_function(
     debug_assert!(function.params.iter().all(|parameter| !parameter.mutable));
     debug_assert!(async_names.contains(&function.name));
 
+    let loop_plan = AsyncLoopPlan::lower(function, async_names);
+    let function = &loop_plan.function;
     let frame_locals = collect_async_frame_locals(function, async_names);
+    let immediate_frame_locals = loop_plan
+        .first_condition_index()
+        .map(|condition_index| {
+            frame_locals
+                .iter()
+                .filter(|local| local.declaration_index < condition_index)
+                .map(|local| local.name.clone())
+                .collect::<BTreeSet<_>>()
+        })
+        .unwrap_or_default();
     emit_async_frame_type(out, function, &frame_locals, async_names);
     out.push_str("static nomo_async_poll ");
     out.push_str(&async_poll_ident(&function.name));
@@ -3919,6 +4147,66 @@ pub(super) fn emit_async_function(
     let mut emitted_terminal_return = false;
     out.push_str("        case 0u: {\n");
     for (index, statement) in function.body.iter().enumerate() {
+        if let Some(marker) = loop_plan.markers.get(&index) {
+            match marker {
+                AsyncLoopMarker::Condition { loop_id, condition } => {
+                    // Values that are local to the pre-loop segment must be
+                    // released exactly once before the backedge label. Frame
+                    // locals needed by the loop were transferred eagerly at
+                    // their declarations and are therefore not in this list.
+                    emit_async_local_releases(out, &local_owned, &[], 3);
+                    local_owned.clear();
+                    out.push_str("nomo_async_loop_condition_");
+                    out.push_str(&loop_id.to_string());
+                    out.push_str(":\n            ;\n");
+                    for local in frame_locals
+                        .iter()
+                        .filter(|local| immediate_frame_locals.contains(&local.name))
+                    {
+                        out.push_str("            ");
+                        out.push_str(&c_var_ident(&local.name));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_frame_value_field(&local.name));
+                        out.push_str(";\n");
+                    }
+                    out.push_str("            if (!(");
+                    emit_expr(out, condition);
+                    out.push_str(")) {\n                goto nomo_async_loop_after_");
+                    out.push_str(&loop_id.to_string());
+                    out.push_str(";\n            }\n");
+                }
+                AsyncLoopMarker::Backedge {
+                    loop_id,
+                    condition_index,
+                    body_start,
+                } => {
+                    emit_async_local_releases(out, &local_owned, &[], 3);
+                    local_owned.clear();
+                    for local in frame_locals.iter().rev().filter(|local| {
+                        *body_start <= local.declaration_index && local.declaration_index < index
+                    }) {
+                        emit_async_frame_field_drop(out, local, 3);
+                    }
+                    out.push_str("            goto nomo_async_loop_condition_");
+                    out.push_str(&loop_id.to_string());
+                    out.push_str(";\n");
+                    out.push_str("nomo_async_loop_after_");
+                    out.push_str(&loop_id.to_string());
+                    out.push_str(":\n            ;\n");
+                    for local in frame_locals.iter().filter(|local| {
+                        local.declaration_index < *condition_index && local.last_use_index > index
+                    }) {
+                        out.push_str("            ");
+                        out.push_str(&c_var_ident(&local.name));
+                        out.push_str(" = frame->");
+                        out.push_str(&async_frame_value_field(&local.name));
+                        out.push_str(";\n");
+                    }
+                    segment_start = index + 1;
+                }
+            }
+            continue;
+        }
         if statement_is_within_async_deadline(function, index)
             && statement_task_select(statement).is_none()
         {
@@ -4149,6 +4437,7 @@ pub(super) fn emit_async_function(
                 .filter(|local| {
                     local.declaration_index >= segment_start && local.declaration_index < index
                 })
+                .filter(|local| !immediate_frame_locals.contains(&local.name))
                 .cloned()
                 .collect::<Vec<_>>();
             for local in &moved_to_frame {
@@ -4942,6 +5231,15 @@ pub(super) fn emit_async_function(
             emitted_terminal_return = true;
             break;
         }
+        if loop_plan.loop_body_bounds(index).is_some()
+            && let Statement::Assign { name, value } = statement
+            && let Some(local) = frame_locals
+                .iter()
+                .find(|local| local.name == *name && immediate_frame_locals.contains(name))
+        {
+            emit_async_frame_assignment(out, local, value, index, 3);
+            continue;
+        }
         emit_stmt(
             out,
             statement,
@@ -4956,6 +5254,14 @@ pub(super) fn emit_async_function(
         );
         if let Some(local) = local_array_from_statement(statement) {
             local_owned.push(local);
+        }
+        if let Some(frame_local) = frame_locals
+            .iter()
+            .find(|local| local.declaration_index == index)
+            .filter(|local| immediate_frame_locals.contains(&local.name))
+        {
+            emit_async_frame_store(out, frame_local, 3);
+            local_owned.retain(|local| local.name != frame_local.name);
         }
     }
     if !emitted_terminal_return {

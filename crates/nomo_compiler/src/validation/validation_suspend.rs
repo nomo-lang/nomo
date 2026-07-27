@@ -239,6 +239,39 @@ fn validate_p1_suspend_function_shape(
     imports: &[String],
     suspending_functions: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
+    let suspending_loops = function
+        .body
+        .iter()
+        .enumerate()
+        .filter_map(|(index, statement)| {
+            let Stmt::For {
+                variant: ForVariant::While { body, .. },
+                ..
+            } = statement
+            else {
+                return None;
+            };
+            body.iter()
+                .any(|statement| {
+                    ast_statement_contains_runtime_suspend(statement, imports)
+                        || ast_statement_contains_call_to(statement, suspending_functions)
+                })
+                .then_some((index, body))
+        })
+        .collect::<Vec<_>>();
+    let suspending_loop_index = (suspending_loops.len() == 1).then(|| suspending_loops[0].0);
+    let loop_assigned_locals = suspending_loops
+        .first()
+        .into_iter()
+        .flat_map(|(_, body)| body.iter())
+        .filter_map(|statement| match statement {
+            Stmt::Assign { target, .. } => match target.as_slice() {
+                [name] => Some(name.clone()),
+                _ => None,
+            },
+            _ => None,
+        })
+        .collect::<HashSet<_>>();
     let returns_void =
         function.return_type.path.as_slice() == ["void"] && function.return_type.args.is_empty();
     let supported_signature = function.type_params.is_empty()
@@ -264,8 +297,15 @@ fn validate_p1_suspend_function_shape(
                         || !ast_expr_contains_suspension(expr, imports, suspending_functions))
                         && !ast_expr_contains_frame_exit(expr)
                 }
-                Stmt::Let { mutable, value, .. } => {
-                    !mutable
+                Stmt::Let {
+                    name,
+                    mutable,
+                    value,
+                    ..
+                } => {
+                    (!mutable
+                        || (suspending_loop_index.is_some_and(|loop_index| index < loop_index)
+                            && loop_assigned_locals.contains(name)))
                         && (ast_expr_is_direct_suspension(value, imports, suspending_functions)
                             || !ast_expr_contains_suspension(value, imports, suspending_functions))
                         && !ast_expr_contains_frame_exit(value)
@@ -395,22 +435,117 @@ fn validate_p1_suspend_function_shape(
                 Stmt::TaskSelect { arms, .. } => {
                     ast_static_select_shape_supported(arms, imports, suspending_functions)
                 }
+                Stmt::For {
+                    variant: ForVariant::While { condition, body },
+                    ..
+                } => {
+                    suspending_loop_index == Some(index)
+                        && !ast_expr_contains_suspension(condition, imports, suspending_functions)
+                        && !ast_expr_contains_frame_exit(condition)
+                        && body.iter().all(|statement| {
+                            ast_suspending_loop_statement_supported(
+                                statement,
+                                imports,
+                                suspending_functions,
+                                &loop_assigned_locals,
+                            )
+                        })
+                }
                 _ => false,
             });
 
-    if supported_signature && supported_body {
+    if supported_signature && supported_body && suspending_loops.len() <= 1 {
         return Ok(());
     }
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, 2 through 8-arm fallthrough `task.select` over direct receive/sleep operations, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters/locals, recursive suspension, nested control flow, `?` or panic in other expression positions, deadline return/`?`/panic, select early exits, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, one non-nested `for condition` loop with a non-suspending condition, direct suspend calls, direct loop-carried owned assignments, and fallthrough-only control, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, 2 through 8-arm fallthrough `task.select` over direct receive/sleep operations, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters, mutable locals not owned by the supported loop, recursive suspension, nested suspending control flow, suspending loop conditions, nested loops, loop early exits, `?` or panic in other expression positions, deadline return/`?`/panic, select early exits, and non-final early control transfers require a later slice",
         path,
         function.span.line,
         function.span.column,
         function.span.length,
         &function.span.text,
     ))
+}
+
+fn ast_suspending_loop_statement_supported(
+    statement: &Stmt,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+    loop_assigned_locals: &HashSet<String>,
+) -> bool {
+    match statement {
+        Stmt::Let { mutable, value, .. } => {
+            !mutable
+                && (ast_expr_is_direct_suspension(value, imports, suspending_functions)
+                    || !ast_expr_contains_suspension(value, imports, suspending_functions))
+                && !ast_expr_contains_frame_exit(value)
+        }
+        Stmt::Assign {
+            target,
+            value,
+            op: AssignOp::Assign,
+            ..
+        } => {
+            matches!(target.as_slice(), [name] if loop_assigned_locals.contains(name))
+                && !ast_expr_contains_suspension(value, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(value)
+        }
+        Stmt::Expr { expr, .. } => {
+            (ast_expr_is_direct_suspension(expr, imports, suspending_functions)
+                || !ast_expr_contains_suspension(expr, imports, suspending_functions))
+                && !ast_expr_contains_frame_exit(expr)
+                && !matches!(expr, AstExpr::Panic { .. } | AstExpr::Question { .. })
+        }
+        Stmt::Match { value, arms, .. } => {
+            !ast_expr_contains_suspension(value, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(value)
+                && arms.iter().all(|arm| {
+                    arm.body.iter().all(|statement| {
+                        ast_synchronous_loop_branch_statement_supported(
+                            statement,
+                            imports,
+                            suspending_functions,
+                        )
+                    })
+                })
+        }
+        _ => false,
+    }
+}
+
+fn ast_synchronous_loop_branch_statement_supported(
+    statement: &Stmt,
+    imports: &[String],
+    suspending_functions: &HashSet<String>,
+) -> bool {
+    match statement {
+        Stmt::Let {
+            mutable: false,
+            value,
+            ..
+        }
+        | Stmt::Expr { expr: value, .. } => {
+            !ast_expr_contains_suspension(value, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(value)
+                && !matches!(value, AstExpr::Panic { .. } | AstExpr::Question { .. })
+        }
+        Stmt::Match { value, arms, .. } => {
+            !ast_expr_contains_suspension(value, imports, suspending_functions)
+                && !ast_expr_contains_frame_exit(value)
+                && arms.iter().all(|arm| {
+                    arm.body.iter().all(|statement| {
+                        ast_synchronous_loop_branch_statement_supported(
+                            statement,
+                            imports,
+                            suspending_functions,
+                        )
+                    })
+                })
+        }
+        _ => false,
+    }
 }
 
 pub(super) fn validate_p1_suspending_functions(
@@ -496,38 +631,58 @@ fn validate_p1_suspend_call_bindings(
     suspending: &HashSet<String>,
 ) -> Result<(), Diagnostic> {
     for statement in &function.body {
-        let Stmt::Expr {
-            expr: AstExpr::Call { callee, .. },
-            span,
-        } = statement
-        else {
-            continue;
-        };
-        let Some(name) = callee.last() else {
-            continue;
-        };
-        if !suspending.contains(name) {
-            continue;
-        }
-        let Some(callee_function) = functions.get(name.as_str()) else {
-            continue;
-        };
+        validate_p1_suspend_call_binding_statement(path, statement, functions, suspending)?;
+    }
+    Ok(())
+}
+
+fn validate_p1_suspend_call_binding_statement(
+    path: &Path,
+    statement: &Stmt,
+    functions: &HashMap<&str, &AstFunction>,
+    suspending: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    if let Stmt::Expr {
+        expr: AstExpr::Call { callee, .. },
+        span,
+    } = statement
+        && let Some(name) = callee.last()
+        && suspending.contains(name)
+        && let Some(callee_function) = functions.get(name.as_str())
+    {
         let returns_void = callee_function.return_type.path.as_slice() == ["void"]
             && callee_function.return_type.args.is_empty();
-        if returns_void {
-            continue;
+        if !returns_void {
+            return Err(Diagnostic::new(
+                "E0876",
+                format!(
+                    "suspend call to `{name}` returns a value; bind the result with an immutable `let`"
+                ),
+                path,
+                span.line,
+                span.column,
+                span.length,
+                &span.text,
+            ));
         }
-        return Err(Diagnostic::new(
-            "E0876",
-            format!(
-                "suspend call to `{name}` returns a value; bind the result with an immutable `let`"
-            ),
-            path,
-            span.line,
-            span.column,
-            span.length,
-            &span.text,
-        ));
+    }
+
+    let nested = match statement {
+        Stmt::For { variant, .. } => match variant {
+            ForVariant::Infinite { body }
+            | ForVariant::While { body, .. }
+            | ForVariant::CStyle { body, .. }
+            | ForVariant::Iterate { body, .. } => Some(body.as_slice()),
+        },
+        Stmt::TaskScope { body, .. }
+        | Stmt::TaskDeadline { body, .. }
+        | Stmt::Unsafe { body, .. } => Some(body.as_slice()),
+        _ => None,
+    };
+    if let Some(body) = nested {
+        for statement in body {
+            validate_p1_suspend_call_binding_statement(path, statement, functions, suspending)?;
+        }
     }
     Ok(())
 }
@@ -729,22 +884,11 @@ pub(super) fn validate_p1_suspend_ir_program(
                 "",
             ));
         }
-        if let Some((name, value_type)) = function.body.iter().find_map(|statement| match statement
+        if let Some((name, value_type)) = function
+            .body
+            .iter()
+            .find_map(|statement| ir_statement_unsupported_frame_local(statement, structs, enums))
         {
-            Statement::Let {
-                name,
-                value_type,
-                initializer,
-            } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
-                (!ir_expr_is_structured_spawn(initializer)).then_some((name, value_type))
-            }
-            Statement::QuestionLet {
-                name, value_type, ..
-            } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
-                Some((name, value_type))
-            }
-            _ => None,
-        }) {
             return Err(Diagnostic::new(
                 "E0876",
                 format!(
@@ -760,45 +904,27 @@ pub(super) fn validate_p1_suspend_ir_program(
             ));
         }
         for statement in &function.body {
-            let Some((callee_name, binding)) =
-                ir_statement_direct_suspend_call(statement, &suspending)
-            else {
-                continue;
-            };
-            let Some(callee) = functions
-                .iter()
-                .find(|candidate| candidate.name == callee_name)
-            else {
-                continue;
-            };
-            if binding.is_none() && callee.return_type != ValueType::Void {
-                return Err(Diagnostic::new(
-                    "E0876",
-                    format!(
-                        "suspend call to `{callee_name}` returns `{}`; bind the result with an immutable `let`",
-                        callee.return_type.name()
-                    ),
-                    path,
-                    1,
-                    1,
-                    1,
-                    "",
-                ));
-            }
+            validate_ir_suspend_call_bindings(path, statement, functions, &suspending)?;
         }
     }
     Ok(())
 }
 
 fn ir_statement_calls_any(statement: &Statement, names: &HashSet<String>) -> bool {
-    matches!(
+    if matches!(
         statement,
         Statement::Expr(ValueExpr::Call { name, .. })
             | Statement::Let {
                 initializer: ValueExpr::Call { name, .. },
                 ..
             } if names.contains(name)
-    )
+    ) {
+        return true;
+    }
+    ir_statement_nested_bodies(statement)
+        .into_iter()
+        .flatten()
+        .any(|statement| ir_statement_calls_any(statement, names))
 }
 
 fn ir_statement_direct_suspend_call<'a>(
@@ -814,6 +940,93 @@ fn ir_statement_direct_suspend_call<'a>(
         } if names.contains(name) => Some((name, Some((binding, value_type)))),
         _ => None,
     }
+}
+
+fn ir_statement_nested_bodies(statement: &Statement) -> Vec<&[Statement]> {
+    match statement {
+        Statement::LetIf {
+            body, else_body, ..
+        }
+        | Statement::If {
+            body, else_body, ..
+        } => vec![body, else_body],
+        Statement::LetMatch { arms, .. } | Statement::Match { arms, .. } => {
+            arms.iter().map(|arm| arm.body.as_slice()).collect()
+        }
+        Statement::LetElse { else_body, .. } => vec![else_body],
+        Statement::IfLet {
+            body, else_body, ..
+        } => {
+            let mut bodies = vec![body.as_slice()];
+            if let Some(else_body) = else_body {
+                bodies.push(else_body);
+            }
+            bodies
+        }
+        Statement::TaskSelect { arms } => arms.iter().map(|arm| arm.body.as_slice()).collect(),
+        Statement::Loop { body, .. } => vec![body],
+        _ => Vec::new(),
+    }
+}
+
+fn ir_statement_unsupported_frame_local<'a>(
+    statement: &'a Statement,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+) -> Option<(&'a str, &'a ValueType)> {
+    let own = match statement {
+        Statement::Let {
+            name,
+            value_type,
+            initializer,
+        } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
+            (!ir_expr_is_structured_spawn(initializer)).then_some((name.as_str(), value_type))
+        }
+        Statement::QuestionLet {
+            name, value_type, ..
+        } if !p1_frame_value_type_supported(value_type, structs, enums, &mut Vec::new()) => {
+            Some((name.as_str(), value_type))
+        }
+        _ => None,
+    };
+    own.or_else(|| {
+        ir_statement_nested_bodies(statement)
+            .into_iter()
+            .flatten()
+            .find_map(|statement| ir_statement_unsupported_frame_local(statement, structs, enums))
+    })
+}
+
+fn validate_ir_suspend_call_bindings(
+    path: &Path,
+    statement: &Statement,
+    functions: &[Function],
+    suspending: &HashSet<String>,
+) -> Result<(), Diagnostic> {
+    if let Some((callee_name, binding)) = ir_statement_direct_suspend_call(statement, suspending)
+        && let Some(callee) = functions
+            .iter()
+            .find(|candidate| candidate.name == callee_name)
+        && binding.is_none()
+        && callee.return_type != ValueType::Void
+    {
+        return Err(Diagnostic::new(
+            "E0876",
+            format!(
+                "suspend call to `{callee_name}` returns `{}`; bind the result with an immutable `let`",
+                callee.return_type.name()
+            ),
+            path,
+            1,
+            1,
+            1,
+            "",
+        ));
+    }
+    for statement in ir_statement_nested_bodies(statement).into_iter().flatten() {
+        validate_ir_suspend_call_bindings(path, statement, functions, suspending)?;
+    }
+    Ok(())
 }
 
 fn p1_frame_value_type_supported(

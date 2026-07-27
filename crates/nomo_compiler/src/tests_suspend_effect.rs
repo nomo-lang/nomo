@@ -1421,7 +1421,11 @@ suspend fn main() -> void {
 "#;
     let mutable_error = parse_inline(mutable_source).unwrap_err();
     assert_eq!(mutable_error.code, "E0876");
-    assert!(mutable_error.message.contains("mutable parameters/locals"));
+    assert!(
+        mutable_error
+            .message
+            .contains("mutable locals not owned by the supported loop")
+    );
 
     let panic_source = r#"package app.main
 
@@ -1661,7 +1665,111 @@ suspend fn main() -> void {
 "#;
     let nested_error = parse_inline(nested_source).unwrap_err();
     assert_eq!(nested_error.code, "E0876");
-    assert!(nested_error.message.contains("nested control flow"));
+    assert!(nested_error.message.contains("nested loops"));
+}
+
+#[test]
+fn bounded_suspending_loop_lowers_loop_carried_scalar_and_managed_state() {
+    let source = r#"package app.main
+
+import std.io
+import std.task
+import std.time
+
+suspend fn main() -> void {
+    let mut remaining: u64 = 3
+    let mut message: string = "initial"
+    for remaining > 0 {
+        task.yield_now()
+        let slept: Result<void, TaskError> = task.sleep(time.duration_millis(0))
+        message = "updated"
+        remaining = remaining - 1
+    }
+    io.println(message)
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_loop_condition_0:"));
+    assert!(c.contains("goto nomo_async_loop_condition_0;"));
+    assert!(c.contains("nomo_async_loop_after_0:"));
+    assert!(c.contains("frame->nomo_async_local_nomo_remaining"));
+    assert!(c.contains("frame->nomo_async_local_nomo_message"));
+    assert!(c.contains("nomo_async_assign_nomo_message_"));
+    assert!(c.contains("nomo_string_release(frame->nomo_async_local_nomo_message);"));
+    assert_eq!(
+        c.matches("nomo_async_frame_main nomo__frame = {0};")
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn bounded_suspending_loop_rejects_nested_condition_and_early_exit_shapes() {
+    let nested = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    let mut running: bool = true
+    for running {
+        for running {
+            task.yield_now()
+        }
+        running = false
+    }
+}
+"#;
+    let nested_error = parse_inline(nested).unwrap_err();
+    assert_eq!(nested_error.code, "E0876");
+    assert!(nested_error.message.contains("nested loops"));
+
+    let suspending_condition = r#"package app.main
+
+import std.task
+
+suspend fn ready() -> bool {
+    task.yield_now()
+    return true
+}
+
+suspend fn main() -> void {
+    for ready() {
+        task.yield_now()
+    }
+}
+"#;
+    let condition_error = parse_inline(suspending_condition).unwrap_err();
+    assert_eq!(condition_error.code, "E0876");
+    assert!(
+        condition_error
+            .message
+            .contains("suspending loop conditions")
+    );
+
+    let early_exit = r#"package app.main
+
+import std.task
+
+suspend fn main() -> void {
+    let mut running: bool = true
+    for running {
+        task.yield_now()
+        break
+    }
+}
+"#;
+    let early_error = parse_inline(early_exit).unwrap_err();
+    assert_eq!(early_error.code, "E0876");
+    assert!(early_error.message.contains("loop early exits"));
 }
 
 #[test]
@@ -1680,7 +1788,7 @@ suspend fn main() -> void {
 "#;
     let mutable_error = parse_inline(mutable_parameter_source).unwrap_err();
     assert_eq!(mutable_error.code, "E0876");
-    assert!(mutable_error.message.contains("mutable parameters/locals"));
+    assert!(mutable_error.message.contains("mutable parameters"));
 
     let affine_parameter_source = r#"package app.main
 

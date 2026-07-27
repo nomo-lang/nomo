@@ -471,3 +471,35 @@ fn emit_async_process_nonwaiting_helpers(
          }\n",
     );
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn windows_process_output_reads_outlive_one_event_pull() {
+        let mut emitted = String::new();
+        emit_async_process_native_helpers(
+            &mut emitted,
+            include_str!("host_async_process_windows.c"),
+        );
+
+        assert!(emitted.contains("nomo_async_reactor_registration output_registration[2];"));
+        assert!(emitted.contains("char *output_read_buffers[2];"));
+        assert!(emitted.contains(
+            "static int nomo_async_process_output_issue_read(\n    nomo_async_process_handle_state *state,"
+        ));
+        assert!(emitted.contains("io->owner = &state->output_read_context[index];"));
+        assert!(emitted.contains("nomo_async_process_buffer_append(\n            state->context,"));
+
+        let finish = emitted
+            .split("static void nomo_async_process_registration_finish(")
+            .nth(1)
+            .unwrap()
+            .split("static void nomo_async_process_start_complete(")
+            .next()
+            .unwrap();
+        assert!(!finish.contains("nomo_async_reactor_deregister"));
+        assert!(!finish.contains("output_read_buffers"));
+    }
+}

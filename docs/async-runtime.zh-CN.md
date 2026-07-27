@@ -17,6 +17,10 @@ RFC acceptance gate 已经通过。
   定义有界 channel、消费式 publication 与后续 static select 表面。
 - [RFC 0037](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0037-owner-affine-async-tcp-client-and-blocking-migration.md)
   定义有界、owner-affine 的异步 TCP client 与阻塞 API 迁移。
+- [RFC 0038](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0038-owner-affine-async-process-pipes-and-blocking-migration.md)
+  定义 owner-affine 异步 process pipe 及其阻塞 API 迁移。
+- [RFC 0039](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0039-loop-carried-coroutine-state-and-suspension-safe-mutation.md)
+  定义受限 loop-carried coroutine state 与 suspension-safe mutation。
 
 [English](async-runtime.md)
 
@@ -148,11 +152,20 @@ timeout function 一旦被求值就会 panic；module 必须在两者运行前�
 secret-safe `NOMO-WASM-003`。
 
 RFC 0024 行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，
-并全部由 E0891 隔离。示例见
+并全部由 E0891 隔离。RFC 0039 增加一种受限、非嵌套的 `for condition`
+lowering：condition 不挂起，direct suspend call 绑定 result，loop 外声明的
+task-local owned mutable local 可在 normal fallthrough backedge 上被替换。现有
+frame 保存这些 live value；managed replacement 会先 retain 新值，再 drop 旧值，
+completion/cancellation 对 initialized slot 恰好 drop 一次。Borrow、guard、
+nested suspending loop、suspending condition、`break`、`continue`、`?`、panic、
+defer 与跨 loop 的 early return 仍由 E0876 拒绝；普通 ARC/COW value 继续保持
+owner-local、non-atomic。示例见
 [`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
 与
 [`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) 或
 [`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows)。
+[`examples/mcp_stdio_async`](../examples/mcp_stdio_async) 使用该 loop 形态组合
+fragmented/coalesced JSON-RPC process output。
 
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
 
@@ -427,13 +440,14 @@ deadline、channel 与 select 属于后续 backend 小切片。
 `task.yield_now()` 和不返回值的 suspend 调用必须是独立语句；返回值的 suspend
 调用与 `task.sleep(Duration)` 必须作为不可变顶层 `let` 的 initializer。
 所在 `suspend fn` 仍须 non-generic；参数、结果和跨 suspension local 必须是
-不可变且 frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。
-async `main` 仍只返回 `void`。mutable 参数/local、borrow、guard、resource
-handle 或包含它的 wrapper、递归 suspend graph、控制流、嵌套表达式或参数表达式
-内部挂起、下述 structured binding 之外的 `?`、其他表达式内部的 panic、
-取消 token 和 reactor-backed socket/process/HTTP operation 都属于后续小 PR。
-当前 P2 foundation 只统一 timer wait，尚不声称 network 或 process handle
-已经是 nonblocking。
+frame-safe 的 scalar、string、struct、enum、Result 或已支持 array。async
+`main` 仍只返回 `void`。上文描述的一个扁平、非嵌套 `for condition` 可以让
+loop 外声明的 owned mutable local 跨 direct suspension point 存活。mutable
+参数、该 loop 以外的 mutable local、borrow、guard、递归 suspend graph、其他
+控制流内挂起、嵌套表达式或参数表达式内部挂起、下述 structured binding 之外
+的 `?`、其他表达式内部的 panic 仍属于后续小 PR。Resource handle 仅通过
+`std.net`、`std.process` 等显式 owner-affine async API 支持；阻塞兼容 API
+继续由 E0891 隔离。
 
 当前 deadline 小切片允许每个 suspend function 有一个非嵌套
 `task.deadline(Duration) { ... }`。body 遵循与 `task.scope` 相同的顶层

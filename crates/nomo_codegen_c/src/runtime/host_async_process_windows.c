@@ -56,6 +56,11 @@ typedef struct nomo_async_process_handle_state
 
 typedef struct {
     nomo_async_process_handle_state *state;
+    uint32_t index;
+} nomo_async_process_read_context;
+
+typedef struct {
+    nomo_async_process_handle_state *state;
     uint32_t generation;
 } nomo_async_process_wait_context;
 
@@ -91,6 +96,7 @@ struct nomo_async_process_handle_state {
     uint8_t prefer_stderr;
     uint8_t event_busy;
     uint8_t stdin_error;
+    uint8_t output_error;
     HANDLE process;
     HANDLE wait_handle;
     HANDLE stdin_write;
@@ -101,6 +107,9 @@ struct nomo_async_process_handle_state {
     size_t stdin_offset;
     nomo_async_reactor_registration stdin_registration;
     nomo_async_reactor_registration exit_registration;
+    nomo_async_reactor_registration output_registration[2];
+    char *output_read_buffers[2];
+    nomo_async_process_read_context output_read_context[2];
     nomo_async_process_buffer stdout_buffer;
     nomo_async_process_buffer stderr_buffer;
     @PROCESS_EXIT@ exit_info;
@@ -128,8 +137,6 @@ typedef struct {
     nomo_async_poll_fn poll;
     nomo_async_timer_registration timer;
     nomo_async_timer_outcome timer_outcome;
-    nomo_async_reactor_registration io[2];
-    char *read_buffers[2];
     uint32_t job_slot;
     uint32_t job_generation;
     uint32_t handle_slot;
@@ -1536,6 +1543,26 @@ static void nomo_async_process_cancel(
     nomo_async_context *context
 );
 
+static void nomo_async_process_output_reads_cancel(
+    nomo_async_process_handle_state *state
+) {
+    for (uint32_t index = 0u; index < 2u; index += 1u) {
+        nomo_async_reactor_registration *io =
+            &state->output_registration[index];
+        if (state->output_read_buffers[index] != NULL) {
+            nomo_async_reactor_detach_buffer(
+                io,
+                state->output_read_buffers[index]
+            );
+            state->output_read_buffers[index] = NULL;
+        }
+        nomo_async_reactor_deregister(
+            &state->context->reactor,
+            io
+        );
+    }
+}
+
 static void nomo_async_process_handle_storage_release(
     nomo_async_process_runtime *runtime,
     nomo_async_process_handle_state *state
@@ -1567,6 +1594,7 @@ static void nomo_async_process_handle_storage_release(
             &state->exit_registration
         );
     }
+    nomo_async_process_output_reads_cancel(state);
     if (state->wait_handle != NULL) {
         UnregisterWaitEx(state->wait_handle, INVALID_HANDLE_VALUE);
         state->wait_handle = NULL;
@@ -1653,22 +1681,6 @@ static void nomo_async_process_registration_finish(
 ) {
     if (registration->context == NULL) {
         return;
-    }
-    for (uint32_t index = 0u; index < 2u; index += 1u) {
-        if (registration->io[index].operation != NULL
-            && registration->read_buffers[index] != NULL) {
-            nomo_async_reactor_detach_buffer(
-                &registration->io[index],
-                registration->read_buffers[index]
-            );
-            registration->read_buffers[index] = NULL;
-        }
-        nomo_async_reactor_deregister(
-            &registration->context->reactor,
-            &registration->io[index]
-        );
-        free(registration->read_buffers[index]);
-        registration->read_buffers[index] = NULL;
     }
     nomo_async_timer_disarm(
         &registration->timer,
@@ -1839,6 +1851,10 @@ static int nomo_async_process_activate_handle(
     state->stdin_write = stdin_write;
     state->stdout_read = stdout_read;
     state->stderr_read = stderr_read;
+    for (uint32_t index = 0u; index < 2u; index += 1u) {
+        state->output_read_context[index].state = state;
+        state->output_read_context[index].index = index;
+    }
     if (nomo_async_process_associate_handle(
             runtime->context,
             stdin_write
@@ -2195,6 +2211,7 @@ static void nomo_async_process_handle_close(
         &runtime->context->reactor,
         &state->stdin_registration
     );
+    nomo_async_process_output_reads_cancel(state);
     nomo_async_process_close_handle(&state->stdin_write);
     nomo_async_process_close_handle(&state->stdout_read);
     nomo_async_process_close_handle(&state->stderr_read);
@@ -2230,6 +2247,17 @@ static int nomo_async_process_event_progress(
             "process stdin write failed"
         );
         runtime->context->process_errors += 1u;
+        return 0;
+    }
+    if (state->output_error != 0u) {
+        state->output_error = 0u;
+        nomo_async_process_event_error(
+            result,
+            "io",
+            "process output read failed"
+        );
+        runtime->context->process_errors += 1u;
+        nomo_async_process_handle_close(runtime, state, 0u);
         return 0;
     }
     if (state->stdin_flushed != 0u) {
@@ -2308,49 +2336,35 @@ static void nomo_async_process_event_release(
     }
 }
 
-static void nomo_async_process_event_wake(void *owner, uint32_t ready) {
-    nomo_async_process_registration *registration =
-        (nomo_async_process_registration *)owner;
-    if (registration == NULL
-        || registration->kind != NOMO_ASYNC_PROCESS_REGISTRATION_EVENT
-        || registration->active == 0u
-        || ready == 0u
-        || registration->ready != 0u) {
-        return;
-    }
-    registration->ready = 1u;
-    registration->context->io_ready_completions += 1u;
-    if (nomo_async_ready_enqueue(
-            registration->context,
-            registration->frame,
-            registration->poll
-        ) != 0) {
-        registration->context->runtime_failed = 1u;
-    }
-}
+static void nomo_async_process_output_wake(void *owner, uint32_t ready);
 
-static int nomo_async_process_event_issue_read(
-    nomo_async_process_registration *registration,
+static int nomo_async_process_output_issue_read(
+    nomo_async_process_handle_state *state,
     uint32_t index,
     HANDLE handle
 ) {
+    nomo_async_reactor_registration *io =
+        &state->output_registration[index];
+    if (io->active != 0u
+        || state->output_read_buffers[index] != NULL) {
+        return 0;
+    }
     char *buffer =
         (char *)malloc(NOMO_ASYNC_PROCESS_READ_CHUNK);
     if (buffer == NULL) {
         return 2;
     }
-    registration->read_buffers[index] = buffer;
-    nomo_async_reactor_registration *io = &registration->io[index];
-    io->owner = registration;
-    io->wake = nomo_async_process_event_wake;
+    state->output_read_buffers[index] = buffer;
+    io->owner = &state->output_read_context[index];
+    io->wake = nomo_async_process_output_wake;
     if (nomo_async_reactor_register(
-            &registration->context->reactor,
+            &state->context->reactor,
             io,
             (nomo_socket)handle,
             NOMO_ASYNC_REACTOR_READ
         ) != 0) {
         free(buffer);
-        registration->read_buffers[index] = NULL;
+        state->output_read_buffers[index] = NULL;
         return 2;
     }
     DWORD transferred = 0u;
@@ -2364,40 +2378,47 @@ static int nomo_async_process_event_issue_read(
     DWORD error = started != FALSE ? ERROR_SUCCESS : GetLastError();
     if (started == FALSE && error != ERROR_IO_PENDING) {
         nomo_async_reactor_deregister(
-            &registration->context->reactor,
+            &state->context->reactor,
             io
         );
         free(buffer);
-        registration->read_buffers[index] = NULL;
+        state->output_read_buffers[index] = NULL;
         if (error == ERROR_BROKEN_PIPE || error == ERROR_HANDLE_EOF) {
             return 1;
         }
         return 3;
     }
     nomo_async_reactor_mark_submitted(
-        &registration->context->reactor,
+        &state->context->reactor,
         io
     );
     return 0;
 }
 
-static int nomo_async_process_event_collect_read(
-    nomo_async_process_registration *registration,
-    nomo_async_process_handle_state *state,
-    uint32_t index
-) {
-    nomo_async_reactor_registration *io = &registration->io[index];
-    if (io->active == 0u || io->operation != NULL) {
-        return 0;
+static void nomo_async_process_output_wake(void *owner, uint32_t ready) {
+    nomo_async_process_read_context *read_context =
+        (nomo_async_process_read_context *)owner;
+    if (read_context == NULL
+        || read_context->state == NULL
+        || read_context->index >= 2u
+        || (ready & NOMO_ASYNC_REACTOR_READ) == 0u) {
+        return;
     }
+    nomo_async_process_handle_state *state = read_context->state;
+    uint32_t index = read_context->index;
+    if (state->occupied == 0u) {
+        return;
+    }
+    nomo_async_reactor_registration *io =
+        &state->output_registration[index];
     DWORD error = io->error;
     DWORD transferred = io->transferred;
     nomo_async_reactor_deregister(
-        &registration->context->reactor,
+        &state->context->reactor,
         io
     );
-    char *buffer = registration->read_buffers[index];
-    registration->read_buffers[index] = NULL;
+    char *buffer = state->output_read_buffers[index];
+    state->output_read_buffers[index] = NULL;
     if (error == ERROR_BROKEN_PIPE || error == ERROR_HANDLE_EOF
         || (error == ERROR_SUCCESS && transferred == 0u)) {
         if (index == 0u) {
@@ -2406,11 +2427,10 @@ static int nomo_async_process_event_collect_read(
             state->stderr_eof = 1u;
         }
         free(buffer);
-        return 0;
-    }
-    if (error != ERROR_SUCCESS
+    } else if (error != ERROR_SUCCESS
+        || buffer == NULL
         || nomo_async_process_buffer_append(
-            registration->context,
+            state->context,
             index == 0u
                 ? &state->stdout_buffer
                 : &state->stderr_buffer,
@@ -2418,10 +2438,12 @@ static int nomo_async_process_event_collect_read(
             (size_t)transferred
         ) != 0) {
         free(buffer);
-        return 1;
+        state->output_error = 1u;
+    } else {
+        free(buffer);
     }
-    free(buffer);
-    return 0;
+    state->context->io_ready_completions += 1u;
+    nomo_async_process_event_signal(state);
 }
 
 static int nomo_async_process_event_arm(
@@ -2443,15 +2465,15 @@ static int nomo_async_process_event_arm(
     registration->deadline_millis = registration->timer.deadline_millis;
     int stdout_status = state->stdout_eof != 0u
         ? 1
-        : nomo_async_process_event_issue_read(
-            registration,
+        : nomo_async_process_output_issue_read(
+            state,
             0u,
             state->stdout_read
         );
     int stderr_status = state->stderr_eof != 0u
         ? 1
-        : nomo_async_process_event_issue_read(
-            registration,
+        : nomo_async_process_output_issue_read(
+            state,
             1u,
             state->stderr_read
         );
@@ -2616,21 +2638,7 @@ static nomo_async_poll nomo_async_process_event_resume(
         registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
         return NOMO_ASYNC_POLL_READY;
     }
-    int read_error =
-        nomo_async_process_event_collect_read(registration, state, 0u)
-        || nomo_async_process_event_collect_read(registration, state, 1u);
     nomo_async_process_registration_finish(registration);
-    if (read_error != 0) {
-        nomo_async_process_event_release(registration);
-        nomo_async_process_event_error(
-            result,
-            "io",
-            "process output read failed"
-        );
-        context->process_errors += 1u;
-        registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
-        return NOMO_ASYNC_POLL_READY;
-    }
     registration->ready = 0u;
     if (nomo_async_process_event_progress(
             runtime,

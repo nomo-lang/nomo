@@ -9,7 +9,7 @@ suspend fn main() -> void {
     io.println("before timer")
     let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
     io.println(result.is_ok(immediate))
-    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(5))
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(50))
     io.println(result.is_ok(waited))
     io.println("after timer")
 }

@@ -14,11 +14,10 @@ Nomo has no stable `v0.1.0` release. The current packaged baseline is
 timestamp releases are prerelease snapshots with no cross-snapshot
 compatibility promise.
 
-Current `main` syntax and project behavior were reviewed at commit
-[`6acff2b`](https://github.com/nomo-lang/nomo/commit/6acff2bba0113efa3d49254ec2b9c72e1d442b33).
-That commit is newer than the packaged snapshot and includes manifest-derived
-module roots, the `nomo fix module-roots` migration, canonical implicit-void
-formatting, and the bounded P3-C static `task.select` runtime slice.
+Current `main` is newer than the packaged snapshot and includes
+manifest-derived module roots, the `nomo fix module-roots` migration,
+canonical implicit-void formatting, and bounded P3-C/P3-D static
+`task.select` runtime slices.
 
 Internal tests establish implementation evidence, not production readiness.
 Review the

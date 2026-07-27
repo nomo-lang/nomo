@@ -59,6 +59,7 @@ pub(super) fn lower_return_stmt(
                     result_type,
                     return_type: expected.clone(),
                     result_expr,
+                    early_exit_actions: Vec::new(),
                 });
             }
             if let Some((carrier, question_expr)) =
@@ -107,6 +108,7 @@ pub(super) fn lower_return_stmt(
                     result_type,
                     return_type: expected.clone(),
                     result_expr,
+                    early_exit_actions: Vec::new(),
                 });
             }
             let (actual, lowered) = lower_value_expr_with_expected(

@@ -38,6 +38,11 @@ jobs:
           -p nomo-wasm
           -p nomo-manifest
           --locked
+      - name: Run P3-D send/join select races on Linux
+        run: >-
+          cargo test -p nomo --test cli_project
+          static_send_join_select
+          --locked
       - name: Run owner-affine async TCP lifecycle through epoll
         run: >-
           cargo test -p nomo --test cli_project
@@ -453,6 +458,35 @@ jobs:
               -or $selectPayload.counters.live_timers -ne 0) {
             throw "unexpected static-select counters"
           }
+      - name: Run P3-D send/join select on Windows
+        shell: pwsh
+        run: |
+          $metrics = Join-Path $env:RUNNER_TEMP "nomo-async-send-join-select-metrics.json"
+          $env:NOMO_ASYNC_METRICS_PATH = $metrics
+          $output = cargo run --locked --bin nomo -- run examples/async_send_join_select
+          if (($output -join "`n") -notmatch "^send`nsent`npending send`npending`nchild`nchild`nlosing join cleaned$") {
+            throw "unexpected send/join-select output"
+          }
+          $payload = Get-Content -Raw $metrics | ConvertFrom-Json
+          if ($payload.schema -ne 1 `
+              -or $payload.runtime -ne "nomo-c99-current-thread" `
+              -or $payload.counters.frame_allocations -ne 0 `
+              -or $payload.counters.frame_drops -ne 6 `
+              -or $payload.counters.task_spawns -ne 4 `
+              -or $payload.counters.publication_moves -ne 1 `
+              -or $payload.counters.task_joins -ne 3 `
+              -or $payload.counters.join_suspensions -ne 1 `
+              -or $payload.counters.channel_send_suspensions -ne 2 `
+              -or $payload.counters.select_registrations -ne 5 `
+              -or $payload.counters.select_immediate_wins -ne 3 `
+              -or $payload.counters.select_suspended_wins -ne 2 `
+              -or $payload.counters.select_loser_cancellations -ne 3 `
+              -or $payload.counters.select_cancellations -ne 0 `
+              -or $payload.counters.live_channel_send_waiters -ne 0 `
+              -or $payload.counters.live_channel_receive_waiters -ne 0 `
+              -or $payload.counters.live_timers -ne 0) {
+            throw "unexpected send/join-select counters"
+          }
       - name: Run successful GET and POST paths through WinHTTP
         run: >-
           cargo test -p nomo --test cli_project
@@ -565,6 +599,14 @@ jobs:
           printf '%s\n' "$structured_panic_output" | grep '^managed slow before$'
           printf '%s\n' "$structured_panic_output" | grep '^panic: panic from child$'
           python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert c["poll_calls"] == 4 and c["frame_drops"] == 3 and c["peak_live_frames"] == 3 and c["task_spawns"] == 2 and c["task_joins"] == 1 and c["join_suspensions"] == 1 and c["task_cancellations"] == 3 and c["timer_registrations"] == 1 and c["timer_expirations"] == 0 and c["timer_cancellations"] == 1 and c["live_timers"] == 0' "$structured_panic_metrics"
+      - name: Run P3-D send/join select on macOS
+        shell: bash
+        run: |
+          metrics="$RUNNER_TEMP/nomo-async-send-join-select-metrics.json"
+          output=$(NOMO_ASYNC_METRICS_PATH="$metrics" \
+            cargo run --locked --bin nomo -- run examples/async_send_join_select)
+          test "$output" = "$(printf 'send\nsent\npending send\npending\nchild\nchild\nlosing join cleaned')"
+          python3 -c 'import json,sys; p=json.load(open(sys.argv[1])); c=p["counters"]; assert p["schema"] == 1 and p["runtime"] == "nomo-c99-current-thread"; assert c["frame_allocations"] == 0 and c["frame_drops"] == 6 and c["task_spawns"] == 4 and c["publication_moves"] == 1 and c["task_joins"] == 3 and c["join_suspensions"] == 1 and c["channel_send_suspensions"] == 2 and c["select_registrations"] == 5 and c["select_immediate_wins"] == 3 and c["select_suspended_wins"] == 2 and c["select_loser_cancellations"] == 3 and c["select_cancellations"] == 0 and c["live_channel_send_waiters"] == 0 and c["live_channel_receive_waiters"] == 0 and c["live_timers"] == 0' "$metrics"
       - name: Run owner-affine async TCP lifecycle through kqueue
         run: >-
           cargo test -p nomo --test cli_project

@@ -413,6 +413,7 @@ pub(super) fn lower_function_as(
             &signature.return_type,
             is_tail,
             0,
+            &[],
             &mut body,
         )?;
     }

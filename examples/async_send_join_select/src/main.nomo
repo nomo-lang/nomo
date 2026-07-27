@@ -1,0 +1,107 @@
+package async_send_join_select
+
+import std.io
+import std.option
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn child_value() -> string {
+    task.yield_now()
+    return "child"
+}
+
+suspend fn slow_child() -> string {
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(100))
+    return "slow"
+}
+
+suspend fn consume_one(channel_value: Channel<string>) {
+    task.yield_now()
+    let received: Option<string> = task.receive(channel_value)
+}
+
+suspend fn choose_send(channel_value: Channel<string>) -> string {
+    task.select {
+        task.send(channel_value, "sent") => sent {
+            return "send"
+        }
+        task.sleep(time.duration_millis(50)) => timeout {
+            return "timer"
+        }
+    }
+    return "unreachable"
+}
+
+suspend fn main() {
+    let sent_channel: Channel<string> = make_channel()
+    let selected: string = choose_send(sent_channel)
+    io.println(selected)
+    let received: Option<string> = task.receive(sent_channel)
+    io.println(option.unwrap_or(received, "closed"))
+    let pending_channel: Channel<string> = make_channel()
+    let filled: Result<void, ChannelSendError<string>> = task.send(pending_channel, "filled")
+    task.scope {
+        let consumer = task.spawn consume_one(pending_channel)
+        task.select {
+            task.send(pending_channel, "pending") => sent {
+                io.println("pending send")
+            }
+            task.sleep(time.duration_millis(100)) => timeout {
+                io.println("pending timeout")
+            }
+        }
+        let consumer_result: Result<void, TaskError> = task.join(consumer)
+    }
+    let pending_received: Option<string> = task.receive(pending_channel)
+    io.println(option.unwrap_or(pending_received, "closed"))
+    task.scope {
+        let child = task.spawn child_value()
+        task.select {
+            task.join(child) => joined {
+                io.println(result.unwrap_or(joined, "failed"))
+            }
+            task.sleep(time.duration_millis(100)) => timeout {
+                io.println("join timeout")
+            }
+        }
+    }
+    let losing_send_channel: Channel<string> = make_channel()
+    let losing_send_filled: Result<void, ChannelSendError<string>> = task.send(losing_send_channel, "filled")
+    let losing_send_value: string = "losing value"
+    task.scope {
+        let child = task.spawn child_value()
+        task.select {
+            task.send(losing_send_channel, losing_send_value) => sent {
+                io.println("unexpected losing send")
+            }
+            task.join(child) => joined {
+                io.println(result.unwrap_or(joined, "failed"))
+            }
+        }
+    }
+    let losing_join_channel: Channel<string> = make_channel()
+    task.scope {
+        let child = task.spawn slow_child()
+        task.select {
+            task.send(losing_join_channel, "send wins") => sent {
+                io.println("losing join cleaned")
+            }
+            task.join(child) => joined {
+                io.println(result.unwrap_or(joined, "failed"))
+            }
+        }
+    }
+    task.close(sent_channel)
+    task.close(pending_channel)
+    task.close(losing_send_channel)
+    task.close(losing_join_channel)
+}

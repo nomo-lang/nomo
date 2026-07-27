@@ -69,7 +69,10 @@ storage 或 metadata。Nomo/Go sample 仅作为证据，不构成性能声明。
 timer 注册到同一个 token，稍后的 direct handoff 获胜，两个 loser 会在
 owner frame 单次 wake 前被清理，最终 waiter/timer live counter 都回到零。
 该探针会校验精确 select counter 并禁止 thread/atomic symbol；它是正确性门禁，
-不是性能声明。
+不是性能声明。`send_join_select_probe` 会进一步覆盖 staged send publication、
+affine join ownership、immediate/pending winner linearization、losing child 的
+隐式清理，以及精确的 zero-live-registration counter；它同样不具备 claim
+资格。
 第一个 P2 foundation 会在 Linux 生成 epoll、macOS 生成 kqueue、Windows
 生成 IOCP。既有正时长 timer 现在使用统一 reactor wait，不再调用 timer
 专用 sleep primitive。P2-TCP-A 为 pending 数值地址 connect 增加一个带

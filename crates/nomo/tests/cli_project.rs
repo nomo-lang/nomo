@@ -10788,6 +10788,117 @@ suspend fn main() {
 }
 
 #[test]
+fn static_send_join_select_linearizes_winners_and_drops_losers_once() {
+    let root = temp_test_root("async-send-join-select-runtime");
+    reset_dir(&root);
+    let project = root.join("async_send_join_select");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        include_str!("../../../examples/async_send_join_select/nomo.toml"),
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        include_str!("../../../examples/async_send_join_select/src/main.nomo"),
+    )
+    .unwrap();
+
+    let metrics_path = root.join("select-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "send\nsent\npending send\npending\nchild\nchild\nlosing join cleaned\n"
+    );
+    assert!(output.stderr.is_empty());
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_channel_send_select_cancel_string"));
+    assert!(generated.contains("structured_waiter_select_token"));
+    assert!(generated.contains("nomo_async_join_select_cancel_child_value"));
+    assert!(generated.contains("nomo_async_select_send_value_owned_"));
+    assert!(!generated.contains("pthread_create"));
+    assert!(!generated.contains("CreateThread"));
+    assert!(!generated.contains("__atomic_"));
+    assert!(!generated.contains("Interlocked"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["task_spawns"], 4);
+    assert_eq!(metrics["counters"]["publication_moves"], 1);
+    assert_eq!(metrics["counters"]["task_joins"], 3);
+    assert_eq!(metrics["counters"]["join_suspensions"], 1);
+    assert_eq!(metrics["counters"]["channel_send_suspensions"], 2);
+    assert_eq!(metrics["counters"]["select_registrations"], 5);
+    assert_eq!(metrics["counters"]["select_immediate_wins"], 3);
+    assert_eq!(metrics["counters"]["select_suspended_wins"], 2);
+    assert_eq!(metrics["counters"]["select_loser_cancellations"], 3);
+    assert_eq!(metrics["counters"]["select_cancellations"], 0);
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-async-send-join-select.exe"
+        } else {
+            "asan-async-send-join-select"
+        });
+        let asan_metrics_path = root.join("asan-select-counters.json");
+        let cc_output = Command::new("cc")
+            .arg("-std=c99")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(asan_output.stdout, output.stdout);
+        assert!(asan_output.stderr.is_empty());
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn static_select_deadline_cancels_every_pending_registration_once() {
     let root = temp_test_root("async-static-select-deadline");
     reset_dir(&root);
@@ -10866,6 +10977,109 @@ suspend fn main() {
     assert_eq!(metrics["counters"]["select_loser_cancellations"], 0);
     assert_eq!(metrics["counters"]["select_cancellations"], 2);
     assert_eq!(metrics["counters"]["live_channel_receive_waiters"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
+fn static_send_join_select_honors_deadline_and_closed_send_ownership() {
+    let root = temp_test_root("async-send-join-select-deadline");
+    reset_dir(&root);
+    let project = root.join("async_send_join_select_deadline");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_send_join_select_deadline\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_send_join_select_deadline
+
+import std.io
+import std.result
+import std.task
+import std.time
+
+fn make_channel() -> Channel<string> {
+    let created: Result<Channel<string>, ChannelError> = task.channel<string>(1)
+    return match created {
+        Result.Ok(channel_value) => channel_value
+        Result.Err(error) => panic(error.message)
+    }
+}
+
+suspend fn slow_child() -> string {
+    let waited: Result<void, TaskError> = task.sleep(time.duration_millis(100))
+    return "slow"
+}
+
+suspend fn bounded_select(channel_value: Channel<string>) {
+    let filled: Result<void, ChannelSendError<string>> = task.send(channel_value, "full")
+    let staged: string = "staged"
+    task.deadline(time.duration_millis(5)) {
+        let child = task.spawn slow_child()
+        task.select {
+            task.send(channel_value, staged) => sent {
+                io.println("unexpected send")
+            }
+            task.join(child) => joined {
+                io.println("unexpected join")
+            }
+        }
+    }
+}
+
+suspend fn main() {
+    let channel_value: Channel<string> = make_channel()
+    task.scope {
+        let child = task.spawn bounded_select(channel_value)
+        let joined: Result<void, TaskError> = task.join(child)
+        io.println(result.is_err(joined))
+    }
+
+    task.close(channel_value)
+    let closed_value: string = "closed"
+    task.select {
+        task.send(channel_value, closed_value) => sent {
+            io.println(result.is_err(sent))
+        }
+        task.sleep(time.duration_millis(0)) => timeout {
+            io.println("unexpected timer")
+        }
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("select-deadline-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "true\ntrue\n");
+    assert!(output.stderr.is_empty());
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["deadline_expirations"], 1);
+    assert_eq!(metrics["counters"]["publication_moves"], 2);
+    assert_eq!(metrics["counters"]["select_registrations"], 2);
+    assert_eq!(metrics["counters"]["select_immediate_wins"], 1);
+    assert_eq!(metrics["counters"]["select_suspended_wins"], 0);
+    assert_eq!(metrics["counters"]["select_loser_cancellations"], 0);
+    assert_eq!(metrics["counters"]["select_cancellations"], 2);
+    assert_eq!(metrics["counters"]["live_channel_send_waiters"], 0);
     assert_eq!(metrics["counters"]["live_timers"], 0);
 
     fs::remove_dir_all(&root).unwrap();

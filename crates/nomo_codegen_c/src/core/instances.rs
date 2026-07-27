@@ -287,9 +287,14 @@ fn collect_stmt_result_map_err(statement: &Statement, out: &mut Vec<ResultMapErr
                     TaskSelectOperation::Receive { channel, .. } => {
                         collect_expr_result_map_err(channel, out);
                     }
+                    TaskSelectOperation::Send { channel, value, .. } => {
+                        collect_expr_result_map_err(channel, out);
+                        collect_expr_result_map_err(value, out);
+                    }
                     TaskSelectOperation::Sleep { duration } => {
                         collect_expr_result_map_err(duration, out);
                     }
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 for statement in &arm.body {
                     collect_stmt_result_map_err(statement, out);
@@ -729,7 +734,12 @@ where
             for arm in arms {
                 match &arm.operation {
                     TaskSelectOperation::Receive { channel, .. } => walk_expr(channel, visit),
+                    TaskSelectOperation::Send { channel, value, .. } => {
+                        walk_expr(channel, visit);
+                        walk_expr(value, visit);
+                    }
                     TaskSelectOperation::Sleep { duration } => walk_expr(duration, visit),
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 for statement in &arm.body {
                     walk_stmt_exprs(statement, visit);

@@ -236,6 +236,7 @@ fn emits_result_void_question_return_without_void_temp() {
                         name: "write".to_string(),
                         args: Vec::new(),
                     },
+                    early_exit_actions: Vec::new(),
                 }],
             },
             Function {

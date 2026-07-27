@@ -329,9 +329,19 @@ fn collect_stmt_enum(
                         collect_type_enum(element_type, seen, out);
                         collect_expr_enum(channel, seen, out);
                     }
+                    TaskSelectOperation::Send {
+                        channel,
+                        value,
+                        element_type,
+                    } => {
+                        collect_type_enum(element_type, seen, out);
+                        collect_expr_enum(channel, seen, out);
+                        collect_expr_enum(value, seen, out);
+                    }
                     TaskSelectOperation::Sleep { duration } => {
                         collect_expr_enum(duration, seen, out);
                     }
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 for stmt in &arm.body {
                     collect_stmt_enum(stmt, seen, out);

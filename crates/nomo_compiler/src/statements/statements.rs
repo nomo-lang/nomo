@@ -500,6 +500,7 @@ pub(super) fn lower_stmt_into(
     return_type: &ValueType,
     is_tail: bool,
     loop_depth: usize,
+    select_exit_cancellations: &[String],
     out: &mut Vec<Statement>,
 ) -> Result<(), Diagnostic> {
     validate_statement_publication_uses(path, stmt, scope)?;
@@ -534,6 +535,12 @@ pub(super) fn lower_stmt_into(
         let mut lowered_arms = Vec::with_capacity(arms.len());
         for arm in arms {
             validate_static_select_arm_body(path, &arm.body, &arm.span)?;
+            validate_static_select_operand_publication_uses(
+                path,
+                &arm.operation,
+                scope,
+                &arm.span,
+            )?;
             if scope.contains_key(&arm.binding) {
                 return Err(Diagnostic::new(
                     "E0886",
@@ -562,7 +569,10 @@ pub(super) fn lower_stmt_into(
                     callee.as_slice(),
                     [module, operation]
                         if module == "task"
-                            && matches!(operation.as_str(), "receive" | "sleep")
+                            && matches!(
+                                operation.as_str(),
+                                "receive" | "send" | "sleep" | "join"
+                            )
                 )
             {
                 return Err(static_select_operation_diagnostic(path, &arm.span));
@@ -594,12 +604,53 @@ pub(super) fn lower_stmt_into(
                         element_type: element_type.clone(),
                     }
                 }
+                ("send", ValueExpr::Call { name, mut args })
+                    if name.starts_with(BUILTIN_TASK_SEND_PREFIX) && args.len() == 2 =>
+                {
+                    let ValueType::Enum(result, result_args) = &binding_type else {
+                        unreachable!("task.send always returns Result<void, ChannelSendError<T>>")
+                    };
+                    debug_assert_eq!(result, "Result");
+                    let [
+                        ValueType::Void,
+                        ValueType::Struct(send_error, send_error_args),
+                    ] = result_args.as_slice()
+                    else {
+                        unreachable!("task.send result keeps its element type")
+                    };
+                    debug_assert_eq!(send_error, "ChannelSendError");
+                    let [element_type] = send_error_args.as_slice() else {
+                        unreachable!("ChannelSendError has one type argument")
+                    };
+                    let channel = args.remove(0);
+                    let value = args.remove(0);
+                    record_static_select_send_publication_move(
+                        path, &arm.span, &value, scope, loop_depth,
+                    )?;
+                    TaskSelectOperation::Send {
+                        channel,
+                        value: Box::new(value),
+                        element_type: element_type.clone(),
+                    }
+                }
                 ("sleep", ValueExpr::Call { name, mut args })
                     if name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1 =>
                 {
                     TaskSelectOperation::Sleep {
                         duration: args.remove(0),
                     }
+                }
+                ("join", ValueExpr::Call { name, mut args })
+                    if name == BUILTIN_TASK_STRUCTURED_JOIN_EXPR && args.len() == 1 =>
+                {
+                    let ValueExpr::Variable(handle) = args.remove(0) else {
+                        return Err(static_select_ownership_diagnostic(
+                            path,
+                            &arm.span,
+                            "task.select join arms require one unqualified scope-owned handle",
+                        ));
+                    };
+                    TaskSelectOperation::Join { handle }
                 }
                 _ => return Err(static_select_operation_diagnostic(path, &arm.span)),
             };
@@ -615,7 +666,7 @@ pub(super) fn lower_stmt_into(
             );
             let mut body = Vec::new();
             for statement in &arm.body {
-                lower_stmt_into(
+                lower_static_select_arm_statement_into(
                     path,
                     statement,
                     &mut arm_scope,
@@ -624,8 +675,8 @@ pub(super) fn lower_stmt_into(
                     structs,
                     enums,
                     return_type,
-                    false,
                     loop_depth,
+                    select_exit_cancellations,
                     &mut body,
                 )?;
             }
@@ -693,6 +744,7 @@ pub(super) fn lower_stmt_into(
         let StructuredScopeValidation {
             unjoined,
             question_cancellations,
+            select_cancellations,
         } = validate_structured_scope(path, body)?;
         debug_assert!(question_cancellations.is_empty());
 
@@ -729,7 +781,7 @@ pub(super) fn lower_stmt_into(
                 source: BindingSource::TaskScope,
             },
         );
-        for statement in body {
+        for (index, statement) in body.iter().enumerate() {
             lower_stmt_into(
                 path,
                 statement,
@@ -741,6 +793,10 @@ pub(super) fn lower_stmt_into(
                 return_type,
                 false,
                 loop_depth,
+                select_cancellations
+                    .get(&index)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
                 out,
             )?;
         }
@@ -779,6 +835,7 @@ pub(super) fn lower_stmt_into(
         let StructuredScopeValidation {
             unjoined,
             question_cancellations,
+            select_cancellations,
         } = validate_structured_scope(path, body)?;
         let exits_with_return = body
             .last()
@@ -822,6 +879,7 @@ pub(super) fn lower_stmt_into(
                     return_type,
                     false,
                     loop_depth,
+                    &[],
                     &mut lowered_return,
                 )?;
                 let [Statement::Return(value)] = lowered_return.as_slice() else {
@@ -853,6 +911,10 @@ pub(super) fn lower_stmt_into(
                 return_type,
                 false,
                 loop_depth,
+                select_cancellations
+                    .get(&index)
+                    .map(Vec::as_slice)
+                    .unwrap_or(&[]),
                 out,
             )?;
         }
@@ -897,7 +959,7 @@ pub(super) fn lower_stmt_into(
 fn static_select_operation_diagnostic(path: &Path, span: &Span) -> Diagnostic {
     Diagnostic::new(
         "E0886",
-        "the P3-C task.select slice supports only `task.receive(channel)` and `task.sleep(duration)` arms",
+        "task.select supports only direct `task.receive(channel)`, `task.send(channel, value)`, `task.sleep(duration)`, and `task.join(child)` arms",
         path,
         span.line,
         span.column,
@@ -906,16 +968,92 @@ fn static_select_operation_diagnostic(path: &Path, span: &Span) -> Diagnostic {
     )
 }
 
+fn static_select_ownership_diagnostic(
+    path: &Path,
+    span: &Span,
+    message: impl Into<String>,
+) -> Diagnostic {
+    Diagnostic::new(
+        "E0887",
+        message,
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
+}
+
+fn validate_static_select_operand_publication_uses(
+    path: &Path,
+    operation: &AstExpr,
+    scope: &HashMap<String, Binding>,
+    span: &Span,
+) -> Result<(), Diagnostic> {
+    crate::validation_tasks::visit_expression(operation, &mut |candidate| {
+        let referenced = match candidate {
+            AstExpr::Name(parts) | AstExpr::MutArg { name: parts } => parts.first(),
+            AstExpr::Call { callee, .. } => callee.first(),
+            _ => None,
+        };
+        if let Some(name) = referenced
+            && scope.contains_key(name)
+        {
+            ensure_publication_binding_available(path, span, scope, name)?;
+        }
+        Ok(())
+    })
+}
+
+fn record_static_select_send_publication_move(
+    path: &Path,
+    span: &Span,
+    value: &ValueExpr,
+    scope: &mut HashMap<String, Binding>,
+    loop_depth: usize,
+) -> Result<(), Diagnostic> {
+    let ValueExpr::Call { name, args } = value else {
+        return Ok(());
+    };
+    if name != BUILTIN_TASK_PUBLICATION_MOVE_EXPR {
+        return Ok(());
+    }
+    let [ValueExpr::Variable(binding)] = args.as_slice() else {
+        return Ok(());
+    };
+    if loop_depth > 0 {
+        return Err(static_select_ownership_diagnostic(
+            path,
+            span,
+            format!(
+                "binding `{binding}` cannot be moved into a repeatable task.select send arm; construct the value inside the loop"
+            ),
+        ));
+    }
+    mark_publication_move(scope, binding, span.line, "task.select send arm");
+    Ok(())
+}
+
 fn validate_static_select_arm_body(
     path: &Path,
     body: &[Stmt],
     arm_span: &Span,
 ) -> Result<(), Diagnostic> {
-    fn validate_statement(path: &Path, statement: &Stmt) -> Result<(), Diagnostic> {
+    fn validate_statement(path: &Path, statement: &Stmt, nested: bool) -> Result<(), Diagnostic> {
         let span = statement_span(statement);
         match statement {
-            Stmt::Return { .. }
-            | Stmt::Break { .. }
+            Stmt::Return { .. } if nested => {
+                return Err(Diagnostic::new(
+                    "E0876",
+                    "task.select supports return, panic, and `?` only as direct arm statements; nested frame exits remain unsupported",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Stmt::Break { .. }
             | Stmt::Continue { .. }
             | Stmt::Defer { .. }
             | Stmt::TaskScope { .. }
@@ -924,7 +1062,7 @@ fn validate_static_select_arm_body(
             | Stmt::Unsafe { .. } => {
                 return Err(Diagnostic::new(
                     "E0876",
-                    "the first task.select slice requires fallthrough arms without return, break, continue, defer, unsafe, nested task scopes, deadlines, or select",
+                    "task.select arms reject break, continue, defer, unsafe, nested task scopes, deadlines, and nested select",
                     path,
                     span.line,
                     span.column,
@@ -932,27 +1070,28 @@ fn validate_static_select_arm_body(
                     &span.text,
                 ));
             }
+            Stmt::Return { .. } => {}
             Stmt::LetElse { else_body, .. } => {
                 for statement in else_body {
-                    validate_statement(path, statement)?;
+                    validate_statement(path, statement, true)?;
                 }
             }
             Stmt::IfLet {
                 body, else_body, ..
             } => {
                 for statement in body {
-                    validate_statement(path, statement)?;
+                    validate_statement(path, statement, true)?;
                 }
                 if let Some(else_body) = else_body {
                     for statement in else_body {
-                        validate_statement(path, statement)?;
+                        validate_statement(path, statement, true)?;
                     }
                 }
             }
             Stmt::Match { arms, .. } => {
                 for arm in arms {
                     for statement in &arm.body {
-                        validate_statement(path, statement)?;
+                        validate_statement(path, statement, true)?;
                     }
                 }
             }
@@ -964,7 +1103,7 @@ fn validate_static_select_arm_body(
                     | ForVariant::Iterate { body, .. } => body,
                 };
                 for statement in nested {
-                    validate_statement(path, statement)?;
+                    validate_statement(path, statement, true)?;
                 }
             }
             Stmt::Let { .. }
@@ -981,10 +1120,21 @@ fn validate_static_select_arm_body(
             }
             Ok(())
         })?;
-        if contains_frame_exit {
+        let direct_frame_exit = matches!(
+            statement,
+            Stmt::Let {
+                value: AstExpr::Question { .. },
+                ..
+            } | Stmt::Return { .. }
+                | Stmt::Expr {
+                    expr: AstExpr::Panic { .. },
+                    ..
+                }
+        );
+        if contains_frame_exit && (nested || !direct_frame_exit) {
             return Err(Diagnostic::new(
                 "E0876",
-                "panic and `?` inside task.select arms require the later general structured-exit slice",
+                "task.select supports panic and `?` only as direct arm statements with a verified frame-drop plan",
                 path,
                 span.line,
                 span.column,
@@ -1007,7 +1157,114 @@ fn validate_static_select_arm_body(
         ));
     }
     for statement in body {
-        validate_statement(path, statement)?;
+        validate_statement(path, statement, false)?;
+    }
+    Ok(())
+}
+
+#[allow(clippy::too_many_arguments)]
+fn lower_static_select_arm_statement_into(
+    path: &Path,
+    statement: &Stmt,
+    arm_scope: &mut HashMap<String, Binding>,
+    imports: &[String],
+    signatures: &HashMap<String, FunctionSignature>,
+    structs: &HashMap<String, StructType>,
+    enums: &HashMap<String, EnumType>,
+    return_type: &ValueType,
+    loop_depth: usize,
+    cancellations: &[String],
+    out: &mut Vec<Statement>,
+) -> Result<(), Diagnostic> {
+    if matches!(
+        statement,
+        Stmt::Let {
+            value: AstExpr::Question { .. },
+            ..
+        }
+    ) {
+        return lower_structured_question_let_into(
+            path,
+            statement,
+            arm_scope,
+            imports,
+            signatures,
+            structs,
+            enums,
+            return_type,
+            loop_depth,
+            cancellations,
+            out,
+        );
+    }
+
+    let mut lowered = Vec::new();
+    lower_stmt_into(
+        path,
+        statement,
+        arm_scope,
+        imports,
+        signatures,
+        structs,
+        enums,
+        return_type,
+        false,
+        loop_depth,
+        &[],
+        &mut lowered,
+    )?;
+    let [lowered_statement] = lowered.as_mut_slice() else {
+        out.extend(lowered);
+        return Ok(());
+    };
+    match lowered_statement {
+        Statement::Return(Some(value)) if !cancellations.is_empty() => {
+            let temporary = fresh_internal_binding(arm_scope, "select_return_value");
+            arm_scope.insert(
+                temporary.clone(),
+                Binding {
+                    value_type: return_type.clone(),
+                    mutable: false,
+                    source: BindingSource::Local,
+                },
+            );
+            out.push(Statement::Let {
+                name: temporary.clone(),
+                value_type: return_type.clone(),
+                initializer: value.clone(),
+            });
+            push_structured_cancellations(out, cancellations);
+            out.push(Statement::Return(Some(ValueExpr::Variable(temporary))));
+        }
+        Statement::Return(None) if !cancellations.is_empty() => {
+            push_structured_cancellations(out, cancellations);
+            out.push(Statement::Return(None));
+        }
+        Statement::QuestionReturn {
+            early_exit_actions, ..
+        } => {
+            *early_exit_actions = structured_cancellation_actions(cancellations);
+            out.append(&mut lowered);
+        }
+        Statement::Panic(message) if !cancellations.is_empty() => {
+            let temporary = fresh_internal_binding(arm_scope, "select_panic_message");
+            arm_scope.insert(
+                temporary.clone(),
+                Binding {
+                    value_type: ValueType::String,
+                    mutable: false,
+                    source: BindingSource::Local,
+                },
+            );
+            out.push(Statement::Let {
+                name: temporary.clone(),
+                value_type: ValueType::String,
+                initializer: message.clone(),
+            });
+            push_structured_cancellations(out, cancellations);
+            out.push(Statement::Panic(ValueExpr::Variable(temporary)));
+        }
+        _ => out.append(&mut lowered),
     }
     Ok(())
 }
@@ -1166,14 +1423,23 @@ fn push_structured_cancellations(out: &mut Vec<Statement>, handles: &[String]) {
 struct StructuredScopeValidation {
     unjoined: Vec<String>,
     question_cancellations: HashMap<usize, Vec<String>>,
+    select_cancellations: HashMap<usize, Vec<String>>,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum StructuredHandleState {
+    Available,
+    Consumed,
+    SelectConsumed,
 }
 
 fn validate_structured_scope(
     path: &Path,
     body: &[Stmt],
 ) -> Result<StructuredScopeValidation, Diagnostic> {
-    let mut handles = HashMap::<String, bool>::new();
+    let mut handles = HashMap::<String, StructuredHandleState>::new();
     let mut question_cancellations = HashMap::new();
+    let mut select_cancellations = HashMap::new();
     for (index, statement) in body.iter().enumerate() {
         let span = statement_span(statement);
         match statement {
@@ -1211,7 +1477,7 @@ fn validate_structured_scope(
                         &span.text,
                     ));
                 };
-                handles.insert(name.clone(), false);
+                handles.insert(name.clone(), StructuredHandleState::Available);
             }
             Stmt::Let {
                 mutable,
@@ -1251,20 +1517,18 @@ fn validate_structured_scope(
                         Ok(())
                     })?;
                     if let Some(handle) = escaped {
-                        return Err(Diagnostic::new(
-                            "E0872",
+                        return Err(structured_handle_escape_diagnostic(
+                            path,
+                            span,
+                            &handle,
+                            &handles,
                             format!(
                                 "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
                             ),
-                            path,
-                            span.line,
-                            span.column,
-                            span.length,
-                            &span.text,
                         ));
                     }
                 }
-                question_cancellations.insert(index, unjoined_structured_handles(&handles));
+                question_cancellations.insert(index, cleanup_structured_handles(&handles));
             }
             Stmt::Let {
                 mutable,
@@ -1305,6 +1569,29 @@ fn validate_structured_scope(
                 }
                 consume_structured_handle(path, span, args, &mut handles, "task.join")?;
             }
+            Stmt::TaskSelect { arms, .. } => {
+                for arm in arms {
+                    let AstExpr::Call {
+                        callee,
+                        args,
+                        type_args,
+                    } = &arm.operation
+                    else {
+                        continue;
+                    };
+                    if callee == &["task", "join"] && type_args.is_empty() && args.len() == 1 {
+                        consume_structured_select_handle(path, &arm.span, args, &mut handles)?;
+                        continue;
+                    }
+                    reject_structured_handle_escape(path, &arm.span, &arm.operation, &handles)?;
+                }
+                for arm in arms {
+                    for arm_statement in &arm.body {
+                        reject_structured_statement_handle_escape(path, arm_statement, &handles)?;
+                    }
+                }
+                select_cancellations.insert(index, cleanup_structured_handles(&handles));
+            }
             Stmt::Return { .. } => {
                 if index + 1 != body.len() {
                     return Err(Diagnostic::new(
@@ -1328,14 +1615,12 @@ fn validate_structured_scope(
                     Ok(())
                 })?;
                 if let Some(handle) = escaped {
-                    return Err(Diagnostic::new(
-                        "E0872",
-                        format!("task handle `{handle}` cannot be returned from its scope"),
+                    return Err(structured_handle_escape_diagnostic(
                         path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
+                        span,
+                        &handle,
+                        &handles,
+                        format!("task handle `{handle}` cannot be returned from its scope"),
                     ));
                 }
             }
@@ -1371,24 +1656,23 @@ fn validate_structured_scope(
                     Ok(())
                 })?;
                 if let Some(handle) = escaped {
-                    return Err(Diagnostic::new(
-                        "E0872",
+                    return Err(structured_handle_escape_diagnostic(
+                        path,
+                        span,
+                        &handle,
+                        &handles,
                         format!(
                             "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
                         ),
-                        path,
-                        span.line,
-                        span.column,
-                        span.length,
-                        &span.text,
                     ));
                 }
             }
         }
     }
     Ok(StructuredScopeValidation {
-        unjoined: unjoined_structured_handles(&handles),
+        unjoined: cleanup_structured_handles(&handles),
         question_cancellations,
+        select_cancellations,
     })
 }
 
@@ -1428,7 +1712,10 @@ fn validate_deadline_scope(path: &Path, body: &[Stmt]) -> Result<(), Diagnostic>
     Ok(())
 }
 
-fn call_targets_structured_handle(args: &[AstExpr], handles: &HashMap<String, bool>) -> bool {
+fn call_targets_structured_handle(
+    args: &[AstExpr],
+    handles: &HashMap<String, StructuredHandleState>,
+) -> bool {
     matches!(
         args,
         [AstExpr::Name(handle_path)]
@@ -1440,7 +1727,7 @@ fn consume_structured_handle(
     path: &Path,
     span: &Span,
     args: &[AstExpr],
-    handles: &mut HashMap<String, bool>,
+    handles: &mut HashMap<String, StructuredHandleState>,
     operation: &str,
 ) -> Result<(), Diagnostic> {
     let [AstExpr::Name(handle_path)] = args else {
@@ -1465,7 +1752,7 @@ fn consume_structured_handle(
             &span.text,
         ));
     };
-    let Some(consumed) = handles.get_mut(handle) else {
+    let Some(state) = handles.get_mut(handle) else {
         return Err(Diagnostic::new(
             "E0872",
             format!("`{handle}` is not a task handle owned by this scope"),
@@ -1476,7 +1763,16 @@ fn consume_structured_handle(
             &span.text,
         ));
     };
-    if *consumed {
+    if *state != StructuredHandleState::Available {
+        if *state == StructuredHandleState::SelectConsumed {
+            return Err(static_select_ownership_diagnostic(
+                path,
+                span,
+                format!(
+                    "task handle `{handle}` is unavailable after task.select; a winning join consumed it and a losing join returned it only to implicit scope cleanup"
+                ),
+            ));
+        }
         let message = if operation == "task.join" {
             format!("task handle `{handle}` is joined more than once or after cancellation")
         } else {
@@ -1492,15 +1788,144 @@ fn consume_structured_handle(
             &span.text,
         ));
     }
-    *consumed = true;
+    *state = StructuredHandleState::Consumed;
     Ok(())
 }
 
-fn unjoined_structured_handles(handles: &HashMap<String, bool>) -> Vec<String> {
+fn consume_structured_select_handle(
+    path: &Path,
+    span: &Span,
+    args: &[AstExpr],
+    handles: &mut HashMap<String, StructuredHandleState>,
+) -> Result<(), Diagnostic> {
+    let [AstExpr::Name(handle_path)] = args else {
+        return Err(static_select_ownership_diagnostic(
+            path,
+            span,
+            "task.select join arms require one scope-owned task handle",
+        ));
+    };
+    let [handle] = handle_path.as_slice() else {
+        return Err(static_select_ownership_diagnostic(
+            path,
+            span,
+            "task.select join arms require one unqualified scope-owned task handle",
+        ));
+    };
+    let Some(state) = handles.get_mut(handle) else {
+        return Err(static_select_ownership_diagnostic(
+            path,
+            span,
+            format!("`{handle}` is not a task handle owned by this scope"),
+        ));
+    };
+    if *state != StructuredHandleState::Available {
+        return Err(static_select_ownership_diagnostic(
+            path,
+            span,
+            format!(
+                "task handle `{handle}` cannot appear in more than one task.select join arm or after another consuming operation"
+            ),
+        ));
+    }
+    *state = StructuredHandleState::SelectConsumed;
+    Ok(())
+}
+
+fn cleanup_structured_handles(handles: &HashMap<String, StructuredHandleState>) -> Vec<String> {
     let mut unjoined = handles
         .iter()
-        .filter_map(|(name, joined)| (!joined).then_some(name.as_str()))
+        .filter_map(|(name, state)| {
+            (*state != StructuredHandleState::Consumed).then_some(name.as_str())
+        })
         .collect::<Vec<_>>();
     unjoined.sort_unstable();
     unjoined.into_iter().map(str::to_string).collect()
+}
+
+fn structured_handle_escape_diagnostic(
+    path: &Path,
+    span: &Span,
+    handle: &str,
+    handles: &HashMap<String, StructuredHandleState>,
+    fallback: String,
+) -> Diagnostic {
+    if handles.get(handle) == Some(&StructuredHandleState::SelectConsumed) {
+        return static_select_ownership_diagnostic(
+            path,
+            span,
+            format!(
+                "task handle `{handle}` is unavailable after task.select; losing join ownership is reserved for mandatory implicit scope cleanup"
+            ),
+        );
+    }
+    Diagnostic::new(
+        "E0872",
+        fallback,
+        path,
+        span.line,
+        span.column,
+        span.length,
+        &span.text,
+    )
+}
+
+fn reject_structured_handle_escape(
+    path: &Path,
+    span: &Span,
+    expression: &AstExpr,
+    handles: &HashMap<String, StructuredHandleState>,
+) -> Result<(), Diagnostic> {
+    let mut escaped = None;
+    crate::validation_tasks::visit_expression(expression, &mut |candidate| {
+        if let AstExpr::Name(name) = candidate
+            && let [name] = name.as_slice()
+            && handles.contains_key(name)
+        {
+            escaped = Some(name.clone());
+        }
+        Ok(())
+    })?;
+    if let Some(handle) = escaped {
+        return Err(structured_handle_escape_diagnostic(
+            path,
+            span,
+            &handle,
+            handles,
+            format!(
+                "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn reject_structured_statement_handle_escape(
+    path: &Path,
+    statement: &Stmt,
+    handles: &HashMap<String, StructuredHandleState>,
+) -> Result<(), Diagnostic> {
+    let span = statement_span(statement);
+    let mut escaped = None;
+    visit_statement_expressions(statement, &mut |expression| {
+        if let AstExpr::Name(name) = expression
+            && let [name] = name.as_slice()
+            && handles.contains_key(name)
+        {
+            escaped = Some(name.clone());
+        }
+        Ok(())
+    })?;
+    if let Some(handle) = escaped {
+        return Err(structured_handle_escape_diagnostic(
+            path,
+            span,
+            &handle,
+            handles,
+            format!(
+                "task handle `{handle}` may only be consumed by task.join or task.cancel inside its scope"
+            ),
+        ));
+    }
+    Ok(())
 }

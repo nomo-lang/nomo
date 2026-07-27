@@ -86,7 +86,11 @@ pub(super) fn statement_uses_env_get(statement: &Statement) -> bool {
         Statement::TaskSelect { arms } => arms.iter().any(|arm| {
             let operation_uses = match &arm.operation {
                 TaskSelectOperation::Receive { channel, .. } => expr_uses_env_get(channel),
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_uses_env_get(channel) || expr_uses_env_get(value)
+                }
                 TaskSelectOperation::Sleep { duration } => expr_uses_env_get(duration),
+                TaskSelectOperation::Join { .. } => false,
             };
             operation_uses || arm.body.iter().any(statement_uses_env_get)
         }),
@@ -182,7 +186,11 @@ pub(super) fn statement_uses_env_args(statement: &Statement) -> bool {
         Statement::TaskSelect { arms } => arms.iter().any(|arm| {
             let operation_uses = match &arm.operation {
                 TaskSelectOperation::Receive { channel, .. } => expr_uses_env_args(channel),
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_uses_env_args(channel) || expr_uses_env_args(value)
+                }
                 TaskSelectOperation::Sleep { duration } => expr_uses_env_args(duration),
+                TaskSelectOperation::Join { .. } => false,
             };
             operation_uses || arm.body.iter().any(statement_uses_env_args)
         }),

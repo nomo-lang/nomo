@@ -105,6 +105,7 @@ pub enum Statement {
         result_type: ValueType,
         return_type: ValueType,
         result_expr: ValueExpr,
+        early_exit_actions: Vec<ValueExpr>,
     },
     LetElse {
         binding: String,
@@ -200,8 +201,16 @@ pub enum TaskSelectOperation {
         channel: ValueExpr,
         element_type: ValueType,
     },
+    Send {
+        channel: ValueExpr,
+        value: Box<ValueExpr>,
+        element_type: ValueType,
+    },
     Sleep {
         duration: ValueExpr,
+    },
+    Join {
+        handle: String,
     },
 }
 

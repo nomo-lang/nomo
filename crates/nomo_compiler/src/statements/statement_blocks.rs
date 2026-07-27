@@ -402,6 +402,7 @@ pub(super) fn lower_block(
             return_type,
             false,
             loop_depth,
+            &[],
             &mut out,
         )?;
     }

@@ -373,16 +373,21 @@ a capability error before evaluating operands that would be consumed. Native
 examples and the exact counter/Go evidence gate are documented in
 `examples/async_bounded_channel` and `performance/async/manifest-p3.json`.
 
-P3-C adds the compiler-recognized
-`task.select { operation => binding { ... } ... }` statement. Its first
-native C99 slice accepts 2 through 8 direct `task.receive(Channel<T>)` and
-`task.sleep(Duration)` arms. Operands evaluate exactly once from top to
-bottom; immediate readiness resolves in source order. Otherwise all pending
-arms share one owner-local token, the first winner eagerly cleans every loser,
-and the owner frame is enqueued at most once. Each arm body must be non-empty,
-non-suspending, and fall through normally. Browser WASM rejects the capability
-before operand evaluation. General send/join selection and structured arm
-exits remain later work. See `examples/async_static_select`.
+P3-C/P3-D add the compiler-recognized
+`task.select { operation => binding { ... } ... }` statement. Native C99
+accepts 2 through 8 direct `task.receive(Channel<T>)`,
+`task.send(Channel<T>, T)`, `task.sleep(Duration)`, and
+`task.join(Task<T>)` arms. Operands evaluate exactly once from top to bottom;
+immediate readiness resolves in source order. Otherwise all pending arms share
+one owner-local token, the first winner eagerly cleans every loser, and the
+owner frame is enqueued at most once. Send values are staged before readiness
+and consumed at the select boundary. Join handles are affine after selection;
+a losing join only unregisters its waiter and leaves the child to mandatory
+scope cleanup. Arm bodies must be non-empty and non-suspending. Direct
+`return`, typed `?`, and panic use structured cleanup, while nested control
+flow or suspension remains E0876. Browser WASM rejects the capability before
+operand evaluation. See `examples/async_static_select` and
+`examples/async_send_join_select`.
 
 The structured forms create true owner-local concurrency without changing
 direct-style child calls. Each child target is currently a direct,
@@ -419,9 +424,9 @@ suspend function. It must fall through; deadline-body control flow, return,
 `?`, panic, defer, unsafe, and nested scopes/deadlines remain E0876. Nested
 scopes, nested control flow, non-final scope return, `?` in other positions,
 panic nested in another expression, cancellation tokens, general deadline
-exits, cross-shard channels, and general send/join select are not in this
-slice. P3-C's static receive/timer arms still reject nested suspension and
-non-fallthrough exits. A direct panic owns its
+exits, and cross-shard channels are not in this slice. P3-C/P3-D static
+receive/send/timer/join arms still reject nested suspension and nested
+structured exits. A direct panic owns its
 non-suspending message, stops the executor, recursively cancels the root task
 tree, drops every frame, completes runtime shutdown and metrics export, then
 prints and releases the original message before process exit. Browser WASM

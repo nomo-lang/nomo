@@ -232,9 +232,19 @@ fn collect_stmt_struct(
                         collect_type_struct(element_type, seen, out);
                         collect_expr_struct(channel, seen, out);
                     }
+                    TaskSelectOperation::Send {
+                        channel,
+                        value,
+                        element_type,
+                    } => {
+                        collect_type_struct(element_type, seen, out);
+                        collect_expr_struct(channel, seen, out);
+                        collect_expr_struct(value, seen, out);
+                    }
                     TaskSelectOperation::Sleep { duration } => {
                         collect_expr_struct(duration, seen, out);
                     }
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 for stmt in &arm.body {
                     collect_stmt_struct(stmt, seen, out);

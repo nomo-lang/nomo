@@ -128,11 +128,15 @@ where
                 })
         }
         Statement::TaskSelect { arms } => arms.iter().any(|arm| {
-            let operation = match &arm.operation {
-                TaskSelectOperation::Receive { channel, .. } => channel,
-                TaskSelectOperation::Sleep { duration } => duration,
+            let operation_contains = match &arm.operation {
+                TaskSelectOperation::Receive { channel, .. } => expr_contains(channel, predicate),
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_contains(channel, predicate) || expr_contains(value, predicate)
+                }
+                TaskSelectOperation::Sleep { duration } => expr_contains(duration, predicate),
+                TaskSelectOperation::Join { .. } => false,
             };
-            expr_contains(operation, predicate)
+            operation_contains
                 || arm
                     .body
                     .iter()

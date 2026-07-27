@@ -745,6 +745,8 @@ fn main() -> void {
                 assert!(target_c.contains("WT_EXECUTEONLYONCE"));
                 assert!(target_c.contains("FILE_FLAG_OVERLAPPED"));
                 assert!(target_c.contains("CancelIoEx"));
+                assert!(!target_c.contains("nomo_member_program.len"));
+                assert!(!target_c.contains("length != data.len"));
                 assert!(!target_c.contains("nomo_process_windows_reader_thread"));
                 assert!(!target_c.contains("nomo_process_windows_writer_thread"));
                 assert!(!target_c.contains("async process pipes are not available"));

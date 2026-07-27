@@ -260,8 +260,7 @@ static void nomo_async_process_command_release(
 
 static int nomo_async_process_command_text_valid(nomo_string value) {
     return value.data != NULL
-        && value.len <= NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES
-        && strlen(value.data) == value.len;
+        && strlen(value.data) <= NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES;
 }
 
 static int nomo_async_process_copy_command(
@@ -270,9 +269,42 @@ static int nomo_async_process_copy_command(
 ) {
     memset(target, 0, sizeof(*target));
     if (!nomo_async_process_command_text_valid(source.@PROGRAM_MEMBER@)
-        || source.@PROGRAM_MEMBER@.len == 0u
+        || source.@PROGRAM_MEMBER@.data[0] == '\0'
         || source.@ARGS_MEMBER@.len > 4096u
         || source.@ENV_MEMBER@.len > 4096u) {
+        return 1;
+    }
+    size_t retained = strlen(source.@PROGRAM_MEMBER@.data) + 1u;
+    for (size_t index = 0u; index < source.@ARGS_MEMBER@.len; index += 1u) {
+        if (!nomo_async_process_command_text_valid(
+                source.@ARGS_MEMBER@.data[index]
+            )) {
+            return 1;
+        }
+        retained += strlen(source.@ARGS_MEMBER@.data[index].data) + 1u;
+    }
+    for (size_t index = 0u; index < source.@ENV_MEMBER@.len; index += 1u) {
+        @PROCESS_ENV@ item = source.@ENV_MEMBER@.data[index];
+        if (!nomo_async_process_command_text_valid(item.@NAME_MEMBER@)
+            || !nomo_async_process_command_text_valid(
+                item.@VALUE_MEMBER@
+            )) {
+            return 1;
+        }
+        retained += strlen(item.@NAME_MEMBER@.data)
+            + strlen(item.@VALUE_MEMBER@.data) + 2u;
+    }
+    if (source.@CWD_MEMBER@.tag == @CWD_SOME@) {
+        if (!nomo_async_process_command_text_valid(
+                source.@CWD_MEMBER@.payload.@SOME_PAYLOAD@
+            )) {
+            return 1;
+        }
+        retained += strlen(
+            source.@CWD_MEMBER@.payload.@SOME_PAYLOAD@.data
+        ) + 1u;
+    }
+    if (retained > NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES) {
         return 1;
     }
     target->program =
@@ -287,7 +319,7 @@ static int nomo_async_process_copy_command(
         nomo_string cwd =
             source.@CWD_MEMBER@.payload.@SOME_PAYLOAD@;
         if (!nomo_async_process_command_text_valid(cwd)
-            || cwd.len == 0u) {
+            || cwd.data[0] == '\0') {
             nomo_async_process_command_release(target);
             return 1;
         }
@@ -329,7 +361,7 @@ static int nomo_async_process_copy_command(
     for (size_t index = 0u; index < target->envc; index += 1u) {
         @PROCESS_ENV@ item = source.@ENV_MEMBER@.data[index];
         if (!nomo_async_process_command_text_valid(item.@NAME_MEMBER@)
-            || item.@NAME_MEMBER@.len == 0u
+            || item.@NAME_MEMBER@.data[0] == '\0'
             || strchr(item.@NAME_MEMBER@.data, '=') != NULL
             || !nomo_async_process_command_text_valid(item.@VALUE_MEMBER@)) {
             nomo_async_process_command_release(target);
@@ -585,8 +617,11 @@ static wchar_t *nomo_async_process_environment_block(
         }
         for (const wchar_t *item = block; *item != L'\0';
              item += wcslen(item) + 1u) {
-            if (*item != L'='
-                && nomo_async_process_wide_env_push(&env, item) != 0) {
+            if (*item == L'=') {
+                continue;
+            }
+            if (env.len >= 4096u - command->envc
+                || nomo_async_process_wide_env_push(&env, item) != 0) {
                 FreeEnvironmentStringsW(block);
                 nomo_async_process_wide_env_release(&env);
                 return NULL;
@@ -668,6 +703,10 @@ static wchar_t *nomo_async_process_environment_block(
     }
     if (env.len == 0u) {
         units = 2u;
+    }
+    if (units > NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES) {
+        nomo_async_process_wide_env_release(&env);
+        return NULL;
     }
     wchar_t *block = (wchar_t *)calloc(units, sizeof(wchar_t));
     if (block == NULL) {
@@ -2716,8 +2755,7 @@ static @VOID_RESULT@ @WRITE_STDIN_NAME@(
     }
     size_t length = strlen(data.data);
     if (length == 0u
-        || length > NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES
-        || length != data.len) {
+        || length > NOMO_ASYNC_PROCESS_MAX_PAYLOAD_BYTES) {
         @VOID_RESULT@ result;
         nomo_async_process_void_error(
             &result,

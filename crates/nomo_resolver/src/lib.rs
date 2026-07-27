@@ -1102,7 +1102,7 @@ mod tests {
         fs::write(package_root.join("nomo.toml"), manifest).unwrap();
         fs::write(
             package_root.join("src/main.nomo"),
-            "package demo.main\n\npub fn answer() -> i64 {\n    return 42\n}\n",
+            "package demo\n\npub fn answer() -> i64 {\n    return 42\n}\n",
         )
         .unwrap();
         let package_metadata = PackageMetadata {

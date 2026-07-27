@@ -170,7 +170,7 @@ mod tests {
 
     #[test]
     fn module_graph_exposes_stable_dependency_order() {
-        let root = ModuleNode::new(id("app.main"), "src/main.nomo".into(), vec![id("app.a")]);
+        let root = ModuleNode::new(id("app"), "src/main.nomo".into(), vec![id("app.a")]);
         let mut graph = ModuleGraph::new(root);
         graph.add_module(ModuleNode::new(
             id("app.a"),
@@ -182,7 +182,7 @@ mod tests {
             "src/b.nomo".into(),
             Vec::new(),
         ));
-        assert!(graph.add_dependency(id("app.main"), id("app.a")).is_none());
+        assert!(graph.add_dependency(id("app"), id("app.a")).is_none());
         assert!(graph.add_dependency(id("app.a"), id("app.b")).is_none());
 
         assert_eq!(graph.module_count(), 3);
@@ -192,11 +192,11 @@ mod tests {
                 .iter()
                 .map(ModuleId::dotted)
                 .collect::<Vec<_>>(),
-            vec!["app.b", "app.a", "app.main"]
+            vec!["app.b", "app.a", "app"]
         );
         assert_eq!(
             graph
-                .dependencies(&id("app.main"))
+                .dependencies(&id("app"))
                 .map(ModuleId::dotted)
                 .collect::<Vec<_>>(),
             vec!["app.a"]

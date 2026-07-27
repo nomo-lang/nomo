@@ -691,18 +691,19 @@ mod tests {
 
     #[test]
     fn formats_messy_source_to_canonical_source() {
-        let source = "package app . main\nimport std . io\n\npub struct User{\npub id:string\nemail:string\n}\nconst MAX:i32=100\npub enum State<T>{\nReady\nDone(T)\n}\nimpl User{\npub fn get_email(self)->string{\nreturn self.email\n}\n}\nfn label(value:State<i32>)->string{\nreturn match value{\nState.Ready=>\"ready\"\nState.Done(code)=>\"done\"\n}\n}\nfn main(){\nlet mut count:i32=1\ncount=count+1\nif let State.Done(code)=State.Done(count){\nreturn\n}else{\ndefer io.println(\"missing\")\n}\nfor item in items{\nbreak\ncontinue\n}\n}\n";
+        let source = "package app\nimport std . io\n\npub struct User{\npub id:string\nemail:string\n}\nconst MAX:i32=100\npub enum State<T>{\nReady\nDone(T)\n}\nimpl User{\npub fn get_email(self)->string{\nreturn self.email\n}\n}\nfn label(value:State<i32>)->string{\nreturn match value{\nState.Ready=>\"ready\"\nState.Done(code)=>\"done\"\n}\n}\nfn main(){\nlet mut count:i32=1\ncount=count+1\nif let State.Done(code)=State.Done(count){\nreturn\n}else{\ndefer io.println(\"missing\")\n}\nfor item in items{\nbreak\ncontinue\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.io\n\npub struct User {\n    pub id: string\n    email: string\n}\n\nconst MAX: i32 = 100\n\npub enum State<T> {\n    Ready\n    Done(T)\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn label(value: State<i32>) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n\nfn main() {\n    let mut count: i32 = 1\n    count = count + 1\n    if let State.Done(code) = State.Done(count) {\n        return\n    } else {\n        defer io.println(\"missing\")\n    }\n    for item in items {\n        break\n        continue\n    }\n}\n"
+            "package app\n\nimport std.io\n\npub struct User {\n    pub id: string\n    email: string\n}\n\nconst MAX: i32 = 100\n\npub enum State<T> {\n    Ready\n    Done(T)\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn label(value: State<i32>) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n\nfn main() {\n    let mut count: i32 = 1\n    count = count + 1\n    if let State.Done(code) = State.Done(count) {\n        return\n    } else {\n        defer io.println(\"missing\")\n    }\n    for item in items {\n        break\n        continue\n    }\n}\n"
         );
     }
 
     #[test]
     fn formatting_is_idempotent() {
-        let source = "package app.main\n\nfn add(left: i32, right: i32) -> i32 {\n    return left + right\n}\n";
+        let source =
+            "package app\n\nfn add(left: i32, right: i32) -> i32 {\n    return left + right\n}\n";
         let once = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &once).unwrap();
 
@@ -711,7 +712,7 @@ mod tests {
 
     #[test]
     fn preserves_test_attributes() {
-        let source = "package app.main\n\n#[test]\nfn adds_numbers(){\n}\n";
+        let source = "package app\n\n#[test]\nfn adds_numbers(){\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
@@ -721,7 +722,7 @@ mod tests {
 
     #[test]
     fn formats_expr_variants_and_escaping() {
-        let source = "package app.main\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let mask: i64 = a&b&^c<<d>>e|f^g\n    let ratio: f64 = total as f64\n    let grouped: i64 = (a+b)*-(c-d)\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
+        let source = "package app\n\nfn main() {\n    let point: Point = Point {\n        x: 1,\n        y: 2,\n    }\n    let ok: bool = !left&&right||fallback\n    let value: i64 = a-b*c/d%e\n    let mask: i64 = a&b&^c<<d>>e|f^g\n    let ratio: f64 = total as f64\n    let grouped: i64 = (a+b)*-(c-d)\n    let text: string = \"a\\n\\\"b\"\n    let letter: char = '\\n'\n    panic(text)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("Point { x: 1, y: 2 }"));
@@ -736,20 +737,20 @@ mod tests {
 
     #[test]
     fn formats_question_propagation() {
-        let source = "package app.main\n\nfn load_value()->Result<string,string>{\nreturn Ok(\"value\")\n}\n\nfn compute()->Result<string,string>{\nlet value:string=load_value()?\ndefer cleanup(load_value()?)\nreturn Ok(load_value()?)\n}\n";
+        let source = "package app\n\nfn load_value()->Result<string,string>{\nreturn Ok(\"value\")\n}\n\nfn compute()->Result<string,string>{\nlet value:string=load_value()?\ndefer cleanup(load_value()?)\nreturn Ok(load_value()?)\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
         assert_eq!(formatted, twice);
         assert_eq!(
             formatted,
-            "package app.main\n\nfn load_value() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nfn compute() -> Result<string, string> {\n    let value: string = load_value()?\n    defer cleanup(load_value()?)\n    return Ok(load_value()?)\n}\n"
+            "package app\n\nfn load_value() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nfn compute() -> Result<string, string> {\n    let value: string = load_value()?\n    defer cleanup(load_value()?)\n    return Ok(load_value()?)\n}\n"
         );
     }
 
     #[test]
     fn formats_compound_assignment_operators() {
-        let source = "package app.main\n\nfn main() -> void {\nlet mut value:i64=1\nvalue+=2\nvalue-=1\nvalue*=3\nvalue/=2\nvalue%=2\nvalue<<=1\nvalue>>=1\nvalue&=6\nvalue^=3\nvalue|=8\nvalue&^=1\n}\n";
+        let source = "package app\n\nfn main() {\nlet mut value:i64=1\nvalue+=2\nvalue-=1\nvalue*=3\nvalue/=2\nvalue%=2\nvalue<<=1\nvalue>>=1\nvalue&=6\nvalue^=3\nvalue|=8\nvalue&^=1\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         for line in [
@@ -771,8 +772,7 @@ mod tests {
 
     #[test]
     fn formats_postfix_update_operators() {
-        let source =
-            "package app.main\n\nfn main() -> void {\nlet mut value:i64=1\nvalue++\nvalue--\n}\n";
+        let source = "package app\n\nfn main() {\nlet mut value:i64=1\nvalue++\nvalue--\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("value++"));
@@ -781,7 +781,7 @@ mod tests {
 
     #[test]
     fn rejects_unformattable_non_expression_defer() {
-        let source = "package app.main\n\nfn main() -> void {\n    defer let value: i32 = 1\n}\n";
+        let source = "package app\n\nfn main() {\n    defer let value: i32 = 1\n}\n";
         let err = format_source(Path::new("main.nomo"), source).unwrap_err();
 
         assert_eq!(err.code, "E0902");
@@ -792,18 +792,18 @@ mod tests {
 
     #[test]
     fn preserves_line_comments_without_dropping_them() {
-        let source = "package app.main\n// keep me\nfn main() -> void {\n    return\n}\n";
+        let source = "package app\n// keep me\nfn main() {\n    return\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\n// keep me\nfn main() {\n    return\n}\n"
+            "package app\n\n// keep me\nfn main() {\n    return\n}\n"
         );
     }
 
     #[test]
     fn preserves_doc_comments_field_comments_and_trailing_comments() {
-        let source = "package app.main\n\n/// User record\npub struct User{\n/// Stable id\npub id:string // visible id\n}\n\nfn main(){\nlet value:i32=1 // one\n}\n";
+        let source = "package app\n\n/// User record\npub struct User{\n/// Stable id\npub id:string // visible id\n}\n\nfn main(){\nlet value:i32=1 // one\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
@@ -815,7 +815,7 @@ mod tests {
 
     #[test]
     fn preserves_nested_block_comments() {
-        let source = "package app.main\n/* outer\n/* inner */\nend */\nfn main(){\nreturn\n}\n";
+        let source = "package app\n/* outer\n/* inner */\nend */\nfn main(){\nreturn\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("/* outer\n/* inner */\nend */\nfn main()"));
@@ -823,7 +823,8 @@ mod tests {
 
     #[test]
     fn comment_markers_inside_strings_are_formattable() {
-        let source = "package app.main\n\nfn main() -> void {\nlet url:string=\"http://example.test/*literal*/\"\n}\n";
+        let source =
+            "package app\n\nfn main() {\nlet url:string=\"http://example.test/*literal*/\"\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("\"http://example.test/*literal*/\""));
@@ -831,24 +832,23 @@ mod tests {
 
     #[test]
     fn formats_top_level_script_statements() {
-        let source =
-            "package app.main\nimport std.io\nlet message:string=\"hi\"\nio.println(message)\n";
+        let source = "package app\nimport std.io\nlet message:string=\"hi\"\nio.println(message)\n";
         let formatted = format_source(Path::new("script.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.io\n\nlet message: string = \"hi\"\nio.println(message)\n"
+            "package app\n\nimport std.io\n\nlet message: string = \"hi\"\nio.println(message)\n"
         );
     }
 
     #[test]
     fn formats_three_clause_for_loop() {
-        let source = "package app.main\n\nfn main(){\nfor let i:ui64=0;i<10;i++{\n}\n}\n";
+        let source = "package app\n\nfn main(){\nfor let i:ui64=0;i<10;i++{\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nfn main() {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
+            "package app\n\nfn main() {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -858,12 +858,12 @@ mod tests {
 
     #[test]
     fn formats_array_literals_and_nested_index_assignment_idempotently() {
-        let source = "package app.main\n\nfn main(){\nlet mut matrix=[[1,2],[3,4],]\nmatrix[0][1]=7\nlet value=matrix[0][1]\n}\n";
+        let source = "package app\n\nfn main(){\nlet mut matrix=[[1,2],[3,4],]\nmatrix[0][1]=7\nlet value=matrix[0][1]\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nfn main() {\n    let mut matrix = [[1, 2], [3, 4]]\n    matrix[0][1] = 7\n    let value = matrix[0][1]\n}\n"
+            "package app\n\nfn main() {\n    let mut matrix = [[1, 2], [3, 4]]\n    matrix[0][1] = 7\n    let value = matrix[0][1]\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -873,26 +873,26 @@ mod tests {
 
     #[test]
     fn formats_interface_extern_impl_and_unsafe_blocks() {
-        let source = "package app.main\nimport std.ffi\n\npub interface Display{\nfn to_string(self)->string\n}\n\nextern \"C\"{\nfn puts(message:CString)->i32\n}\n\nstruct User{\nname:string\n}\n\nimpl Display for User{\nfn to_string(self)->string{\nreturn self.name\n}\n}\n\nfn main(){\nlet user:User=User{name:\"ok\"}\nlet message:CString=CString.from_string(user.to_string())\nunsafe{\nputs(message)\n}\n}\n";
+        let source = "package app\nimport std.ffi\n\npub interface Display{\nfn to_string(self)->string\n}\n\nextern \"C\"{\nfn puts(message:CString)->i32\n}\n\nstruct User{\nname:string\n}\n\nimpl Display for User{\nfn to_string(self)->string{\nreturn self.name\n}\n}\n\nfn main(){\nlet user:User=User{name:\"ok\"}\nlet message:CString=CString.from_string(user.to_string())\nunsafe{\nputs(message)\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
         assert_eq!(formatted, twice);
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.ffi\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: CString) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user: User = User { name: \"ok\" }\n    let message: CString = CString.from_string(user.to_string())\n    unsafe {\n        puts(message)\n    }\n}\n"
+            "package app\n\nimport std.ffi\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: CString) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user: User = User { name: \"ok\" }\n    let message: CString = CString.from_string(user.to_string())\n    unsafe {\n        puts(message)\n    }\n}\n"
         );
     }
 
     #[test]
     fn preserves_generic_interface_bounds() {
-        let source = "package app.main\n\ninterface Display{\nfn to_string(self)->string\n}\n\nfn render<T:Display>(value:T)->string{\nreturn value.to_string()\n}\n";
+        let source = "package app\n\ninterface Display{\nfn to_string(self)->string\n}\n\nfn render<T:Display>(value:T)->string{\nreturn value.to_string()\n}\n";
 
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n"
+            "package app\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -902,7 +902,7 @@ mod tests {
 
     #[test]
     fn formats_task_worker_types_without_exposing_the_internal_type_path() {
-        let source = "package std.task\n\nstruct TaskContext{\nhandle:u64\n}\n\npub fn spawn(worker:task fn(TaskContext,string)->string,input:string)->void{\n}\n";
+        let source = "package std.task\n\nstruct TaskContext{\nhandle:u64\n}\n\npub fn spawn(worker:task fn(TaskContext,string)->string,input:string){\n}\n";
         let formatted = format_source(Path::new("task.nomo"), source).unwrap();
 
         assert!(formatted.contains(
@@ -917,7 +917,7 @@ mod tests {
 
     #[test]
     fn omits_void_for_declarations_but_preserves_void_in_types_and_values() {
-        let source = "package app.main\n\ninterface Sink {\n    fn close(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64) -> void\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) -> Result<void, string> {\n    callback(\"ok\")\n    return Ok(void)\n}\n\nsuspend fn flush() -> void {\n}\n";
+        let source = "package app\n\ninterface Sink {\n    fn close(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64) -> void\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) -> Result<void, string> {\n    callback(\"ok\")\n    return Ok(void)\n}\n\nsuspend fn flush() -> void {\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert!(formatted.contains("fn close(self)\n"));
@@ -935,12 +935,12 @@ mod tests {
 
     #[test]
     fn formats_suspend_functions_and_interface_methods_idempotently() {
-        let source = "package app.main\n\ninterface Loader{\nsuspend fn load(self)->string\n}\n\nstruct Client{\n}\n\nimpl Loader for Client{\npub suspend fn load(self)->string{\nreturn \"ready\"\n}\n}\n\npub suspend fn main(){\n}\n";
+        let source = "package app\n\ninterface Loader{\nsuspend fn load(self)->string\n}\n\nstruct Client{\n}\n\nimpl Loader for Client{\npub suspend fn load(self)->string{\nreturn \"ready\"\n}\n}\n\npub suspend fn main(){\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() {\n}\n"
+            "package app\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() {\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -950,12 +950,12 @@ mod tests {
 
     #[test]
     fn formats_structured_task_scope_idempotently() {
-        let source = "package app.main\nimport std.task\n\nsuspend fn worker(value:string)->void{\ntask.yield_now()\n}\n\nsuspend fn main(){\ntask.scope{\nlet child=task.spawn worker(\"value\")\nlet joined:Result<void,TaskError> =task.join(child)\n}\n}\n";
+        let source = "package app\nimport std.task\n\nsuspend fn worker(value:string){\ntask.yield_now()\n}\n\nsuspend fn main(){\ntask.scope{\nlet child=task.spawn worker(\"value\")\nlet joined:Result<void,TaskError> =task.join(child)\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\n\nsuspend fn worker(value: string) {\n    task.yield_now()\n}\n\nsuspend fn main() {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
+            "package app\n\nimport std.task\n\nsuspend fn worker(value: string) {\n    task.yield_now()\n}\n\nsuspend fn main() {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -965,12 +965,12 @@ mod tests {
 
     #[test]
     fn formats_structured_task_deadline_idempotently() {
-        let source = "package app.main\nimport std.task\nimport std.time\n\nsuspend fn main(){\ntask.deadline(time.duration_millis(5)){\ntask.check_cancelled()\n}\n}\n";
+        let source = "package app\nimport std.task\nimport std.time\n\nsuspend fn main(){\ntask.deadline(time.duration_millis(5)){\ntask.check_cancelled()\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main() {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
+            "package app\n\nimport std.task\nimport std.time\n\nsuspend fn main() {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -980,12 +980,12 @@ mod tests {
 
     #[test]
     fn formats_static_task_select_idempotently() {
-        let source = "package app.main\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value:Channel<string>){\ntask.select{\ntask.receive(channel_value)=>received{\nlet value=received\n}\ntask.sleep(time.duration_millis(5))=>timeout{\nlet value=timeout\n}\n}\n}\n";
+        let source = "package app\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value:Channel<string>){\ntask.select{\ntask.receive(channel_value)=>received{\nlet value=received\n}\ntask.sleep(time.duration_millis(5))=>timeout{\nlet value=timeout\n}\n}\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value: Channel<string>) {\n    task.select {\n        task.receive(channel_value) => received {\n            let value = received\n        }\n        task.sleep(time.duration_millis(5)) => timeout {\n            let value = timeout\n        }\n    }\n}\n"
+            "package app\n\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value: Channel<string>) {\n    task.select {\n        task.receive(channel_value) => received {\n            let value = received\n        }\n        task.sleep(time.duration_millis(5)) => timeout {\n            let value = timeout\n        }\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

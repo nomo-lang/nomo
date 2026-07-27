@@ -550,14 +550,18 @@ fn render_nomo_bindings(
                     releases,
                 )?);
             }
-            out.push_str(") -> ");
-            out.push_str(&render_function_type(
+            out.push(')');
+            let return_type = render_function_type(
                 &function.return_type,
                 TypePosition::Return,
                 opaque_types,
                 &struct_names,
                 releases,
-            )?);
+            )?;
+            if return_type != "void" {
+                out.push_str(" -> ");
+                out.push_str(&return_type);
+            }
             out.push('\n');
         }
         out.push_str("}\n");
@@ -724,7 +728,7 @@ int32_t apply(int32_t value, int32_t (*callback)(int32_t));
         assert!(
             first
                 .source
-                .contains("fn file_close(handle: Owned<FileHandle>) -> void")
+                .contains("fn file_close(handle: Owned<FileHandle>)")
         );
         assert!(
             first

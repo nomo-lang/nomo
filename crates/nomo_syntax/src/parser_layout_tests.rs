@@ -3,7 +3,7 @@ use crate::lexer::lex;
 
 #[test]
 fn parses_dot_chain_line_continuation() {
-    let source = "package app\n    .main\n\nimport std\n    .io\n\nfn main() -> void {\n    let count: u64 = message\n        .len()\n}\n";
+    let source = "package app\n    .main\n\nimport std\n    .io\n\nfn main() {\n    let count: u64 = message\n        .len()\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -20,7 +20,8 @@ fn parses_dot_chain_line_continuation() {
 
 #[test]
 fn parses_keyword_as_dot_path_segment() {
-    let source = "package app.main\n\nimport std.debug.panic\n\nfn main() -> void {\n    debug.panic(\"boom\")\n}\n";
+    let source =
+        "package app\n\nimport std.debug.panic\n\nfn main() {\n    debug.panic(\"boom\")\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -36,7 +37,7 @@ fn parses_keyword_as_dot_path_segment() {
 
 #[test]
 fn parses_repeated_line_start_dot_continuations_on_named_values() {
-    let source = "package app.main\n\nfn make() -> Result<string, string> {\n    let prefix: string = \"newline\"\n    let with_dot: string = prefix\n        .concat(\" dot\")\n    return Result\n        .Ok(with_dot\n            .concat(\" ok\"))\n}\n";
+    let source = "package app\n\nfn make() -> Result<string, string> {\n    let prefix: string = \"newline\"\n    let with_dot: string = prefix\n        .concat(\" dot\")\n    return Result\n        .Ok(with_dot\n            .concat(\" ok\"))\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -67,7 +68,7 @@ fn parses_repeated_line_start_dot_continuations_on_named_values() {
 
 #[test]
 fn parses_operator_call_and_type_arg_line_continuations() {
-    let source = "package app.main\n\nstruct Box<T> {\n    value: T\n}\n\nfn add(left: i32, right: i32) -> i32 {\n    return left +\n        right\n}\n\nfn main() -> void {\n    let total: i32 = add(\n        1,\n        2\n    )\n    let ratio: f64 = total as\n        f64\n    let boxed: Box<i32> = Box.new<\n        i32\n    >(\n        total\n    )\n}\n";
+    let source = "package app\n\nstruct Box<T> {\n    value: T\n}\n\nfn add(left: i32, right: i32) -> i32 {\n    return left +\n        right\n}\n\nfn main() {\n    let total: i32 = add(\n        1,\n        2\n    )\n    let ratio: f64 = total as\n        f64\n    let boxed: Box<i32> = Box.new<\n        i32\n    >(\n        total\n    )\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -107,7 +108,7 @@ fn parses_operator_call_and_type_arg_line_continuations() {
 
 #[test]
 fn parses_match_arrow_line_continuation() {
-    let source = "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(n) =>\n            \"some\"\n        Option.None =>\n            \"none\"\n    }\n}\n\nfn print(value: Option<i32>) -> void {\n    match value {\n        Option.Some(n) =>\n            {\n                println(\"some\")\n            }\n        Option.None =>\n            {\n                println(\"none\")\n            }\n    }\n}\n";
+    let source = "package app\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(n) =>\n            \"some\"\n        Option.None =>\n            \"none\"\n    }\n}\n\nfn print(value: Option<i32>) {\n    match value {\n        Option.Some(n) =>\n            {\n                println(\"some\")\n            }\n        Option.None =>\n            {\n                println(\"none\")\n            }\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -128,19 +129,19 @@ fn parses_match_arrow_line_continuation() {
 fn rejects_multiple_newline_separated_items_on_one_line() {
     for (source, message) in [
         (
-            "package app.main\n\nstruct User {\n    id: string email: string\n}\n\nfn main() -> void {\n}\n",
+            "package app\n\nstruct User {\n    id: string email: string\n}\n\nfn main() {\n}\n",
             "expected newline after struct field",
         ),
         (
-            "package app.main\n\nenum Color {\n    Red Blue\n}\n\nfn main() -> void {\n}\n",
+            "package app\n\nenum Color {\n    Red Blue\n}\n\nfn main() {\n}\n",
             "expected newline after enum variant",
         ),
         (
-            "package app.main\n\nfn main() -> void {\n    let left: i32 = 1 let right: i32 = 2\n}\n",
+            "package app\n\nfn main() {\n    let left: i32 = 1 let right: i32 = 2\n}\n",
             "expected newline after statement",
         ),
         (
-            "package app.main\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\" Color.Blue => \"blue\"\n    }\n}\n\nfn main() -> void {\n}\n",
+            "package app\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\" Color.Blue => \"blue\"\n    }\n}\n\nfn main() {\n}\n",
             "expected newline after match arm",
         ),
     ] {

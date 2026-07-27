@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn accepts_enum_variant_and_exhaustive_match() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -18,7 +18,7 @@ fn label(color: Color) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let color: Color = Color.Red
     let text: string = label(color)
     io.println(text)
@@ -52,14 +52,14 @@ fn main() -> void {
 
 #[test]
 fn rejects_generic_enum_type_with_missing_type_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 enum Option<T> {
     Some(T)
     None
 }
 
-fn main() -> void {
+fn main() {
     let value: Option = Option.None
 }
 "#;
@@ -72,13 +72,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_generic_enum_type_with_extra_type_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 enum Color {
     Red
 }
 
-fn main() -> void {
+fn main() {
     let value: Color<i32> = Color.Red
 }
 "#;
@@ -91,11 +91,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_std_result_type_with_missing_type_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 
-fn main() -> void {
+fn main() {
     let value: Result<i32> = Result.Ok(1)
 }
 "#;
@@ -108,7 +108,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_exhaustive_match() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -123,7 +123,7 @@ fn label(color: Color) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -134,7 +134,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_payload_enum_and_match_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -150,7 +150,7 @@ fn unwrap_or_zero(value: MaybeInt) -> i64 {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: MaybeInt = MaybeInt.Some(41)
     let answer: i64 = unwrap_or_zero(value) + 1
     io.println("done")
@@ -172,7 +172,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_struct_payload_enum_and_match_field_access() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -192,7 +192,7 @@ fn label(value: MaybeUser) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: MaybeUser = MaybeUser.Some(User { email: "a@nomo.dev" })
     io.println(label(value))
 }
@@ -224,7 +224,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_struct_payload_enum_and_match_method_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -250,7 +250,7 @@ fn label(value: MaybeUser) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: MaybeUser = MaybeUser.Some(User { email: "a@nomo.dev" })
     io.println(label(value))
 }
@@ -281,7 +281,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_match_payload_binding_shadowing_outer_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -290,7 +290,7 @@ enum Option<T> {
     None
 }
 
-fn main() -> void {
+fn main() {
     let text: string = "outer"
     let value: Option<string> = Option.Some("inner")
     let result: string = match value {
@@ -308,7 +308,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_let_else_binding_shadowing_outer_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn label(value: Option<string>) -> string {
     let text: string = "outer"
@@ -318,7 +318,7 @@ fn label(value: Option<string>) -> string {
     return text
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -329,7 +329,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_if_let_binding_shadowing_outer_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn label(value: Option<string>) -> string {
     let text: string = "outer"
@@ -340,7 +340,7 @@ fn label(value: Option<string>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -351,11 +351,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_for_iter_binding_shadowing_outer_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
-fn main() -> void {
+fn main() {
     let item: i32 = 0
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
@@ -371,7 +371,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_generic_enum_instantiation_and_match_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -387,7 +387,7 @@ fn unwrap_or_zero(value: Option<i64>) -> i64 {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: Option<i64> = Option.Some(41)
     let answer: i64 = unwrap_or_zero(value) + 1
     io.println("done")
@@ -409,7 +409,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_unqualified_option_and_result_prelude_variants() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse() -> Result<i32, string> {
     return Ok(41)
@@ -464,7 +464,7 @@ fn main() -> Result<void, string> {
 
 #[test]
 fn accepts_let_else_with_option_payload_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn unwrap_or_fallback(value: Option<string>) -> string {
     let Some(text) = value else {
@@ -473,7 +473,7 @@ fn unwrap_or_fallback(value: Option<string>) -> string {
     return text
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -504,9 +504,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_let_else_with_non_diverging_else_body() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let value: Option<i32> = None
     let Some(number) = value else {
         let fallback: i32 = 0
@@ -521,7 +521,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_if_let_with_option_payload_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn label(value: Option<string>) -> string {
     if let Some(text) = value {
@@ -531,7 +531,7 @@ fn label(value: Option<string>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -567,7 +567,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_if_let_with_unit_variant() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn is_missing(value: Option<string>) -> bool {
     if let None = value {
@@ -576,7 +576,7 @@ fn is_missing(value: Option<string>) -> bool {
     return false
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -599,7 +599,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_pattern_scrutinees() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn load() -> Result<Option<string>, string> {
     return Ok(Some("value"))
@@ -631,7 +631,7 @@ fn unwrap_with_match() -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -714,9 +714,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_if_let_binding_outside_body() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let value: Option<string> = Some("inner")
     if let Some(text) = value {
     }
@@ -731,14 +731,14 @@ fn main() -> void {
 
 #[test]
 fn unqualified_variant_does_not_target_user_enum() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 enum MaybeInt {
     Some(i32)
     None
 }
 
-fn main() -> void {
+fn main() {
     let value: MaybeInt = Some(1)
 }
 "#;
@@ -750,13 +750,13 @@ fn main() -> void {
 
 #[test]
 fn function_name_shadows_unqualified_prelude_variant() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn Ok(value: i32) -> i32 {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let value: i32 = Ok(1)
 }
 "#;
@@ -774,9 +774,9 @@ fn main() -> void {
 
 #[test]
 fn local_binding_shadows_unqualified_prelude_variant_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let Ok: i32 = 1
     let value: Result<i32, string> = Ok(2)
 }
@@ -789,9 +789,9 @@ fn main() -> void {
 
 #[test]
 fn local_binding_shadows_unqualified_prelude_variant_pattern() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let Some: string = "shadow"
     let value: Option<i32> = Option.Some(1)
     let label: string = match value {
@@ -808,11 +808,11 @@ fn main() -> void {
 
 #[test]
 fn qualified_core_variant_still_works_when_local_name_shadows_prelude() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 
-fn main() -> void {
+fn main() {
     let Some: string = "shadow"
     let value: Option<i32> = Option.Some(1)
     let label: string = match value {
@@ -827,7 +827,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_missing_payload_binding_in_match() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -843,7 +843,7 @@ fn unwrap_or_zero(value: MaybeInt) -> i64 {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;

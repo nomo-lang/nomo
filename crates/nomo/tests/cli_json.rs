@@ -52,7 +52,11 @@ fn nomo_check_emits_json_errors() {
         "[package]\nname = \"json_demo\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), invalid_source()).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        with_package(invalid_source(), "json_demo"),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("check")
@@ -78,7 +82,11 @@ fn nomo_check_source_file_path_emits_json_errors() {
     )
     .unwrap();
     let source = project.join("src/main.nomo");
-    fs::write(&source, invalid_source()).unwrap();
+    fs::write(
+        &source,
+        with_package(invalid_source(), "json_source_file_demo"),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("check")
@@ -103,7 +111,11 @@ fn nomo_build_emits_json_errors() {
         "[package]\nname = \"json_build_demo\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), invalid_source()).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        with_package(invalid_source(), "json_build_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -137,7 +149,11 @@ fn nomo_build_source_file_path_emits_json_errors() {
     )
     .unwrap();
     let source = project.join("src/main.nomo");
-    fs::write(&source, invalid_source()).unwrap();
+    fs::write(
+        &source,
+        with_package(invalid_source(), "json_build_source_file_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -171,7 +187,11 @@ fn nomo_native_build_source_file_path_emits_json_errors() {
     )
     .unwrap();
     let source = project.join("src/main.nomo");
-    fs::write(&source, invalid_source()).unwrap();
+    fs::write(
+        &source,
+        with_package(invalid_source(), "json_native_build_source_file_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -203,7 +223,11 @@ fn nomo_run_emits_json_errors() {
         "[package]\nname = \"json_run_demo\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), invalid_source()).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        with_package(invalid_source(), "json_run_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -236,7 +260,11 @@ fn nomo_run_source_file_path_emits_json_errors() {
     )
     .unwrap();
     let source = project.join("src/main.nomo");
-    fs::write(&source, invalid_source()).unwrap();
+    fs::write(
+        &source,
+        with_package(invalid_source(), "json_run_source_file_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -292,7 +320,11 @@ fn nomo_check_emits_json_for_lexical_errors() {
         "[package]\nname = \"lexical_demo\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), invalid_lexical_source()).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        with_package(invalid_lexical_source(), "lexical_demo"),
+    )
+    .unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("check")
@@ -352,11 +384,7 @@ fn nomoc_check_emits_json_for_reserved_future_keywords() {
     let root = temp_test_root("nomoc-json-reserved-future-keyword");
     reset_dir(&root);
     let source = root.join("reserved-future-keyword.nomo");
-    fs::write(
-        &source,
-        "package app.main\n\nfn main() -> void {\n    go work()\n}\n",
-    )
-    .unwrap();
+    fs::write(&source, "package app\n\nfn main() {\n    go work()\n}\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("check")
@@ -413,7 +441,7 @@ fn nomoc_check_emits_json_for_parser_errors() {
         "{text}"
     );
     assert!(text.contains("\"line\":1"), "{text}");
-    assert!(text.contains("\"column\":18"), "{text}");
+    assert!(text.contains("\"column\":13"), "{text}");
     assert!(text.contains("\"suggestions\":[]"), "{text}");
     assert!(
         output.stdout.is_empty(),
@@ -435,7 +463,11 @@ fn nomo_check_emits_json_for_parser_errors() {
         "[package]\nname = \"parser_demo\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), invalid_parser_source()).unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        with_package(invalid_parser_source(), "parser_demo"),
+    )
+    .unwrap();
     let build_dir = project.join("build");
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -456,7 +488,7 @@ fn nomo_check_emits_json_for_parser_errors() {
         "{text}"
     );
     assert!(text.contains("\"line\":1"), "{text}");
-    assert!(text.contains("\"column\":18"), "{text}");
+    assert!(text.contains("\"column\":21"), "{text}");
     assert!(text.contains("\"suggestions\":[]"), "{text}");
     assert!(
         output.stdout.is_empty(),
@@ -475,7 +507,7 @@ fn nomoc_check_emits_json_suggestions() {
     let source = root.join("missing-import.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    println(\"hi\")\n}\n",
+        "package app\n\nfn main() {\n    println(\"hi\")\n}\n",
     )
     .unwrap();
 
@@ -511,7 +543,7 @@ fn nomoc_check_emits_json_for_missing_standard_type_import() {
     let source = root.join("missing-standard-type-import.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn parse() -> Result<i32, string> {\n    return 1\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nfn parse() -> Result<i32, string> {\n    return 1\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -545,7 +577,7 @@ fn nomoc_check_emits_json_for_missing_main() {
     let source = root.join("missing-main.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn helper() -> string {\n    return \"ok\"\n}\n",
+        "package app\n\nfn helper() -> string {\n    return \"ok\"\n}\n",
     )
     .unwrap();
 
@@ -563,7 +595,7 @@ fn nomoc_check_emits_json_for_missing_main() {
     assert!(text.contains("\"status\":\"error\""), "{text}");
     assert!(text.contains("\"error_code\":\"E0201\""), "{text}");
     assert!(
-        text.contains("\"message\":\"expected `fn main() -> void { ... }`\""),
+        text.contains("\"message\":\"expected `fn main() { ... }`\""),
         "{text}"
     );
     assert!(text.contains("\"line\":1"), "{text}");
@@ -579,7 +611,7 @@ fn nomoc_check_emits_json_for_invalid_main_return_type() {
     let source = root.join("invalid-main-return.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> i32 {\n    return 1\n}\n",
+        "package app\n\nfn main() -> i32 {\n    return 1\n}\n",
     )
     .unwrap();
 
@@ -613,7 +645,7 @@ fn nomoc_check_emits_json_for_unsupported_wildcard_imports() {
     let source = root.join("wildcard-import.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.io.*\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport std.io.*\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -647,7 +679,7 @@ fn nomoc_check_emits_json_for_duplicate_local_binding() {
     let source = root.join("duplicate-local.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    let name: string = \"one\"\n    let name: string = \"two\"\n}\n",
+        "package app\n\nfn main() {\n    let name: string = \"one\"\n    let name: string = \"two\"\n}\n",
     )
     .unwrap();
 
@@ -681,7 +713,7 @@ fn nomoc_check_emits_json_for_unknown_variable_read() {
     let source = root.join("unknown-variable.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    let value: i32 = missing\n}\n",
+        "package app\n\nfn main() {\n    let value: i32 = missing\n}\n",
     )
     .unwrap();
 
@@ -715,7 +747,7 @@ fn nomoc_check_emits_json_for_unsupported_match_wildcard() {
     let source = root.join("match-wildcard.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn label(value: Option<string>) -> string {\n    return match value {\n        Some(text) => text\n        _ => \"missing\"\n    }\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nfn label(value: Option<string>) -> string {\n    return match value {\n        Some(text) => text\n        _ => \"missing\"\n    }\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -749,7 +781,7 @@ fn nomoc_check_emits_json_for_non_exhaustive_match() {
     let source = root.join("non-exhaustive-match.nomo");
     fs::write(
         &source,
-        "package app.main\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\"\n    }\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\"\n    }\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -783,7 +815,7 @@ fn nomoc_check_emits_json_for_stdlib_arity_error() {
     let source = root.join("stdlib-arity.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.fs\n\nfn main() -> void {\n    let result: Result<void, FsError> = fs.write_string(\"/tmp/nomo-missing-content.txt\")\n}\n",
+        "package app\n\nimport std.fs\n\nfn main() {\n    let result: Result<void, FsError> = fs.write_string(\"/tmp/nomo-missing-content.txt\")\n}\n",
     )
     .unwrap();
 
@@ -817,7 +849,7 @@ fn nomoc_check_emits_json_for_question_error_type_mismatch() {
     let source = root.join("question-error-mismatch.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.result\n\nstruct AppError {\n    message: string\n}\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn compute() -> Result<i32, AppError> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport std.result\n\nstruct AppError {\n    message: string\n}\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn compute() -> Result<i32, AppError> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -853,7 +885,7 @@ fn nomoc_check_emits_json_for_question_on_non_result_value() {
     let source = root.join("question-non-result.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.result\n\nfn parse() -> i32 {\n    return 1\n}\n\nfn compute() -> Result<i32, string> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport std.result\n\nfn parse() -> i32 {\n    return 1\n}\n\nfn compute() -> Result<i32, string> {\n    let value: i32 = parse()?\n    return Ok(value)\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -887,7 +919,7 @@ fn nomoc_check_emits_json_for_question_in_non_result_function() {
     let source = root.join("question-non-result-function.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.result\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn main() -> void {\n    let value: i32 = parse()?\n}\n",
+        "package app\n\nimport std.result\n\nfn parse() -> Result<i32, string> {\n    return Ok(1)\n}\n\nfn main() {\n    let value: i32 = parse()?\n}\n",
     )
     .unwrap();
 
@@ -923,7 +955,7 @@ fn nomoc_check_emits_json_for_unsupported_question_position() {
     let source = root.join("question-unsupported-position.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.result\n\nfn parse() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nconst VALUE: string = parse()?\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport std.result\n\nfn parse() -> Result<string, string> {\n    return Ok(\"value\")\n}\n\nconst VALUE: string = parse()?\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -958,7 +990,7 @@ fn nomoc_check_emits_json_for_implicit_numeric_conversion() {
     let source = root.join("implicit-numeric-conversion.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    let age: i32 = 18\n    let ratio: f64 = age\n}\n",
+        "package app\n\nfn main() {\n    let age: i32 = 18\n    let ratio: f64 = age\n}\n",
     )
     .unwrap();
 
@@ -994,7 +1026,7 @@ fn nomoc_check_emits_json_for_implicit_numeric_conversion_in_call_argument() {
     let source = root.join("implicit-call-numeric-conversion.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn inspect(value: i64) -> void {\n}\n\nfn main() -> void {\n    let count: i32 = 41\n    inspect(count)\n}\n",
+        "package app\n\nfn inspect(value: i64) {\n}\n\nfn main() {\n    let count: i32 = 41\n    inspect(count)\n}\n",
     )
     .unwrap();
 
@@ -1030,7 +1062,7 @@ fn nomoc_check_emits_json_for_int_not_builtin() {
     let source = root.join("int-not-builtin.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    let count: int = 1\n}\n",
+        "package app\n\nfn main() {\n    let count: int = 1\n}\n",
     )
     .unwrap();
 
@@ -1066,7 +1098,7 @@ fn nomoc_check_emits_json_for_assignment_to_immutable_variable() {
     let source = root.join("immutable-assign.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn main() -> void {\n    let count: i32 = 1\n    count = 2\n}\n",
+        "package app\n\nfn main() {\n    let count: i32 = 1\n    count = 2\n}\n",
     )
     .unwrap();
 
@@ -1100,7 +1132,7 @@ fn nomoc_check_emits_json_for_assignment_to_immutable_parameter() {
     let source = root.join("immutable-param-assign.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn bump(value: i32) -> i32 {\n    value = value + 1\n    return value\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nfn bump(value: i32) -> i32 {\n    value = value + 1\n    return value\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -1134,7 +1166,7 @@ fn nomoc_check_emits_json_for_field_assignment_to_immutable_parameter() {
     let source = root.join("immutable-param-field-assign.nomo");
     fs::write(
         &source,
-        "package app.main\n\nstruct Counter {\n    value: i32\n}\n\nfn bump(counter: Counter) -> void {\n    counter.value = counter.value + 1\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nstruct Counter {\n    value: i32\n}\n\nfn bump(counter: Counter) {\n    counter.value = counter.value + 1\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -1168,7 +1200,7 @@ fn nomoc_check_emits_json_for_mutating_array_method_on_immutable_parameter() {
     let source = root.join("array-mut-immutable-param.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.array\n\nfn push_one(items: Array<i32>) -> void {\n    items.push(1)\n}\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport std.array\n\nfn push_one(items: Array<i32>) {\n    items.push(1)\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -1204,7 +1236,7 @@ fn nomoc_check_emits_json_for_missing_mut_call_argument() {
     let source = root.join("missing-mut-call-arg.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn inspect(mut value: i64) -> i64 {\n    return value\n}\n\nfn main() -> void {\n    let mut count: i64 = 41\n    let answer: i64 = inspect(count)\n}\n",
+        "package app\n\nfn inspect(mut value: i64) -> i64 {\n    return value\n}\n\nfn main() {\n    let mut count: i64 = 41\n    let answer: i64 = inspect(count)\n}\n",
     )
     .unwrap();
 
@@ -1238,7 +1270,7 @@ fn nomoc_check_emits_json_for_extra_mut_call_argument() {
     let source = root.join("extra-mut-call-arg.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn inspect(value: i64) -> i64 {\n    return value\n}\n\nfn main() -> void {\n    let mut count: i64 = 41\n    let answer: i64 = inspect(mut count)\n}\n",
+        "package app\n\nfn inspect(value: i64) -> i64 {\n    return value\n}\n\nfn main() {\n    let mut count: i64 = 41\n    let answer: i64 = inspect(mut count)\n}\n",
     )
     .unwrap();
 
@@ -1272,7 +1304,7 @@ fn nomoc_check_emits_json_for_immutable_variable_as_mut_call_argument() {
     let source = root.join("immutable-mut-call-arg.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn inspect(mut value: i64) -> i64 {\n    return value\n}\n\nfn main() -> void {\n    let count: i64 = 41\n    let answer: i64 = inspect(mut count)\n}\n",
+        "package app\n\nfn inspect(mut value: i64) -> i64 {\n    return value\n}\n\nfn main() {\n    let count: i64 = 41\n    let answer: i64 = inspect(mut count)\n}\n",
     )
     .unwrap();
 
@@ -1306,7 +1338,7 @@ fn nomoc_check_emits_json_for_duplicate_mut_borrow_in_call() {
     let source = root.join("duplicate-mut-borrow.nomo");
     fs::write(
         &source,
-        "package app.main\n\nfn combine(mut left: i64, mut right: i64) -> i64 {\n    return left + right\n}\n\nfn main() -> void {\n    let mut count: i64 = 41\n    let answer: i64 = combine(mut count, mut count)\n}\n",
+        "package app\n\nfn combine(mut left: i64, mut right: i64) -> i64 {\n    return left + right\n}\n\nfn main() {\n    let mut count: i64 = 41\n    let answer: i64 = combine(mut count, mut count)\n}\n",
     )
     .unwrap();
 
@@ -1336,19 +1368,23 @@ fn nomoc_check_emits_json_for_duplicate_mut_borrow_in_call() {
 }
 
 fn invalid_source() -> &'static str {
-    "package app.main\n\nfn main() -> void {\n    let value: i32 = \"bad\"\n}\n"
+    "package app\n\nfn main() {\n    let value: i32 = \"bad\"\n}\n"
 }
 
 fn invalid_lexical_source() -> &'static str {
-    "package app.main\n\nfn main() -> void {\n    @\n}\n"
+    "package app\n\nfn main() {\n    @\n}\n"
 }
 
 fn invalid_semicolon_source() -> &'static str {
-    "package app.main\n\nfn main() -> void {\n    let value: i32 = 1;\n}\n"
+    "package app\n\nfn main() {\n    let value: i32 = 1;\n}\n"
 }
 
 fn invalid_parser_source() -> &'static str {
-    "package app.main import std.io\n\nfn main() -> void {\n}\n"
+    "package app import std.io\n\nfn main() {\n}\n"
+}
+
+fn with_package(source: &str, package: &str) -> String {
+    source.replacen("package app", &format!("package {package}"), 1)
 }
 
 fn assert_json_diagnostic(stderr: &[u8], source: &Path) {

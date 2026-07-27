@@ -557,11 +557,7 @@ mod tests {
 
     #[test]
     fn lexes_package_and_println() {
-        let tokens = lex(
-            Path::new("main.nomo"),
-            "package app.main\nio.println(\"hi\")\n",
-        )
-        .unwrap();
+        let tokens = lex(Path::new("main.nomo"), "package app\nio.println(\"hi\")\n").unwrap();
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Package));
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Dot));
@@ -590,7 +586,7 @@ mod tests {
 
     #[test]
     fn lexes_question_mark_operator() {
-        let tokens = lex(Path::new("main.nomo"), "fn main() -> void { parse()? }\n").unwrap();
+        let tokens = lex(Path::new("main.nomo"), "fn main() { parse()? }\n").unwrap();
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Question));
     }
@@ -722,7 +718,7 @@ mod tests {
 
     #[test]
     fn lexes_suspend_as_a_keyword() {
-        let tokens = lex(Path::new("main.nomo"), "suspend fn ready() -> void {\n}\n").unwrap();
+        let tokens = lex(Path::new("main.nomo"), "suspend fn ready() {\n}\n").unwrap();
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Suspend));
         assert!(
@@ -734,7 +730,7 @@ mod tests {
 
     #[test]
     fn lexes_pub_keyword() {
-        let tokens = lex(Path::new("main.nomo"), "pub fn main() -> void {\n}\n").unwrap();
+        let tokens = lex(Path::new("main.nomo"), "pub fn main() {\n}\n").unwrap();
 
         assert!(tokens.iter().any(|token| token.kind == TokenKind::Pub));
     }
@@ -786,7 +782,7 @@ mod tests {
     fn skips_line_and_doc_comments() {
         let tokens = lex(
             Path::new("main.nomo"),
-            "/// module docs\n//! crate docs\npackage app.main // trailing\nlet url = \"http://example.test/*literal*/\"\n",
+            "/// module docs\n//! crate docs\npackage app // trailing\nlet url = \"http://example.test/*literal*/\"\n",
         )
         .unwrap();
 
@@ -807,7 +803,7 @@ mod tests {
     fn skips_nested_block_and_doc_comments() {
         let tokens = lex(
             Path::new("main.nomo"),
-            "/*! module docs */\npackage app.main\n/* outer\n   /* inner */\n   outer */\nfn main() -> void {\n    /** statement docs */ return\n}\n",
+            "/*! module docs */\npackage app\n/* outer\n   /* inner */\n   outer */\nfn main() {\n    /** statement docs */ return\n}\n",
         )
         .unwrap();
 
@@ -818,7 +814,7 @@ mod tests {
 
     #[test]
     fn rejects_unterminated_block_comment() {
-        let err = lex(Path::new("main.nomo"), "package app.main\n/* open\n").unwrap_err();
+        let err = lex(Path::new("main.nomo"), "package app\n/* open\n").unwrap_err();
 
         assert_eq!(err.code, "E0108");
         assert_eq!(err.message, "unterminated block comment");
@@ -828,7 +824,7 @@ mod tests {
 
     #[test]
     fn lexer_token_sequence_golden() {
-        let source = "package app.main\n\nimport std.array.Array\n\nconst LIMIT: i32 = 3\n\nfn main() -> void {\n    let mut items = Array.new<i32>()\n    items.push(mut items, LIMIT)\n    for item in items {\n        if item >= 1 {\n            break\n        } else {\n            continue\n        }\n    }\n}\n";
+        let source = "package app\n\nimport std.array.Array\n\nconst LIMIT: i32 = 3\n\nfn main() {\n    let mut items = Array.new<i32>()\n    items.push(mut items, LIMIT)\n    for item in items {\n        if item >= 1 {\n            break\n        } else {\n            continue\n        }\n    }\n}\n";
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let snapshot = tokens
             .iter()
@@ -840,8 +836,6 @@ mod tests {
             snapshot,
             r#"Package
 Ident("app")
-Dot
-Ident("main")
 Newline
 Newline
 Import
@@ -864,8 +858,6 @@ Fn
 Ident("main")
 LParen
 RParen
-Arrow
-Void
 LBrace
 Newline
 Let

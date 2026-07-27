@@ -156,7 +156,7 @@ fn module_root_fix_cli_checks_warns_migrates_and_is_idempotent() {
     .unwrap();
     fs::write(
         root.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package app.main\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -297,11 +297,7 @@ fn target_conditioned_dependencies_are_locked_completely_and_filtered_for_builds
         "[package]\nnamespace = \"app\"\nname = \"app\"\nversion = \"1.0.0\"\nedition = \"2026\"\n\n[dependencies]\nlinux = { package = \"app/linux\", path = \"../linux\", target = { os = \"linux\" } }\nwindows = { package = \"app/windows\", path = \"../windows\", target = { os = [\"windows\"] } }\n",
     )
     .unwrap();
-    fs::write(
-        app.join("src/main.nomo"),
-        "package app\n\nfn main() -> void {\n}\n",
-    )
-    .unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n\nfn main() {\n}\n").unwrap();
     for (package, name) in [(&linux, "linux"), (&windows, "windows")] {
         fs::write(
             package.join("nomo.toml"),
@@ -388,7 +384,7 @@ fn nomo_build_rejects_unsupported_target_before_creating_artifacts() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {}\n",
+        "package invalid_target_demo\n\nfn main() {}\n",
     )
     .unwrap();
 
@@ -415,7 +411,7 @@ fn nomoc_build_embeds_the_requested_target_in_emitted_c() {
     reset_dir(&root);
     let source = root.join("main.nomo");
     let output_path = root.join("target.c");
-    fs::write(&source, "package app.main\n\nfn main() -> void {\n}\n").unwrap();
+    fs::write(&source, "package app\n\nfn main() {\n}\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("build")
@@ -446,7 +442,7 @@ fn nomo_fmt_formats_standalone_source_file() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        "package app . main\nfn main(){\nlet message:string=\"hi\"\n}\n",
+        "package app\nfn main(){\nlet message:string=\"hi\"\n}\n",
     )
     .unwrap();
 
@@ -467,7 +463,7 @@ fn nomo_fmt_formats_standalone_source_file() {
     );
     assert_eq!(
         fs::read_to_string(&source).unwrap(),
-        "package app.main\n\nfn main() {\n    let message: string = \"hi\"\n}\n"
+        "package app\n\nfn main() {\n    let message: string = \"hi\"\n}\n"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -480,7 +476,7 @@ fn nomo_fmt_preserves_comments_in_standalone_source_file() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        "package app . main\n\n/// Entry point\nfn main(){\nlet message:string=\"hi\" // greeting\n}\n",
+        "package app\n\n/// Entry point\nfn main(){\nlet message:string=\"hi\" // greeting\n}\n",
     )
     .unwrap();
 
@@ -497,7 +493,7 @@ fn nomo_fmt_preserves_comments_in_standalone_source_file() {
     );
     assert_eq!(
         fs::read_to_string(&source).unwrap(),
-        "package app.main\n\n/// Entry point\nfn main() {\n    let message: string = \"hi\" // greeting\n}\n"
+        "package app\n\n/// Entry point\nfn main() {\n    let message: string = \"hi\" // greeting\n}\n"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -508,7 +504,7 @@ fn nomo_fmt_check_reports_differences_without_writing() {
     let root = temp_test_root("fmt-check");
     reset_dir(&root);
     let source = root.join("a.nomo");
-    let original = "package app . main\nfn main(){\n}\n";
+    let original = "package app\nfn main(){\n}\n";
     fs::write(&source, original).unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -545,12 +541,12 @@ fn nomo_fmt_formats_project_sources_recursively() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\nimport app.math.main\nfn main(){\n}\n",
+        "package hello\nimport hello.math\nfn main(){\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/math/main.nomo"),
-        "package app.math.main\npub fn add(a:i32,b:i32)->i32{\nreturn a+b\n}\n",
+        "package hello.math\npub fn add(a:i32,b:i32)->i32{\nreturn a+b\n}\n",
     )
     .unwrap();
 
@@ -576,11 +572,11 @@ fn nomo_fmt_formats_project_sources_recursively() {
     )));
     assert_eq!(
         fs::read_to_string(project.join("src/main.nomo")).unwrap(),
-        "package app.main\n\nimport app.math.main\n\nfn main() {\n}\n"
+        "package hello\n\nimport hello.math\n\nfn main() {\n}\n"
     );
     assert_eq!(
         fs::read_to_string(project.join("src/math/main.nomo")).unwrap(),
-        "package app.math.main\n\npub fn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n"
+        "package hello.math\n\npub fn add(a: i32, b: i32) -> i32 {\n    return a + b\n}\n"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -591,11 +587,7 @@ fn nomo_fmt_json_errors_reports_parse_or_lex_diagnostic() {
     let root = temp_test_root("fmt-json-error");
     reset_dir(&root);
     let source = root.join("a.nomo");
-    fs::write(
-        &source,
-        "package app.main\n\nfn main() -> void {\n    return;\n}\n",
-    )
-    .unwrap();
+    fs::write(&source, "package app\n\nfn main() {\n    return;\n}\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("fmt")
@@ -632,7 +624,7 @@ fn nomo_doc_generates_html_and_search_index() {
         project.join("src/main.nomo"),
         r#"//! Hello module docs.
 
-package app.main
+package hello
 
 import std.ffi
 
@@ -688,7 +680,7 @@ extern "C" {
         String::from_utf8_lossy(&output.stdout),
         format!("documented {}\n", output_dir.display())
     );
-    let module_html = fs::read_to_string(output_dir.join("local/hello/app_main.html")).unwrap();
+    let module_html = fs::read_to_string(output_dir.join("local/hello/hello.html")).unwrap();
     assert!(module_html.contains("Hello module docs."), "{module_html}");
     assert!(module_html.contains("Greets a caller."), "{module_html}");
     assert!(
@@ -755,7 +747,7 @@ fn nomo_doc_open_opens_generated_index() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "//! Hello module docs.\n\npackage app.main\n\npub fn greet() -> string {\n    return \"hello\"\n}\n",
+        "//! Hello module docs.\n\npackage hello\n\npub fn greet() -> string {\n    return \"hello\"\n}\n",
     )
     .unwrap();
 
@@ -797,7 +789,7 @@ fn nomo_doc_json_reports_project_docs() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport std.ffi\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\n/// Display contract.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n",
+        "package hello\n\nimport std.ffi\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\n/// Documented user.\nstruct User {\n    /// User display name.\n    pub name: string\n}\n\n/// Result status.\nenum Status {\n    /// Ready to run.\n    Ready\n}\n\n/// Display contract.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n",
     )
     .unwrap();
 
@@ -816,7 +808,7 @@ fn nomo_doc_json_reports_project_docs() {
     assert!(output.stderr.is_empty());
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"package\":\"local/hello\""), "{stdout}");
-    assert!(stdout.contains("\"name\":\"app.main\""), "{stdout}");
+    assert!(stdout.contains("\"name\":\"hello\""), "{stdout}");
     assert!(stdout.contains("\"docs\":\"Adds numbers.\""), "{stdout}");
     assert!(
         stdout.contains("\"signature\":\"pub fn add(a: i64, b: i64) -> i64\""),
@@ -1017,21 +1009,21 @@ fn nomo_test_runs_project_tests_with_local_modules() {
     .unwrap();
     fs::write(
         project.join("src/math.nomo"),
-        "package app.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        "package hello.math\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import app.math
+import hello.math
 
 #[test]
-fn main_test() -> void {
+fn main_test() {
 }
 
 #[test]
-fn add_test() -> void {
+fn add_test() {
     let total: i64 = add(1, 2)
     if total == 3 {
         void
@@ -1040,7 +1032,7 @@ fn add_test() -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     panic("original main should not run")
 }
 "#,
@@ -1060,10 +1052,10 @@ fn main() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "running 2 tests\nok app.main.add_test\nok app.main.main_test\n"
+        "running 2 tests\nok hello.add_test\nok hello.main_test\n"
     );
-    assert!(project.join("build/test/c/app_main_add_test.c").is_file());
-    assert!(project.join("build/test/c/app_main_main_test.c").is_file());
+    assert!(project.join("build/test/c/hello_add_test.c").is_file());
+    assert!(project.join("build/test/c/hello_main_test.c").is_file());
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -1081,12 +1073,12 @@ fn nomo_check_preserves_suspend_effects_across_local_modules() {
     .unwrap();
     fs::write(
         project.join("src/worker.nomo"),
-        "package app.worker\n\npub suspend fn fetch() -> string {\n    return \"ready\"\n}\n",
+        "package hello.worker\n\npub suspend fn fetch() -> string {\n    return \"ready\"\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.worker\n\nfn main() -> void {\n    let value: string = fetch()\n}\n",
+        "package hello\n\nimport hello.worker\n\nfn main() {\n    let value: string = fetch()\n}\n",
     )
     .unwrap();
 
@@ -1102,7 +1094,7 @@ fn nomo_check_preserves_suspend_effects_across_local_modules() {
 
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.worker\n\nsuspend fn main() -> void {\n    let value: string = fetch()\n}\n",
+        "package hello\n\nimport hello.worker\n\nsuspend fn main() {\n    let value: string = fetch()\n}\n",
     )
     .unwrap();
     let accepted = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -1118,12 +1110,12 @@ fn nomo_check_preserves_suspend_effects_across_local_modules() {
 
     fs::write(
         project.join("src/worker.nomo"),
-        "package app.worker\n\nimport std.task\n\npub suspend fn pause() -> void {\n    task.yield_now()\n}\n",
+        "package hello.worker\n\nimport std.task\n\npub suspend fn pause() {\n    task.yield_now()\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.worker\n\nsuspend fn main() -> void {\n    pause()\n}\n",
+        "package hello\n\nimport hello.worker\n\nsuspend fn main() {\n    pause()\n}\n",
     )
     .unwrap();
     let nested = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -1154,12 +1146,12 @@ fn nomo_check_rejects_transitive_blocking_sleep_from_suspend_module_graph() {
     .unwrap();
     fs::write(
         project.join("src/worker.nomo"),
-        "package app.worker\n\nimport std.time\n\npub fn pause() -> void {\n    time.sleep_millis(1)\n}\n",
+        "package hello.worker\n\nimport std.time\n\npub fn pause() {\n    time.sleep_millis(1)\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.worker\n\nsuspend fn main() -> void {\n    pause()\n}\n",
+        "package hello\n\nimport hello.worker\n\nsuspend fn main() {\n    pause()\n}\n",
     )
     .unwrap();
 
@@ -1192,12 +1184,12 @@ fn nomo_check_rejects_transitive_blocking_http_from_suspend_module_graph() {
     .unwrap();
     fs::write(
         project.join("src/worker.nomo"),
-        "package app.worker\n\nimport std.http\nimport std.result\n\npub fn request() -> Result<HttpResponse, HttpError> {\n    return http.get_blocking(\"https://example.invalid/?token=cli-http-secret-sentinel\")\n}\n",
+        "package hello.worker\n\nimport std.http\nimport std.result\n\npub fn request() -> Result<HttpResponse, HttpError> {\n    return http.get_blocking(\"https://example.invalid/?token=cli-http-secret-sentinel\")\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.worker\nimport std.http\nimport std.result\n\nsuspend fn main() -> void {\n    let response: Result<HttpResponse, HttpError> = request()\n}\n",
+        "package hello\n\nimport hello.worker\nimport std.http\nimport std.result\n\nsuspend fn main() {\n    let response: Result<HttpResponse, HttpError> = request()\n}\n",
     )
     .unwrap();
 
@@ -1228,7 +1220,7 @@ fn nomo_test_json_reports_failures() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n#[test]\nfn fails() -> void {\n    panic(\"boom\")\n}\n",
+        "package hello\n\n#[test]\nfn fails() {\n    panic(\"boom\")\n}\n",
     )
     .unwrap();
 
@@ -1248,7 +1240,7 @@ fn nomo_test_json_reports_failures() {
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("\"status\":\"failed\""), "{stdout}");
     assert!(
-        stdout.contains("\"name\":\"app.main.fails\",\"status\":\"failed\""),
+        stdout.contains("\"name\":\"hello.fails\",\"status\":\"failed\""),
         "{stdout}"
     );
     assert!(stdout.contains("panic: boom"), "{stdout}");
@@ -1269,7 +1261,7 @@ fn nomo_test_runs_std_testing_assert_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
 import std.result
 import std.testing
@@ -1279,7 +1271,7 @@ fn fail() -> Result<i64, string> {
 }
 
 #[test]
-fn assert_helpers() -> void {
+fn assert_helpers() {
     testing.assert(true, "expected true")
     testing.assert_equal(42, 42)
     testing.assert_equal("same", "same")
@@ -1303,7 +1295,7 @@ fn assert_helpers() -> void {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "running 1 tests\nok app.main.assert_helpers\n"
+        "running 1 tests\nok hello.assert_helpers\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -1327,7 +1319,7 @@ fn nomo_test_filter_runs_matching_tests_only() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n#[test]\nfn fast() -> void {\n}\n\n#[test]\nfn slow_array() -> void {\n}\n",
+        "package hello\n\n#[test]\nfn fast() {\n}\n\n#[test]\nfn slow_array() {\n}\n",
     )
     .unwrap();
 
@@ -1346,7 +1338,7 @@ fn nomo_test_filter_runs_matching_tests_only() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "running 1 tests\nok app.main.slow_array\n"
+        "running 1 tests\nok hello.slow_array\n"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -1377,12 +1369,12 @@ fn nomo_test_workspace_package_selects_one_member() {
     .unwrap();
     fs::write(
         app.join("src/main.nomo"),
-        "package app.main\n\n#[test]\nfn cli_test() -> void {\n}\n",
+        "package cli\n\n#[test]\nfn cli_test() {\n}\n",
     )
     .unwrap();
     fs::write(
         core.join("src/main.nomo"),
-        "package core.main\n\n#[test]\nfn core_test() -> void {\n}\n",
+        "package core\n\n#[test]\nfn core_test() {\n}\n",
     )
     .unwrap();
 
@@ -1402,7 +1394,7 @@ fn nomo_test_workspace_package_selects_one_member() {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "running 1 tests\nok core.main.core_test\n"
+        "running 1 tests\nok core.core_test\n"
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -1421,7 +1413,7 @@ fn nomo_test_rejects_parameters() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n#[test]\nfn bad(value: i32) -> void {\n}\n",
+        "package hello\n\n#[test]\nfn bad(value: i32) {\n}\n",
     )
     .unwrap();
 
@@ -1455,7 +1447,7 @@ fn nomo_test_rejects_suspend_functions_until_async_runner_is_available() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\n#[test]\nsuspend fn async_test() -> void {\n}\n",
+        "package hello\n\n#[test]\nsuspend fn async_test() {\n}\n",
     )
     .unwrap();
 
@@ -1484,10 +1476,10 @@ fn nomo_fmt_formats_loose_source_directory_recursively() {
     reset_dir(&root);
     let dir = root.join("loose");
     fs::create_dir_all(dir.join("nested")).unwrap();
-    fs::write(dir.join("main.nomo"), "package app . main\nfn main(){\n}\n").unwrap();
+    fs::write(dir.join("main.nomo"), "package app\nfn main(){\n}\n").unwrap();
     fs::write(
         dir.join("nested/helper.nomo"),
-        "package app . helper\npub fn ok()->bool{\nreturn true\n}\n",
+        "package app.helper\npub fn ok()->bool{\nreturn true\n}\n",
     )
     .unwrap();
 
@@ -1510,7 +1502,7 @@ fn nomo_fmt_formats_loose_source_directory_recursively() {
     )));
     assert_eq!(
         fs::read_to_string(dir.join("main.nomo")).unwrap(),
-        "package app.main\n\nfn main() {\n}\n"
+        "package app\n\nfn main() {\n}\n"
     );
     assert_eq!(
         fs::read_to_string(dir.join("nested/helper.nomo")).unwrap(),
@@ -1548,7 +1540,7 @@ fn nomo_run_standalone_script_without_main() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.io\n\nlet message: string = \"script ok\"\nio.println(message)\n",
+        "package app\n\nimport std.io\n\nlet message: string = \"script ok\"\nio.println(message)\n",
     )
     .unwrap();
 
@@ -1575,7 +1567,7 @@ fn nomo_run_standalone_file_with_explicit_main() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport std.io\n\nfn main() -> void {\n    io.println(\"main ok\")\n}\n",
+        "package app\n\nimport std.io\n\nfn main() {\n    io.println(\"main ok\")\n}\n",
     )
     .unwrap();
 
@@ -1640,7 +1632,7 @@ fn nomo_run_and_test_use_manifest_ffi_link_metadata() {
     );
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package ffi_link
 
 import std.io
 
@@ -1649,7 +1641,7 @@ extern "C" {
 }
 
 #[test]
-fn native_answer_test() -> void {
+fn native_answer_test() {
     unsafe {
         let answer: i32 = native_answer(10)
     }
@@ -1660,7 +1652,7 @@ fn native_answer_test() -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     unsafe {
         let answer: i32 = native_answer(21)
     }
@@ -1697,7 +1689,7 @@ fn main() -> void {
         String::from_utf8_lossy(&test_output.stderr)
     );
     assert!(
-        String::from_utf8_lossy(&test_output.stdout).contains("ok app.main.native_answer_test")
+        String::from_utf8_lossy(&test_output.stdout).contains("ok ffi_link.native_answer_test")
     );
 
     fs::remove_dir_all(&root).unwrap();
@@ -1710,11 +1702,11 @@ fn nomo_run_executes_binary_arithmetic() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let value: i64 = 20 - 3 * 4 / 2 % 5
     if value == 19 {
         io.println("arithmetic ok")
@@ -1750,7 +1742,7 @@ fn nomo_run_executes_three_clause_for_with_inference_and_multi_println() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
@@ -1758,7 +1750,7 @@ fn greeting() -> string {
     return "Hello, native"
 }
 
-fn main() -> void {
+fn main() {
     let message = greeting()
     for let i: ui64 = 0; i < 3; i++ {
         io.println(message, i)
@@ -1795,7 +1787,7 @@ fn nomo_run_formats_scalars_and_display_structs() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.fmt
 import std.io
@@ -1816,7 +1808,7 @@ impl fmt.Debug for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "Nomo" }
     let message = fmt.format("display={} debug={:?} count={{ {} }}", user, user, 3)
     io.println(message)
@@ -1853,7 +1845,7 @@ fn nomo_run_short_circuits_logical_operators() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
@@ -1861,7 +1853,7 @@ fn explode() -> bool {
     panic("should not run")
 }
 
-fn main() -> void {
+fn main() {
     let ok: bool = true || explode()
     let also_ok: bool = false && explode()
     if ok && !also_ok {
@@ -1898,11 +1890,11 @@ fn nomo_run_executes_bitwise_operators() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let value: i64 = 7 & 3 | 8 ^ 2 << 1
     let cleared: i64 = value &^ 3
     let shifted: i64 = cleared >> 2
@@ -1940,12 +1932,12 @@ fn nomo_run_executes_signed_shifts_portably() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let negative: i64 = 0 - 8
     let minus_one: i64 = 0 - 1
     let negative32: i32 = negative as i32
@@ -1991,12 +1983,12 @@ fn nomo_run_executes_unary_negation_and_parentheses() {
     let source = root.join("a.nomo");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let base: i64 = -(2 + 3) * 4
     let shifted: i64 = (-8) >> 1
     let min32: i32 = -2147483648
@@ -2039,7 +2031,7 @@ fn nomoc_still_rejects_top_level_script_statements() {
     let root = temp_test_root("nomoc-script-reject");
     reset_dir(&root);
     let source = root.join("a.nomo");
-    fs::write(&source, "package app.main\n\nlet value: i32 = 1\n").unwrap();
+    fs::write(&source, "package app\n\nlet value: i32 = 1\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("check")
@@ -2068,7 +2060,7 @@ fn project_check_rejects_top_level_script_statements() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nlet value: i32 = 1\n",
+        "package hello\n\nlet value: i32 = 1\n",
     )
     .unwrap();
 
@@ -2099,7 +2091,7 @@ fn nomo_run_source_file_with_bad_manifest_does_not_fallback_to_script_mode() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport std.io\n\nlet message: string = \"should not run\"\nio.println(message)\n",
+        "package hello\n\nimport std.io\n\nlet message: string = \"should not run\"\nio.println(message)\n",
     )
     .unwrap();
 
@@ -2348,7 +2340,7 @@ fn nomo_deps_resolve_writes_lockfile_for_namespace_first_manifest() {
     let json = root.join("json");
     let json_rev = init_git_package(&json, "nomo-lang", "json");
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         utils.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
@@ -2400,7 +2392,7 @@ fn nomo_deps_tree_prints_dependency_aliases() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nstd = { package = \"nomo-lang/std\", version = \"0.1.0\" }\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -2452,7 +2444,7 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
     .unwrap();
     fs::write(
         app.join("src/main.nomo"),
-        "package app.main\n\nimport json.parser\nimport core.math\n\nfn main() -> void {\n    let total: i64 = add(40, 2)\n}\n",
+        "package cli\n\nimport json.parser\nimport core.math\n\nfn main() {\n    let total: i64 = add(40, 2)\n}\n",
     )
     .unwrap();
     fs::write(
@@ -2462,7 +2454,7 @@ fn nomo_workspace_member_inherits_package_and_dependencies() {
     .unwrap();
     fs::write(
         core.join("src/main.nomo"),
-        "package core.main\n\nfn main() -> void {\n}\n",
+        "package core\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -2703,7 +2695,7 @@ fn nomo_deps_resolve_records_explicit_registry_source() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\", registry = \"https://packages.nomo.test\" }\n",
@@ -2759,13 +2751,13 @@ fn nomo_deps_resolve_locks_git_branch_to_head_rev() {
     let json = root.join("json");
     init_git_package(&json, "nomo-lang", "json");
     run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
-    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    fs::write(json.join("src/main.nomo"), "package json\n\n").unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
     run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
     let stable_rev = git_head_rev(&json);
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -2830,13 +2822,13 @@ fn nomo_deps_resolve_reuses_git_cache_and_fetches_branch_updates() {
     let json = root.join("json");
     init_git_package(&json, "nomo-lang", "json");
     run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
-    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    fs::write(json.join("src/main.nomo"), "package json\n\n").unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
     run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
     let first_rev = git_head_rev(&json);
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -2863,7 +2855,7 @@ fn nomo_deps_resolve_reuses_git_cache_and_fetches_branch_updates() {
 
     fs::write(
         json.join("src/main.nomo"),
-        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+        "package json\n\npub fn version() -> i64 {\n    return 2\n}\n",
     )
     .unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
@@ -2904,13 +2896,13 @@ fn nomo_deps_update_rewrites_git_branch_lockfile() {
     let json = root.join("json");
     init_git_package(&json, "nomo-lang", "json");
     run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
-    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    fs::write(json.join("src/main.nomo"), "package json\n\n").unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
     run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
     let first_rev = git_head_rev(&json);
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -2939,7 +2931,7 @@ fn nomo_deps_update_rewrites_git_branch_lockfile() {
 
     fs::write(
         json.join("src/main.nomo"),
-        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+        "package json\n\npub fn version() -> i64 {\n    return 2\n}\n",
     )
     .unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
@@ -2982,7 +2974,7 @@ fn nomo_add_and_remove_edit_registry_dependency_manifest() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
@@ -3083,7 +3075,7 @@ fn nomo_add_rejects_duplicate_dependency_alias() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -3697,12 +3689,12 @@ fn nomo_publish_dry_run_builds_package_archive_and_checksum() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package hello\n\nfn main() {\n}\n",
     )
     .unwrap();
     fs::write(
         project.join("src/util.nomo"),
-        "package app.util\n\npub fn answer() -> i64 {\n    return 42\n}\n",
+        "package hello.util\n\npub fn answer() -> i64 {\n    return 42\n}\n",
     )
     .unwrap();
     fs::write(
@@ -3778,7 +3770,7 @@ fn nomo_publish_respects_manifest_v2_publish_false() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package private_app\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -3814,7 +3806,7 @@ fn nomo_publish_rejects_package_file_symlink_escape() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package hello\n\nfn main() {\n}\n",
     )
     .unwrap();
     let outside = root.join("outside.c");
@@ -3851,7 +3843,7 @@ fn nomo_publish_without_dry_run_or_registry_reports_required_mode() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package hello\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -3886,7 +3878,7 @@ fn nomo_publish_uploads_archive_to_http_registry() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package hello\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -4008,7 +4000,7 @@ fn nomo_project_commands_use_file_registry_dependency_module_public_api() {
     .unwrap();
     fs::write(
         package.join("src/main.nomo"),
-        "package utils.main\n\nfn main() -> void {\n}\n",
+        "package utils\n\nfn main() {\n}\n",
     )
     .unwrap();
     fs::write(
@@ -4069,11 +4061,11 @@ pub fn make_segment(value: i64) -> Segment {
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
 import local_utils.path
 
-fn main() -> void {
+fn main() {
     let total: i64 = join(40, 2)
     let segment: Segment = make_segment(total)
 }
@@ -4195,7 +4187,7 @@ fn nomo_project_commands_use_http_registry_dependency_module_public_api() {
     .unwrap();
     fs::write(
         package.join("src/main.nomo"),
-        "package utils.main\n\nfn main() -> void {\n}\n",
+        "package utils\n\nfn main() {\n}\n",
     )
     .unwrap();
     fs::write(
@@ -4301,11 +4293,11 @@ pub fn join(a: i64, b: i64) -> i64 {
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
 import local_utils.path
 
-fn main() -> void {
+fn main() {
     let total: i64 = join(40, 2)
 }
 "#,
@@ -4352,7 +4344,7 @@ fn nomo_deps_resolve_selects_highest_registry_version_for_range() {
     .unwrap();
     fs::write(
         package.join("src/main.nomo"),
-        "package json.main\n\npub fn version() -> i64 {\n    return 19\n}\n\nfn main() -> void {\n}\n",
+        "package json\n\npub fn version() -> i64 {\n    return 19\n}\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -4388,7 +4380,7 @@ fn nomo_deps_resolve_selects_highest_registry_version_for_range() {
         ),
     )
     .unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package app\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -4465,7 +4457,7 @@ fn nomo_workspace_resolve_selects_one_version_for_all_member_constraints() {
     fs::create_dir_all(worker.join("src")).unwrap();
     fs::write(
         package.join("src/main.nomo"),
-        "package json.main\n\nfn main() -> void {\n}\n",
+        "package json\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -4525,8 +4517,8 @@ fn nomo_workspace_resolve_selects_one_version_for_all_member_constraints() {
         "[workspace]\nmembers = [\"apps/*\"]\n",
     )
     .unwrap();
-    fs::write(api.join("src/main.nomo"), "package api.main\n").unwrap();
-    fs::write(worker.join("src/main.nomo"), "package worker.main\n").unwrap();
+    fs::write(api.join("src/main.nomo"), "package api\n").unwrap();
+    fs::write(worker.join("src/main.nomo"), "package worker\n").unwrap();
     fs::write(
         api.join("nomo.toml"),
         format!(
@@ -4627,7 +4619,7 @@ fn nomo_deps_resolve_reuses_cached_http_registry_range_offline() {
     .unwrap();
     fs::write(
         package.join("src/main.nomo"),
-        "package json.main\n\nfn main() -> void {\n}\n",
+        "package json\n\nfn main() {\n}\n",
     )
     .unwrap();
     let publish = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -4701,7 +4693,7 @@ fn nomo_deps_resolve_reuses_cached_http_registry_range_offline() {
         }
     });
 
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package app\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -4748,7 +4740,7 @@ fn nomo_deps_update_precise_rewrites_registry_lockfile() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package app\n").unwrap();
     let manifest = "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \">=0.1.0, <0.3.0\", registry = \"https://packages.nomo.test\" }\n";
     fs::write(project.join("nomo.toml"), manifest).unwrap();
 
@@ -4810,7 +4802,7 @@ fn nomo_deps_update_precise_rejects_version_outside_manifest_requirement() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"^1.2.0\", registry = \"https://packages.nomo.test\" }\n",
@@ -4849,13 +4841,13 @@ fn nomo_deps_update_precise_rewrites_git_lockfile_to_rev() {
     let json = root.join("json");
     init_git_package(&json, "nomo-lang", "json");
     run_git(&json, &["checkout", "--quiet", "-b", "stable"]);
-    fs::write(json.join("src/main.nomo"), "package json.main\n\n").unwrap();
+    fs::write(json.join("src/main.nomo"), "package json\n\n").unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
     run_git(&json, &["commit", "--quiet", "-m", "stable branch"]);
     let first_rev = git_head_rev(&json);
     fs::write(
         json.join("src/main.nomo"),
-        "package json.main\n\npub fn version() -> i64 {\n    return 2\n}\n",
+        "package json\n\npub fn version() -> i64 {\n    return 2\n}\n",
     )
     .unwrap();
     run_git(&json, &["add", "src/main.nomo"]);
@@ -4865,7 +4857,7 @@ fn nomo_deps_update_precise_rewrites_git_lockfile_to_rev() {
     run_git(&json, &["checkout", "--quiet", &first_rev]);
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -4914,7 +4906,7 @@ fn nomo_deps_update_precise_requires_target() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -4946,8 +4938,8 @@ fn nomo_deps_update_precise_rejects_path_dependency() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
@@ -4986,7 +4978,7 @@ fn nomo_deps_update_rejects_unknown_target() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -5018,7 +5010,7 @@ fn nomo_deps_clean_cache_removes_git_cache() {
     let json_rev = init_git_package(&json, "nomo-lang", "json");
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -5090,13 +5082,13 @@ fn nomo_deps_vendor_copies_locked_path_and_git_sources() {
         &json,
         "nomo-lang",
         "json",
-        "package json.main\n\npub fn version() -> i64 {\n    return 1\n}\n",
+        "package json\n\npub fn version() -> i64 {\n    return 1\n}\n",
     );
     fs::create_dir_all(project.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
     fs::create_dir_all(utils.join("native")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         utils.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[ffi]\nsources = [\"native/bridge.c\"]\n",
@@ -5181,7 +5173,7 @@ fn nomo_build_offline_uses_vendored_git_source_when_cache_is_missing() {
     let project = root.join("hello");
     let json = root.join("json");
     let _initial_json_rev =
-        init_git_package_with_source(&json, "nomo-lang", "json", "package json.main\n\n");
+        init_git_package_with_source(&json, "nomo-lang", "json", "package json\n\n");
     fs::write(
         json.join("src/path.nomo"),
         "package json.path\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
@@ -5194,7 +5186,7 @@ fn nomo_build_offline_uses_vendored_git_source_when_cache_is_missing() {
     fs::create_dir_all(project.join("src")).unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport json.path\n\nfn main() -> void {\n    let total: i64 = add(40, 2)\n}\n",
+        "package hello\n\nimport json.path\n\nfn main() {\n    let total: i64 = add(40, 2)\n}\n",
     )
     .unwrap();
     fs::write(
@@ -5259,7 +5251,7 @@ fn nomo_deps_resolve_locks_git_tag_to_head_rev() {
     let tag_rev = git_head_rev(&json);
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -5325,7 +5317,7 @@ fn nomo_deps_tree_rejects_stale_git_checksum_when_cache_exists() {
     let json_rev = init_git_package(&json, "nomo-lang", "json");
 
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         format!(
@@ -5350,7 +5342,7 @@ fn nomo_deps_tree_rejects_stale_git_checksum_when_cache_exists() {
     let checkout = find_git_cache_checkout(&project, "json");
     fs::write(
         checkout.join("src/main.nomo"),
-        "package json.main\n\nfn changed() -> void {}\n",
+        "package json\n\nfn changed() {}\n",
     )
     .unwrap();
 
@@ -5378,8 +5370,8 @@ fn nomo_deps_resolve_and_tree_include_transitive_path_dependencies() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
@@ -5438,8 +5430,8 @@ fn nomo_deps_resolve_reports_full_package_cycle() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nutils = { package = \"fynn/utils\", path = \"../utils\" }\n",
@@ -5475,8 +5467,8 @@ fn nomo_deps_tree_reads_existing_lockfile() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
@@ -5527,11 +5519,7 @@ fn nomo_locked_flags_require_and_validate_lockfile() {
     reset_dir(&root);
     let app = root.join("app");
     fs::create_dir_all(app.join("src")).unwrap();
-    fs::write(
-        app.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
-    )
-    .unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n\nfn main() {\n}\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -5673,7 +5661,7 @@ fn nomo_offline_resolve_rejects_uncached_git_dependency() {
     let json = root.join("json");
     let json_rev = init_git_package(&json, "nomo-lang", "json");
     fs::create_dir_all(app.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         format!(
@@ -5711,8 +5699,8 @@ fn nomo_deps_tree_rejects_stale_path_checksum_when_source_exists() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\n",
@@ -5737,7 +5725,7 @@ fn nomo_deps_tree_rejects_stale_path_checksum_when_source_exists() {
     );
     fs::write(
         utils.join("src/main.nomo"),
-        "package utils.main\n\nfn changed() -> void {}\n",
+        "package utils\n\nfn changed() {}\n",
     )
     .unwrap();
 
@@ -5763,7 +5751,7 @@ fn nomo_deps_rejects_dependency_with_multiple_sources() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nutils = { package = \"fynn/utils\", path = \"../utils\", version = \"0.1.0\" }\n",
@@ -5793,8 +5781,8 @@ fn nomo_deps_resolve_reports_conflicting_version_requirements() {
     let utils = root.join("utils");
     fs::create_dir_all(app.join("src")).unwrap();
     fs::create_dir_all(utils.join("src")).unwrap();
-    fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
-    fs::write(utils.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
+    fs::write(utils.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         app.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nlocal_utils = { package = \"fynn/utils\", path = \"../utils\" }\ncli = { package = \"nomo-lang/cli\", version = \"0.2.0\" }\n",
@@ -5844,7 +5832,7 @@ fn nomo_deps_rejects_url_like_package_identity() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\njson = { package = \"github.com/nomo-lang/json\", version = \"0.1.0\" }\n",
@@ -5872,7 +5860,7 @@ fn nomo_deps_rejects_reserved_package_namespace() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"core\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nstd = { package = \"nomo-lang/std\", version = \"0.1.0\" }\n",
@@ -5901,7 +5889,7 @@ fn nomo_deps_rejects_reserved_dependency_namespace() {
     reset_dir(&root);
     let project = root.join("hello");
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(
         project.join("nomo.toml"),
         "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nmagic = { package = \"nomo/magic\", version = \"0.1.0\" }\n",
@@ -5939,7 +5927,7 @@ fn nomo_project_commands_accept_imports_from_dependency_aliases() {
     .unwrap();
     fs::write(
         &source,
-        "package app.main\n\nimport json.parser\n\nfn main() -> void {\n}\n",
+        "package hello\n\nimport json.parser\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -5993,11 +5981,11 @@ fn nomo_project_commands_load_local_flat_module() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import app.math
+import hello.math
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(40, 2)
 }
 "#,
@@ -6005,7 +5993,7 @@ fn main() -> void {
     .unwrap();
     fs::write(
         project.join("src/math.nomo"),
-        r#"package app.math
+        r#"package hello.math
 
 pub fn add(a: i64, b: i64) -> i64 {
     return a + b
@@ -6041,11 +6029,11 @@ fn nomo_project_commands_load_local_directory_module() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import app.math
+import hello.math
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(1, 2)
 }
 "#,
@@ -6053,7 +6041,7 @@ fn main() -> void {
     .unwrap();
     fs::write(
         project.join("src/math/main.nomo"),
-        r#"package app.math
+        r#"package hello.math
 
 pub fn add(a: i64, b: i64) -> i64 {
     return a + b
@@ -6089,11 +6077,11 @@ fn nomo_project_commands_reject_private_local_module_api() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import app.math
+import hello.math
 
-fn main() -> void {
+fn main() {
     let total: i64 = hidden()
 }
 "#,
@@ -6101,7 +6089,7 @@ fn main() -> void {
     .unwrap();
     fs::write(
         project.join("src/math.nomo"),
-        r#"package app.math
+        r#"package hello.math
 
 fn hidden() -> i64 {
     return 99
@@ -6135,7 +6123,7 @@ fn nomo_project_commands_reject_missing_local_module() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.missing\n\nfn main() -> void {\n}\n",
+        "package hello\n\nimport hello.missing\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -6148,7 +6136,7 @@ fn nomo_project_commands_reject_missing_local_module() {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("E0903"), "{stderr}");
-    assert!(stderr.contains("app.missing"), "{stderr}");
+    assert!(stderr.contains("hello.missing"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -6165,10 +6153,10 @@ fn nomo_project_commands_reject_module_package_mismatch() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport app.math\n\nfn main() -> void {\n}\n",
+        "package hello\n\nimport hello.math\n\nfn main() {\n}\n",
     )
     .unwrap();
-    fs::write(project.join("src/math.nomo"), "package app.other\n").unwrap();
+    fs::write(project.join("src/math.nomo"), "package wrong.math\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("check")
@@ -6180,7 +6168,7 @@ fn nomo_project_commands_reject_module_package_mismatch() {
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("E0904"), "{stderr}");
     assert!(stderr.contains("hello.math"), "{stderr}");
-    assert!(stderr.contains("app.other"), "{stderr}");
+    assert!(stderr.contains("wrong.math"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -6197,11 +6185,11 @@ fn nomo_project_commands_reject_local_module_import_cycles() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import app.a
+import hello.a
 
-fn main() -> void {
+fn main() {
     let value: i64 = a()
 }
 "#,
@@ -6209,9 +6197,9 @@ fn main() -> void {
     .unwrap();
     fs::write(
         project.join("src/a.nomo"),
-        r#"package app.a
+        r#"package hello.a
 
-import app.b
+import hello.b
 
 pub fn a() -> i64 {
     return b()
@@ -6221,9 +6209,9 @@ pub fn a() -> i64 {
     .unwrap();
     fs::write(
         project.join("src/b.nomo"),
-        r#"package app.b
+        r#"package hello.b
 
-import app.a
+import hello.a
 
 pub fn b() -> i64 {
     return 42
@@ -6241,7 +6229,7 @@ pub fn b() -> i64 {
     assert!(!output.status.success());
     let stderr = String::from_utf8_lossy(&output.stderr);
     assert!(stderr.contains("E0607"), "{stderr}");
-    assert!(stderr.contains("app.a -> app.b -> app.a"), "{stderr}");
+    assert!(stderr.contains("hello.a -> hello.b -> hello.a"), "{stderr}");
     fs::remove_dir_all(&root).unwrap();
 }
 
@@ -6263,7 +6251,7 @@ fn nomo_project_commands_use_path_dependency_public_api() {
     .unwrap();
     fs::write(
         dependency.join("src/main.nomo"),
-        r#"package calc.main
+        r#"package calc
 
 pub struct Pair {
     value: i64
@@ -6285,16 +6273,16 @@ fn hidden() -> i64 {
     .unwrap();
     fs::write(
         project.join("nomo.toml"),
-        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\ncalc = { package = \"fynn/calc\", path = \"../calc\" }\n",
+        "[package]\nnamespace = \"fynn\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n\n[dependencies]\nmath_lib = { package = \"fynn/calc\", path = \"../calc\" }\n",
     )
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
-import calc.main
+import math_lib
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(40, 2)
     let pair: Pair = make_pair(total)
 }
@@ -6335,10 +6323,10 @@ fn main() -> void {
     );
     assert!(bin_path.exists());
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_calc_main_fn_add"));
-    assert!(!generated_c.contains("nomo_pkg_app_main_fn_add"));
-    assert!(generated_c.contains("nomo_pkg_calc_main_struct_Pair"));
-    assert!(!generated_c.contains("nomo_pkg_app_main_struct_Pair"));
+    assert!(generated_c.contains("nomo_pkg_calc_fn_add"));
+    assert!(!generated_c.contains("nomo_pkg_hello_fn_add"));
+    assert!(generated_c.contains("nomo_pkg_calc_struct_Pair"));
+    assert!(!generated_c.contains("nomo_pkg_hello_struct_Pair"));
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -6358,7 +6346,7 @@ fn nomo_project_commands_use_path_dependency_module_public_api() {
         "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     )
     .unwrap();
-    fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(dependency.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         dependency.join("src/path.nomo"),
         r#"package utils.path
@@ -6384,11 +6372,11 @@ pub fn make_segment(value: i64) -> Segment {
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
 import local_utils.path
 
-fn main() -> void {
+fn main() {
     let total: i64 = join(40, 2)
     let segment: Segment = make_segment(total)
 }
@@ -6431,7 +6419,7 @@ fn nomo_project_commands_type_check_path_dependency_public_api() {
     .unwrap();
     fs::write(
         dependency.join("src/main.nomo"),
-        "package calc.main\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+        "package calc\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
     )
     .unwrap();
     fs::write(
@@ -6441,11 +6429,11 @@ fn nomo_project_commands_type_check_path_dependency_public_api() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import calc.main
+import calc
 
-fn main() -> void {
+fn main() {
     let total: string = add(40, 2)
 }
 "#,
@@ -6483,7 +6471,7 @@ fn nomo_project_commands_reject_private_path_dependency_api() {
     .unwrap();
     fs::write(
         dependency.join("src/main.nomo"),
-        "package calc.main\n\nfn hidden() -> i64 {\n    return 99\n}\n",
+        "package calc\n\nfn hidden() -> i64 {\n    return 99\n}\n",
     )
     .unwrap();
     fs::write(
@@ -6493,11 +6481,11 @@ fn nomo_project_commands_reject_private_path_dependency_api() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package hello
 
-import calc.main
+import calc
 
-fn main() -> void {
+fn main() {
     let value: i64 = hidden()
 }
 "#,
@@ -6529,7 +6517,7 @@ fn nomo_project_commands_use_git_dependency_public_api() {
         &dependency,
         "fynn",
         "calc",
-        r#"package calc.main
+        r#"package calc
 
 pub struct Pair {
     value: i64
@@ -6560,11 +6548,11 @@ fn hidden() -> i64 {
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
-import calc.main
+import calc
 
-fn main() -> void {
+fn main() {
     let total: i64 = add(40, 2)
     let pair: Pair = make_pair(total)
 }
@@ -6606,10 +6594,10 @@ fn main() -> void {
     );
     assert!(c_path.exists());
     let generated_c = fs::read_to_string(c_path).unwrap();
-    assert!(generated_c.contains("nomo_pkg_calc_main_fn_add"));
-    assert!(!generated_c.contains("nomo_pkg_app_main_fn_add"));
-    assert!(generated_c.contains("nomo_pkg_calc_main_struct_Pair"));
-    assert!(!generated_c.contains("nomo_pkg_app_main_struct_Pair"));
+    assert!(generated_c.contains("nomo_pkg_calc_fn_add"));
+    assert!(!generated_c.contains("nomo_pkg_hello_fn_add"));
+    assert!(generated_c.contains("nomo_pkg_calc_struct_Pair"));
+    assert!(!generated_c.contains("nomo_pkg_hello_struct_Pair"));
 
     fs::remove_dir_all(&root).unwrap();
 }
@@ -6628,7 +6616,7 @@ fn nomo_project_commands_use_git_dependency_module_public_api() {
         "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
     )
     .unwrap();
-    fs::write(dependency.join("src/main.nomo"), "package utils.main\n").unwrap();
+    fs::write(dependency.join("src/main.nomo"), "package utils\n").unwrap();
     fs::write(
         dependency.join("src/path.nomo"),
         r#"package utils.path
@@ -6661,11 +6649,11 @@ pub fn join(a: i64, b: i64) -> i64 {
     .unwrap();
     fs::write(
         &source,
-        r#"package app.main
+        r#"package hello
 
 import local_utils.path
 
-fn main() -> void {
+fn main() {
     let total: i64 = join(40, 2)
 }
 "#,
@@ -6703,7 +6691,7 @@ fn nomo_project_commands_reject_imports_without_dependency_alias() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nimport yaml.parser\n\nfn main() -> void {\n}\n",
+        "package hello\n\nimport yaml.parser\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -6730,7 +6718,7 @@ fn nomoc_still_rejects_external_dependency_imports() {
     let source = root.join("main.nomo");
     fs::write(
         &source,
-        "package app.main\n\nimport json.parser\n\nfn main() -> void {\n}\n",
+        "package app\n\nimport json.parser\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -7058,7 +7046,7 @@ fn nomo_clean_rejects_extra_arguments_without_deleting_build_dir() {
     fs::create_dir_all(&build_dir).unwrap();
     fs::write(project.join("nomo.toml"), "[package]\nname = \"hello\"\n").unwrap();
     fs::create_dir_all(project.join("src")).unwrap();
-    fs::write(project.join("src/main.nomo"), "package app.main\n").unwrap();
+    fs::write(project.join("src/main.nomo"), "package hello\n").unwrap();
     fs::write(build_dir.join("keep.txt"), "keep").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -7263,11 +7251,11 @@ fn nomoc_builds_standalone_source_file_to_compilable_c() {
     let bin_path = root.join("out/standalone");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.println("standalone ok")
 }
 "#,
@@ -7336,7 +7324,7 @@ fn nomoc_build_rejects_missing_out_path() {
     let root = temp_test_root("nomoc-missing-out-path");
     reset_dir(&root);
     let source = root.join("main.nomo");
-    fs::write(&source, "package app.main\n").unwrap();
+    fs::write(&source, "package app\n").unwrap();
 
     let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("build")
@@ -7561,7 +7549,7 @@ fn generated_c_runtime_smoke_passes_with_address_sanitizer_when_available() {
 
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.array
 import std.io
@@ -7576,7 +7564,7 @@ fn fail() -> Result<string, string> {
     return Err("stop")
 }
 
-fn cleanup(label: string) -> void {
+fn cleanup(label: string) {
     io.println(label)
 }
 
@@ -7673,7 +7661,7 @@ fn run() -> Result<string, string> {
     return Ok(value)
 }
 
-fn main() -> void {
+fn main() {
     for let i: u64 = 0; i < 256; i++ {
         let json_result: Result<string, JsonError> = json_roundtrip()
         match json_result {
@@ -7790,7 +7778,7 @@ fn async_frame_completion_and_early_drop_are_asan_clean_when_available() {
     let generated_c = root.join("generated.c");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.array
 import std.io
@@ -7825,7 +7813,7 @@ suspend fn child(message: string, values: Array<string>) -> string {
     return child_message
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let message: string = "live"
     let values: Array<string> = ["alpha", "beta"]
     let envelope: Envelope = Envelope { body: "payload" }
@@ -7980,7 +7968,7 @@ fn structured_task_completion_and_parent_drop_are_asan_clean_when_available() {
     let generated_c = root.join("generated.c");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.result
@@ -8010,7 +7998,7 @@ suspend fn gather() -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let gathered: string = gather()
     io.println(gathered)
 }
@@ -8145,7 +8133,7 @@ fn structured_spawn_publication_move_is_asan_clean_when_available() {
     });
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.array
 import std.io
@@ -8170,7 +8158,7 @@ suspend fn launch(message: AgentMessage) -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let content: string = launch(AgentMessage {
         content: "publication",
         tags: ["agent", "task"]
@@ -8262,27 +8250,27 @@ fn structured_scope_auto_cancel_is_asan_clean_when_available() {
     let metrics_path = root.join("metrics.json");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
-suspend fn queued_child(value: string) -> void {
+suspend fn queued_child(value: string) {
     io.println(value, "unexpected")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let slow = task.spawn slow_child("managed")
         let gate = task.spawn gate_child()
@@ -8385,7 +8373,7 @@ fn io_owned_temporaries_are_asan_clean_when_available() {
     let bin_path = root.join("asan-io-owned-temporaries");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.array
 import std.io
@@ -8395,7 +8383,7 @@ fn render() -> string {
     return string.to_upper("call")
 }
 
-fn main() -> void {
+fn main() {
     let message: string = "borrowed"
     let values: Array<string> = ["first"]
     io.print(message, 7)
@@ -8486,11 +8474,11 @@ fn async_ready_queue_is_bounded_fifo_across_wraparound() {
     });
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     task.yield_now()
 }
 "#,
@@ -8635,18 +8623,18 @@ fn async_runtime_exports_versioned_counters_without_polluting_program_output() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package counter_probe
 
 import std.io
 import std.task
 
-suspend fn yield_once() -> void {
+suspend fn yield_once() {
     io.println("child-before")
     task.yield_now()
     io.println("child-after")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     io.println("before")
     yield_once()
     task.yield_now()
@@ -8751,13 +8739,13 @@ fn nomo_run_executes_zero_one_and_many_suspending_loop_iterations() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_loop_carried_state
 
 import std.io
 import std.string
 import std.task
 
-suspend fn pause() -> void {
+suspend fn pause() {
     task.yield_now()
 }
 
@@ -8773,7 +8761,7 @@ suspend fn run(label: string, count: u64) -> string {
     return message
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let zero: string = run("zero", 0)
     let one: string = run("one", 1)
     let many: string = run("many", 3)
@@ -8832,7 +8820,7 @@ fn suspending_loop_cancellation_drops_loop_carried_state_once() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_loop_carried_state_cancel
 
 import std.io
 import std.result
@@ -8840,7 +8828,7 @@ import std.string
 import std.task
 import std.time
 
-suspend fn slow_loop(value: string) -> void {
+suspend fn slow_loop(value: string) {
     let mut remaining: u64 = 2
     let mut state: string = value
     for remaining > 0 {
@@ -8851,11 +8839,11 @@ suspend fn slow_loop(value: string) -> void {
     io.println(state)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn slow_loop("managed")
         let gate_task = task.spawn gate()
@@ -8978,20 +8966,20 @@ fn structured_scope_return_cancel_is_asan_clean_when_available() {
     let metrics_path = root.join("metrics.json");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.string
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
@@ -9010,7 +8998,7 @@ suspend fn finish(value: string) -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: string = finish("managed")
     io.println(result)
 }
@@ -9108,7 +9096,7 @@ fn structured_scope_question_propagation_cancels_unjoined_child_and_is_asan_clea
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_scope_question_cancel
 
 import std.io
 import std.num
@@ -9116,13 +9104,13 @@ import std.result
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
@@ -9136,7 +9124,7 @@ suspend fn finish(value: string) -> Result<void, NumError> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let outcome: Result<void, NumError> = finish("managed")
     io.println(result.is_err(outcome))
 }
@@ -9274,7 +9262,7 @@ fn structured_scope_option_question_none_cancels_live_child_before_completion() 
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_scope_option_question_cancel
 
 import std.io
 import std.option
@@ -9285,13 +9273,13 @@ fn missing() -> Option<string> {
     return None
 }
 
-suspend fn slow_child() -> void {
+suspend fn slow_child() {
     io.println("slow before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println("slow after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
@@ -9305,7 +9293,7 @@ suspend fn finish() -> Option<void> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let outcome: Option<void> = finish()
     io.println(option.is_none(outcome))
 }
@@ -9379,24 +9367,24 @@ fn structured_explicit_cancel_consumes_child_and_is_asan_clean() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_explicit_cancel
 
 import std.io
 import std.result
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn slow_child("managed")
         let gate_task = task.spawn gate()
@@ -9534,21 +9522,21 @@ fn structured_explicit_cancel_handles_not_started_and_completed_children() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_explicit_cancel_terminal_states
 
 import std.io
 import std.result
 import std.task
 
-suspend fn ready_child(value: string) -> void {
+suspend fn ready_child(value: string) {
     io.println(value)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let before_start = task.spawn ready_child("before-start body")
         let before_start_cancelled: Result<void, TaskError> = task.cancel(before_start)
@@ -9621,7 +9609,7 @@ fn structured_deadline_times_out_child_and_is_asan_clean() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_deadline_timeout
 
 import std.io
 import std.result
@@ -9636,7 +9624,7 @@ suspend fn bounded_work() -> string {
     return "completed"
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn bounded_work()
         let joined: Result<string, TaskError> = task.join(child)
@@ -9753,19 +9741,19 @@ fn root_zero_deadline_fails_before_body_without_registering_a_timer() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package root_zero_deadline
 
 import std.io
 import std.task
 import std.time
 
-suspend fn bounded() -> void {
+suspend fn bounded() {
     task.deadline(time.duration_millis(0)) {
         io.println("deadline-body-secret")
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     bounded()
     io.println("deadline-caller-after-secret")
 }
@@ -9816,13 +9804,13 @@ fn positive_deadline_disarms_after_normal_fallthrough() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package normal_deadline_fallthrough
 
 import std.io
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(time.duration_millis(10000)) {
         task.check_cancelled()
         io.println("completed")
@@ -9869,24 +9857,24 @@ fn structured_cancel_observes_an_already_failed_deadline_child() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package cancel_failed_deadline_child
 
 import std.io
 import std.result
 import std.task
 import std.time
 
-suspend fn bounded() -> void {
+suspend fn bounded() {
     task.deadline(time.duration_millis(0)) {
         io.println("failed-child-body-secret")
     }
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let failed = task.spawn bounded()
         let gate_task = task.spawn gate()
@@ -9927,26 +9915,26 @@ fn structured_child_panic_cancels_root_siblings_and_is_asan_clean() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_child_panic_cleanup
 
 import std.io
 import std.string
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "slow before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "slow after")
 }
 
-suspend fn panicking_child(prefix: string) -> void {
+suspend fn panicking_child(prefix: string) {
     task.yield_now()
     let message: string = prefix.concat(" child")
     panic(message)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let slow = task.spawn slow_child("managed")
         let failure = task.spawn panicking_child("panic from")
@@ -10080,7 +10068,7 @@ fn structured_scope_question_join_spills_managed_success_across_later_suspension
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_scope_question_join_success
 
 import std.io
 import std.result
@@ -10101,7 +10089,7 @@ suspend fn gather() -> Result<string, TaskError> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let gathered: Result<string, TaskError> = gather()
     io.println(result.unwrap_or(gathered, "failed"))
 }
@@ -10198,9 +10186,9 @@ fn structured_tasks_use_bounded_fifo_and_surface_typed_queue_saturation() {
     .unwrap();
 
     let mut source = String::from(
-        "package app.main\n\nimport std.io\nimport std.result\nimport std.task\n\n\
+        "package structured_tasks\n\nimport std.io\nimport std.result\nimport std.task\n\n\
          suspend fn child() -> string {\n    return \"done\"\n}\n\n\
-         suspend fn main() -> void {\n    task.scope {\n",
+         suspend fn main() {\n    task.scope {\n",
     );
     for index in 0..65 {
         source.push_str(&format!("        let child_{index} = task.spawn child()\n"));
@@ -10260,13 +10248,13 @@ fn structured_scope_normal_exit_cancels_unjoined_timer_child() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_scope_auto_cancel
 
 import std.io
 import std.task
 import std.time
 
-suspend fn slow_child() -> void {
+suspend fn slow_child() {
     io.println("slow before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     task.scope {
@@ -10275,15 +10263,15 @@ suspend fn slow_child() -> void {
     io.println("slow after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
-suspend fn queued_child(value: string) -> void {
+suspend fn queued_child(value: string) {
     io.println(value, "unexpected")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let slow = task.spawn slow_child()
         let gate = task.spawn gate_child()
@@ -10361,20 +10349,20 @@ fn structured_scope_return_cancels_unjoined_child_before_waking_parent() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package structured_scope_return_cancel
 
 import std.io
 import std.string
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
@@ -10393,7 +10381,7 @@ suspend fn finish(value: string) -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: string = finish("managed")
     io.println(result)
 }
@@ -10468,7 +10456,7 @@ fn bounded_channel_applies_fifo_backpressure_with_exact_counters_and_asan_cleanu
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_bounded_channel
 
 import std.io
 import std.option
@@ -10483,12 +10471,12 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn producer(channel_value: Channel<string>) -> void {
+suspend fn producer(channel_value: Channel<string>) {
     let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
     let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
 }
 
-suspend fn consumer(channel_value: Channel<string>) -> void {
+suspend fn consumer(channel_value: Channel<string>) {
     task.yield_now()
     let first: Option<string> = task.receive(channel_value)
     let second: Option<string> = task.receive(channel_value)
@@ -10497,7 +10485,7 @@ suspend fn consumer(channel_value: Channel<string>) -> void {
     task.close(channel_value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let producer_task = task.spawn producer(channel_value)
@@ -10629,7 +10617,7 @@ fn static_receive_timer_select_is_source_ordered_and_cleans_losers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_static_select
 
 import std.io
 import std.option
@@ -10645,12 +10633,12 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn publish(channel_value: Channel<string>) -> void {
+suspend fn publish(channel_value: Channel<string>) {
     task.yield_now()
     let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, "winner")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let idle_channel: Channel<string> = make_channel()
     let ready_channel: Channel<string> = make_channel()
     let selected_prefix: string = "selected"
@@ -10812,7 +10800,7 @@ fn static_select_deadline_cancels_every_pending_registration_once() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_static_select_deadline
 
 import std.io
 import std.result
@@ -10827,7 +10815,7 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn bounded_select(channel_value: Channel<string>) -> void {
+suspend fn bounded_select(channel_value: Channel<string>) {
     task.deadline(time.duration_millis(5)) {
         task.select {
             task.receive(channel_value) => received {
@@ -10840,7 +10828,7 @@ suspend fn bounded_select(channel_value: Channel<string>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let child = task.spawn bounded_select(channel_value)
@@ -10896,7 +10884,7 @@ fn bounded_channel_close_wakes_sender_and_returns_the_single_unsent_owner() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package async_bounded_channel_close
 
 import std.io
 import std.option
@@ -10918,20 +10906,20 @@ fn recover(result: Result<void, ChannelSendError<string>>) -> string {
     }
 }
 
-suspend fn sender(channel_value: Channel<string>) -> void {
+suspend fn sender(channel_value: Channel<string>) {
     let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
     let pending_value: string = "second"
     let second: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
     io.println(recover(second))
 }
 
-suspend fn closer(channel_value: Channel<string>) -> void {
+suspend fn closer(channel_value: Channel<string>) {
     task.yield_now()
     task.close(channel_value)
     task.close(channel_value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let sender_task = task.spawn sender(channel_value)
@@ -11056,7 +11044,7 @@ fn bounded_channel_try_operations_validate_capacity_wrap_and_close_drain_order()
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package bounded_channel_try_operations
 
 import std.io
 import std.result
@@ -11077,7 +11065,7 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-fn print_send(result: ChannelTrySend<string>) -> void {
+fn print_send(result: ChannelTrySend<string>) {
     match result {
         ChannelTrySend.Sent => {
             io.println("sent")
@@ -11102,7 +11090,7 @@ fn receive_text(result: ChannelTryReceive<string>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println(channel_error_code(task.channel<string>(0)))
     io.println(channel_error_code(task.channel<string>(65537)))
     let channel_value: Channel<string> = make_channel()
@@ -11248,7 +11236,7 @@ fn bounded_channel_accepts_exact_element_and_byte_limits_and_rejects_one_field_o
     .unwrap();
 
     let mut source = String::from(
-        "package app.main\n\nimport std.io\nimport std.result\nimport std.task\n\nstruct AtByteLimit {\n",
+        "package bounded_channel_capacity_boundaries\n\nimport std.io\nimport std.result\nimport std.task\n\nstruct AtByteLimit {\n",
     );
     for index in 0..128 {
         source.push_str(&format!("    field_{index}: u64\n"));
@@ -11267,7 +11255,7 @@ fn above_limit_code(created: Result<Channel<AboveByteLimit>, ChannelError>) -> s
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println(result.is_ok(task.channel<u64>(65536)))
     io.println(result.is_ok(task.channel<AtByteLimit>(65536)))
     io.println(above_limit_code(task.channel<AboveByteLimit>(65536)))
@@ -11309,7 +11297,7 @@ fn bounded_channel_deadline_cancels_one_waiter_without_leaking_registration() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package bounded_channel_deadline_cancel
 
 import std.io
 import std.option
@@ -11325,14 +11313,14 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn wait_for_value(channel_value: Channel<string>) -> void {
+suspend fn wait_for_value(channel_value: Channel<string>) {
     task.deadline(time.duration_millis(5)) {
         let received: Option<string> = task.receive(channel_value)
         io.println(option.unwrap_or(received, "unexpected"))
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let waiter = task.spawn wait_for_value(channel_value)
@@ -11397,7 +11385,7 @@ fn bounded_channel_hands_values_to_blocked_receivers_in_waiter_fifo_order() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package bounded_channel_direct_handoff
 
 import std.io
 import std.option
@@ -11412,18 +11400,18 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn receiver(channel_value: Channel<string>) -> void {
+suspend fn receiver(channel_value: Channel<string>) {
     let received: Option<string> = task.receive(channel_value)
     io.println(option.unwrap_or(received, "missing"))
 }
 
-suspend fn sender(channel_value: Channel<string>) -> void {
+suspend fn sender(channel_value: Channel<string>) {
     task.yield_now()
     let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
     let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let first_receiver = task.spawn receiver(channel_value)
@@ -11487,7 +11475,7 @@ fn bounded_channel_deadline_cancels_blocked_sender_and_drops_published_value_onc
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package bounded_channel_sender_cancel
 
 import std.io
 import std.option
@@ -11503,14 +11491,14 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn blocked_sender(channel_value: Channel<string>) -> void {
+suspend fn blocked_sender(channel_value: Channel<string>) {
     task.deadline(time.duration_millis(5)) {
         let pending_value: string = "cancelled-value"
         let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     let primed: ChannelTrySend<string> = task.try_send(channel_value, "buffered")
     task.scope {
@@ -11630,7 +11618,7 @@ fn bounded_channel_root_panic_drops_buffer_and_linked_sender_once_under_asan() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package bounded_channel_panic_cleanup
 
 import std.result
 import std.task
@@ -11643,19 +11631,19 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn blocked_sender(channel_value: Channel<string>) -> void {
+suspend fn blocked_sender(channel_value: Channel<string>) {
     let buffered: Result<void, ChannelSendError<string>> = task.send(channel_value, "buffered")
     let pending_value: string = "linked"
     let pending: Result<void, ChannelSendError<string>> = task.send(channel_value, pending_value)
 }
 
-suspend fn panicking_child(channel_value: Channel<string>) -> void {
+suspend fn panicking_child(channel_value: Channel<string>) {
     task.yield_now()
     task.close(channel_value)
     panic("channel panic")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let sender = task.spawn blocked_sender(channel_value)
@@ -11756,14 +11744,14 @@ fn async_timer_uses_monotonic_owner_local_waiting_and_exact_counters() {
     let metrics_path = root.join("timer-metrics.json");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 import std.result
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     let started: i64 = time.monotonic_millis()
     io.println("before")
     let immediate: Result<void, TaskError> = task.sleep(time.duration_millis(0))
@@ -11914,7 +11902,7 @@ fn nomo_run_allows_option_question_early_return() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package option_question
 
 import std.io
 
@@ -11928,7 +11916,7 @@ fn compute() -> Option<string> {
     return Some(text)
 }
 
-fn main() -> void {
+fn main() {
     let result: Option<string> = compute()
     match result {
         Some(text) => {
@@ -11978,12 +11966,12 @@ fn nomo_run_executes_std_log_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_log_helpers
 
 import std.io
 import std.log
 
-fn main() -> void {
+fn main() {
     log.debug("debug")
     log.info("info")
     log.warn("warn")
@@ -12052,14 +12040,14 @@ fn nomo_run_executes_std_hash_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_hash_helpers
 
 import std.hash
 import std.array.Array
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let mut bytes: Array<u32> = Array.new<u32>()
     bytes.push(110 as u32)
     bytes.push(111 as u32)
@@ -12120,7 +12108,7 @@ fn nomo_run_executes_std_crypto_sha_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_crypto_helpers
 
 import std.crypto
 import std.io
@@ -12140,7 +12128,7 @@ fn all_bytes(values: Array<u32>) -> bool {
     return bad_count == 0
 }
 
-fn main() -> void {
+fn main() {
     io.println(crypto.sha256("nomo"))
     io.println(crypto.sha512("nomo"))
     let bytes: Array<u32> = crypto.random_bytes(4 as u64)
@@ -12193,12 +12181,12 @@ fn nomo_run_executes_std_json_parse_and_stringify() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_json_helpers
 
 import std.io
 import std.json
 
-fn main() -> void {
+fn main() {
     let parsed: Result<JsonValue, JsonError> = json.parse("{\"lang\":\"nomo\",\"versions\":[1,true,null]}")
     match parsed {
         Ok(value) => {
@@ -12351,12 +12339,12 @@ fn cron_native_expression_limit_accepts_the_exact_boundary() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package cron_expression_boundary
 
 import std.cron
 import std.io
 
-fn main() -> void {{
+fn main() {{
     let exact: Result<CronSchedule, CronError> = cron.parse("{exact}")
     match exact {{
         Ok(value) => {{
@@ -12499,7 +12487,7 @@ fn jsonrpc_native_limits_accept_exact_boundaries_and_reject_overflow() {
 
     fs::write(
         project.join("src/main.nomo"),
-        r#"package jsonrpc_boundaries.main
+        r#"package jsonrpc_boundaries
 
 import std.fs
 import std.io
@@ -12518,7 +12506,7 @@ fn read_fixture(path: string) -> string {
     }
 }
 
-fn feed_case(label: string, input: string) -> void {
+fn feed_case(label: string, input: string) {
     match jsonrpc.decoder(1048575 as u64) {
         Ok(decoder_value) => {
             match jsonrpc.feed(decoder_value, input) {
@@ -12538,7 +12526,7 @@ fn feed_case(label: string, input: string) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     feed_case("message-exact", read_fixture("exact.txt"))
     feed_case("chunk-over", read_fixture("chunk_over.txt"))
     feed_case("batch-exact", read_fixture("batch_exact.txt"))
@@ -12586,7 +12574,7 @@ fn nomo_run_executes_structured_json_agent_payloads() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package structured_json_agent.main
+        r#"package structured_json_agent
 
 import std.array.Array
 import std.io
@@ -12609,7 +12597,7 @@ fn request_body() -> Result<JsonValue, JsonError> {
     return json.from_object(request)
 }
 
-fn main() -> void {
+fn main() {
     let request: Result<JsonValue, JsonError> = request_body()
     match request {
         Err(err) => {
@@ -12852,7 +12840,7 @@ fn structured_json_enforces_native_boundary_limits() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package structured_json_boundaries.main
+        r#"package structured_json_boundaries
 
 import std.array.Array
 import std.fs
@@ -12860,7 +12848,7 @@ import std.io
 import std.json
 import std.string
 
-fn show_result(result: Result<JsonValue, JsonError>) -> void {
+fn show_result(result: Result<JsonValue, JsonError>) {
     match result {
         Ok(value) => {
             let raw: string = json.stringify(value)
@@ -12872,7 +12860,7 @@ fn show_result(result: Result<JsonValue, JsonError>) -> void {
     }
 }
 
-fn parse_file(path: string) -> void {
+fn parse_file(path: string) {
     let input: Result<string, FsError> = fs.read_to_string(path)
     match input {
         Err(err) => {
@@ -12884,7 +12872,7 @@ fn parse_file(path: string) -> void {
     }
 }
 
-fn construct_string_file(path: string) -> void {
+fn construct_string_file(path: string) {
     let input: Result<string, FsError> = fs.read_to_string(path)
     match input {
         Err(err) => {
@@ -12914,7 +12902,7 @@ fn value_array(count: u64) -> Result<JsonValue, JsonError> {
     return json.from_array(values)
 }
 
-fn number_boundaries() -> void {
+fn number_boundaries() {
     let smallest: JsonValue = json.from_i64(-9223372036854775807 - 1)
     let largest_number: u64 = (9223372036854775807 as u64) * 2 + 1
     let largest: JsonValue = json.from_u64(largest_number)
@@ -12924,14 +12912,14 @@ fn number_boundaries() -> void {
     show_result(json.from_number_text("1E+2"))
 }
 
-fn empty_containers() -> void {
+fn empty_containers() {
     let empty_values: Array<JsonValue> = Array.new<JsonValue>()
     let empty_members: Array<JsonMember> = Array.new<JsonMember>()
     show_result(json.from_array(empty_values))
     show_result(json.from_object(empty_members))
 }
 
-fn wrong_kind_access() -> void {
+fn wrong_kind_access() {
     let value: JsonValue = json.from_bool(true)
     io.println(json.is_null(value))
     match json.as_bool(value) {
@@ -12952,7 +12940,7 @@ fn wrong_kind_access() -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     parse_file("text_exact.json")
     parse_file("text_over.json")
     parse_file("depth_exact.json")
@@ -13033,11 +13021,11 @@ fn structured_json_native_runtime_rejects_invalid_utf8() {
     });
     fs::write(
         &source,
-        r#"package structured_json_invalid_utf8.main
+        r#"package structured_json_invalid_utf8
 
 import std.json
 
-fn main() -> void {
+fn main() {
     let value: Result<JsonValue, JsonError> = json.parse("{}")
 }
 "#,
@@ -13124,14 +13112,14 @@ fn nomo_run_executes_std_regex_helpers_with_question() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_regex_helpers
 
 import std.array
 import std.io
 import std.num
 import std.regex
 
-fn print_group(groups: Array<string>, index: u64) -> void {
+fn print_group(groups: Array<string>, index: u64) {
     match groups.get(index) {
         Some(value) => {
             io.println(value)
@@ -13205,14 +13193,14 @@ fn nomo_run_executes_std_collections_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package std_collections_helpers
 
 import std.collections
 import std.io
 import std.num
 import std.option
 
-fn main() -> void {
+fn main() {
     let mut map: StringMap = collections.map_new()
     map = collections.map_set(map, "lang", "nomo")
     map = collections.map_set(map, "tool", "compiler")
@@ -13287,7 +13275,7 @@ fn nomo_run_uses_question_for_result_propagation() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package question_result_propagation
 
 import std.io
 
@@ -13300,7 +13288,7 @@ fn compute() -> Result<string, string> {
     return Ok(value)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<string, string> = compute()
     match result {
         Ok(value) => {
@@ -13350,7 +13338,7 @@ fn nomo_run_uses_question_for_option_propagation() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package question_option_propagation
 
 import std.io
 
@@ -13362,7 +13350,7 @@ fn compute() -> Option<string> {
     return load_value()?
 }
 
-fn main() -> void {
+fn main() {
     let result: Option<string> = compute()
     match result {
         Some(value) => {
@@ -13412,7 +13400,7 @@ fn nomo_run_reports_result_main_error_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package err_main
 
 import std.result.Result
 
@@ -13453,9 +13441,9 @@ fn nomo_run_reports_direct_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package direct_panic
 
-fn main() -> void {
+fn main() {
     panic("boom")
 }
 "#,
@@ -13491,11 +13479,11 @@ fn managed_sync_panic_message_survives_local_cleanup_and_is_asan_clean() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package managed_sync_panic
 
 import std.string
 
-fn main() -> void {
+fn main() {
     let prefix: string = "managed"
     let message: string = prefix.concat(" sync panic")
     panic(message)
@@ -13590,11 +13578,11 @@ fn nomo_run_reports_debug_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package debug_panic
 
 import std.debug
 
-fn main() -> void {
+fn main() {
     debug.panic("debug-boom")
 }
 "#,
@@ -13630,11 +13618,11 @@ fn nomo_run_reports_array_set_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package array_panic
 
 import std.array
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     items.set(1, 2)
@@ -13675,11 +13663,11 @@ fn nomo_run_reports_division_by_zero_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package division_panic
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let value: i64 = 1 / 0
     io.println("wrong")
 }
@@ -13716,11 +13704,11 @@ fn nomo_run_reports_signed_overflow_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package overflow_panic
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let max: i64 = 9223372036854775807
     let value: i64 = max + 1
     io.println("wrong")
@@ -13761,11 +13749,11 @@ fn nomo_run_reports_invalid_shift_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package shift_panic
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let value: i64 = 1 << 64
     io.println("wrong")
 }
@@ -13802,9 +13790,9 @@ fn nomo_run_reports_signed_left_shift_overflow_panic_status() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package shift_overflow_panic
 
-fn main() -> void {
+fn main() {
     let value: i64 = 4611686018427387904 << 1
 }
 "#,
@@ -13845,12 +13833,12 @@ fn nomo_run_handles_fs_read_error_as_result_value() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package fs_error
 
 import std.fs
 import std.io
 
-fn main() -> void {{
+fn main() {{
     let result: Result<string, FsError> = fs.read_to_string("{}")
     let message: string = match result {{
         Ok(text) => "wrong"
@@ -13906,12 +13894,12 @@ fn nomo_run_handles_fs_write_error_as_result_value() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package fs_write_error
 
 import std.fs
 import std.io
 
-fn main() -> void {{
+fn main() {{
     let result: Result<void, FsError> = fs.write_string("{}", "content")
     let message: string = match result {{
         Ok(value) => "wrong"
@@ -13969,7 +13957,7 @@ fn nomo_run_executes_fs_read_and_write_bytes() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package fs_bytes
 
 import std.array
 import std.fs
@@ -14041,12 +14029,12 @@ fn nomo_run_handles_fs_open_error_as_result_value() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package fs_open_error
 
 import std.fs
 import std.io
 
-fn main() -> void {{
+fn main() {{
     let result: Result<File, FsError> = fs.open("{}")
     let message: string = match result {{
         Ok(file) => "wrong"
@@ -14105,7 +14093,7 @@ fn nomo_run_executes_file_read_and_write_string_methods() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package file_methods
 
 import std.fs
 import std.io
@@ -14118,7 +14106,7 @@ fn checked(path: string) -> Result<string, FsError> {{
     return Ok(text)
 }}
 
-fn main() -> void {{
+fn main() {{
     match checked("{}") {{
         Ok(text) => {{
             io.println(text)
@@ -14175,7 +14163,7 @@ fn nomo_run_executes_fs_directory_helpers() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package fs_dirs
 
 import std.array
 import std.fs
@@ -14213,7 +14201,7 @@ fn checked() -> Result<void, FsError> {{
     return fs.write_string("{}", "ok")?
 }}
 
-fn main() -> void {{
+fn main() {{
     match checked() {{
         Ok(value) => {{
             io.println("fs dirs ok")
@@ -14279,12 +14267,12 @@ fn nomo_run_handles_missing_env_get_as_none() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package env_none
 
 import std.env
 import std.io
 
-fn main() -> void {{
+fn main() {{
     let value: Option<string> = env.get("{}")
     let message: string = match value {{
         Some(text) => "wrong"
@@ -14340,14 +14328,14 @@ fn nomo_run_executes_extended_std_env_helpers() {
     fs::write(
         project.join("src/main.nomo"),
         format!(
-            r#"package app.main
+            r#"package env_extended
 
 import std.env
 import std.io
 import std.option
 import std.string
 
-fn main() -> void {{
+fn main() {{
     env.set("{}", "set ok")
     let value: Option<string> = env.get("{}")
     let label: string = match value {{
@@ -14422,13 +14410,13 @@ fn nomo_run_forwards_program_arguments_after_separator() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package args_demo
 
 import std.array
 import std.env
 import std.io
 
-fn main() -> void {
+fn main() {
     let args: Array<string> = env.args()
     let first: Option<string> = args.get(1)
     let message: string = match first {
@@ -14472,12 +14460,12 @@ fn nomo_run_executes_std_path_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package path_demo
 
 import std.io
 import std.path
 
-fn main() -> void {
+fn main() {
     io.println(path.join("/tmp", "nomo.txt"))
     io.println(path.basename("/tmp/nomo.txt"))
     io.println(path.dirname("/tmp/nomo.txt"))
@@ -14532,14 +14520,14 @@ fn nomo_run_executes_extended_std_string_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package string_demo
 
 import std.array
 import std.io
 import std.option
 import std.string
 
-fn main() -> void {
+fn main() {
     let text: string = "  NoMo  "
     if !text.is_empty() && text.contains("No") && text.starts_with("  N") && text.ends_with("  ") {
         io.println("predicates")
@@ -14607,12 +14595,12 @@ fn nomo_run_executes_std_math_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package math_demo
 
 import std.io
 import std.math
 
-fn main() -> void {
+fn main() {
     if math.abs(0 - 7) == 7 {
         io.println("abs")
     } else {
@@ -14681,12 +14669,12 @@ fn nomo_run_executes_std_char_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package char_demo
 
 import std.char
 import std.io
 
-fn main() -> void {
+fn main() {
     let digit: string = if char.is_digit('7') { "digit" } else { "bad digit" }
     let alpha: string = if char.is_alpha('N') { "alpha" } else { "bad alpha" }
     let space: string = if char.is_whitespace(' ') { "space" } else { "bad space" }
@@ -14739,12 +14727,12 @@ fn nomo_run_executes_std_os_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package os_demo
 
 import std.io
 import std.os
 
-fn main() -> void {
+fn main() {
     io.println(os.platform())
     io.println(os.arch())
     io.println(os.path_separator())
@@ -14817,12 +14805,12 @@ fn nomo_run_executes_std_time_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package time_helpers
 
 import std.io
 import std.time
 
-fn main() -> void {
+fn main() {
     let now: i64 = time.now_millis()
     let before: i64 = time.monotonic_millis()
     time.sleep_millis(0)
@@ -14872,12 +14860,12 @@ fn nomo_run_executes_std_debug_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package debug_helpers
 
 import std.debug
 import std.io
 
-fn main() -> void {
+fn main() {
     debug.print("debug-")
     debug.println("ok")
     io.println(debug.backtrace())
@@ -14920,13 +14908,13 @@ fn nomo_run_executes_std_time_duration_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package time_duration_helpers
 
 import std.io
 import std.num
 import std.time
 
-fn main() -> void {
+fn main() {
     let short: Duration = time.duration_millis(1500)
     let long: Duration = time.duration_seconds(2)
     time.sleep(time.duration_millis(0))
@@ -14976,12 +14964,12 @@ fn nomo_run_executes_std_process_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package process_helpers
 
 import std.io
 import std.process
 
-fn main() -> void {
+fn main() {
     let spawned: Result<i32, ProcessError> = process.spawn("printf spawn-ok >/dev/null")
     match spawned {
         Ok(code) => {
@@ -15318,7 +15306,7 @@ fn nomo_run_executes_controlled_process_stdio_without_a_shell() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package controlled_process.main
+        r#"package controlled_process
 
 import std.array.Array
 import std.env
@@ -15439,7 +15427,7 @@ fn run(program: string, cwd: string) -> Result<void, ProcessControlError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let program: Option<string> = env.get("NOMO_PROCESS_FIXTURE")
     let cwd: Option<string> = env.get("NOMO_PROCESS_CWD")
     match program {
@@ -15532,7 +15520,7 @@ fn controlled_processes_enforce_limits_timeouts_and_protocol_safety() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package controlled_process_safety.main
+        r#"package controlled_process_safety
 
 import std.array.Array
 import std.env
@@ -15547,7 +15535,7 @@ fn command(program: string, mode: string) -> ProcessCommand {
     return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
 }
 
-fn report_void(label: string, result: Result<void, ProcessControlError>) -> void {
+fn report_void(label: string, result: Result<void, ProcessControlError>) {
     match result {
         Ok(done) => {
             io.println(label, "ok")
@@ -15661,7 +15649,7 @@ fn run_split_utf8(program: string) -> Result<void, ProcessControlError> {
     return Ok(void)
 }
 
-fn run_invalid_utf8(program: string) -> void {
+fn run_invalid_utf8(program: string) {
     let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "invalid-utf8"))
     match started {
         Ok(child) => {
@@ -15692,7 +15680,7 @@ fn run_invalid_utf8(program: string) -> void {
     }
 }
 
-fn run_secret_output(program: string) -> void {
+fn run_secret_output(program: string) {
     let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "secret-output"))
     match started {
         Ok(child) => {
@@ -15780,7 +15768,7 @@ fn run_bounds(program: string) -> Result<void, ProcessControlError> {
     return Ok(void)
 }
 
-fn run_close_reaps(program: string) -> void {
+fn run_close_reaps(program: string) {
     let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "hold"))
     match started {
         Ok(child) => {
@@ -15803,7 +15791,7 @@ fn run_close_reaps(program: string) -> void {
     }
 }
 
-fn run_command_secret_errors(program: string) -> void {
+fn run_command_secret_errors(program: string) {
     let mut args: Array<string> = Array.new<string>()
     args.push("argv-secret-token")
     let mut invalid_environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
@@ -15865,7 +15853,7 @@ fn run_stdin_secret_error(program: string) -> Result<void, ProcessControlError> 
     return Ok(void)
 }
 
-fn run_missing(program: string) -> void {
+fn run_missing(program: string) {
     let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command(program, "echo"))
     match started {
         Ok(child) => {
@@ -15878,7 +15866,7 @@ fn run_missing(program: string) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let fixture: Option<string> = env.get("NOMO_PROCESS_FIXTURE")
     let missing: Option<string> = env.get("NOMO_MISSING_PROCESS")
     match fixture {
@@ -16012,7 +16000,7 @@ fn nomo_run_executes_std_net_tcp_stream_helpers() {
         "[package]\nname = \"net_tcp_stream_helpers\"\nversion = \"0.1.0\"\n\n[dependencies]\nstd = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package net_tcp_stream_helpers
 
 import std.io
 import std.net
@@ -16026,7 +16014,7 @@ fn request() -> Result<string, NetError> {
     return Ok(text)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<string, NetError> = request()
     match result {
         Ok(text) => {
@@ -16077,13 +16065,13 @@ fn async_process_pipe_contract_is_secret_safe_on_every_target() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_process_pipe_contract.main
+        r#"package async_process_pipe_contract
 
 import std.array.Array
 import std.io
 import std.process
 
-fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+fn report(started: Result<ProcessChild, ProcessControlError>) {
     match started {
         Ok(child) => {
             process.close_child(child)
@@ -16095,7 +16083,7 @@ fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let args: Array<string> = Array.new<string>()
     let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
     let command: ProcessCommand = ProcessCommand {
@@ -16304,7 +16292,7 @@ fn async_process_protocol_error_closes_child_without_leaking_output() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_process_protocol_error.main
+        r#"package async_process_protocol_error
 
 import std.array.Array
 import std.env
@@ -16346,7 +16334,7 @@ fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChi
     }
 }
 
-fn require_void(value: Result<void, ProcessControlError>) -> void {
+fn require_void(value: Result<void, ProcessControlError>) {
     match value {
         Ok(done) => {
         }
@@ -16356,7 +16344,7 @@ fn require_void(value: Result<void, ProcessControlError>) -> void {
     }
 }
 
-fn report_event(value: Result<ProcessEvent, ProcessControlError>) -> void {
+fn report_event(value: Result<ProcessEvent, ProcessControlError>) {
     match value {
         Ok(event) => {
             panic("invalid output was accepted")
@@ -16367,7 +16355,7 @@ fn report_event(value: Result<ProcessEvent, ProcessControlError>) -> void {
     }
 }
 
-fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void {
+fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) {
     match value {
         Ok(status) => {
             panic("protocol error left child open")
@@ -16378,7 +16366,7 @@ fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void 
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let program: string = require_program(env.get("NOMO_PROCESS_FIXTURE"))
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 5000)
     let child: ProcessChild = require_child(started)
@@ -16487,7 +16475,7 @@ fn async_process_start_cancellation_storm_drops_queued_jobs_without_waking_frame
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_process_start_cancel.main
+        r#"package async_process_start_cancel
 
 import std.array.Array
 import std.io
@@ -16507,7 +16495,7 @@ fn command() -> ProcessCommand {
     }
 }
 
-fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+fn report(started: Result<ProcessChild, ProcessControlError>) {
     match started {
         Ok(child) => {
             process.close_child(child)
@@ -16519,7 +16507,7 @@ fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
     }
 }
 
-fn require_cancelled(cancelled: Result<void, TaskError>) -> void {
+fn require_cancelled(cancelled: Result<void, TaskError>) {
     match cancelled {
         Ok(done) => {
         }
@@ -16529,16 +16517,16 @@ fn require_cancelled(cancelled: Result<void, TaskError>) -> void {
     }
 }
 
-suspend fn launch() -> void {
+suspend fn launch() {
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(), 5000)
     report(started)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let task_00 = task.spawn launch()
         let task_01 = task.spawn launch()
@@ -16676,7 +16664,7 @@ fn async_process_event_timeout_keeps_child_usable_and_close_reaps() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_process_event_timeout.main
+        r#"package async_process_event_timeout
 
 import std.array.Array
 import std.env
@@ -16718,7 +16706,7 @@ fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChi
     }
 }
 
-fn require_void(value: Result<void, ProcessControlError>) -> void {
+fn require_void(value: Result<void, ProcessControlError>) {
     match value {
         Ok(done) => {
         }
@@ -16728,7 +16716,7 @@ fn require_void(value: Result<void, ProcessControlError>) -> void {
     }
 }
 
-fn report_timeout(value: Result<ProcessEvent, ProcessControlError>) -> void {
+fn report_timeout(value: Result<ProcessEvent, ProcessControlError>) {
     match value {
         Ok(event) => {
             panic("process event unexpectedly completed")
@@ -16739,7 +16727,7 @@ fn report_timeout(value: Result<ProcessEvent, ProcessControlError>) -> void {
     }
 }
 
-fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void {
+fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) {
     match value {
         Ok(status) => {
             match status {
@@ -16757,7 +16745,7 @@ fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void 
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let program: string = require_program(env.get("NOMO_PROCESS_FIXTURE"))
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 5000)
     let child: ProcessChild = require_child(started)
@@ -16839,13 +16827,13 @@ fn nomo_run_executes_owner_affine_async_tcp_connect() {
         "[package]\nname = \"async_tcp_connect\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package async_tcp_connect
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Ok(stream) => {
             let stale_alias: TcpStream = stream
@@ -16859,7 +16847,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
     report(result)
 }
@@ -16982,7 +16970,7 @@ fn nomo_run_executes_bounded_owner_affine_async_tcp_io() {
         "[package]\nname = \"async_tcp_io\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_io.main
+    let source = r#"package async_tcp_io
 
 import std.io
 import std.net
@@ -16996,7 +16984,7 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-fn require_write(result: Result<void, NetError>) -> void {
+fn require_write(result: Result<void, NetError>) {
     match result {
         Result.Ok(value) => {
         }
@@ -17020,7 +17008,7 @@ fn require_text(result: Result<TcpTextChunk, NetError>) -> TcpTextChunk {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let host: string = string.concat("127.0.0.", "1")
     let connected: Result<TcpStream, NetError> = net.connect(host, __PORT__, 1000)
     let stream: TcpStream = require_stream(connected)
@@ -17160,7 +17148,7 @@ fn owner_affine_async_tcp_shutdown_write_preserves_reads_and_is_idempotent() {
         "[package]\nname = \"async_tcp_shutdown_write\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_shutdown_write.main
+    let source = r#"package async_tcp_shutdown_write
 
 import std.io
 import std.net
@@ -17173,7 +17161,7 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-fn require_void(result: Result<void, NetError>) -> void {
+fn require_void(result: Result<void, NetError>) {
     match result {
         Result.Ok(value) => {
         }
@@ -17190,7 +17178,7 @@ fn require_text(result: Result<TcpTextChunk, NetError>) -> TcpTextChunk {
     }
 }
 
-fn report_closed(result: Result<void, NetError>) -> void {
+fn report_closed(result: Result<void, NetError>) {
     match result {
         Result.Ok(value) => {
             panic("write unexpectedly succeeded")
@@ -17205,7 +17193,7 @@ fn report_closed(result: Result<void, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 5000)
     let stream: TcpStream = require_stream(connected)
     let stale: TcpStream = stream
@@ -17329,7 +17317,7 @@ fn owner_affine_async_tcp_read_timeout_preserves_stream_and_rejects_invalid_utf8
         "[package]\nname = \"async_tcp_read_errors\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_read_errors.main
+    let source = r#"package async_tcp_read_errors
 
 import std.io
 import std.net
@@ -17342,7 +17330,7 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-fn expect_timeout(result: Result<TcpTextChunk, NetError>, label: string) -> void {
+fn expect_timeout(result: Result<TcpTextChunk, NetError>, label: string) {
     match result {
         Result.Ok(chunk) => {
             panic("expected TCP timeout")
@@ -17357,7 +17345,7 @@ fn expect_timeout(result: Result<TcpTextChunk, NetError>, label: string) -> void
     }
 }
 
-fn expect_read_error(result: Result<TcpTextChunk, NetError>) -> void {
+fn expect_read_error(result: Result<TcpTextChunk, NetError>) {
     match result {
         Result.Ok(chunk) => {
             panic("expected invalid UTF-8 failure")
@@ -17372,7 +17360,7 @@ fn expect_read_error(result: Result<TcpTextChunk, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
     let stream: TcpStream = require_stream(connected)
 
@@ -17484,7 +17472,7 @@ fn owner_affine_async_tcp_rejects_invalid_bounds_before_reactor_registration() {
         "[package]\nname = \"async_tcp_invalid_bounds\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_invalid_bounds.main
+    let source = r#"package async_tcp_invalid_bounds
 
 import std.io
 import std.net
@@ -17497,7 +17485,7 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-fn expect_invalid_read(result: Result<TcpChunk, NetError>, label: string) -> void {
+fn expect_invalid_read(result: Result<TcpChunk, NetError>, label: string) {
     match result {
         Result.Ok(chunk) => {
             panic("expected invalid TCP read input")
@@ -17512,7 +17500,7 @@ fn expect_invalid_read(result: Result<TcpChunk, NetError>, label: string) -> voi
     }
 }
 
-fn expect_invalid_write(result: Result<void, NetError>, label: string) -> void {
+fn expect_invalid_write(result: Result<void, NetError>, label: string) {
     match result {
         Result.Ok(value) => {
             panic("expected invalid TCP write input")
@@ -17527,7 +17515,7 @@ fn expect_invalid_write(result: Result<void, NetError>, label: string) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
     let stream: TcpStream = require_stream(connected)
 
@@ -17634,7 +17622,7 @@ fn owner_affine_async_tcp_write_completes_maximum_payload_across_readiness() {
         "[package]\nname = \"async_tcp_write_maximum\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_write_maximum.main
+    let source = r#"package async_tcp_write_maximum
 
 import std.array
 import std.io
@@ -17656,7 +17644,7 @@ fn make_payload() -> Array<u32> {
     return payload
 }
 
-fn require_write(result: Result<void, NetError>) -> void {
+fn require_write(result: Result<void, NetError>) {
     match result {
         Result.Ok(value) => {
             io.println("wrote maximum payload")
@@ -17667,7 +17655,7 @@ fn require_write(result: Result<void, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 1000)
     let stream: TcpStream = require_stream(connected)
     let payload: Array<u32> = make_payload()
@@ -17773,7 +17761,7 @@ fn owner_affine_async_tcp_managed_write_arguments_are_asan_clean_when_available(
         "[package]\nname = \"async_tcp_write_arguments\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_write_arguments.main
+    let source = r#"package async_tcp_write_arguments
 
 import std.net
 import std.result
@@ -17787,7 +17775,7 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-fn require_write(result: Result<void, NetError>) -> void {
+fn require_write(result: Result<void, NetError>) {
     match result {
         Result.Ok(value) => {
         }
@@ -17805,7 +17793,7 @@ fn make_text() -> string {
     return string.concat("rea", "dy")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let host: string = string.concat("127.0.0.", "1")
     let connected: Result<TcpStream, NetError> = net.connect(host, __PORT__, 1000)
     let stream: TcpStream = require_stream(connected)
@@ -17906,7 +17894,7 @@ fn structured_cancel_drops_pending_owner_affine_async_tcp_read() {
         "[package]\nname = \"async_tcp_read_cancel\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package async_tcp_read_cancel.main
+    let source = r#"package async_tcp_read_cancel
 
 import std.io
 import std.net
@@ -17921,17 +17909,17 @@ fn require_stream(result: Result<TcpStream, NetError>) -> TcpStream {
     }
 }
 
-suspend fn reader(port: i64) -> void {
+suspend fn reader(port: i64) {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", port, 1000)
     let stream: TcpStream = require_stream(connected)
     let pending: Result<TcpTextChunk, NetError> = stream.read_string(1, 10000)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(200))
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let reader_task = task.spawn reader(__PORT__)
         let gate_task = task.spawn gate()
@@ -18028,22 +18016,22 @@ fn nomo_run_cancels_owner_affine_async_tcp_connect_before_reactor_wait() {
         "[package]\nname = \"async_tcp_connect_cancel\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package async_tcp_connect_cancel
 
 import std.io
 import std.net
 import std.result
 import std.task
 
-suspend fn connect_child(port: i64) -> void {
+suspend fn connect_child(port: i64) {
     let connected: Result<TcpStream, NetError> = net.connect("127.0.0.1", port, 10000)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn connect_child(__PORT__)
         let gate_task = task.spawn gate()
@@ -18143,13 +18131,13 @@ fn nomo_run_owner_affine_async_tcp_connect_zero_timeout_is_allocation_free() {
         "[package]\nname = \"async_tcp_connect_zero_timeout\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package async_tcp_connect_zero_timeout
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Ok(stream) => {
             stream.close()
@@ -18165,7 +18153,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", __PORT__, 0)
     report(result)
 }
@@ -18278,13 +18266,13 @@ fn async_tcp_connect_resolves_hostname_on_bounded_pool_and_returns_to_owner() {
         "[package]\nname = \"async_tcp_connect_hostname\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package async_tcp_connect_hostname
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Ok(stream) => {
             io.println("connected")
@@ -18296,7 +18284,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("localhost", __PORT__, 5000)
     report(result)
 }
@@ -18413,13 +18401,13 @@ fn async_tcp_hostname_zero_timeout_does_not_initialize_blocking_pool() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_tcp_hostname_zero_timeout.main
+        r#"package async_tcp_hostname_zero_timeout
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Result.Ok(stream) => {
             stream.close()
@@ -18435,7 +18423,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("localhost", 80, 0)
     report(connected)
 }
@@ -18508,13 +18496,13 @@ fn async_tcp_hostname_resolution_error_is_typed_bounded_and_secret_safe() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_tcp_hostname_resolve_error.main
+        r#"package async_tcp_hostname_resolve_error
 
 import std.io
 import std.net
 import std.result
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Result.Ok(stream) => {
             stream.close()
@@ -18531,7 +18519,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("authorization-secret..invalid", 443, 1000)
     report(connected)
 }
@@ -18647,14 +18635,14 @@ fn async_tcp_resolver_cancels_queued_job_without_waking_dropped_frame() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_tcp_resolver_cancel.main
+        r#"package async_tcp_resolver_cancel
 
 import std.io
 import std.net
 import std.result
 import std.task
 
-fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
+fn report_resolution(connected: Result<TcpStream, NetError>) {
     match connected {
         Result.Ok(stream) => {
             stream.close()
@@ -18670,16 +18658,16 @@ fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn resolve_one() -> void {
+suspend fn resolve_one() {
     let connected: Result<TcpStream, NetError> = net.connect("resolver-cancel..invalid", 443, 5000)
     report_resolution(connected)
 }
 
-suspend fn gate() -> void {
+suspend fn gate() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let first = task.spawn resolve_one()
         let second = task.spawn resolve_one()
@@ -18783,13 +18771,13 @@ fn async_tcp_resolver_timeout_detaches_running_job_and_cleans_on_completion() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package async_tcp_resolver_timeout.main
+        r#"package async_tcp_resolver_timeout
 
 import std.io
 import std.net
 import std.result
 
-fn report_timeout(connected: Result<TcpStream, NetError>) -> void {
+fn report_timeout(connected: Result<TcpStream, NetError>) {
     match connected {
         Result.Ok(stream) => {
             stream.close()
@@ -18805,7 +18793,7 @@ fn report_timeout(connected: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect("resolver-timeout..invalid", 443, 20)
     report_timeout(connected)
 }
@@ -18895,14 +18883,14 @@ fn async_tcp_resolver_queue_saturation_is_typed_and_bounded() {
     )
     .unwrap();
     let mut source = String::from(
-        r#"package async_tcp_resolver_saturation.main
+        r#"package async_tcp_resolver_saturation
 
 import std.io
 import std.net
 import std.result
 import std.task
 
-fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
+fn report_resolution(connected: Result<TcpStream, NetError>) {
     match connected {
         Result.Ok(stream) => {
             stream.close()
@@ -18922,12 +18910,12 @@ fn report_resolution(connected: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn resolve_one() -> void {
+suspend fn resolve_one() {
     let connected: Result<TcpStream, NetError> = net.connect("resolver-saturation..invalid", 443, 5000)
     report_resolution(connected)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
 "#,
     );
@@ -19043,7 +19031,7 @@ fn nomo_run_executes_std_net_tcp_listener_helpers_without_std_dependency() {
         "[package]\nname = \"net_tcp_listener_helpers\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package net_tcp_listener_helpers
 
 import std.io
 import std.net
@@ -19059,7 +19047,7 @@ fn serve() -> Result<void, NetError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, NetError> = serve()
     match result {
         Ok(value) => {
@@ -19147,7 +19135,7 @@ fn nomo_run_executes_std_net_udp_socket_helpers_without_std_dependency() {
         "[package]\nname = \"net_udp_socket_helpers\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package net_udp_socket_helpers
 
 import std.io
 import std.net
@@ -19160,7 +19148,7 @@ fn serve() -> Result<void, NetError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, NetError> = serve()
     match result {
         Ok(value) => {
@@ -19322,7 +19310,7 @@ fn nomo_run_executes_std_http_client_helpers_without_std_dependency() {
         "[package]\nname = \"http_client_helpers\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package http_client_helpers
 
 import std.http
 import std.io
@@ -19335,7 +19323,7 @@ fn request() -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, HttpError> = request()
     match result {
         Ok(value) => {
@@ -19424,13 +19412,13 @@ fn structured_http_requests_enforce_limits_and_redact_secrets() {
         "[package]\nname = \"structured_http_limits\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package structured_http_limits.main
+    let source = r#"package structured_http_limits
 
 import std.array.Array
 import std.http
 import std.io
 
-fn invalid_header() -> void {
+fn invalid_header() {
     let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
     headers.push(HttpHeader {
         name: "Authorization",
@@ -19455,7 +19443,7 @@ fn invalid_header() -> void {
     }
 }
 
-fn body_limit() -> void {
+fn body_limit() {
     let headers: Array<HttpHeader> = Array.new<HttpHeader>()
     let request: HttpRequest = HttpRequest {
         method: "GET",
@@ -19476,7 +19464,7 @@ fn body_limit() -> void {
     }
 }
 
-fn request_timeout() -> void {
+fn request_timeout() {
     let headers: Array<HttpHeader> = Array.new<HttpHeader>()
     let request: HttpRequest = HttpRequest {
         method: "GET",
@@ -19497,7 +19485,7 @@ fn request_timeout() -> void {
     }
 }
 
-fn tls_failure() -> void {
+fn tls_failure() {
     let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
     headers.push(HttpHeader {
         name: "Authorization",
@@ -19522,7 +19510,7 @@ fn tls_failure() -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     invalid_header()
     body_limit()
     request_timeout()
@@ -19634,13 +19622,13 @@ fn structured_http_stream_parses_incremental_sse_events() {
         "[package]\nname = \"structured_http_stream_sse\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package structured_http_stream_sse.main
+    let source = r#"package structured_http_stream_sse
 
 import std.array.Array
 import std.http
 import std.io
 
-fn print_retry(retry: Option<u64>) -> void {
+fn print_retry(retry: Option<u64>) {
     match retry {
         Some(value) => {
             io.println(value)
@@ -19702,7 +19690,7 @@ fn run() -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, HttpError> = run()
     match result {
         Ok(value) => {
@@ -19777,7 +19765,7 @@ fn structured_http_stream_reads_utf8_text_and_rejects_closed_or_mixed_modes() {
         "[package]\nname = \"structured_http_stream_text\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package structured_http_stream_text.main
+    let source = r#"package structured_http_stream_text
 
 import std.array.Array
 import std.http
@@ -19836,7 +19824,7 @@ fn run() -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, HttpError> = run()
     match result {
         Ok(value) => {
@@ -19962,7 +19950,7 @@ fn structured_http_stream_enforces_limits_timeouts_cancel_and_secret_redaction()
         "[package]\nname = \"structured_http_stream_failures\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package structured_http_stream_failures.main
+    let source = r#"package structured_http_stream_failures
 
 import std.array.Array
 import std.http
@@ -20084,7 +20072,7 @@ fn oversized_sse_event() -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let limit_result: Result<void, HttpError> = response_limit()
     let timeout_result: Result<void, HttpError> = idle_timeout()
     let utf8_result: Result<void, HttpError> = invalid_utf8()
@@ -20181,7 +20169,7 @@ fn nomo_run_executes_std_http_server_helpers_without_std_dependency() {
         "[package]\nname = \"http_server_helpers\"\nversion = \"0.1.0\"\n",
     )
     .unwrap();
-    let source = r#"package app.main
+    let source = r#"package http_server_helpers
 
 import std.http
 import std.io
@@ -20195,7 +20183,7 @@ fn serve() -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, HttpError> = serve()
     match result {
         Ok(value) => {
@@ -20289,12 +20277,12 @@ fn nomo_run_executes_extended_std_array_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package array_demo
 
 import std.array
 import std.io
 
-fn print_option(value: Option<string>, missing: string) -> void {
+fn print_option(value: Option<string>, missing: string) {
     match value {
         Some(text) => {
             io.println(text)
@@ -20305,7 +20293,7 @@ fn print_option(value: Option<string>, missing: string) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
     let mut items: Array<string> = Array.new<string>()
     items.push("a")
     items.push("c")
@@ -20372,7 +20360,7 @@ fn nomo_run_executes_std_num_helpers_with_question() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package num_helpers
 
 import std.io
 import std.num
@@ -20432,12 +20420,12 @@ fn nomo_run_executes_std_num_checked_and_wrapping_helpers() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package num_checked_wrapping
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let checked: Option<i64> = num.checked_add(9223372036854775807, 1)
     match checked {
         Option.Some(value) => {
@@ -20494,7 +20482,7 @@ fn nomo_run_executes_std_io_read_line() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package io_read_line
 
 import std.io
 import std.result
@@ -20553,11 +20541,11 @@ fn nomo_run_allows_print_calls_in_void_if_branches() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package if_print
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let ok: bool = true
     if ok {
         io.println("if print ok")
@@ -20605,7 +20593,7 @@ fn nomoc_build_runs_statement_update_operators() {
     let bin_path = root.join("statement-updates");
     fs::write(
         &source,
-        r#"package app.main
+        r#"package app
 
 import std.io
 
@@ -20613,7 +20601,7 @@ struct Counter {
     value: i64
 }
 
-fn main() -> void {
+fn main() {
     let mut value: i64 = 10
     value += 5
     value -= 3
@@ -20713,7 +20701,7 @@ fn nomo_publish_external_signer_and_independent_verify_round_trip() {
     .unwrap();
     fs::write(
         project.join("src/main.nomo"),
-        "package app.main\n\nfn main() -> void {\n}\n",
+        "package signed\n\nfn main() {\n}\n",
     )
     .unwrap();
 
@@ -20987,9 +20975,9 @@ int32_t apply_callback(int32_t value, int32_t (*callback)(int32_t)) {
 
     fs::write(
         project.join("src/main.nomo"),
-        r#"package app.main
+        r#"package ffi_bindgen
 
-import app.bindings
+import ffi_bindgen.bindings
 import std.io
 
 fn double(value: i32) -> i32 {
@@ -21008,7 +20996,7 @@ fn marker(handle: Borrowed<FileHandle>) -> i32 {
     }
 }
 
-fn close(handle: Owned<FileHandle>) -> void {
+fn close(handle: Owned<FileHandle>) {
     unsafe {
         file_close(handle)
     }
@@ -21026,7 +21014,7 @@ fn callback(value: i32) -> i32 {
     }
 }
 
-fn main() -> void {
+fn main() {
     let maybe: Nullable<Owned<FileHandle>> = open()
     let handle: Owned<FileHandle> = maybe.unwrap()
     let observed: i32 = marker(handle.borrow())
@@ -21073,7 +21061,7 @@ fn reset_dir(path: &Path) {
 }
 
 fn init_git_package(path: &Path, namespace: &str, name: &str) -> String {
-    init_git_package_with_source(path, namespace, name, "package package.main\n")
+    init_git_package_with_source(path, namespace, name, "package package\n")
 }
 
 fn init_git_package_with_source(path: &Path, namespace: &str, name: &str, source: &str) -> String {

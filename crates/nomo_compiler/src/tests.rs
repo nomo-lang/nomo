@@ -52,17 +52,17 @@ fn parse_inline(source: &str) -> Result<Program, Diagnostic> {
 
 #[test]
 fn parses_v0_1_hello() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.println("Hello, Nomo")
 }
 "#;
 
     let program = parse_inline(source).unwrap();
-    assert_eq!(program.package, "app.main");
+    assert_eq!(program.package, "app");
     assert_eq!(program.imports, vec!["std.io"]);
     let main = program.functions.iter().find(|f| f.name == "main").unwrap();
     assert_eq!(
@@ -75,7 +75,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_missing_main() {
-    let source = "package app.main\nimport std.io\n";
+    let source = "package app\nimport std.io\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0201");
 }
@@ -127,7 +127,7 @@ fn library_module_check_still_rejects_invalid_function_bodies() {
 
 #[test]
 fn accepts_script_body_as_synthesized_main_in_script_mode() {
-    let source = "package app.main\n\nlet value: i32 = 1\n";
+    let source = "package app\n\nlet value: i32 = 1\n";
     let program = check_script_source_text(Path::new("script.nomo"), source).unwrap();
     let main = program
         .functions
@@ -145,7 +145,7 @@ fn accepts_script_body_as_synthesized_main_in_script_mode() {
 
 #[test]
 fn rejects_top_level_script_body_outside_script_mode() {
-    let source = "package app.main\n\nlet value: i32 = 1\n";
+    let source = "package app\n\nlet value: i32 = 1\n";
     let err = parse_inline(source).unwrap_err();
 
     assert_eq!(err.code, "E0201");
@@ -154,7 +154,7 @@ fn rejects_top_level_script_body_outside_script_mode() {
 
 #[test]
 fn rejects_script_body_with_explicit_main_in_script_mode() {
-    let source = "package app.main\n\nfn main() -> void {\n}\n\nlet value: i32 = 1\n";
+    let source = "package app\n\nfn main() {\n}\n\nlet value: i32 = 1\n";
     let err = check_script_source_text(Path::new("script.nomo"), source).unwrap_err();
 
     assert_eq!(err.code, "E0201");
@@ -163,9 +163,9 @@ fn rejects_script_body_with_explicit_main_in_script_mode() {
 
 #[test]
 fn rejects_missing_io_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     io.println("Hello")
 }
 "#;
@@ -178,11 +178,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_unqualified_println_without_specific_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     println("Hello")
 }
 "#;
@@ -196,11 +196,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_unqualified_print_without_specific_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     print("Hello")
 }
 "#;
@@ -214,12 +214,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_unqualified_string_len_without_specific_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.string
 
-fn main() -> void {
+fn main() {
     let size: u64 = len("Nomo")
     io.println("done")
 }
@@ -231,12 +231,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_for_while_iterate_and_infinite() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut i: i32 = 0
     for i < 2 {
         i = i + 1
@@ -256,7 +256,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_three_clause_for_ui64_alias_and_inferred_bindings() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -264,7 +264,7 @@ fn greeting() -> string {
     return "Hello"
 }
 
-fn main() -> void {
+fn main() {
     let message = greeting()
     for let i: ui64 = 0; i < 3; i++ {
         io.println(message, i)
@@ -297,9 +297,9 @@ fn main() -> void {
 
 #[test]
 fn infers_three_clause_for_binding_without_type_annotation() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     for let i = 0; i < 3; i++ {
     }
 }
@@ -323,7 +323,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_for_in_iterable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
@@ -341,7 +341,7 @@ fn sum_items() -> Result<i32, string> {
     return Ok(total)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -379,7 +379,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_for_while_condition() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn should_continue() -> Result<bool, string> {
     return Ok(true)
@@ -392,7 +392,7 @@ fn compute() -> Result<void, string> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -434,7 +434,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_assignment_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -446,7 +446,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -480,7 +480,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_field_assignment_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Label {
     value: string
@@ -496,7 +496,7 @@ fn compute() -> Result<string, string> {
     return Ok(label.value)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -533,7 +533,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_if_assignment_branch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -553,7 +553,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -611,7 +611,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_match_assignment_arm() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -630,7 +630,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -707,7 +707,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_void_expression_statement_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
@@ -721,7 +721,7 @@ fn collect() -> Result<void, string> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -755,13 +755,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_defer_call_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
 }
 
-fn consume(value: string) -> void {
+fn consume(value: string) {
 }
 
 fn compute() -> Result<void, string> {
@@ -769,7 +769,7 @@ fn compute() -> Result<void, string> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -800,9 +800,9 @@ fn main() -> void {
 
 #[test]
 fn accepts_break_and_continue_in_loop() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     for {
         break
     }
@@ -816,9 +816,9 @@ fn main() -> void {
 
 #[test]
 fn accepts_nested_loop_break() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     for {
         for {
             break
@@ -832,21 +832,21 @@ fn main() -> void {
 
 #[test]
 fn rejects_break_outside_loop() {
-    let source = "package app.main\nfn main() -> void {\n    break\n}\n";
+    let source = "package app\nfn main() {\n    break\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0510");
 }
 
 #[test]
 fn rejects_continue_outside_loop() {
-    let source = "package app.main\nfn main() -> void {\n    continue\n}\n";
+    let source = "package app\nfn main() {\n    continue\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0511");
 }
 
 #[test]
 fn accepts_defer_inside_loop() {
-    let source = "package app.main\nimport std.io\nfn main() -> void {\n    for {\n        defer io.println(\"cleanup\")\n        break\n    }\n}\n";
+    let source = "package app\nimport std.io\nfn main() {\n    for {\n        defer io.println(\"cleanup\")\n        break\n    }\n}\n";
     let program = parse_inline(source).unwrap();
     let Statement::Loop { body, .. } = &program.functions[0].body[0] else {
         panic!("expected loop");
@@ -857,14 +857,14 @@ fn accepts_defer_inside_loop() {
 
 #[test]
 fn rejects_defer_non_expression() {
-    let source = "package app.main\nfn main() -> void {\n    defer return\n}\n";
+    let source = "package app\nfn main() {\n    defer return\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0265");
 }
 
 #[test]
 fn accepts_defer_method_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -873,12 +873,12 @@ struct R {
 }
 
 impl R {
-    pub fn close(self) -> void {
+    pub fn close(self) {
         io.println("closed")
     }
 }
 
-fn main() -> void {
+fn main() {
     let r: R = R { id: 1 }
     defer r.close()
     io.println("working")
@@ -889,11 +889,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_defer_io_print_calls() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     defer io.println("cleanup")
     defer io.eprintln("error cleanup")
     io.println("working")
@@ -921,11 +921,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_defer_specific_print_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io.println
 
-fn main() -> void {
+fn main() {
     defer println("cleanup")
     println("working")
 }
@@ -935,9 +935,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_defer_io_print_without_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     defer io.println("cleanup")
 }
 "#;
@@ -947,14 +947,14 @@ fn main() -> void {
 
 #[test]
 fn accepts_package_const_reference() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
 const LIMIT: i32 = 5
 const NAME: string = "nomo"
 
-fn main() -> void {
+fn main() {
     let mut i: i32 = 0
     for i < LIMIT {
         i = i + 1
@@ -970,33 +970,34 @@ fn main() -> void {
 
 #[test]
 fn rejects_const_non_literal_initializer() {
-    let source = "package app.main\nfn one() -> i32 {\n    return 1\n}\nconst X: i32 = one()\nfn main() -> void {\n}\n";
+    let source =
+        "package app\nfn one() -> i32 {\n    return 1\n}\nconst X: i32 = one()\nfn main() {\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0430");
 }
 
 #[test]
 fn rejects_const_duplicate() {
-    let source = "package app.main\nconst A: i32 = 1\nconst A: i32 = 2\nfn main() -> void {\n}\n";
+    let source = "package app\nconst A: i32 = 1\nconst A: i32 = 2\nfn main() {\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert_eq!(err.code, "E0304");
 }
 
 #[test]
 fn rejects_for_in_over_non_array() {
-    let source = "package app.main\nfn main() -> void {\n    for n in 5 {\n    }\n}\n";
+    let source = "package app\nfn main() {\n    for n in 5 {\n    }\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert!(err.message.contains("Array"));
 }
 
 #[test]
 fn rejects_for_iter_binding_outside_loop_body() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut words: Array<string> = Array.new<string>()
     words.push("hello")
     for word in words {
@@ -1012,11 +1013,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_loop_local_let_outside_loop_body() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     for {
         let message: string = "inside"
         break
@@ -1031,7 +1032,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_for_condition_must_be_bool() {
-    let source = "package app.main\nfn main() -> void {\n    for 5 {\n    }\n}\n";
+    let source = "package app\nfn main() {\n    for 5 {\n    }\n}\n";
     let err = parse_inline(source).unwrap_err();
     assert!(err.message.contains("bool"));
 }

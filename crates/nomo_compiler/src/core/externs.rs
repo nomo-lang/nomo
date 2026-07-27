@@ -74,7 +74,7 @@ pub(super) fn validate_opaque_handle_release_functions(
             return Err(Diagnostic::new(
                 "E1523",
                 format!(
-                    "release function `{release_function}` for `{}` must be declared in an extern \"C\" block as `fn {release_function}(handle: Owned<{}>) -> void`",
+                    "release function `{release_function}` for `{}` must be declared in an extern \"C\" block as `fn {release_function}(handle: Owned<{}>)`",
                     item.name, item.name
                 ),
                 path,

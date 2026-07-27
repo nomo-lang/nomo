@@ -154,7 +154,7 @@ mod tests {
 
     fn packet() -> StructType {
         StructType {
-            package: "app.main".to_string(),
+            package: "app".to_string(),
             name: "Packet".to_string(),
             type_params: Vec::new(),
             fields: vec![

@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn lowers_the_complete_jsonrpc_codec_surface() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json
 import std.jsonrpc
@@ -23,7 +23,7 @@ fn run() -> Result<void, JsonRpcProtocolError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, JsonRpcProtocolError> = run()
 }
 "#;
@@ -66,11 +66,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_jsonrpc_argument_type_mismatches() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.jsonrpc
 
-fn main() -> void {
+fn main() {
     let decoder_value: Result<JsonRpcDecoder, JsonRpcProtocolError> = jsonrpc.decoder("large")
 }
 "#;
@@ -81,13 +81,13 @@ fn main() -> void {
 
 #[test]
 fn lowers_specifically_imported_jsonrpc_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.jsonrpc.JsonRpcDecoder
 import std.jsonrpc.JsonRpcProtocolError
 import std.jsonrpc.decoder
 
-fn main() -> void {
+fn main() {
     let created: Result<JsonRpcDecoder, JsonRpcProtocolError> = decoder(4096 as u64)
 }
 "#;
@@ -99,7 +99,7 @@ fn main() -> void {
 
 #[test]
 fn permits_pure_jsonrpc_codecs_inside_isolated_tasks() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.jsonrpc
 import std.task
@@ -109,7 +109,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "payload")
 }
 "#;
@@ -119,11 +119,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_forged_jsonrpc_values_and_private_field_access() {
-    let forged = r#"package app.main
+    let forged = r#"package app
 
 import std.jsonrpc
 
-fn main() -> void {
+fn main() {
     let message: JsonRpcMessage = JsonRpcMessage { raw: "{}" }
 }
 "#;
@@ -131,12 +131,12 @@ fn main() -> void {
     assert_eq!(error.code, "E0840");
     assert!(error.message.contains("cannot be constructed"));
 
-    let exposed = r#"package app.main
+    let exposed = r#"package app
 
 import std.io
 import std.jsonrpc
 
-fn main() -> void {
+fn main() {
     let decoder_value: Result<JsonRpcDecoder, JsonRpcProtocolError> = jsonrpc.decoder(16 as u64)
     match decoder_value {
         Ok(value) => {
@@ -151,7 +151,7 @@ fn main() -> void {
     assert_eq!(error.code, "E0840");
     assert!(error.message.contains("does not expose its fields"));
 
-    let mutated = r#"package app.main
+    let mutated = r#"package app
 
 import std.jsonrpc
 
@@ -161,7 +161,7 @@ fn run() -> Result<void, JsonRpcProtocolError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, JsonRpcProtocolError> = run()
 }
 "#;
@@ -172,12 +172,12 @@ fn main() -> void {
 
 #[test]
 fn reports_missing_jsonrpc_type_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn keep(message: JsonRpcMessage) -> void {
+fn keep(message: JsonRpcMessage) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let error = parse_inline(source).unwrap_err();

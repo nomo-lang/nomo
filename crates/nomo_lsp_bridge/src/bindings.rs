@@ -640,7 +640,7 @@ mod tests {
 
     #[test]
     fn parameter_references_stay_inside_the_declaring_function() {
-        let source = "package app.main\n\nfn first(value: i64) -> i64 {\n    return value\n}\n\nfn second(value: i64) -> i64 {\n    return value\n}\n";
+        let source = "package app\n\nfn first(value: i64) -> i64 {\n    return value\n}\n\nfn second(value: i64) -> i64 {\n    return value\n}\n";
 
         let references = local_references(
             source,
@@ -656,7 +656,7 @@ mod tests {
 
     #[test]
     fn nested_let_binding_shadows_outer_binding() {
-        let source = "package app.main\n\nfn main() -> void {\n    let value: i64 = 1\n    for {\n        let value: i64 = 2\n        io.println(value)\n        break\n    }\n    io.println(value)\n}\n";
+        let source = "package app\n\nfn main() {\n    let value: i64 = 1\n    for {\n        let value: i64 = 2\n        io.println(value)\n        break\n    }\n    io.println(value)\n}\n";
 
         let outer = local_references(
             source,
@@ -681,7 +681,7 @@ mod tests {
 
     #[test]
     fn pattern_bindings_use_their_language_scopes() {
-        let source = "package app.main\n\nfn main(values: Array<string>) -> void {\n    let Some(first) = values.get(0) else {\n        panic(\"missing\")\n    }\n    io.println(first)\n    if let Some(second) = values.get(1) {\n        io.println(second)\n    }\n    for value in values {\n        io.println(value)\n    }\n    let label: string = match values.get(0) {\n        Some(text) => text\n        None => \"missing\"\n    }\n}\n";
+        let source = "package app\n\nfn main(values: Array<string>) {\n    let Some(first) = values.get(0) else {\n        panic(\"missing\")\n    }\n    io.println(first)\n    if let Some(second) = values.get(1) {\n        io.println(second)\n    }\n    for value in values {\n        io.println(value)\n    }\n    let label: string = match values.get(0) {\n        Some(text) => text\n        None => \"missing\"\n    }\n}\n";
 
         for (line, character, use_line) in [(3, 13, 6), (7, 16, 8), (10, 8, 11), (14, 13, 14)] {
             let references = local_references(source, TextPosition { line, character });
@@ -692,7 +692,7 @@ mod tests {
 
     #[test]
     fn local_binding_does_not_capture_fields_or_struct_labels() {
-        let source = "package app.main\n\nstruct User {\n    value: i64\n}\n\nfn read(value: i64, user: User) -> i64 {\n    let copy: User = User { value: value }\n    user.value\n    return value\n}\n";
+        let source = "package app\n\nstruct User {\n    value: i64\n}\n\nfn read(value: i64, user: User) -> i64 {\n    let copy: User = User { value: value }\n    user.value\n    return value\n}\n";
 
         let references = local_references(
             source,
@@ -714,7 +714,7 @@ mod tests {
 
     #[test]
     fn binding_facts_keep_their_enclosing_function_and_impl_owner() {
-        let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
+        let source = "package app\n\nstruct User {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
         let path = Path::new("main.nomo");
         let tokens = lex(path, source).unwrap();
         let mut source_map = SourceMap::new();

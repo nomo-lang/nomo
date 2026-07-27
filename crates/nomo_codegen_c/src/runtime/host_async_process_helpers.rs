@@ -477,6 +477,22 @@ mod tests {
     use super::*;
 
     #[test]
+    fn unix_process_events_close_the_exit_registration_race() {
+        let mut emitted = String::new();
+        emit_async_process_native_helpers(&mut emitted, include_str!("host_async_process_unix.c"));
+
+        assert!(
+            emitted.contains(
+                "if (exit_handle >= 0) {\n        nomo_async_process_update_exit(state);"
+            )
+        );
+        assert!(emitted.contains("if (armed == 3) {"));
+        assert!(emitted.contains(
+            "now >= registration->deadline_millis) {\n            if (state->occupied == 1u"
+        ));
+    }
+
+    #[test]
     fn windows_process_output_reads_outlive_one_event_pull() {
         let mut emitted = String::new();
         emit_async_process_native_helpers(

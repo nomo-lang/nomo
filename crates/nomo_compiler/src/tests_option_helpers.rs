@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn accepts_option_value_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 import std.string
@@ -14,7 +14,7 @@ fn decorate(text: string) -> Option<string> {
     return Some(text.concat(" ok"))
 }
 
-fn main() -> void {
+fn main() {
     let some: Option<string> = Some("seed")
     let none: Option<string> = None
     let present: bool = some.is_some()
@@ -67,7 +67,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_option_helper_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option.Option
 import std.option.is_some
@@ -85,7 +85,7 @@ fn decorate(text: string) -> Option<string> {
     return Some(text.concat(" ok"))
 }
 
-fn main() -> void {
+fn main() {
     let some: Option<string> = Some("seed")
     let none: Option<string> = None
     let present: bool = is_some(some)
@@ -101,7 +101,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_option_module_helpers() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 import std.string
@@ -114,7 +114,7 @@ fn decorate(text: string) -> Option<string> {
     return Some(text.concat(" ok"))
 }
 
-fn main() -> void {
+fn main() {
     let some: Option<string> = Some("seed")
     let none: Option<string> = None
     let present: bool = option.is_some(some)
@@ -130,11 +130,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_option_method_without_option_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option.Option
 
-fn main() -> void {
+fn main() {
     let some: Option<string> = Some("seed")
     let present: bool = some.is_some()
 }

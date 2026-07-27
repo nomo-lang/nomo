@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn accepts_result_question_let_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -20,7 +20,7 @@ fn compute() -> Result<i64, string> {
     return Result.Ok(value + 1)
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -49,7 +49,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_option_question_let_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn load() -> Option<string> {
     return Some("value")
@@ -60,7 +60,7 @@ fn compute() -> Option<string> {
     return Some(text)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -89,7 +89,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_option_question_return_payload() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn load() -> Option<string> {
     return Some("value")
@@ -99,7 +99,7 @@ fn compute() -> Option<string> {
     return Some(load()?)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -127,7 +127,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_result_ok_return_payload() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse() -> Result<i64, string> {
     return Ok(41)
@@ -137,7 +137,7 @@ fn compute() -> Result<i64, string> {
     return Ok(parse()?)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -165,7 +165,7 @@ fn main() -> void {
 
 #[test]
 fn question_in_shadowed_ok_call_is_not_treated_as_result_variant() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn Ok(value: i64) -> Result<i64, string> {
     return Result.Ok(value)
@@ -179,7 +179,7 @@ fn compute() -> Result<i64, string> {
     return Ok(parse()?)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -207,7 +207,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_result_void_ok() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -220,7 +220,7 @@ fn write() -> Result<void, string> {
     return Result.Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -249,7 +249,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_question_in_non_result_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -262,7 +262,7 @@ fn parse() -> Result<i64, string> {
     return Result.Ok(41)
 }
 
-fn main() -> void {
+fn main() {
     let value: i64 = parse()?
     io.println("done")
 }
@@ -274,7 +274,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_question_let_without_type_annotation() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -292,7 +292,7 @@ fn compute() -> Result<i64, string> {
     return Result.Ok(value + 1)
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;

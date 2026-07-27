@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn accepts_result_map_err_with_question_propagation() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 
@@ -23,7 +23,7 @@ fn decorate_label() -> Result<string, AppError> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -61,7 +61,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_result_map_err_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result.Result
 import std.result.map_err
@@ -84,7 +84,7 @@ fn decorate_label() -> Result<string, AppError> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -108,7 +108,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_result_value_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.string
@@ -121,7 +121,7 @@ fn decorate(text: string) -> Result<string, string> {
     return Ok(text.concat(" ok"))
 }
 
-fn main() -> void {
+fn main() {
     let ok: Result<string, string> = Ok("seed")
     let err: Result<string, string> = Err("bad")
     let present: bool = ok.is_ok()
@@ -180,7 +180,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_result_helper_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result.Result
 import std.result.is_ok
@@ -207,7 +207,7 @@ fn app_error_from_string(message: string) -> AppError {
     return AppError { message: message }
 }
 
-fn main() -> void {
+fn main() {
     let ok: Result<string, string> = Ok("seed")
     let err: Result<string, string> = Err("bad")
     let present: bool = is_ok(ok)
@@ -224,7 +224,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_result_module_helpers() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.string
@@ -245,7 +245,7 @@ fn app_error_from_string(message: string) -> AppError {
     return AppError { message: message }
 }
 
-fn main() -> void {
+fn main() {
     let ok: Result<string, string> = Ok("seed")
     let err: Result<string, string> = Err("bad")
     let present: bool = result.is_ok(ok)
@@ -262,7 +262,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_result_map_err_without_result_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct AppError {
     message: string
@@ -276,7 +276,7 @@ fn app_error_from_string(message: string) -> AppError {
     return AppError { message: message }
 }
 
-fn main() -> void {
+fn main() {
     let raw: Result<string, string> = parse_label()
     let mapped: Result<string, AppError> = raw.map_err(app_error_from_string)
 }

@@ -237,7 +237,7 @@ pub(super) fn lower_program(
         let Some(main_signature) = signatures.get("main") else {
             return Err(Diagnostic::new(
                 "E0201",
-                "expected `fn main() -> void { ... }`",
+                "expected `fn main() { ... }`",
                 path,
                 1,
                 1,

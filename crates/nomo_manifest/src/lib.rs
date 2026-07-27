@@ -2387,7 +2387,7 @@ mod manifest_v2_tests {
     fn write_package(root: &Path, body: &str) {
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(root.join("nomo.toml"), body).unwrap();
-        fs::write(root.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(root.join("src/main.nomo"), "package app\n").unwrap();
     }
 
     #[test]

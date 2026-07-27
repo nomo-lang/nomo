@@ -2,11 +2,11 @@ use super::*;
 
 #[test]
 fn rejects_string_len_as_i64() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.string
 
-fn main() -> void {
+fn main() {
     let count: i64 = string.len("hello")
 }
 "#;
@@ -17,9 +17,9 @@ fn main() -> void {
 
 #[test]
 fn accepts_basic_equality_for_string_char_and_bool() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let same: bool = "nomo" == "nomo"
     let different: bool = "nomo" != "rust"
     let same_char: bool = '語' == '語'
@@ -70,9 +70,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_ordering_comparison_for_strings() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let ordered: bool = "a" < "b"
 }
 "#;
@@ -84,7 +84,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_function_call_and_integer_return() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -92,7 +92,7 @@ fn add(a: i64, b: i64) -> i64 {
     return a + b
 }
 
-fn main() -> void {
+fn main() {
     let answer: i64 = add(40, 2)
     io.println("done")
 }
@@ -113,7 +113,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_binary_arithmetic_operators() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn calc(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {
     return a - b * c / d % e
@@ -123,7 +123,7 @@ fn ratio(total: f64, count: f64) -> f64 {
     return total / count
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -155,13 +155,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_float_remainder() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bad(left: f64, right: f64) -> f64 {
     return left % right
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -173,13 +173,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_logical_operators() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn check(a: bool, b: bool, c: bool) -> bool {
     return !a && b || c
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -202,13 +202,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_bool_logical_operands() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bad(value: i64) -> bool {
     return value && true
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -220,13 +220,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_bool_not_operand() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bad(value: i64) -> bool {
     return !value
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -238,13 +238,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_bitwise_operators() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn mask(a: i64, b: i64, c: i64, shift: u32) -> i64 {
     return a & b | c ^ a &^ b << shift >> 1
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -263,13 +263,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_integer_bitwise_operands() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bad(left: bool, right: bool) -> bool {
     return left & right
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -281,13 +281,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_integer_shift_rhs() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bad(left: i64, right: bool) -> i64 {
     return left << right
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -299,7 +299,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_generic_function_instances() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -307,7 +307,7 @@ fn identity<T>(value: T) -> T {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let number: i32 = identity<i32>(7)
     let text: string = identity<string>("generic")
     io.println(text)
@@ -354,7 +354,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_generic_function_call_without_type_arguments() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -362,7 +362,7 @@ fn identity<T>(value: T) -> T {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let number: i32 = identity(7)
     io.println("done")
 }
@@ -374,7 +374,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_mut_call_argument_for_mut_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -382,7 +382,7 @@ fn inspect(mut value: i64) -> i64 {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 41
     let answer: i64 = inspect(mut count) + 1
     io.println("done")
@@ -412,18 +412,18 @@ fn main() -> void {
 
 #[test]
 fn accepts_mut_field_path_call_argument_for_mut_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Point {
     x: i32
     y: i32
 }
 
-fn bump(mut value: i32) -> void {
+fn bump(mut value: i32) {
     value = value + 1
 }
 
-fn main() -> void {
+fn main() {
     let mut point: Point = Point { x: 1, y: 2 }
     bump(mut point.x)
 }
@@ -444,18 +444,18 @@ fn main() -> void {
 
 #[test]
 fn accepts_forwarding_mut_parameter_as_mut_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn bump(mut value: i32) -> void {
+fn bump(mut value: i32) {
     value = value + 1
 }
 
-fn bump_twice(mut value: i32) -> void {
+fn bump_twice(mut value: i32) {
     bump(mut value)
     bump(mut value)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -485,7 +485,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_missing_mut_call_argument_for_mut_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -493,7 +493,7 @@ fn inspect(mut value: i64) -> i64 {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 41
     let answer: i64 = inspect(count)
     io.println("done")
@@ -506,7 +506,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_immutable_variable_as_mut_call_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -514,7 +514,7 @@ fn inspect(mut value: i64) -> i64 {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let count: i64 = 41
     let answer: i64 = inspect(mut count)
     io.println("done")
@@ -527,7 +527,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_duplicate_mut_call_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -535,7 +535,7 @@ fn combine(mut left: i64, mut right: i64) -> i64 {
     return left + right
 }
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 41
     let answer: i64 = combine(mut count, mut count)
     io.println("done")
@@ -548,17 +548,17 @@ fn main() -> void {
 
 #[test]
 fn rejects_prefix_conflicting_mut_field_borrow_in_same_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Point {
     x: i32
     y: i32
 }
 
-fn overwrite(mut point: Point, mut value: i32) -> void {
+fn overwrite(mut point: Point, mut value: i32) {
 }
 
-fn main() -> void {
+fn main() {
     let mut point: Point = Point { x: 1, y: 2 }
     overwrite(mut point, mut point.x)
 }
@@ -572,20 +572,20 @@ fn main() -> void {
 
 #[test]
 fn accepts_non_overlapping_mut_field_borrows_in_same_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Point {
     x: i32
     y: i32
 }
 
-fn swap_values(mut left: i32, mut right: i32) -> void {
+fn swap_values(mut left: i32, mut right: i32) {
     let temp: i32 = left
     left = right
     right = temp
 }
 
-fn main() -> void {
+fn main() {
     let mut point: Point = Point { x: 1, y: 2 }
     swap_values(mut point.x, mut point.y)
 }
@@ -596,7 +596,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_f64_literal_cast_addition_and_comparison() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -612,7 +612,7 @@ fn check(value: f64) -> bool {
     return value >= 1.5
 }
 
-fn main() -> void {
+fn main() {
     let pi: f64 = 3.14
     let value: f64 = ratio(42)
     let total: f64 = add(pi, value)
@@ -658,27 +658,27 @@ fn main() -> void {
 fn rejects_primitive_type_arguments() {
     for (source, type_name) in [
         (
-            r#"package app.main
+            r#"package app
 
-fn main() -> void {
+fn main() {
     let value: i32<string> = 1
 }
 "#,
             "i32",
         ),
         (
-            r#"package app.main
+            r#"package app
 
-fn main() -> void {
+fn main() {
     let value: string<i32> = "x"
 }
 "#,
             "string",
         ),
         (
-            r#"package app.main
+            r#"package app
 
-fn main() -> void {
+fn main() {
     let value: bool<i32> = true
 }
 "#,
@@ -694,7 +694,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_distinct_integer_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -706,7 +706,7 @@ fn check64(value: u64) -> bool {
     return value >= 1
 }
 
-fn main() -> void {
+fn main() {
     let signed: i32 = 1
     let word: u32 = 2
     let wide: u64 = 3
@@ -760,27 +760,27 @@ fn main() -> void {
 #[test]
 fn rejects_int_alias_in_v0_1() {
     for source in [
-        r#"package app.main
+        r#"package app
 
-fn main() -> void {
+fn main() {
     let value: int = 1
 }
 "#,
-        r#"package app.main
+        r#"package app
 
-fn inspect(value: int) -> void {
+fn inspect(value: int) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
-        r#"package app.main
+        r#"package app
 
 fn inspect() -> int {
     return 1
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
     ] {
@@ -797,9 +797,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_i32_literal_overflow() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let value: i32 = 2147483648
 }
 "#;
@@ -810,9 +810,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_mixed_integer_binary_without_cast() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let left: i32 = 1
     let right: i64 = 2
     let value: i64 = left + right
@@ -825,7 +825,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_char_literal_and_return() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -833,7 +833,7 @@ fn initial() -> char {
     return 'N'
 }
 
-fn main() -> void {
+fn main() {
     let letter: char = initial()
     io.println("done")
 }
@@ -854,9 +854,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_implicit_int_to_f64_initializer() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let ratio: f64 = 42
 }
 "#;
@@ -867,9 +867,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_char_string_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let text: string = 'N'
 }
 "#;
@@ -880,7 +880,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_tail_expression_return() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -888,7 +888,7 @@ fn add(a: i64, b: i64) -> i64 {
     a + b
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -900,7 +900,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_if_expression_and_integer_comparison() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -912,7 +912,7 @@ fn label(score: i64) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let text: string = label(75)
     io.println(text)
 }
@@ -943,11 +943,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_panic_statement() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     panic("boom")
 }
 "#;
@@ -962,7 +962,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_panic_as_diverging_match_arm() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -978,7 +978,7 @@ fn unwrap_text(value: Option<string>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: Option<string> = Option.Some("hello")
     let text: string = unwrap_text(value)
     io.println(text)
@@ -999,7 +999,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_if_condition_that_is_not_bool() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -1011,7 +1011,7 @@ fn label(score: i64) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -1022,7 +1022,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_if_branch_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -1034,7 +1034,7 @@ fn value(flag: bool) -> i64 {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -1045,11 +1045,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_unknown_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.println(message)
 }
 "#;
@@ -1060,11 +1060,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_let_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let message: string = 42
 }
 "#;
@@ -1075,7 +1075,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_wrong_function_argument_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -1083,7 +1083,7 @@ fn id(value: i64) -> i64 {
     return value
 }
 
-fn main() -> void {
+fn main() {
     let answer: i64 = id("nope")
     io.println("done")
 }

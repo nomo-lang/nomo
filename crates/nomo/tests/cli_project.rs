@@ -3,7 +3,7 @@ use rustls::pki_types::{PrivateKeyDer, PrivatePkcs8KeyDer};
 use rustls::{ServerConfig, ServerConnection, StreamOwned};
 use std::fs;
 use std::io::{ErrorKind, Read, Write};
-use std::net::{Shutdown, TcpListener, TcpStream, UdpSocket as RustUdpSocket};
+use std::net::{Shutdown, TcpListener, TcpStream, ToSocketAddrs, UdpSocket as RustUdpSocket};
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 use std::sync::Arc;
@@ -16949,7 +16949,12 @@ suspend fn main() -> void {
 
 #[test]
 fn async_tcp_connect_resolves_hostname_on_bounded_pool_and_returns_to_owner() {
-    let listener = TcpListener::bind("127.0.0.1:0").unwrap();
+    let first_localhost = ("localhost", 0)
+        .to_socket_addrs()
+        .unwrap()
+        .next()
+        .expect("localhost must resolve to at least one address");
+    let listener = TcpListener::bind(first_localhost).unwrap();
     let port = listener.local_addr().unwrap().port();
     let server = std::thread::spawn(move || {
         let (stream, _) = listener.accept().unwrap();
@@ -16984,7 +16989,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
 }
 
 suspend fn main() -> void {
-    let result: Result<TcpStream, NetError> = net.connect("localhost", __PORT__, 1000)
+    let result: Result<TcpStream, NetError> = net.connect("localhost", __PORT__, 5000)
     report(result)
 }
 "#

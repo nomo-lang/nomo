@@ -134,14 +134,19 @@ pipe 则保持 owner-affine 并注册到 owner reactor。Linux 使用 epoll，�
 `pidfd` 观察退出，旧内核回退到唯一的有界 reaper/wakeup source；macOS 使用
 kqueue 与 `EVFILT_PROC`，退出注册竞态也由同一个有界 source 收口。event
 timeout 与 task cancellation 恰好一次移除 interest，同时保留 child 与尚未
-写完的 stdin 后缀；close 不等待，runtime shutdown 会回收全部 child。Windows
-在 P2-PROC-C 之前仍走 secret-safe、ready `unsupported` capability 路径。
+写完的 stdin 后缀；close 不等待，runtime shutdown 会回收全部 child。
+Windows P2-PROC-C 使用关联到 owner IOCP 的 overlapped named pipe。一个惰性、
+有界 worker 负责创建进程，`RegisterWaitForSingleObject` 将带 generation 校验
+的退出 completion 回投同一个 IOCP。stdin 与两条输出流使用稳定的 reactor
+operation slot，并由 `CancelIoEx` 排空延迟 completion；async 路径不会为每个
+child 创建 reader/writer thread。
 
 RFC 0024 行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，
 并全部由 E0891 隔离。示例见
 [`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
 与
-[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix)。
+[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) 或
+[`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows)。
 
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
 

@@ -695,11 +695,16 @@ fn main() -> void {
     }
     assert!(c.contains("nomo_async_process_result_owned_0 = 1u"));
     assert!(!c.contains("nomo_process_control_states"));
-    assert!(!c.contains("CreateThread"));
     if cfg!(windows) {
-        assert!(c.contains("async process pipes are not available"));
+        assert_eq!(c.matches("CreateThread(").count(), 1);
+        assert!(c.contains("CreateNamedPipeW"));
+        assert!(c.contains("RegisterWaitForSingleObject"));
+        assert!(c.contains("WT_EXECUTEONLYONCE"));
+        assert!(c.contains("FILE_FLAG_OVERLAPPED"));
+        assert!(!c.contains("async process pipes are not available"));
         assert!(!c.contains("pthread_create"));
     } else {
+        assert!(!c.contains("CreateThread"));
         assert!(c.contains("pthread_create"));
         assert!(c.contains("nomo_async_process_pool_watch"));
         assert!(c.contains("NOMO_ASYNC_REACTOR_PROCESS"));
@@ -716,9 +721,9 @@ fn main() -> void {
         assert!(target_c.contains("nomo_async_process_spawn_start"));
         assert!(target_c.contains("nomo_async_process_event_start"));
         assert!(!target_c.contains("nomo_process_control_states"));
-        assert!(!target_c.contains("CreateThread"));
         match target_text {
             "x86_64-unknown-linux-gnu" => {
+                assert!(!target_c.contains("CreateThread"));
                 assert!(target_c.contains("pthread_create"));
                 assert!(target_c.contains("epoll_create(1)"));
                 assert!(target_c.contains("SYS_pidfd_open"));
@@ -726,14 +731,23 @@ fn main() -> void {
                 assert!(!target_c.contains("async process pipes are not available"));
             }
             "aarch64-apple-darwin" => {
+                assert!(!target_c.contains("CreateThread"));
                 assert!(target_c.contains("pthread_create"));
                 assert!(target_c.contains("kqueue()"));
                 assert!(target_c.contains("EVFILT_PROC"));
                 assert!(!target_c.contains("async process pipes are not available"));
             }
             "x86_64-pc-windows-msvc" => {
+                assert_eq!(target_c.matches("CreateThread(").count(), 1);
                 assert!(!target_c.contains("pthread_create"));
-                assert!(target_c.contains("async process pipes are not available"));
+                assert!(target_c.contains("CreateNamedPipeW"));
+                assert!(target_c.contains("RegisterWaitForSingleObject"));
+                assert!(target_c.contains("WT_EXECUTEONLYONCE"));
+                assert!(target_c.contains("FILE_FLAG_OVERLAPPED"));
+                assert!(target_c.contains("CancelIoEx"));
+                assert!(!target_c.contains("nomo_process_windows_reader_thread"));
+                assert!(!target_c.contains("nomo_process_windows_writer_thread"));
+                assert!(!target_c.contains("async process pipes are not available"));
             }
             _ => unreachable!(),
         }

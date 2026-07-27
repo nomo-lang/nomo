@@ -5,8 +5,18 @@ pub(super) fn emit_async_process_helpers(
     include_suspend_abi: bool,
     target: &nomo_target::TargetTriple,
 ) {
-    if include_suspend_abi && target.operating_system() != nomo_target::OperatingSystem::Windows {
-        emit_async_process_unix_helpers(out);
+    if include_suspend_abi {
+        match target.operating_system() {
+            nomo_target::OperatingSystem::Windows => {
+                emit_async_process_native_helpers(
+                    out,
+                    include_str!("host_async_process_windows.c"),
+                );
+            }
+            nomo_target::OperatingSystem::Linux | nomo_target::OperatingSystem::Darwin => {
+                emit_async_process_native_helpers(out, include_str!("host_async_process_unix.c"));
+            }
+        }
         return;
     }
     let process_child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
@@ -178,7 +188,7 @@ pub(super) fn emit_async_process_helpers(
     }
 }
 
-fn emit_async_process_unix_helpers(out: &mut String) {
+fn emit_async_process_native_helpers(out: &mut String, template: &str) {
     let process_env = ValueType::Struct("ProcessEnv".to_string(), Vec::new());
     let process_child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
     let process_command = ValueType::Struct("ProcessCommand".to_string(), Vec::new());
@@ -202,7 +212,7 @@ fn emit_async_process_unix_helpers(out: &mut String) {
         "Result".to_string(),
         vec![exit_option.clone(), process_error],
     );
-    let rendered = include_str!("host_async_process_unix.c")
+    let rendered = template
         .replace("@PROCESS_ENV@", &c_type(&process_env))
         .replace("@PROCESS_CHILD@", &c_struct_ident("ProcessChild", &[]))
         .replace("@PROCESS_COMMAND@", &c_type(&process_command))

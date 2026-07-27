@@ -15804,11 +15804,7 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    let expected = if cfg!(windows) {
-        "unsupported async process pipes are not available in this runtime slice\n"
-    } else {
-        "spawn failed to start process\n"
-    };
+    let expected = "spawn failed to start process\n";
     assert_eq!(stdout, expected);
     assert!(!stdout.contains("process-command-secret-sentinel"));
     assert!(output.stderr.is_empty());
@@ -15841,11 +15837,19 @@ suspend fn main() -> void {
         assert!(c.contains(symbol), "missing {symbol}");
     }
     assert!(!c.contains("nomo_process_control_states"));
-    assert!(!c.contains("CreateThread"));
     if cfg!(windows) {
+        assert_eq!(c.matches("CreateThread(").count(), 1);
         assert!(!c.contains("pthread_create"));
-        assert!(c.contains("async process pipes are not available"));
+        assert!(c.contains("CreateNamedPipeW"));
+        assert!(c.contains("RegisterWaitForSingleObject"));
+        assert!(c.contains("WT_EXECUTEONLYONCE"));
+        assert!(c.contains("FILE_FLAG_OVERLAPPED"));
+        assert!(c.contains("CancelIoEx"));
+        assert!(!c.contains("nomo_process_windows_reader_thread"));
+        assert!(!c.contains("nomo_process_windows_writer_thread"));
+        assert!(!c.contains("async process pipes are not available"));
     } else {
+        assert!(!c.contains("CreateThread"));
         assert!(c.contains("pthread_create"));
         assert!(c.contains("nomo_async_process_runtime_shutdown"));
         assert!(c.contains("nomo_async_process_event_wake"));
@@ -15861,16 +15865,21 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(not(windows))]
 #[test]
-fn async_process_pipe_unix_runs_owner_affine_stdio_and_reaps_cleanly() {
-    let root = temp_test_root("async-process-pipe-unix");
+fn async_process_pipe_native_runs_owner_affine_stdio_and_reaps_cleanly() {
+    let root = temp_test_root("async-process-pipe-native");
     reset_dir(&root);
     let fixture_binary = build_controlled_process_fixture(&root);
     let metrics = root.join("metrics.json");
-    let source_example =
-        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/async_process_pipe_unix");
-    let example = root.join("async_process_pipe_unix");
+    let example_name = if cfg!(windows) {
+        "async_process_pipe_windows"
+    } else {
+        "async_process_pipe_unix"
+    };
+    let source_example = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../examples")
+        .join(example_name);
+    let example = root.join(example_name);
     fs::create_dir_all(example.join("src")).unwrap();
     fs::copy(source_example.join("nomo.toml"), example.join("nomo.toml")).unwrap();
     fs::copy(
@@ -15918,6 +15927,9 @@ fn async_process_pipe_unix_runs_owner_affine_stdio_and_reaps_cleanly() {
         ("live_process_operations", 0),
         ("peak_live_process_operations", 1),
         ("retained_process_bytes", 0),
+        ("blocking_pool_initializations", 1),
+        ("blocking_threads_started", 1),
+        ("blocking_threads_retired", 1),
         ("live_blocking_threads", 0),
         ("live_blocking_jobs", 0),
         ("live_reactor_registrations", 0),
@@ -15935,11 +15947,29 @@ fn async_process_pipe_unix_runs_owner_affine_stdio_and_reaps_cleanly() {
             .unwrap()
             >= "hello from Nomo\n".len() as u64
     );
+    if cfg!(windows) {
+        assert!(
+            metrics["counters"]["iocp_operations_started"]
+                .as_u64()
+                .unwrap()
+                >= 3,
+            "expected stdin/stdout/stderr IOCP operations in:\n{metrics}"
+        );
+        assert_eq!(
+            metrics["counters"]["iocp_operations_started"],
+            metrics["counters"]["iocp_operations_completed"],
+            "late IOCP operations were not drained:\n{metrics}"
+        );
+        assert_eq!(metrics["counters"]["live_iocp_operations"], 0);
+        assert_eq!(
+            metrics["counters"]["reactor_registrations"],
+            metrics["counters"]["reactor_deregistrations"]
+        );
+    }
 
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(windows))]
 #[test]
 fn async_process_protocol_error_closes_child_without_leaking_output() {
     let root = temp_test_root("async-process-protocol-error");
@@ -16259,7 +16289,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(root).unwrap();
 }
 
-#[cfg(not(windows))]
 #[test]
 fn async_process_event_timeout_keeps_child_usable_and_close_reaps() {
     let root = temp_test_root("async-process-event-timeout");

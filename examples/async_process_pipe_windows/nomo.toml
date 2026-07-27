@@ -1,0 +1,3 @@
+[package]
+name = "async-process-pipe-windows"
+version = "0.1.0"

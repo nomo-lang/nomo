@@ -848,8 +848,13 @@ and reap use one lazy bounded worker with fixed job/handle tables; stdin,
 stdout, and stderr use owner-affine epoll registrations on Linux or kqueue
 registrations on macOS. Linux prefers `pidfd` exit readiness and otherwise
 uses one bounded reaper/wakeup source. macOS uses `EVFILT_PROC`, with the same
-bounded source handling the narrow exit-registration race. Windows remains
-ready `unsupported` until the IOCP P2-PROC-C slice.
+bounded source handling the narrow exit-registration race. Windows P2-PROC-C
+creates overlapped named pipes, associates all parent endpoints with the owner
+IOCP, and uses a bounded system wait callback for generation-checked exit
+completion. Its one lazy process-creation worker is shared by all children;
+the async path has no per-child reader/writer threads. Cancellation uses
+`CancelIoEx`, and stable IOCP operation slots own late pipe completions after
+the coroutine frame is dropped.
 
 The `_blocking` compatibility path invokes `program` directly and never a
 shell. A program containing a
@@ -892,6 +897,7 @@ blocking migration.
 
 See `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for native owner-affine stdin/output/exit,
+`examples/async_process_pipe_windows` for the corresponding IOCP path,
 and `examples/process_controlled_blocking` for two queued stdin messages and
 multiplexed output/exit handling.
 

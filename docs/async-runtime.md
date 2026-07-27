@@ -151,14 +151,20 @@ reaper/wakeup source; macOS uses kqueue plus `EVFILT_PROC`, with that same
 source closing the exit-registration race. Event timeout and task cancellation
 remove interests exactly once while preserving the child and pending stdin
 suffix. Close never waits, and runtime shutdown reaps every child. Windows
-remains a secret-safe ready `unsupported` capability until P2-PROC-C.
+P2-PROC-C uses overlapped named pipes associated with the owner IOCP. One
+lazy bounded worker performs process creation, while `RegisterWaitForSingleObject`
+posts generation-checked exit completion back to the same IOCP. Stdin and
+both output streams use stable reactor operation slots plus `CancelIoEx`
+late-completion draining; the async path creates no per-child reader or writer
+threads.
 
 RFC 0024 behavior remains temporarily available only through
 `BlockingProcessChild` and explicit `_blocking` names, all quarantined by
 E0891. See
 [`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
 and
-[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix).
+[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) or
+[`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows).
 
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:

@@ -769,9 +769,14 @@ blocking registry. `process.start(command, timeout)` and
 operations over `ProcessChild`. Queueing stdin, closing stdin, `try_wait`,
 termination request, and `close_child` are synchronous owner-local operations
 that must not wait. P2-PROC-A fixes this public effect, handle identity, C99
-start/resume/frame ABI, and secret-safe ready `unsupported` result. Native
-reactor-backed process creation and pipes arrive in P2-PROC-B; the current
-placeholder does not wrap the old polling runtime in a coroutine.
+start/resume/frame ABI, and secret-safe capability rejection. P2-PROC-B
+implements the native Unix slice: one lazy bounded worker performs process
+start and reap jobs, while stdin/stdout/stderr remain owner-affine and use
+epoll on Linux or kqueue on macOS. Linux uses `pidfd` when available and a
+single bounded reaper/wakeup source on older kernels; macOS uses
+`EVFILT_PROC`, with the same bounded source covering the exit-registration
+race. It never creates one thread per child or places the old polling registry
+behind a coroutine.
 
 The accepted synchronous implementation remains available for one migration
 window through `BlockingProcessChild` and the explicit
@@ -785,11 +790,14 @@ Controlled process payloads and output chunks are limited to 1 MiB,
 `next_event` timeouts are limited to 15 minutes, and output must be valid UTF-8
 without NUL. `ProcessControlError` exposes stable, secret-safe error codes;
 errors and default diagnostics do not copy command arguments, environment,
-cwd, stdin, or child output. Unix-like and Windows native programs use
-toolchain-owned adapters, so application code needs no C FFI. See
-`examples/async_process_pipe_contract` for the P2-PROC-A ABI and
-`examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking` for
-the explicit migration path.
+cwd, stdin, or child output. The Unix async adapter is toolchain-owned, so
+application code needs no C FFI. Windows keeps the secret-safe ready
+`unsupported` path until P2-PROC-C adds IOCP process pipes; browser WASM
+rejects the capability before evaluating command operands. See
+`examples/async_process_pipe_contract` for capability behavior,
+`examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
+and `examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking`
+for the explicit migration path.
 
 `std.net` now provides owner-affine direct-style suspend TCP client operations.
 `net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns

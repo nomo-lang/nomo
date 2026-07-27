@@ -237,7 +237,7 @@
       "nomo_project": "reference/nomo/process_pipe_contract",
       "expected_stdout": "unsupported\n",
       "snapshot": "snapshots/process-pipe-contract.json",
-      "note": "P2-PROC-A fixture locks the suspend lowering and zero-thread ready unsupported path; it remains disabled until native process-pipe counters land."
+      "note": "P2-PROC-B statically gates bounded Unix start/reap and owner-reactor pipes; native CLI fixtures validate lifecycle counters, while this fair cross-platform benchmark remains disabled until it owns a self-contained child fixture."
     },
     {
       "id": "connection_churn",

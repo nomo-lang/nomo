@@ -128,12 +128,20 @@ E0876。P2-TCP-F 在 Unix 通过 `SHUT_WR`、在 Windows 通过 `SD_SEND` 实现
 P2-PROC-A 已拆分进程契约。`process.start(command, timeout)` 与
 `process.next_event(child, max_bytes, timeout)` 是基于 owner-affine、
 Local/!Send `ProcessChild` 的 suspend intrinsic；其 C99 frame 带有类型化的
-start/resume/cancel 状态和恰好一次的结果所有权。当前 native 路径会 inline
-返回 secret-safe `unsupported`，且不会发出阻塞注册表或辅助线程。RFC 0024
-行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，并全部由
-E0891 隔离。P2-PROC-B 将用有界 start job 与 epoll/kqueue pipe registration
-替换 ready 占位路径。示例见
-[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)。
+start/resume/cancel 状态和恰好一次的结果所有权。P2-PROC-B 已实现 Unix
+native 路径：一个惰性、有界的 process worker 负责 start/reap job，非阻塞
+pipe 则保持 owner-affine 并注册到 owner reactor。Linux 使用 epoll，优先用
+`pidfd` 观察退出，旧内核回退到唯一的有界 reaper/wakeup source；macOS 使用
+kqueue 与 `EVFILT_PROC`，退出注册竞态也由同一个有界 source 收口。event
+timeout 与 task cancellation 恰好一次移除 interest，同时保留 child 与尚未
+写完的 stdin 后缀；close 不等待，runtime shutdown 会回收全部 child。Windows
+在 P2-PROC-C 之前仍走 secret-safe、ready `unsupported` capability 路径。
+
+RFC 0024 行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，
+并全部由 E0891 隔离。示例见
+[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
+与
+[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix)。
 
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
 

@@ -1,0 +1,3 @@
+[package]
+name = "async_process_pipe_unix"
+version = "0.1.0"

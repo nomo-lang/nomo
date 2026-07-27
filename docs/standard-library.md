@@ -841,10 +841,15 @@ process.close_child_blocking(child: BlockingProcessChild) -> void
 `start` and `next_event` are suspend intrinsics. `ProcessChild` is owner-affine
 and Local/!Send; `BlockingProcessChild` is a distinct compatibility identity
 and cannot be passed to the async API. P2-PROC-A fixes operand evaluation,
-frame ownership, start/resume/cancel ABI, effect diagnostics, and a
-secret-safe ready `unsupported` path. It does not place the synchronous
-registry behind a suspend signature. Native epoll/kqueue process pipes and
-bounded process-start jobs arrive in P2-PROC-B.
+frame ownership, start/resume/cancel ABI, effect diagnostics, and secret-safe
+capability rejection. P2-PROC-B implements native Unix process I/O without
+placing the synchronous registry behind a suspend signature. Process creation
+and reap use one lazy bounded worker with fixed job/handle tables; stdin,
+stdout, and stderr use owner-affine epoll registrations on Linux or kqueue
+registrations on macOS. Linux prefers `pidfd` exit readiness and otherwise
+uses one bounded reaper/wakeup source. macOS uses `EVFILT_PROC`, with the same
+bounded source handling the narrow exit-registration race. Windows remains
+ready `unsupported` until the IOCP P2-PROC-C slice.
 
 The `_blocking` compatibility path invokes `program` directly and never a
 shell. A program containing a
@@ -853,7 +858,9 @@ child `PATH`. `cwd = None` inherits the current directory. With
 `inherit_env = true`, explicit entries override inherited variables; with
 `false`, only explicit variables and platform-required entries are present.
 Environment names must be non-empty, contain neither `=` nor NUL, and be
-unique (case-insensitively on Windows).
+unique (case-insensitively on Windows). The copied command has at most 4096
+arguments/environment items and at most 1 MiB of retained string storage;
+inherited environment entries count toward both limits.
 
 `write_stdin` accepts one non-empty UTF-8 payload of at most 1 MiB. Only one
 payload may be pending. The caller waits for `StdinFlushed` before queuing the
@@ -883,8 +890,9 @@ call with E0891. Synchronous calls to the new `start` or `next_event` report
 E0870 and guide callers to mark the function `suspend` or choose the explicit
 blocking migration.
 
-See `examples/async_process_pipe_contract` for the P2-PROC-A ABI and
-`examples/process_controlled_blocking` for two queued stdin messages and
+See `examples/async_process_pipe_contract` for capability behavior,
+`examples/async_process_pipe_unix` for native owner-affine stdin/output/exit,
+and `examples/process_controlled_blocking` for two queued stdin messages and
 multiplexed output/exit handling.
 
 `std.net` provides the first owner-affine async TCP client slice plus explicit

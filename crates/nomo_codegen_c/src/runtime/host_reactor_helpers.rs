@@ -26,6 +26,7 @@ fn emit_common_reactor_types(out: &mut String, target: &TargetTriple) {
         r#"
 #define NOMO_ASYNC_REACTOR_READ 1u
 #define NOMO_ASYNC_REACTOR_WRITE 2u
+#define NOMO_ASYNC_REACTOR_PROCESS 4u
 
 typedef void (*nomo_async_reactor_wake_fn)(void *, uint32_t);
 
@@ -131,7 +132,9 @@ fn emit_epoll_reactor(out: &mut String) {
 
 static uint32_t nomo_async_reactor_epoll_events(uint32_t interests) {
     uint32_t events = EPOLLERR | EPOLLHUP | EPOLLONESHOT;
-    if ((interests & NOMO_ASYNC_REACTOR_READ) != 0u) {
+    if ((interests
+            & (NOMO_ASYNC_REACTOR_READ | NOMO_ASYNC_REACTOR_PROCESS))
+        != 0u) {
         events |= EPOLLIN;
     }
     if ((interests & NOMO_ASYNC_REACTOR_WRITE) != 0u) {
@@ -253,7 +256,10 @@ static int nomo_async_reactor_wait(
         && registration->wake != NULL) {
         uint32_t ready = 0u;
         if ((event.events & (EPOLLIN | EPOLLHUP | EPOLLERR)) != 0u) {
-            ready |= NOMO_ASYNC_REACTOR_READ;
+            ready |= (registration->interests
+                    & NOMO_ASYNC_REACTOR_PROCESS) != 0u
+                ? NOMO_ASYNC_REACTOR_PROCESS
+                : NOMO_ASYNC_REACTOR_READ;
         }
         if ((event.events & (EPOLLOUT | EPOLLHUP | EPOLLERR)) != 0u) {
             ready |= NOMO_ASYNC_REACTOR_WRITE;
@@ -305,9 +311,18 @@ fn emit_kqueue_reactor(out: &mut String) {
 }
 
 static int16_t nomo_async_reactor_kqueue_filter(uint32_t interests) {
+    if ((interests & NOMO_ASYNC_REACTOR_PROCESS) != 0u) {
+        return EVFILT_PROC;
+    }
     return (interests & NOMO_ASYNC_REACTOR_WRITE) != 0u
         ? EVFILT_WRITE
         : EVFILT_READ;
+}
+
+static uint32_t nomo_async_reactor_kqueue_fflags(uint32_t interests) {
+    return (interests & NOMO_ASYNC_REACTOR_PROCESS) != 0u
+        ? NOTE_EXIT
+        : 0u;
 }
 
 static int nomo_async_reactor_register(
@@ -327,11 +342,15 @@ static int nomo_async_reactor_register(
         (uintptr_t)handle,
         nomo_async_reactor_kqueue_filter(interests),
         EV_ADD | EV_ONESHOT,
-        0,
+        nomo_async_reactor_kqueue_fflags(interests),
         0,
         registration
     );
     if (kevent(reactor->handle, &change, 1, NULL, 0, NULL) != 0) {
+        if ((interests & NOMO_ASYNC_REACTOR_PROCESS) != 0u
+            && (errno == ESRCH || errno == ENOENT)) {
+            return 2;
+        }
         reactor->errors += 1u;
         return 1;
     }
@@ -360,7 +379,7 @@ static int nomo_async_reactor_reregister(
         (uintptr_t)registration->handle,
         nomo_async_reactor_kqueue_filter(interests),
         EV_ADD | EV_ONESHOT,
-        0,
+        nomo_async_reactor_kqueue_fflags(interests),
         0,
         registration
     );
@@ -386,12 +405,14 @@ static void nomo_async_reactor_deregister(
         (uintptr_t)registration->handle,
         nomo_async_reactor_kqueue_filter(registration->interests),
         EV_DELETE,
-        0,
+        nomo_async_reactor_kqueue_fflags(registration->interests),
         0,
         NULL
     );
     if (kevent(reactor->handle, &change, 1, NULL, 0, NULL) != 0
-        && errno != ENOENT) {
+        && errno != ENOENT
+        && !((registration->interests & NOMO_ASYNC_REACTOR_PROCESS) != 0u
+            && errno == ESRCH)) {
         reactor->errors += 1u;
     }
     registration->active = 0u;
@@ -438,9 +459,11 @@ static int nomo_async_reactor_wait(
     if (registration != NULL
         && registration->active != 0u
         && registration->wake != NULL) {
-        uint32_t ready = event.filter == EVFILT_WRITE
-            ? NOMO_ASYNC_REACTOR_WRITE
-            : NOMO_ASYNC_REACTOR_READ;
+        uint32_t ready = event.filter == EVFILT_PROC
+            ? NOMO_ASYNC_REACTOR_PROCESS
+            : (event.filter == EVFILT_WRITE
+                ? NOMO_ASYNC_REACTOR_WRITE
+                : NOMO_ASYNC_REACTOR_READ);
         registration->wake(registration->owner, ready);
     }
     return 0;
@@ -871,6 +894,8 @@ mod tests {
         assert!(emitted.contains("EPOLLONESHOT"));
         assert!(emitted.contains("EPOLL_CTL_ADD"));
         assert!(emitted.contains("EPOLL_CTL_DEL"));
+        assert!(emitted.contains("NOMO_ASYNC_REACTOR_PROCESS"));
+        assert!(emitted.contains("NOMO_ASYNC_REACTOR_READ | NOMO_ASYNC_REACTOR_PROCESS"));
         assert!(!emitted.contains("kqueue()"));
     }
 
@@ -880,6 +905,8 @@ mod tests {
         assert!(emitted.contains("kqueue()"));
         assert!(emitted.contains("EV_ADD | EV_ONESHOT"));
         assert!(emitted.contains("EV_DELETE"));
+        assert!(emitted.contains("EVFILT_PROC"));
+        assert!(emitted.contains("NOTE_EXIT"));
         assert!(!emitted.contains("epoll_create(1)"));
     }
 

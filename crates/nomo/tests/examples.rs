@@ -31,6 +31,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_timer",
     "async_tcp_connect",
     "async_tcp_io",
+    "async_process_pipe_unix",
     "async_publication_move",
     "async_bounded_channel",
     "async_static_select",
@@ -78,6 +79,10 @@ fn examples_check_and_run() {
 
         assert_cli_check(&example);
         assert_cli_build_emit_c(&example);
+        if cfg!(windows) && example_name(&example) == "async_process_pipe_unix" {
+            clean_example_artifacts(&example);
+            continue;
+        }
         assert_cli_run(&example);
         assert_extra_cli_commands(&example);
 
@@ -297,6 +302,15 @@ fn assert_cli_run(example: &Path) {
                 .arg("run")
                 .arg(example)
                 .env("NOMO_TCP_ECHO_PORT", port.to_string())
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        }),
+        #[cfg(not(windows))]
+        "async_process_pipe_unix" => run_with_async_process_fixture(|fixture| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_PROCESS_FIXTURE", fixture)
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
         }),
@@ -765,12 +779,73 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                 .output()
                 .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
         }),
+        #[cfg(not(windows))]
+        "async_process_pipe_unix" => run_with_async_process_fixture(|fixture| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_PROCESS_FIXTURE", fixture)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        }),
         _ => Command::new(bin)
             .current_dir(project_root)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
             .output()
             .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display())),
     }
+}
+
+#[cfg(not(windows))]
+fn run_with_async_process_fixture<F>(run: F) -> Output
+where
+    F: FnOnce(&Path) -> Output,
+{
+    let root = std::env::temp_dir().join(format!(
+        "nomo-async-process-example-fixture-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("fixture.c");
+    let binary = root.join("fixture");
+    fs::write(
+        &source,
+        r#"#include <stdio.h>
+#include <string.h>
+
+int main(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "async") != 0) {
+        return 2;
+    }
+    char line[4096];
+    if (fgets(line, sizeof(line), stdin) == NULL) {
+        return 3;
+    }
+    printf("async:%s", line);
+    fflush(stdout);
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    let compiled = Command::new("cc")
+        .arg("-std=c99")
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "failed to build async process example fixture\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let output = run(&binary);
+    fs::remove_dir_all(root).unwrap();
+    output
 }
 
 fn run_with_http_example_server<F>(run: F) -> Output
@@ -1395,7 +1470,14 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "prelude_shadow" => "shadow ok / qualified ok\n",
         "primitives" => "primitives ok\n",
         "process_controlled_blocking" => "set NOMO_PROCESS_FIXTURE to a line-oriented executable\n",
-        "async_process_pipe_contract" => "unsupported\n",
+        "async_process_pipe_contract" => {
+            if cfg!(windows) {
+                "unsupported\n"
+            } else {
+                "spawn\n"
+            }
+        }
+        "async_process_pipe_unix" => "stdin flushed\nasync:hello from Nomo\nexit 0 0\n",
         "pub_visibility" => "pub visibility ok\n",
         "read_file" => "file ok\n",
         "result_chain" => "result ok\n",

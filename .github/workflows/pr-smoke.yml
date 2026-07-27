@@ -43,6 +43,11 @@ jobs:
           cargo test -p nomo --test cli_project
           async_tcp
           --locked
+      - name: Run owner-affine async process lifecycle through epoll and pidfd
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_process_
+          --locked
       - name: Build and verify browser WebAssembly runtime
         shell: bash
         run: |
@@ -430,6 +435,11 @@ jobs:
           cargo test -p nomo --test cli_project
           controlled_process
           --locked
+      - name: Verify async process capability rejection on Windows
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_process_
+          --locked
       - name: Run structured JSON conformance and boundary gates
         run: >-
           cargo test -p nomo --test cli_project
@@ -520,6 +530,11 @@ jobs:
         run: >-
           cargo test -p nomo --test cli_project
           async_tcp
+          --locked
+      - name: Run owner-affine async process lifecycle through kqueue
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_process_
           --locked
       - name: Run structured JSON conformance and boundary gates
         run: >-

@@ -111,14 +111,16 @@ detaches payload storage before frame drop and shutdown drains late
 completions. The browser fixture proves typed `Unsupported` capability
 rejection before host, port, or timeout operand evaluation. The cross-language
 `tcp_echo` workload remains disabled until the dedicated benchmark slice
-defines a fair server and connection matrix. HTTP/SSE and process-pipe
-registrations remain disabled until their focused slices land. This is
-correctness and lifecycle evidence, not a cross-language performance claim.
-P2-PROC-A now versions `process_pipe_contract`: it fixes the suspend
-start/resume/frame ABI and proves the native placeholder returns
-`unsupported` without emitting the blocking registry or helper threads. The
-workload stays disabled until P2-PROC-B supplies real Unix registrations and
-lifecycle counters.
+defines a fair server and connection matrix. HTTP/SSE performance probes also
+remain disabled until their focused slices land. This is correctness and
+lifecycle evidence, not a cross-language performance claim.
+`process_pipe_contract` now statically gates the P2-PROC-B Unix lowering:
+bounded start/reap jobs, one lazy worker, owner-reactor process events, and no
+per-child threads or `poll` loop. Native CLI fixtures validate stdin/output/
+exit ordering, timeout reuse, cancellation, termination, secret safety, and
+zero live counters after shutdown. The cross-language workload itself remains
+disabled and non-claim-eligible until it owns a self-contained cross-platform
+child fixture and a fair Go comparison.
 
 ## Run
 

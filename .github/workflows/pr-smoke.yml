@@ -456,6 +456,7 @@ jobs:
         run: |
           cargo test -p nomo --test cli_project jsonrpc --locked
           cargo test -p nomo --test cli_project mcp_stdio_example_completes_two_jsonrpc_exchanges --locked -- --exact
+          cargo test -p nomo --test cli_project mcp_stdio_async_example_composes_fragmented_jsonrpc_without_blocking_workers --locked -- --exact
       - name: Run bounded UTC cron conformance
         run: >-
           cargo test -p nomo --test cli_project
@@ -552,6 +553,7 @@ jobs:
         run: |
           cargo test -p nomo --test cli_project jsonrpc --locked
           cargo test -p nomo --test cli_project mcp_stdio_example_completes_two_jsonrpc_exchanges --locked -- --exact
+          cargo test -p nomo --test cli_project mcp_stdio_async_example_composes_fragmented_jsonrpc_without_blocking_workers --locked -- --exact
       - name: Run bounded UTC cron conformance
         run: >-
           cargo test -p nomo --test cli_project

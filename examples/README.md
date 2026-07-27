@@ -28,6 +28,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `std_process`: `std.process` spawn, status, exec, and captured output helpers
 - `process_controlled_blocking`: preview compatibility example for shell-free queued stdin and multiplexed stdout/stderr
 - `mcp_stdio_blocking`: preview compatibility example for bounded newline-framed JSON-RPC over a blocking child
+- `mcp_stdio_async`: RFC 0039 loop-carried decoder state composed with owner-affine async process events for fragmented/coalesced MCP JSON-RPC
 - `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
 - `suspend_ready`: P0 direct-style `suspend fn` effect on an always-ready call chain; no executor or suspension primitive yet
 - `async_yield`: P1 direct-style nested stackless frames driven by the current-thread executor across two cooperative yields

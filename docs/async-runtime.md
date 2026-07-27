@@ -21,6 +21,10 @@ acceptance gate has passed.
   surface.
 - [RFC 0037](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0037-owner-affine-async-tcp-client-and-blocking-migration.md)
   defines the bounded owner-affine async TCP client and blocking migration.
+- [RFC 0038](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0038-owner-affine-async-process-pipes-and-blocking-migration.md)
+  defines owner-affine async process pipes and their blocking migration.
+- [RFC 0039](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0039-loop-carried-coroutine-state-and-suspension-safe-mutation.md)
+  defines bounded loop-carried coroutine state and suspension-safe mutation.
 
 [中文版本](async-runtime.zh-CN.md)
 
@@ -167,11 +171,21 @@ timeout functions that panic if evaluated, and must return secret-safe
 
 RFC 0024 behavior remains temporarily available only through
 `BlockingProcessChild` and explicit `_blocking` names, all quarantined by
-E0891. See
+E0891. RFC 0039 adds one bounded, non-nested `for condition` lowering shape:
+the condition does not suspend, direct suspend calls bind their results, and
+task-local owned mutable locals declared before the loop may be replaced on
+the normal fallthrough backedge. The existing frame stores those live values;
+managed replacement retains the new value before dropping the old value, and
+completion/cancellation drops the initialized slot once. Borrows, guards,
+nested suspending loops, suspending conditions, `break`, `continue`, `?`,
+panic, defer, and early return across the loop remain E0876. Ordinary
+ARC/COW values stay owner-local and non-atomic. See
 [`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
 and
 [`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) or
 [`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows).
+[`examples/mcp_stdio_async`](../examples/mcp_stdio_async) composes this loop
+shape with fragmented/coalesced JSON-RPC process output.
 
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:
@@ -479,15 +493,16 @@ slice, `task.yield_now()` and value-less calls to actually suspending functions
 must be standalone statements. A value-returning suspend call and
 `task.sleep(Duration)` must initialize an immutable top-level `let`. The
 containing `suspend fn` remains non-generic; its parameters, result, and
-cross-suspension locals must be immutable frame-safe scalar, string, struct,
-enum, Result, or supported array values. Async `main` still returns `void`.
-Mutable parameters/locals, borrows, guards, resource handles or wrappers
-containing them, recursive suspend graphs, suspension in control flow, nested
-expressions or argument expressions, `?` outside the direct structured binding
-described below, panic nested inside another expression, cancellation
-tokens, and reactor-backed socket/process/HTTP operations are later slices. The
-current P2 foundation normalizes timer waiting only; it does not claim that a
-network or process handle is nonblocking yet.
+cross-suspension locals must be frame-safe scalar, string, struct, enum,
+Result, or supported array values. Async `main` still returns `void`. One flat
+non-nested `for condition` may carry owned mutable locals declared before the
+loop across direct suspension points as described above. Mutable parameters,
+mutable locals outside that loop, borrows, guards, recursive suspend graphs,
+other suspension in control flow, nested expressions or argument expressions,
+`?` outside the direct structured binding described below, and panic nested
+inside another expression remain later slices. Resource handles are supported
+only by explicitly owner-affine async APIs such as `std.net` and `std.process`;
+blocking compatibility APIs remain quarantined by E0891.
 
 The current deadline slice permits one non-nested
 `task.deadline(Duration) { ... }` per suspend function. Its body has the same

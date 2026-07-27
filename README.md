@@ -571,8 +571,11 @@ exits remain later work. Browser WASM reports a capability error before
 evaluating select operands.
 E0871, E0872, E0875, E0876, E0880, E0881, and E0883 reject invalid
 boundaries, ownership, targets, publication moves, and unsupported shapes.
-Mutable
-parameters/locals, resource-handle wrappers, recursive suspend graphs,
+RFC 0039 additionally permits one flat non-nested `for condition` to carry
+owned mutable locals declared before the loop across direct suspension points;
+managed replacement retains the new value before dropping the old frame slot.
+Mutable parameters, mutable locals outside that loop, resource-handle wrappers
+outside explicitly owner-affine APIs, recursive suspend graphs, other
 suspension in nested control flow or expressions, suspending argument
 expressions, `?` in other positions, panic nested in another expression,
 non-final scope return, cancellation tokens, nested/general deadline exits,
@@ -801,8 +804,9 @@ host imports. See
 `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
 `examples/async_process_pipe_windows` for the native IOCP lifecycle,
+`examples/mcp_stdio_async` for a real fragmented/coalesced JSON-RPC loop,
 and `examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking`
-for the explicit migration path.
+for the explicit blocking migration path.
 
 `std.net` now provides owner-affine direct-style suspend TCP client operations.
 `net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
@@ -897,10 +901,11 @@ only validated request, notification, success, or error messages. Encoding
 adds exactly one newline. Messages are limited to 1,048,575 bytes, chunks to
 1 MiB, and batches to 4096 messages; stable errors never reproduce protocol
 payloads. `JsonRpcMessage` and `JsonRpcDecoder` are opaque so applications
-cannot bypass validation. See `examples/mcp_stdio_blocking` for the preview
-native blocking MCP
-initialize and `tools/list` exchange composed with `std.process`, with no
-application-side C FFI.
+cannot bypass validation. `examples/mcp_stdio_async` composes the codec with
+owner-affine `std.process` events and RFC 0039 loop-carried task-local state,
+handling fragmented first responses, coalesced notification/response batches,
+stderr, stdin flush, and final exit without application-side C FFI.
+`examples/mcp_stdio_blocking` remains the explicit preview compatibility path.
 
 `std.cron` provides deterministic UTC calendar scheduling without a global
 runtime scheduler. Expressions and search work are bounded, errors use stable

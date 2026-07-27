@@ -8688,6 +8688,226 @@ suspend fn main() -> void {
 }
 
 #[test]
+fn nomo_run_executes_zero_one_and_many_suspending_loop_iterations() {
+    let root = temp_test_root("async-loop-carried-state");
+    reset_dir(&root);
+    let project = root.join("async_loop_carried_state");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_loop_carried_state\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.string
+import std.task
+
+suspend fn pause() -> void {
+    task.yield_now()
+}
+
+suspend fn run(label: string, count: u64) -> string {
+    let mut remaining: u64 = count
+    let mut message: string = label
+    for remaining > 0 {
+        pause()
+        message = string.concat(message, ".")
+        task.yield_now()
+        remaining = remaining - 1
+    }
+    return message
+}
+
+suspend fn main() -> void {
+    let zero: string = run("zero", 0)
+    let one: string = run("one", 1)
+    let many: string = run("many", 3)
+    io.println(zero)
+    io.println(one)
+    io.println(many)
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("runtime-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout),
+        "zero\none.\nmany...\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["cooperative_yields"], 8);
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 8);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+    assert_eq!(metrics["counters"]["live_reactors"], 0);
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn suspending_loop_cancellation_drops_loop_carried_state_once() {
+    let root = temp_test_root("async-loop-carried-state-cancel");
+    reset_dir(&root);
+    let project = root.join("async_loop_carried_state_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_loop_carried_state_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package app.main
+
+import std.io
+import std.result
+import std.string
+import std.task
+import std.time
+
+suspend fn slow_loop(value: string) -> void {
+    let mut remaining: u64 = 2
+    let mut state: string = value
+    for remaining > 0 {
+        state = string.concat(state, ".")
+        let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
+        remaining = remaining - 1
+    }
+    io.println(state)
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let child = task.spawn slow_loop("managed")
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(child)
+        io.println("cancelled", result.is_ok(cancelled))
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let metrics_path = root.join("runtime-counters.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(String::from_utf8_lossy(&output.stdout), "cancelled true\n");
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let generated_c = project.join("build/c/main.c");
+    let generated = fs::read_to_string(&generated_c).unwrap();
+    assert!(generated.contains("nomo_async_loop_condition_0:"));
+    assert!(generated.contains("goto nomo_async_loop_condition_0;"));
+    assert!(generated.contains("nomo_string_release(frame->nomo_async_local_nomo_state);"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["frame_allocations"], 0);
+    assert_eq!(metrics["counters"]["frame_drops"], 3);
+    assert_eq!(metrics["counters"]["task_cancellations"], 1);
+    assert_eq!(metrics["counters"]["timer_registrations"], 1);
+    assert_eq!(metrics["counters"]["timer_cancellations"], 1);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
+
+    if cc_supports_address_sanitizer(&root) {
+        let bin_path = root.join(if cfg!(windows) {
+            "asan-loop-carried-cancel.exe"
+        } else {
+            "asan-loop-carried-cancel"
+        });
+        let asan_metrics_path = root.join("asan-metrics.json");
+        let cc_output = Command::new("cc")
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g")
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&bin_path)
+            .output()
+            .unwrap();
+        assert!(
+            cc_output.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&cc_output.stdout),
+            String::from_utf8_lossy(&cc_output.stderr)
+        );
+        let asan_options = if cfg!(target_os = "macos") {
+            "detect_leaks=0:abort_on_error=1"
+        } else {
+            "detect_leaks=1:abort_on_error=1"
+        };
+        let asan_output = Command::new(&bin_path)
+            .env("ASAN_OPTIONS", asan_options)
+            .env("NOMO_ASYNC_METRICS_PATH", &asan_metrics_path)
+            .output()
+            .unwrap();
+        assert!(
+            asan_output.status.success(),
+            "stdout:\n{}\nstderr:\n{}",
+            String::from_utf8_lossy(&asan_output.stdout),
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&asan_output.stdout),
+            "cancelled true\n"
+        );
+        assert!(
+            asan_output.stderr.is_empty(),
+            "{}",
+            String::from_utf8_lossy(&asan_output.stderr)
+        );
+        let asan_metrics: serde_json::Value =
+            serde_json::from_slice(&fs::read(&asan_metrics_path).unwrap()).unwrap();
+        assert_eq!(asan_metrics["counters"], metrics["counters"]);
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn structured_scope_return_cancel_is_asan_clean_when_available() {
     let root = temp_test_root("asan-structured-scope-return-cancel");
     reset_dir(&root);
@@ -14976,6 +15196,53 @@ fn mcp_stdio_example_completes_two_jsonrpc_exchanges() {
     assert!(stderr.contains("mcp-fixture-ready\n"), "{stderr}");
     assert!(stderr.contains("mcp-fixture-complete\n"), "{stderr}");
     assert!(!stderr.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn mcp_stdio_async_example_composes_fragmented_jsonrpc_without_blocking_workers() {
+    let root = temp_test_root("mcp-stdio-async-example");
+    reset_dir(&root);
+    let fixture_binary = build_controlled_process_fixture(&root);
+    let metrics_path = root.join("runtime-counters.json");
+    let example = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/mcp_stdio_async");
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(example)
+        .env("NOMO_MCP_FIXTURE", fixture_binary)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics_path)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace('\r', ""),
+        "response 1 success\nserver notification\nresponse 2 success\nMCP stdio async exchange complete\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr).replace('\r', "");
+    assert!(stderr.contains("mcp-fixture-ready\n"), "{stderr}");
+    assert!(stderr.contains("mcp-fixture-complete\n"), "{stderr}");
+    assert!(!stderr.contains("NOMO_JSONRPC_SECRET_SENTINEL"));
+
+    let metrics: serde_json::Value =
+        serde_json::from_slice(&fs::read(&metrics_path).unwrap()).unwrap();
+    assert_eq!(metrics["counters"]["process_starts"], 1);
+    assert_eq!(metrics["counters"]["process_start_completions"], 1);
+    assert_eq!(metrics["counters"]["process_stdin_writes"], 2);
+    assert_eq!(metrics["counters"]["process_errors"], 0);
+    assert_eq!(metrics["counters"]["live_process_handles"], 0);
+    assert_eq!(metrics["counters"]["live_process_operations"], 0);
+    assert_eq!(metrics["counters"]["retained_process_bytes"], 0);
+    assert_eq!(metrics["counters"]["live_blocking_jobs"], 0);
+    assert_eq!(metrics["counters"]["live_reactor_registrations"], 0);
+    assert_eq!(metrics["counters"]["live_timers"], 0);
 
     fs::remove_dir_all(root).unwrap();
 }

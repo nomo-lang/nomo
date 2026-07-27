@@ -16,7 +16,7 @@ use nomo_ir::{
     MathUnaryFunction, NumBinaryFunction, Program, QuestionCarrier, Statement, StructType,
     TaskSelectArm, TaskSelectOperation, UnaryOp, ValueExpr, ValueType,
 };
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 
 // Core C emission, naming, and nominal type support.
 #[path = "core/array_helpers.rs"]

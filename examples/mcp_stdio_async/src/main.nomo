@@ -1,0 +1,343 @@
+package mcp_stdio_async.main
+
+import std.array.Array
+import std.debug
+import std.env
+import std.io
+import std.json
+import std.jsonrpc
+import std.process
+import std.result
+
+struct McpLoopState {
+    decoder: JsonRpcDecoder
+    flushed: bool
+    received: bool
+    exited: bool
+}
+
+fn from_protocol(error: JsonRpcProtocolError) -> string {
+    return error.message
+}
+
+fn from_json(error: JsonError) -> string {
+    return error.message
+}
+
+fn json_string_value(value: string) -> Result<JsonValue, string> {
+    let raw: Result<JsonValue, JsonError> = json.from_string(value)
+    return raw.map_err(from_json)
+}
+
+fn json_object_value(members: Array<JsonMember>) -> Result<JsonValue, string> {
+    let raw: Result<JsonValue, JsonError> = json.from_object(members)
+    return raw.map_err(from_json)
+}
+
+fn request_message(id: JsonValue, method: string, params: Option<JsonValue>) -> Result<JsonRpcMessage, string> {
+    let raw: Result<JsonRpcMessage, JsonRpcProtocolError> = jsonrpc.request(id, method, params)
+    return raw.map_err(from_protocol)
+}
+
+fn initialize_request() -> Result<JsonRpcMessage, string> {
+    let empty_members: Array<JsonMember> = Array.new<JsonMember>()
+    let capabilities: JsonValue = json_object_value(empty_members)?
+    let mut client_members: Array<JsonMember> = Array.new<JsonMember>()
+    let client_name: JsonValue = json_string_value("nomo-mcp-async-example")?
+    let client_version: JsonValue = json_string_value("0.1")?
+    client_members.push(JsonMember { key: "name", value: client_name })
+    client_members.push(JsonMember { key: "version", value: client_version })
+    let client: JsonValue = json_object_value(client_members)?
+    let mut params_members: Array<JsonMember> = Array.new<JsonMember>()
+    let protocol_version: JsonValue = json_string_value("2025-06-18")?
+    params_members.push(JsonMember { key: "protocolVersion", value: protocol_version })
+    params_members.push(JsonMember { key: "capabilities", value: capabilities })
+    params_members.push(JsonMember { key: "clientInfo", value: client })
+    let params: JsonValue = json_object_value(params_members)?
+    return request_message(json.from_i64(1), "initialize", Some(params))
+}
+
+fn tools_list_request() -> Result<JsonRpcMessage, string> {
+    let empty_members: Array<JsonMember> = Array.new<JsonMember>()
+    let params: JsonValue = json_object_value(empty_members)?
+    return request_message(json.from_i64(2), "tools/list", Some(params))
+}
+
+fn require_fixture() -> string {
+    match env.get("NOMO_MCP_FIXTURE") {
+        Some(program) => {
+            return program
+        }
+        None => {
+            debug.panic("set NOMO_MCP_FIXTURE to an MCP stdio server executable")
+        }
+    }
+}
+
+fn require_message(value: Result<JsonRpcMessage, string>) -> JsonRpcMessage {
+    match value {
+        Ok(message) => {
+            return message
+        }
+        Err(message) => {
+            debug.panic(message)
+        }
+    }
+}
+
+fn require_encoded(value: Result<string, JsonRpcProtocolError>) -> string {
+    match value {
+        Ok(encoded) => {
+            return encoded
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_control(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+            return
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_event(value: Result<ProcessEvent, ProcessControlError>) -> ProcessEvent {
+    match value {
+        Ok(event) => {
+            return event
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_batch(value: Result<JsonRpcDecodeBatch, JsonRpcProtocolError>) -> JsonRpcDecodeBatch {
+    match value {
+        Ok(batch) => {
+            return batch
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_decoder(value: Result<JsonRpcDecoder, JsonRpcProtocolError>) -> JsonRpcDecoder {
+    match value {
+        Ok(decoder_value) => {
+            return decoder_value
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn require_finished(value: Result<void, JsonRpcProtocolError>) -> void {
+    match value {
+        Ok(done) => {
+            return
+        }
+        Err(error) => {
+            debug.panic(error.message)
+        }
+    }
+}
+
+fn response_id(message: JsonRpcMessage) -> Option<string> {
+    let envelope: JsonValue = jsonrpc.value(message)
+    match json.get(envelope, "id") {
+        None => {
+            return None
+        }
+        Some(value) => {
+            return json.number_text(value)
+        }
+    }
+}
+
+fn observe_message(message: JsonRpcMessage, expected_id: string) -> bool {
+    match jsonrpc.kind(message) {
+        JsonRpcMessageKind.Request => {
+            io.println("unexpected server request")
+        }
+        JsonRpcMessageKind.Notification => {
+            io.println("server notification")
+        }
+        JsonRpcMessageKind.Success => {
+            match response_id(message) {
+                Some(id) => {
+                    io.println("response", id, "success")
+                    return id == expected_id
+                }
+                None => {
+                    io.println("response without id")
+                }
+            }
+        }
+        JsonRpcMessageKind.Error => {
+            match response_id(message) {
+                Some(id) => {
+                    io.println("response", id, "error")
+                    return id == expected_id
+                }
+                None => {
+                    io.println("error response without id")
+                }
+            }
+        }
+    }
+    return false
+}
+
+fn new_state(decoder_value: JsonRpcDecoder) -> McpLoopState {
+    return McpLoopState { decoder: decoder_value, flushed: false, received: false, exited: false }
+}
+
+fn reset_exchange(state: McpLoopState) -> McpLoopState {
+    return McpLoopState { decoder: state.decoder, flushed: false, received: false, exited: state.exited }
+}
+
+fn advance_exchange(state: McpLoopState, event: ProcessEvent, expected_id: string) -> McpLoopState {
+    let mut next: McpLoopState = state
+    match event {
+        ProcessEvent.StdinFlushed => {
+            next.flushed = true
+        }
+        ProcessEvent.Stdout(text) => {
+            let batch: JsonRpcDecodeBatch = require_batch(jsonrpc.feed(next.decoder, text))
+            next.decoder = batch.decoder
+            let messages: Array<JsonRpcMessage> = batch.messages
+            for message in messages {
+                next.received = observe_message(message, expected_id) || next.received
+            }
+        }
+        ProcessEvent.Stderr(text) => {
+            io.eprint(text)
+        }
+        ProcessEvent.Exited(status) => {
+            next.exited = true
+        }
+    }
+    return next
+}
+
+fn require_exit(state: McpLoopState, status: ProcessExit) -> McpLoopState {
+    let checked: Option<McpLoopState> = if status.code == 0 {
+        Some(McpLoopState { decoder: state.decoder, flushed: state.flushed, received: state.received, exited: true })
+    } else {
+        None
+    }
+    match checked {
+        Some(value) => {
+            return value
+        }
+        None => {
+            debug.panic("MCP server returned a non-zero status")
+        }
+    }
+}
+
+fn advance_drain(state: McpLoopState, event: ProcessEvent) -> McpLoopState {
+    let mut next: McpLoopState = state
+    match event {
+        ProcessEvent.StdinFlushed => {
+        }
+        ProcessEvent.Stdout(text) => {
+            let batch: JsonRpcDecodeBatch = require_batch(jsonrpc.feed(next.decoder, text))
+            next.decoder = batch.decoder
+            let messages: Array<JsonRpcMessage> = batch.messages
+            for message in messages {
+                let observed: bool = observe_message(message, "")
+            }
+        }
+        ProcessEvent.Stderr(text) => {
+            io.eprint(text)
+        }
+        ProcessEvent.Exited(status) => {
+            next = require_exit(next, status)
+        }
+    }
+    return next
+}
+
+fn require_response(state: McpLoopState) -> McpLoopState {
+    let checked: Option<McpLoopState> = if !state.exited && state.received {
+        Some(state)
+    } else {
+        None
+    }
+    match checked {
+        Some(value) => {
+            return value
+        }
+        None => {
+            debug.panic("MCP response was not observed before exit")
+        }
+    }
+}
+
+suspend fn exchange(child: ProcessChild, initial: McpLoopState, request: JsonRpcMessage, expected_id: string) -> McpLoopState {
+    let encoded: string = require_encoded(jsonrpc.encode(request, 1048575 as u64))
+    require_control(process.write_stdin(child, encoded))
+    let mut state: McpLoopState = reset_exchange(initial)
+    for !(state.flushed && state.received) && !state.exited {
+        let raw: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 65536, 5000)
+        let event: ProcessEvent = require_event(raw)
+        state = advance_exchange(state, event, expected_id)
+    }
+    return state
+}
+
+suspend fn drain(child: ProcessChild, initial: McpLoopState) -> McpLoopState {
+    let mut state: McpLoopState = initial
+    for !state.exited {
+        let raw: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 65536, 5000)
+        let event: ProcessEvent = require_event(raw)
+        state = advance_drain(state, event)
+    }
+    return state
+}
+
+fn mcp_command(program: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("mcp")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand { program: program, args: args, cwd: None, env: environment, inherit_env: true }
+}
+
+suspend fn main() -> void {
+    let program: string = require_fixture()
+    let command: ProcessCommand = mcp_command(program)
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command, 5000)
+    let child: ProcessChild = require_child(started)
+    let decoder_value: JsonRpcDecoder = require_decoder(jsonrpc.decoder(1048575 as u64))
+    let initial: McpLoopState = new_state(decoder_value)
+    let first: McpLoopState = exchange(child, initial, require_message(initialize_request()), "1")
+    let first_checked: McpLoopState = require_response(first)
+    let second: McpLoopState = exchange(child, first_checked, require_message(tools_list_request()), "2")
+    let second_checked: McpLoopState = require_response(second)
+    require_control(process.close_stdin(child))
+    let finished: McpLoopState = drain(child, second_checked)
+    require_finished(jsonrpc.finish(finished.decoder))
+    process.close_child(child)
+    io.println("MCP stdio async exchange complete")
+}

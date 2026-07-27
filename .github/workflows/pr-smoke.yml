@@ -118,6 +118,7 @@ jobs:
           async_tcp
           --locked
       - name: Run owner-affine process pipes through IOCP
+        timeout-minutes: 5
         run: >-
           cargo test -p nomo --test cli_project
           async_process_

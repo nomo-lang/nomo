@@ -745,6 +745,16 @@ fn main() -> void {
                 assert!(target_c.contains("WT_EXECUTEONLYONCE"));
                 assert!(target_c.contains("FILE_FLAG_OVERLAPPED"));
                 assert!(target_c.contains("CancelIoEx"));
+                let connect_index = target_c
+                    .find("ConnectNamedPipe(server, &connected_overlapped)")
+                    .expect("Windows process pipe must initiate its server connection");
+                let client_index = target_c
+                    .find("HANDLE client = CreateFileW(")
+                    .expect("Windows process pipe must open its child endpoint");
+                assert!(
+                    connect_index < client_index,
+                    "Windows process pipe must connect its server before opening the client"
+                );
                 assert!(!target_c.contains("nomo_member_program.len"));
                 assert!(!target_c.contains("length != data.len"));
                 assert!(!target_c.contains("nomo_process_windows_reader_thread"));

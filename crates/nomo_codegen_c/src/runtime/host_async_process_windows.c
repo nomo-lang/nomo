@@ -763,6 +763,25 @@ static int nomo_async_process_make_pipe(
     if (server == INVALID_HANDLE_VALUE) {
         return 1;
     }
+    HANDLE connected_event = CreateEventW(NULL, TRUE, FALSE, NULL);
+    if (connected_event == NULL) {
+        CloseHandle(server);
+        return 1;
+    }
+    OVERLAPPED connected_overlapped;
+    memset(&connected_overlapped, 0, sizeof(connected_overlapped));
+    connected_overlapped.hEvent = connected_event;
+    BOOL connected = ConnectNamedPipe(server, &connected_overlapped);
+    DWORD connect_error = connected != FALSE
+        ? ERROR_SUCCESS
+        : GetLastError();
+    if (connected == FALSE
+        && connect_error != ERROR_IO_PENDING
+        && connect_error != ERROR_PIPE_CONNECTED) {
+        CloseHandle(connected_event);
+        CloseHandle(server);
+        return 1;
+    }
     SECURITY_ATTRIBUTES security = {
         .nLength = sizeof(SECURITY_ATTRIBUTES),
         .lpSecurityDescriptor = NULL,
@@ -778,15 +797,33 @@ static int nomo_async_process_make_pipe(
         NULL
     );
     if (client == INVALID_HANDLE_VALUE) {
+        if (connect_error == ERROR_IO_PENDING) {
+            CancelIoEx(server, &connected_overlapped);
+            WaitForSingleObject(connected_event, INFINITE);
+        }
+        CloseHandle(connected_event);
         CloseHandle(server);
         return 1;
     }
-    if (ConnectNamedPipe(server, NULL) == FALSE
-        && GetLastError() != ERROR_PIPE_CONNECTED) {
-        CloseHandle(server);
-        CloseHandle(client);
-        return 1;
+    if (connect_error == ERROR_IO_PENDING) {
+        DWORD wait_status = WaitForSingleObject(connected_event, 5000u);
+        DWORD transferred = 0u;
+        if (wait_status != WAIT_OBJECT_0
+            || !GetOverlappedResult(
+                server,
+                &connected_overlapped,
+                &transferred,
+                FALSE
+            )) {
+            CancelIoEx(server, &connected_overlapped);
+            WaitForSingleObject(connected_event, INFINITE);
+            CloseHandle(connected_event);
+            CloseHandle(server);
+            CloseHandle(client);
+            return 1;
+        }
     }
+    CloseHandle(connected_event);
     *parent = server;
     *child = client;
     return 0;

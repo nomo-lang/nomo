@@ -46,6 +46,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_structured_explicit_cancel",
     "async_structured_deadline",
     "mcp_stdio_blocking",
+    "mcp_stdio_async",
     "nomo_test_basic",
     "nomo_doc_basic",
     "workspace_basic",
@@ -318,6 +319,14 @@ fn assert_cli_run(example: &Path) {
                     })
             })
         }
+        "mcp_stdio_async" => run_with_mcp_process_fixture(|fixture| {
+            Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("run")
+                .arg(example)
+                .env("NOMO_MCP_FIXTURE", fixture)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run nomo run {}: {err}", example.display()))
+        }),
         _ => Command::new(env!("CARGO_BIN_EXE_nomo"))
             .arg("run")
             .arg(example)
@@ -792,6 +801,13 @@ fn run_built_example(project_root: &Path, bin: &Path, example: &Path) -> Output 
                     .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
             })
         }
+        "mcp_stdio_async" => run_with_mcp_process_fixture(|fixture| {
+            Command::new(bin)
+                .current_dir(project_root)
+                .env("NOMO_MCP_FIXTURE", fixture)
+                .output()
+                .unwrap_or_else(|err| panic!("failed to run {}: {err}", bin.display()))
+        }),
         _ => Command::new(bin)
             .current_dir(project_root)
             .env("NOMO_EXAMPLE_ENV", "env get ok")
@@ -848,6 +864,88 @@ int main(int argc, char **argv) {
     assert!(
         compiled.status.success(),
         "failed to build async process example fixture\nstdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&compiled.stdout),
+        String::from_utf8_lossy(&compiled.stderr)
+    );
+    let output = run(&binary);
+    fs::remove_dir_all(root).unwrap();
+    output
+}
+
+fn run_with_mcp_process_fixture<F>(run: F) -> Output
+where
+    F: FnOnce(&Path) -> Output,
+{
+    let root = std::env::temp_dir().join(format!(
+        "nomo-mcp-process-example-fixture-{}",
+        std::process::id()
+    ));
+    if root.exists() {
+        fs::remove_dir_all(&root).unwrap();
+    }
+    fs::create_dir_all(&root).unwrap();
+    let source = root.join("fixture.c");
+    let binary = root.join(if cfg!(windows) {
+        "fixture.exe"
+    } else {
+        "fixture"
+    });
+    fs::write(
+        &source,
+        r#"#define _POSIX_C_SOURCE 200809L
+#include <stdio.h>
+#include <string.h>
+#ifdef _WIN32
+#include <windows.h>
+static void nomo_fixture_sleep(unsigned long millis) { Sleep((DWORD)millis); }
+#else
+#include <time.h>
+static void nomo_fixture_sleep(unsigned long millis) {
+    struct timespec duration;
+    duration.tv_sec = (time_t)(millis / 1000UL);
+    duration.tv_nsec = (long)(millis % 1000UL) * 1000000L;
+    while (nanosleep(&duration, &duration) != 0) {}
+}
+#endif
+
+int main(int argc, char **argv) {
+    if (argc < 2 || strcmp(argv[1], "mcp") != 0) {
+        return 2;
+    }
+    char line[65536];
+    if (fgets(line, sizeof(line), stdin) == NULL) {
+        return 3;
+    }
+    fputs("{\"jsonrpc\":\"2.0\",\"id\":1,\"result\":{\"protocolVersion\":\"2025-06-18\",", stdout);
+    fflush(stdout);
+    nomo_fixture_sleep(50UL);
+    fputs("\"capabilities\":{},\"serverInfo\":{\"name\":\"fixture\",\"version\":\"1\"}}}\n", stdout);
+    fflush(stdout);
+    if (fgets(line, sizeof(line), stdin) == NULL) {
+        return 4;
+    }
+    fputs(
+        "{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"step\":1}}\n"
+        "{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[]}}\n",
+        stdout
+    );
+    fflush(stdout);
+    nomo_fixture_sleep(100UL);
+    return 0;
+}
+"#,
+    )
+    .unwrap();
+    let compiled = Command::new(if cfg!(windows) { "clang" } else { "cc" })
+        .arg("-std=c99")
+        .arg(&source)
+        .arg("-o")
+        .arg(&binary)
+        .output()
+        .unwrap();
+    assert!(
+        compiled.status.success(),
+        "failed to build MCP process example fixture\nstdout:\n{}\nstderr:\n{}",
         String::from_utf8_lossy(&compiled.stdout),
         String::from_utf8_lossy(&compiled.stderr)
     );
@@ -1461,6 +1559,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "let_else" => "let else ok\n",
         "loops" => "counted\ncounted\ncounted\na\nb\nonce\n",
         "mcp_stdio_blocking" => "set NOMO_MCP_FIXTURE to an MCP stdio server executable\n",
+        "mcp_stdio_async" => {
+            "response 1 success\nserver notification\nresponse 2 success\nMCP stdio async exchange complete\n"
+        }
         "mut_field_borrow" => "mut field borrow ok\n",
         "mut_methods" => "mut method ok\n",
         "newline_dot" => "newline dot ok\n",

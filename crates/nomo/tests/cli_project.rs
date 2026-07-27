@@ -15126,6 +15126,7 @@ int main(int argc, char **argv) {
         fputs("mcp-fixture-complete\n", stderr);
         fflush(stdout);
         fflush(stderr);
+        nomo_fixture_sleep(100UL);
         return 0;
     }
 

@@ -1,8 +1,11 @@
 # Nomo WebAssembly runtime
 
-`nomo-wasm` brings the production Nomo lexer, parser, semantic checker, typed
+`nomo-wasm` brings the compiler's Nomo lexer, parser, semantic checker, typed
 IR, and a capability-free interpreter into the browser. It is the execution
 engine used by `play.nomo-lang.org`.
+
+This is a bounded Preview execution path. Its internal compiler/runtime tests
+do not establish native-backend equivalence or production service readiness.
 
 The WebAssembly module deliberately has no imports. Programs can use pure
 language features such as functions, typed variables, arithmetic, conditions,

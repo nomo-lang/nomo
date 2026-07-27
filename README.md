@@ -1,984 +1,242 @@
-# nomo
+# Nomo
 
-The reference compiler and project tooling for the [Nomo](https://github.com/nomo-lang)
-programming language.
+Reference compiler, runtime, standard library, and project tooling for the
+early-preview [Nomo programming language](https://www.nomo-lang.org).
 
-Nomo is a small language for systems tools, command-line programs and small
-services. This crate is the heart of the ecosystem: it implements the compiler
-front-end (lexer, parser, AST, type/semantic checks and diagnostics) and a C99
-back-end. `.nomo` source is translated to C99 and then handed to the system C
-compiler (`cc`) to produce a native executable.
+Nomo lowers typed source to readable C99 and invokes the platform C compiler
+for native executables. The repository also builds an import-free WebAssembly
+compiler/interpreter used by the public Playground.
 
-This repository ships two binaries and reusable Rust crates:
+## Preview status
 
-- `nomo` — the project manager (`new` / `check` / `build` / `run` / `fmt`).
-- `nomoc` — the compiler driver that operates on a single `.nomo` source file.
-- `nomo` (lib crate) — the reusable compiler API, consumed by other repositories
-  such as the [`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server.
-- `nomo-compiler` (lib crate) — the source-to-IR compiler pipeline, including
-  import validation, lowering, type checks and script entry synthesis.
-- `nomo-codegen-c` (lib crate) — the C99 backend that emits native C source from
-  lowered Nomo IR.
-- `nomo-runtime` (lib crate) — the platform prelude and reusable C runtime
-  emitters for checked operators, strings, `CString`, paths and logging.
-- `nomo-std` (toolchain package) — the reserved `nomo-lang/std` package,
-  standard module sources and shared compiler/doc/LSP import registry.
-- `nomo-ir` (lib crate) — the lowered compiler IR shared between semantic
-  analysis and the C99 code generator.
-- `nomo-lockfile` (lib crate) — the `nomo.lock` model, TOML parsing, rendering
-  and locked dependency graph reconstruction.
-- `nomo-manifest` (lib crate) — the `nomo.toml` manifest model, TOML parsing,
-  workspace inheritance and dependency declaration editing.
-- `nomo-resolver` (lib crate) — package source hashing and archive
-  pack/unpack primitives used by dependency resolution, vendoring and registry
-  cache flows.
-- `nomo-lsp-bridge` (lib crate) — shared symbol, local-binding, structured
-  member-owner, definition and declaration-aware reference queries consumed by
-  editor tooling.
-- `nomo-syntax` (lib crate) — the AST, diagnostics, lexer and parser boundary
-  shared by the compiler, formatter, docs and LSP semantic services.
-- `nomo-wasm` (WebAssembly crate) — the production compiler front-end plus an
-  import-free, fuel-limited typed-IR interpreter used by the browser
-  Playground.
+Nomo has no stable `v0.1.0` release. The current packaged baseline is
+[`v0.0.0-20260721120555`](https://github.com/nomo-lang/nomo/releases/tag/v0.0.0-20260721120555);
+timestamp releases are prerelease snapshots with no cross-snapshot
+compatibility promise.
 
-## Role in the Nomo ecosystem
+Current `main` syntax and project behavior were reviewed at commit
+[`6acff2b`](https://github.com/nomo-lang/nomo/commit/6acff2bba0113efa3d49254ec2b9c72e1d442b33).
+That commit is newer than the packaged snapshot and includes manifest-derived
+module roots, the `nomo fix module-roots` migration, canonical implicit-void
+formatting, and the bounded P3-C static `task.select` runtime slice.
 
-`nomo` is the upstream dependency for the rest of the toolchain. The
-[`nomo-lsp`](https://github.com/nomo-lang/nomo-lsp) language server links against
-this crate (via a `path` dependency) to produce diagnostics, and the editor
-extensions ([`vscode-nomo`](https://github.com/nomo-lang/vscode-nomo),
-[`zed-nomo`](https://github.com/nomo-lang/zed-nomo),
-[`intellij-nomo`](https://github.com/nomo-lang/intellij-nomo)) talk to that
-server in turn. Language decisions are tracked in the
-[`rfcs`](https://github.com/nomo-lang/rfcs) repository.
+Internal tests establish implementation evidence, not production readiness.
+Review the
+[Release Gate](https://github.com/nomo-lang/rfcs/blob/main/RELEASE-GATE.md)
+before making platform, performance, stability, security, or ecosystem claims.
 
-## Requirements
+## Install
 
-- A recent stable Rust toolchain (the crate uses edition 2024).
-- A system C compiler reachable as `cc` on your `PATH` (e.g. `clang` or `gcc`),
-  used to compile the generated C99.
-
-## Build and install
-
-This repository is a Cargo workspace. Package metadata and shared dependencies
-are centralized at the workspace level so `crates/*` members inherit the same
-settings. Split-out members include `crates/nomo_syntax`, which owns the AST,
-lexer and parser, `libs/diagnostics`, which owns the shared diagnostic model,
-rendering contract and error-code registry, `libs/spans`, which owns source-file
-identities, spans and source position mapping, `libs/graph`, which owns stable
-directed graph traversal, topological ordering and cycle paths,
-`crates/nomo_ir`, which owns the lowered compiler IR, `crates/nomo_manifest`,
-which owns `nomo.toml` parsing and editing, and
-`crates/nomo_compiler`, which owns source-to-IR compilation, and
-`crates/nomo_lockfile`, which owns `nomo.lock` parsing/rendering, and
-`crates/nomo_resolver`, which owns package source/archive primitives, and
-`crates/nomo_runtime`, which owns shared platform-aware C runtime emission, and
-`crates/nomo_codegen_c`, which owns the IR-specific C99 backend. The `std/`
-workspace member owns the toolchain standard-library package identity, module
-source inventory and public import metadata used across compiler tooling.
-The user-facing `nomo` package, library, and `nomo`/`nomoc` binaries live in
-`crates/nomo`; the workspace root is a virtual manifest. Internal package
-dependencies are declared once in the root `[workspace.dependencies]` table and
-are inherited by members with `workspace = true`.
-The current module files establish package/module identity and documentation
-roots; builtin bodies continue to lower through compiler intrinsics and the
-native runtime while public implementations migrate into Nomo source.
-
-```bash
-cargo build --workspace --release
-# or install both binaries onto your PATH:
-cargo install --path crates/nomo
-```
-
-Tagged releases publish `nomo` and `nomoc` archives for Linux x86-64, macOS
-x86-64 and Apple silicon, and Windows x86-64, plus the import-free
-`nomo-wasm` browser runtime. Every release also publishes a `std/` source
-directory for standard-library documentation and source navigation, plus a
-`SHA256SUMS` file consumed by the `setup-nomo` action. CI workflows can install
-the latest preview toolchain with:
+Download a pinned archive and `SHA256SUMS` from
+[GitHub Releases](https://github.com/nomo-lang/nomo/releases), or use
+[`setup-nomo`](https://github.com/nomo-lang/setup-nomo):
 
 ```yaml
 - uses: nomo-lang/setup-nomo@main
   with:
-    version: latest
+    version: v0.0.0-20260721120555
 ```
 
-The action still requires a system C compiler because Nomo's native backend
-compiles generated C99 code on the runner.
+`version: latest` is reserved for a future non-prerelease release and currently
+does not select timestamp snapshots.
 
-## Using `nomo` (project manager)
+Build current source with stable Rust and a C99 compiler available as `cc`:
 
-```bash
-nomo new <name>                  # scaffold a new project (nomo.toml + src/main.nomo)
-nomo check [path] [--json-errors] [--workspace] # type-check one project or every workspace member
-nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen] # compile one project or every workspace member
-nomo run [path] [--json-errors] [-- args...] # build then run, forwarding args after `--`
-nomo fmt [path] [--check] [--json-errors] # format project src/**/*.nomo or one source file
-nomo manifest migrate [path] [--check] # migrate v1 manifests and trust policy to v2 atomically
-nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen] # discover and run #[test] functions
-nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>] # generate HTML docs or JSON doc data
-nomo clean [path]                 # remove generated build artifacts
-nomo cache stats [path]           # inspect the persistent incremental cache
-nomo cache clean [path]           # remove the persistent incremental cache
-nomo cache prune [path] --max-bytes <bytes> # evict oldest entries to a capacity
-nomo login --registry <url> --token <token> # store a registry bearer token in $NOMO_HOME/credentials.toml
-nomo owner add <owner/package> <user> --registry <url> # add a package owner through an HTTP/HTTPS registry
-nomo owner remove <owner/package> <user> --registry <url> # remove a package owner through an HTTP/HTTPS registry
-nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>] # add a registry dependency to nomo.toml
-nomo remove <alias> [path]        # remove a dependency from nomo.toml
-nomo search <query> --registry <url> # query an HTTP/HTTPS registry package index
-nomo yank <owner/package> <version> --registry <url> # mark a published registry version as yanked
-nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors] # validate, package, or upload a package archive
-nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen] # resolve one package or the full workspace lockfile
-nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen] # print one package dependency tree or all workspace member trees
-nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>] # refresh all or one direct dependency lock entry
-nomo deps vendor [path] [--workspace] [--dir vendor] [--sync] # copy locked path/git dependency sources into vendor/
-nomo deps clean-cache [path]      # remove the project or workspace git dependency cache
-nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>] # generate typed Nomo bindings and provenance
+```sh
+cargo build --workspace --release --locked
+cargo install --path crates/nomo --locked
 ```
 
-A project is a directory containing a `nomo.toml` manifest and a `src/main.nomo`
-entry point. `nomo build` writes generated C to `build/c/main.c` and the linked
-executable to `build/bin/<name>`. An explicit `--target` canonicalizes the
-triple and isolates both artifacts under `build/<canonical-target>/`. Native
-cross-link paths are configured for macOS `x86_64 <-> aarch64` and GNU/Linux
-`x86_64 <-> aarch64`; CI links and executes the Linux arm64 artifact under
-QEMU. `--emit-c` can emit C for every recognized target even when a native
-cross linker is not configured. See
-[Cross Compilation](docs/cross-compilation.md).
+The install provides `nomo` (project CLI) and `nomoc` (single-file compiler
+driver).
 
-`nomo check` and the C-generation stage of `nomo build` reuse conservative,
-content-addressed results across processes. Entries live under
-`.nomo/cache/incremental/v1`, are written through synced temporary files and
-atomic replacement, and carry both query-key and value checksums. A malformed,
-incompatible, or truncated entry is deleted and recomputed as a normal miss.
-The default capacity is 512 MiB; set `NOMO_INCREMENTAL_CACHE_MAX_BYTES` or run
-`nomo cache prune` to apply a different limit. `nomo clean` removes build
-artifacts but intentionally preserves this rebuildable cache; `nomo cache
-clean` removes it separately. See
-[Persistent Incremental Cache](docs/incremental-cache.md).
+## Quick start
 
-For `signed+transparent` registry policy, schema-v2 tree heads carry issuance
-times and predecessor checkpoints, log keys rotate through old/new dual-signed
-statements, and cached or imported gossip checkpoints expose rollback and split
-views. Online proofs default to a 24-hour maximum age and offline proofs to
-seven days, with manifest and `nomo verify` overrides. See
-[Transparency Log Operations](docs/transparency-operations.md).
-
-Typed C interop supports nominal opaque handles, explicit nullable and
-owned/borrowed handle types, fixed-layout `#[repr(C)]` records, and restricted
-non-capturing callbacks. `nomo ffi bindgen` converts a controlled C-header
-subset into deterministic reviewable Nomo source plus SHA-256 provenance. See
-[Typed C FFI](docs/ffi.md) for the accepted syntax and explicit limitations.
-
-`nomo run <source.nomo>` also supports a standalone script file when the file is
-not inside a project manifest. The file still starts with `package`, may define
-imports and declarations, and may omit `fn main`; in that case, top-level
-statements after all declarations are compiled as a synthesized `main() -> void`.
-Explicit `main` functions and top-level script statements cannot be mixed.
-
-`nomo fmt` is an AST-based v0.1 formatter. With no path or a project directory
-path, it discovers the project manifest and formats `src/**/*.nomo` in stable
-path order. Workspace roots format each member's `src/**/*.nomo`; loose source
-directories without a `nomo.toml` format contained `.nomo` files recursively.
-With a direct `.nomo` file path, it formats only that file and does not require a
-manifest. `--check` prints `would format <path>` without writing and exits with
-failure if any target differs. The formatter emits canonical whitespace and
-indentation while preserving Rust-style line comments (`//`, `///`, `//!`) and
-nested block comments (`/* */`, `/** */`, `/*! */`) as leading or trailing
-trivia attached to nearby declarations and statements.
-
-`nomo test` discovers top-level `#[test]` functions under project `src/**/*.nomo`.
-Test functions must be non-generic, take no parameters, return `void`, and must
-not be named `main`. Each test is compiled through the same project module and
-dependency resolver path as `nomo build`, with a temporary runner `main()` that
-calls the test. `--filter` keeps tests whose full name contains the filter text,
-`--workspace` runs every workspace member, `--package` selects a package id or
-member name, and `--json` prints a machine-readable test report.
-
-`nomo doc` extracts Rust-style doc comments (`//!`, `///`, `/*! */`, `/** */`)
-from project source files and combines them with parsed signatures,
-visibility, source locations, and module names. Functions, extern functions,
-structs, enums, interfaces, methods, and constants are emitted as top-level
-documentation items. Struct fields, enum variants, and interface methods are
-emitted as documented child items and are included in the search index. By
-default it writes `build/doc/index.html`,
-package/module HTML pages, and `search-index.json`. `--json` prints the same
-documentation model to stdout without writing files. `--workspace` documents
-workspace members, `--package` selects one member, `--std` adds the current
-built-in standard-library module index, and `--open` opens the generated
-`index.html` after writing docs. `--open` is not valid together with `--json`.
-
-Current expression support includes binary numeric arithmetic (`+`, `-`, `*`,
-`/`, `%`) with standard precedence, logical operators (`&&`, `||`, `!`) with
-short-circuit evaluation, bitwise operators (`&`, `|`, `^`, `&^`, `<<`, `>>`),
-unary negation (`-`), parenthesized subexpressions, plus equality and ordering
-comparisons. Statement-level update operators include postfix `++`/`--` and
-compound assignment `+=`, `-=`, `*=`, `/=`, `%=`, `<<=`, `>>=`, `&=`, `^=`,
-`|=`, and `&^=` for mutable variables and mutable struct fields; they are not
-expressions and do not produce values. `%` and bitwise operators are restricted
-to integer operands; `/` works for integer and `f64` operands. Unary `-` works
-for `i32`, `i64`, and `f64`. Runtime divide-by-zero, signed `i32`/`i64`
-arithmetic overflow, and invalid shift amounts panic. Signed right shift is
-arithmetic: negative values shift in `1` bits, and non-negative values shift in
-`0` bits.
-
-```bash
-nomo new hello
-cd hello
-nomo run
+```sh
+nomo new hello-world
+cd hello-world
+nomo fmt .
+nomo check .
+nomo run .
 ```
 
-## Package manifests and dependencies
-
-Nomo uses a namespace-first package model. A package's stable identity is
-`<namespace>/<name>`; repository URLs, local paths and registry versions are
-dependency sources rather than language-level package names. The namespaces
-`std`, `nomo`, and `core` are reserved for the language and standard tooling.
-`std` is built in: projects can import `std.*` modules without declaring a
-`std` dependency in `nomo.toml`, and `std` is not written to `nomo.lock`.
-The toolchain-owned [`std/intrinsics.toml`](std/intrinsics.toml) records the
-small set of compiler/runtime-controlled identities. `nomo check`, `nomo build`,
-`nomo run`, and `nomo doc --std` validate that manifest before using the shared
-standard-library registry; a malformed manifest is reported as `E0800`.
-
-New projects use this manifest shape:
-
-```toml
-[package]
-namespace = "local"
-name = "hello"
-version = "0.1.0"
-edition = "2026"
-```
-
-Dependency keys are local import aliases. For example:
-
-```toml
-[dependencies]
-json = { package = "nomo-lang/json", version = "^1.2.0" }
-json_private = { package = "nomo-lang/json", version = ">=1.2, <2.0", registry = "https://packages.example.com" }
-local_utils = { package = "fynn/utils", path = "../utils" }
-http = { package = "nomo-lang/http", git = "https://github.com/nomo-lang/http.git", rev = "2a4b8c1" }
-cli = { package = "nomo-lang/cli", git = "https://github.com/nomo-lang/cli.git", branch = "stable" }
-renderer = { package = "nomo-lang/renderer", git = "https://github.com/nomo-lang/renderer.git", tag = "v0.1.0" }
-```
-
-Projects and source dependencies can declare native linker metadata for C FFI:
-
-```toml
-[ffi]
-libraries = ["sqlite3"]
-library_paths = ["native/lib"]
-sources = ["native/bridge.c"]
-frameworks = ["Security"]
-link_args = ["-Wl,-rpath,@loader_path"]
-```
-
-`library_paths` are resolved relative to the manifest that declares them. During
-native `nomo build`, `nomo run`, and `nomo test`, Nomo aggregates `[ffi]`
-metadata from the root package and source dependencies and passes it to `cc`.
-
-Workspace roots can share package defaults and dependency declarations with
-member packages:
-
-```toml
-manifest-version = 2
-
-[workspace]
-members = ["apps/*", "packages/*"]
-default-members = ["apps/cli"]
-
-[workspace.package]
-namespace = "fynn"
-version = "0.1.0"
-edition = "2026"
-
-[workspace.dependencies]
-json = { package = "nomo-lang/json", version = "0.1.0" }
-core = { path = "packages/core" }
-```
-
-```toml
-manifest-version = 2
-
-[package]
-name = "cli"
-inherit = "workspace"
-
-[dependencies]
-json = { workspace = true }
-core = { workspace = true }
-```
+`[package].name = "hello-world"` deterministically maps to the lower_snake_case
+source root:
 
 ```nomo
-import json.parser
-import local_utils.path
-import http.client
+package hello_world
+
+import std.io
+
+fn main() {
+    io.println("Hello, Nomo")
+}
 ```
 
-Project commands (`nomo check`, `nomo build`, and `nomo run`) validate those
-aliases from `nomo.toml`, so `import json.parser` is accepted only when `json`
-is declared as a dependency alias or inherited from `[workspace.dependencies]`.
-Project files can import sibling modules:
-`import app.util` resolves to `src/util.nomo`, falling back to
-`src/util/main.nomo`; `import app.main` resolves to `src/main.nomo`.
-Dependency modules use the same Flat+Dir lookup under the dependency `src/`
-directory, so `import local_utils.path` resolves to `src/path.nomo` or
-`src/path/main.nomo` in that dependency. Imported local modules and imported
-`path`/`git` dependencies contribute public API to the current v0.1 compile
-unit, so public functions, constants, structs, enums, and public methods can
-participate in type checking and generated C. Private dependency and module
-items are not exported. Generated C function and nominal type symbols use each
-item's source package path for mangling, so dependency APIs keep their
-dependency package identity instead of being emitted as part of the root
-application package.
-`nomoc` remains a standalone source-file driver and only accepts built-in
-`std.*` imports. Existing manifests that still declare
-`std = { package = "nomo-lang/std", version = "0.1.0" }` or `std = "0.1.0"`
-are accepted as compatibility input, but the declaration is ignored as a normal
-dependency.
-`nomo deps resolve` for a workspace member writes `nomo.lock` at the workspace
-root. `nomo check --workspace`, `nomo build --workspace`,
-`nomo test --workspace`, `nomo doc --workspace`,
-`nomo deps resolve --workspace`, and `nomo deps tree --workspace` discover the
-workspace root, expand `members` minus `exclude`, and visit each member package
-in stable path order.
+`src/main.nomo` declares the manifest root itself, not `<root>.main`.
+`src/http/main.nomo` declares `<root>.http`. Namespace, canonical
+`owner/package` identity, and dependency aliases never enter the package's own
+source declaration.
 
-The library-level `WorkspaceGraph` records canonical member identities,
-versions, default members, the root lockfile, inherited workspace dependencies,
-and dependency-first member ordering. Member path cycles and duplicate package
-identities are rejected during discovery. `discover_workspace` remains a
-manifest-only operation; `build_workspace_graph` (or its options variant)
-explicitly resolves and attaches one `PackageGraph` per workspace member. Its
-workspace-wide package index de-duplicates shared packages and rejects members
-that resolve the same external package identity to conflicting sources.
+No-return functions, methods, `suspend fn`, interface methods, and extern
+functions canonically omit `-> void`. Explicit arrows remain parser-compatible
+during the documented snapshot window. The `void` type still appears in
+`Result<void, E>`, `Ok(void)`, and callable types such as
+`task fn(string) -> void`.
 
-`nomo deps resolve [path]` validates the manifest and writes `nomo.lock`.
-`nomo deps resolve --workspace [path]` writes a single workspace-root lockfile
-that records each member as a `[[root]]` entry and stores shared locked package
-entries once.
-`nomo deps tree [path]` prints dependency aliases, canonical package IDs, and
-target predicates. `--target <triple>` filters the tree to the graph active for
-that target. If
-`nomo.lock` exists, `tree` reads the locked dependency graph; otherwise it
-resolves the current manifest sources. `nomo.lock` is standard TOML: package
-entries are encoded as `[[package]]` tables with `id`, `alias`, `source`,
-optional source metadata, `checksum`, and dependency edges. Unconditional
-edges retain the compact `alias -> owner/package` spelling; conditional edges
-are tables that preserve canonical `arch`, `os`, and `env` sets. Workspace
-lockfiles, and single-package locks with conditional root edges, use `[[root]]`
-tables to map package IDs to their complete direct dependency sets. Invalid
-TOML, unknown lockfile fields, and mismatched
-field types are rejected. When locked `path` sources or matching git cache
-checkouts are still available, `tree` verifies their `sha256:` checksums before
-printing; missing path sources and git cache entries are treated as offline
-locked entries. Git sources use a project-local `.nomo/deps/git/` cache keyed by
-the canonical package ID and source URL. Cache misses clone the repository;
-cache hits run `git fetch --tags --prune origin` before checking out the
-requested `branch`, `tag`, or `rev`. Branch sources also run `git pull
---ff-only`. The checkout is validated against the expected canonical package ID
-and locked to the actual `HEAD` revision. Resolved `path`, `git`, and fetched
-registry packages include a `sha256:` checksum over `nomo.toml` and `src/`
-contents. Registry sources without an explicit endpoint remain leaf lockfile
-entries. Registry sources with a `file://`, `http://`, or `https://` endpoint read
-`/api/v1/packages/<owner>/<package>/<version>/download`, unpack the
-deterministic `.nomo-package` archive into `.nomo/cache/registry/`, and can
-provide imported public API to project builds. HTTP and HTTPS registry requests
-share one transport with platform certificate verification, proxy environment
-support, response size limits, and optional bearer authentication. `nomo add`
-and `nomo remove` edit the registry dependency entries in `nomo.toml`.
-Registry ranges are solved as described below. `nomo publish --dry-run`
-validates the selected package with `nomo check`, packages `nomo.toml` plus
-`src/` into a deterministic `.nomo-package` archive, and prints its `sha256:`
-checksum and byte size. `nomo publish --registry <url>` prepares the same
-archive and uploads it with `PUT /api/v1/packages/<owner>/<package>/<version>`
-to an HTTP or HTTPS registry endpoint. `nomo search <query> --registry <url>` calls
-`GET /api/v1/packages?query=<encoded>` and expects a JSON array of objects with
-`package`, optional `version`, and optional `description`. `nomo yank
-<owner/package> <version> --registry <url>` marks a published version as yanked
-with `POST /api/v1/packages/<owner>/<package>/<version>/yank`; yanked versions
-remain buildable from existing lockfiles. `nomo login --registry <url> --token
-<token>` stores a registry bearer token in `$NOMO_HOME/credentials.toml` (or
-`$HOME/.nomo/credentials.toml` when `NOMO_HOME` is unset). Subsequent HTTP or
-HTTPS download, search, publish, yank, and owner requests to the same endpoint include
-`Authorization: Bearer <token>`. `nomo owner add <owner/package> <user>
---registry <url>` adds a package owner with `PUT
-/api/v1/packages/<owner>/<package>/owners/<user>`, and `nomo owner remove`
-removes one with `DELETE /api/v1/packages/<owner>/<package>/owners/<user>`;
-both use the stored Bearer token when present. A dependency must specify exactly
-one source among `path`, `git`, and `version`.
-Fresh online resolution of an explicit HTTP or HTTPS registry dependency first
-queries `GET /api/v1/packages/<owner>/<package>/<version>`. The JSON response
-contains `package`, `version`, the `.nomo-package` archive `checksum`, and a
-`yanked` flag. Nomo rejects yanked versions during fresh resolution and verifies
-the downloaded archive against that checksum before unpacking it. Existing
-lockfiles may continue to use a yanked version from a verified cache or vendor
-directory without consulting registry metadata. The package-index form
-`GET /api/v1/packages/<owner>/<package>` returns `package` plus a `versions`
-array using the same `version`, `checksum`, and `yanked` fields. File registries
-may provide equivalent `index.json` and per-version `metadata.json` files;
-metadata remains optional for legacy local fixtures. Dependency manifests may
-use bare exact versions, caret ranges, tilde ranges, or bounded comparison
-ranges. Nomo rejects wildcards, alternatives, implicit `latest`, and `=` exact
-syntax. Fresh resolution chooses the highest non-yanked version satisfying all
-constraints and records only that exact version in `nomo.lock`; all workspace
-members share one selection. HTTP package indexes are cached for offline range
-resolution. Unsatisfiable constraints report a stable minimal set with the
-dependency path that introduced each requirement. Multiple versions of one
-canonical package and conflicting sources remain errors.
-`--locked` is accepted by `nomo build`, `nomo deps resolve`, and
-`nomo deps tree`; it requires an existing lockfile and rejects missing or
-out-of-date direct dependencies without rewriting `nomo.lock`. `--offline`
-prevents git fetch/clone and uses existing lockfiles or git cache checkouts;
-without a lockfile, uncached git dependencies fail instead of going to the
-network. `--frozen` is equivalent to `--locked --offline`.
-`nomo deps update [path] [alias-or-package]` refreshes the lockfile from the
-current manifest sources. Without a target it updates all dependencies; with an
-alias or canonical package ID it first verifies that the target is a direct
-dependency, then rewrites the lockfile. The current implementation rewrites the
-full lockfile. `--precise <version-or-rev>` requires a direct dependency target,
-updates only the in-memory source used for lockfile generation, and never edits
-`nomo.toml`: registry dependencies use the precise value as the exact lockfile
-selection only when it satisfies the declared manifest requirement; git
-dependencies use it as `rev` with any branch/tag selector cleared, and path
-dependencies are rejected.
-`nomo deps vendor [path]` ensures a lockfile exists, copies locked `path`, `git`,
-and cached registry dependency sources into `vendor/`, and writes
-`vendor/nomo-vendor.toml`. `--dir <path>` selects a different output directory,
-and `--sync` removes the vendor directory before copying. Registry dependencies
-without a cached archive are recorded as skipped. Locked/offline project builds
-and checks fall back to the default `vendor/` directory when a locked path
-source, git cache checkout, or registry cache entry is missing.
-`nomo deps clean-cache [path]` removes the project or workspace
-`.nomo/deps/git` cache. The command is idempotent and does not remove
-`nomo.lock`, source files, or build artifacts.
+Migrate an older project atomically:
 
-## Using `nomoc` (compiler driver)
-
-`nomoc` works directly on a single source file rather than a project:
-
-```bash
-nomoc check <source.nomo> [--json-errors]        # parse and type-check
-nomoc build <source.nomo> [--target <triple>] [--emit-c] [--out path] [--json-errors] # emit target-tagged C99
+```sh
+nomo fix module-roots . --check
+nomo fix module-roots .
+nomo fmt .
 ```
 
-The `--json-errors` flag produces machine-readable diagnostics (with positions
-and fix suggestions) suitable for tooling on `check` and `build`.
-`nomoc` remains a compiler driver rather than a script runner; top-level script
-statements are accepted only by `nomo run <source.nomo>`.
+The migration changes only the current package's declarations; it does not
+rewrite dependency aliases or dependency source.
 
-## Language notes
+## Verified capabilities
 
-Local bindings support initializer-based type inference. Write
-`let message = greeting()` when the initializer determines the type, or
-`let count: u64 = 0` when the annotation communicates or constrains the
-intended type. The `:` separates the binding name from an optional type
-annotation; it is not required for ordinary initialized locals. Explicit
-annotations remain required where there is not enough context to infer a
-concrete type. The canonical unsigned 64-bit spelling is `u64`; `ui64` is
-accepted as a source-compatibility alias and lowers to the same type.
+The repository's current automated gates cover:
 
-Loops support infinite `for { ... }`, conditional `for condition { ... }`,
-iterator `for item in items { ... }`, and three-clause
-`for let i: u64 = 0; i < limit; i++ { ... }` forms. The type annotation in the
-three-clause form is optional, so `for let i = 0; i < limit; i++ { ... }`
-infers `i64` from the integer initializer. Semicolons are reserved for
-separating the three header clauses; ordinary Nomo statements remain
-newline-separated.
+- lexer, parser, AST, semantic checks, structured diagnostics, formatter, docs,
+  and compiler/LSP query bridges;
+- C99 emission, native linking, standalone files, projects, workspaces,
+  cross-target emission, and selected real cross-linked artifacts;
+- immutable-by-default values, explicit mutation, structs, enums, generics,
+  interfaces, `Option`, `Result`, arrays, nested copy-on-write indexing, and
+  deterministic insertion-ordered `Map`;
+- manifests, lockfiles, path/git/registry dependencies, vendoring, offline and
+  frozen resolution, package archives, checksums, signatures, transparency
+  proofs, and controlled typed C FFI;
+- built-in standard modules for I/O, paths, files, processes, JSON, HTTP,
+  SQLite, time, testing, and related preview facilities;
+- direct-style `suspend`, a bounded current-thread executor, structured tasks,
+  timers/deadlines, bounded channels, static selection, owner-affine TCP and
+  process operations, cancellation, and lifecycle counters;
+- an import-free, fuel-limited WebAssembly compiler/interpreter boundary;
+- examples, benchmark correctness fixtures, and release-gate evidence.
 
-Async effect syntax uses `suspend fn`. Calls stay direct-style without an
-`await` token, but a normal `fn` cannot call a suspend function; E0870 asks the
-caller to declare the effect. Suspend effects are preserved across generics,
-interfaces, local modules, formatter output, documentation, and LSP
-signatures. P1 adds standalone `task.yield_now()`, `let`-bound
-`task.sleep(Duration) -> Result<void, TaskError>`, and nested direct-style calls
-between non-generic `suspend fn` functions with immutable frame-safe
-parameters and results. Value-returning suspend calls are bound by an immutable
-top-level `let`; void calls remain standalone.
-The C99 backend emits a stackless root frame with embedded child frames and a
-current-thread executor only when a suspension primitive is reachable.
-Always-ready suspend chains still use the direct C99 path. Immutable top-level
-locals whose transitive value fields are frame-safe may live across a
-suspension: exact liveness decides which values enter each frame, and managed
-fields carry ownership bits for child-first idempotent completion or explicit
-early root drop. Positive sleeps use bounded, generation-checked owner-local
-monotonic timers and wait through a lazily initialized epoll, kqueue, or IOCP
-backend; non-positive sleeps complete inline without registration, queue
-traffic, or reactor initialization. Opt-in, versioned P1/P2 probes export exact
-current-thread poll, yield, frame, ready-queue, timer, and reactor lifecycle
-counters without changing normal stdout. Managed call arguments are evaluated
-once and retained or transferred into the child frame; owned results move out
-before child drop.
-The structured slice adds `task.scope`, direct `task.spawn child(args)`, and
-one-argument `task.join(handle)` and `task.cancel(handle)` for scope-owned
-`Task<T>` children. Spawned
-frames enter the same bounded owner FIFO; child completion re-enqueues a
-waiting parent, typed results move exactly once into
-`Result<T, TaskError>`, and saturation becomes a typed `queue_full` join error.
-Each inferred immutable handle must remain in its scope and may be consumed
-exactly once by join or cancel. Structured cancel is a consuming
-cancel-and-join operation: it requests cancellation, completes child cleanup
-before returning `Result<void, TaskError>`, and rejects subsequent handle use.
-On the current-thread backend this completes inline without a new allocation
-or queue operation. Normal scope fallthrough and a final scope
-`return` cancel unjoined children, remove their ready/timer registrations, and
-drop their frames before code after the scope or return completion runs. A
-return expression evaluates into an owned temporary before that cleanup.
-P3-A also makes every structured-spawn argument a compiler-known publication
-boundary. Numeric, Boolean, and character values remain Copy. A named string,
-array, ordered map, or structurally Send aggregate is moved into the child
-frame and its source binding becomes unavailable; E0881 rejects any later use.
-The C99 lowering transfers the existing owner bit without retaining the value.
-Native resource handles such as files, sockets, HTTP streams, processes,
-SQLite handles, task handles, and FFI handles remain Local/!Send; E0880 and
-E0883 report the direct type or first nested field. There is no public `Send`
-interface or `move` keyword in this slice.
-An immutable top-level `let value: T = expression?` inside the scope stores an
-owned propagated Err/None, cancels and drops the children that are live at
-that statement, and only then completes the helper. The operand may be a
-non-suspending expression or the direct `task.join(handle)?` form.
-A direct top-level `panic(message)` or `debug.panic(message)` statement owns
-its non-suspending message and stops the executor. Root cleanup recursively
-cancels incomplete children, removes ready/timer registrations, drops every
-frame, runs shutdown and metrics export, then prints and releases the original
-message before exiting with status 1. Browser WASM returns the corresponding
-runtime error without executing structured child bodies.
-The first deadline slice adds one non-nested
-`task.deadline(Duration) { ... }` per suspend function and the
-allocation-free, non-suspending `task.check_cancelled()` observation point.
-Non-positive durations fail with stable code `timeout` before the body and
-without timer registration. Positive deadlines use the owner-local monotonic
-timer table; normal fallthrough disarms the timer, while timeout cancels the
-current child subtree and becomes a typed structured-join error or a
-secret-safe nonzero root failure. Browser WASM rejects the deadline without
-evaluating its duration or body.
-P3-B adds `Channel<T>` for compiler-known Send element types. Native C99 uses
-a checked bounded ring plus FIFO sender/receiver registrations on the
-current-thread executor. `task.send` and `task.receive` suspend directly;
-`try_send`/`try_receive` are immediate, and idempotent close wakes waiters while
-preserving buffered drain order. Consuming sends either transfer exactly one
-owner or return it through `ChannelSendError<T>`/`ChannelTrySend<T>`. The
-browser sandbox reports `runtime_unavailable` before evaluating unsupported
-consuming operands. Channel code adds no OS thread or atomic shim, and programs
-that never construct a channel emit no channel metadata.
-P3-C adds a compiler-recognized `task.select` with 2 through 8 direct
-`task.receive`/`task.sleep` arms. Operands evaluate once from top to bottom,
-already-ready arms resolve in source order, and a suspended winner eagerly
-removes every loser before one owner-frame wake. The first slice requires
-non-empty fallthrough arm bodies; send/join selection and general structured
-exits remain later work. Browser WASM reports a capability error before
-evaluating select operands.
-E0871, E0872, E0875, E0876, E0880, E0881, and E0883 reject invalid
-boundaries, ownership, targets, publication moves, and unsupported shapes.
-RFC 0039 additionally permits one flat non-nested `for condition` to carry
-owned mutable locals declared before the loop across direct suspension points;
-managed replacement retains the new value before dropping the old frame slot.
-Mutable parameters, mutable locals outside that loop, resource-handle wrappers
-outside explicitly owner-affine APIs, recursive suspend graphs, other
-suspension in nested control flow or expressions, suspending argument
-expressions, `?` in other positions, panic nested in another expression,
-non-final scope return, cancellation tokens, nested/general deadline exits,
-cross-shard channels, general send/join select,
-the multi-task timer wheel, and the async test runner land in later reviewable
-slices. See
-`examples/suspend_ready`, `examples/async_yield`, `examples/async_call_abi`,
-`examples/async_timer`, `examples/async_publication_move`,
-`examples/async_structured_void`,
-`examples/async_structured_results`, `examples/async_structured_return`,
-`examples/async_structured_cancel`,
-`examples/async_structured_return_cancel`,
-`examples/async_structured_question_cancel`,
-`examples/async_structured_explicit_cancel`,
-`examples/async_structured_deadline`,
-`examples/async_structured_panic_cleanup`,
-`examples/async_bounded_channel`, `examples/async_static_select`,
-`examples/async_tcp_connect`, `examples/async_tcp_io`, the
-[bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
-[P0/P1/P2/P3 async benchmark gates](performance/async/README.md).
+See [`examples/README.md`](examples/README.md) for the executable matrix.
 
-`std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
-primitive scalar or a struct implementing `fmt.Display`;
-`fmt.debug_string(value)` uses `fmt.Debug`. `fmt.format` accepts a compile-time
-string literal with `{}` display placeholders, `{:?}` debug placeholders, and
-`{{` / `}}` escaped braces. Placeholder counts and forms are checked by the
-compiler.
+## Known boundaries
 
-`std.io` owns output destinations. Its print builtins accept zero or more
-values and reuse the `std.fmt` conversion rules. Multiple values are rendered
-left-to-right with one space between them, so `io.println(message, i)` prints
-both values and then one newline. C-style `printf` is intentionally omitted in
-favor of type-checked `fmt.format`. The C99 backend streams these formatted
-fragments without an intermediate concatenation allocation, releases owned
-formatting temporaries after output, and leaves borrowed string ownership with
-the caller.
+- Language, standard-library, manifest, and editor contracts may change between
+  timestamp snapshots.
+- Native TLS/HTTP and async transport slices remain capability-specific and do
+  not imply a general production service runtime.
+- The current executor is deliberately bounded; unsupported concurrency or
+  ownership cases remain explicit errors or deferred work.
+- WASM has no filesystem, process, environment, network, clock, or input host
+  capabilities.
+- Benchmark results are workload- and environment-specific, claim-ineligible
+  unless their versioned evidence contract says otherwise.
+- Internal CI is not external adoption, long-term compatibility, or exhaustive
+  platform certification.
 
-The postfix `?` operator works on both standard carriers in v0.1:
-`Result.Ok(value)` unwraps to `value`, `Result.Err(error)` returns the error
-early, `Option.Some(value)` unwraps to `value`, and `Option.None` returns
-`None` early from the current `Option`-returning function.
-There is no `try` keyword or statement syntax in v0.1; postfix `?` is the only
-error/absence propagation syntax.
-Cross-layer `Result` error conversion is written explicitly as
-`result.map_err(named_converter)?`.
+## CLI
 
-`std.option` provides carrier helpers as module functions, specific imports, and
-value methods: `is_some`, `is_none`, `unwrap_or`, `map`, and `and_then`.
-The canonical source package now defines the `Option<T>` carrier and the pure
-`is_some`, `is_none`, and `unwrap_or` helpers; the compiler validates and
-type-checks that source while retaining its injected ABI as the compatibility
-path. `map` and `and_then` remain controlled intrinsics until function values
-are part of the language.
-`Option.map` and `Option.and_then` accept named, unqualified, non-generic
-converter functions in v0.1.
+Run `nomo --help` for the complete current contract.
 
-`std.result` provides matching carrier helpers as module functions, specific
-imports, and value methods: `is_ok`, `is_err`, `unwrap_or`, `map`, `map_err`,
-and `and_then`. `Result.map`, `Result.map_err`, and `Result.and_then` accept
-named, unqualified, non-generic converter functions in v0.1; `and_then`
-requires the converter to return the same error type.
-The canonical source package likewise defines `Result<T, E>` plus the pure
-`is_ok`, `is_err`, and `unwrap_or` helpers. `map`, `map_err`, and `and_then`
-remain intrinsic-backed during this migration.
+| Command | Purpose |
+| --- | --- |
+| `nomo new <name>` | Create `nomo.toml` and canonical `src/main.nomo` |
+| `nomo check [path] [--workspace]` | Resolve and type-check a project/workspace |
+| `nomo build [path] [--target T] [--emit-c]` | Emit C99 and link a native artifact |
+| `nomo run [path] [-- args...]` | Build and execute |
+| `nomo fmt [path] [--check]` | Canonical source formatting |
+| `nomo fix module-roots [path] [--check]` | Migrate manifest-derived package roots |
+| `nomo manifest migrate [path] [--check]` | Atomically migrate manifest schema/trust policy |
+| `nomo test [path] [--workspace]` | Discover and execute `#[test]` functions |
+| `nomo doc [path] [--workspace] [--std]` | Generate HTML or JSON API documentation |
+| `nomo add`, `remove`, `search`, `yank` | Manage dependencies and registry state |
+| `nomo deps resolve`, `tree`, `update` | Resolve and inspect lockfile graphs |
+| `nomo deps vendor`, `clean-cache` | Vendor sources and manage dependency cache |
+| `nomo publish`, `verify` | Build or verify integrity-protected package archives |
+| `nomo ffi bindgen` | Generate reviewed bindings for a controlled C-header subset |
+| `nomo cache stats`, `clean`, `prune` | Manage the rebuildable incremental cache |
+| `nomo clean` | Remove generated project build artifacts |
 
-Nomo includes minimal boundary syntax for native integration and static
-abstractions. `interface` declarations and `impl Interface for Type` blocks are
-accepted for statically dispatched methods. The compiler checks that an
-interface impl provides every required method with matching parameters,
-mutability and return type. Generic functions can constrain parameters with
-`T: Interface`; explicit concrete calls such as `render<User>(user)` verify the
-matching impl, type-check the generic body against the interface API, and
-monomorphize method calls with static dispatch. Dynamic
-dispatch, associated types, specialization and blanket impls are not part of
-the current model. `extern "C"` blocks plus `unsafe { ... }` support the native
-FFI path. `import std.ffi` provides owned `CString` values for `const char *`
-parameters and non-dereferenceable `Opaque` handles for `void *` parameters and
-returns, alongside primitive integer/float/bool/char mappings such as
-`abs(i32) -> i32`. C functions cannot return `CString`; ownership-bearing C
-strings need an explicit wrapper. Project manifests can use `[ffi]` metadata to
-compile package-relative C source files and pass native libraries, library search
-paths, macOS frameworks, and raw link arguments to project builds and tests.
+Common dependency/release flags include `--locked`, `--offline`, `--frozen`,
+`--json-errors`, and workspace/package selectors. Consult CLI help rather than
+copying an older snapshot's long command line.
 
-`std.fs` provides filesystem helpers: `fs.read_to_string`,
-`fs.write_string`, `fs.read_bytes`, `fs.write_bytes`, `fs.exists`,
-`fs.metadata`, `fs.create_dir`, `fs.remove_dir`, `fs.read_dir`, `fs.open`,
-`File.read_to_string`, `File.write_string`, and `File.close`. Fallible helpers return
-`Result<T, FsError>`. `fs.metadata` returns `FileMetadata` with `is_file`,
-`is_dir`, and byte `size` fields; directory size is platform-defined.
-`fs.read_bytes` and `fs.write_bytes` use `Array<u32>` byte values in the
-inclusive range `0..255`.
-`fs.open` opens an existing file for reading and writing. `File.read_to_string`
-reads the whole file from the beginning; `File.write_string` writes at the
-beginning and flushes. `fs.read_dir` returns entry names as `Array<string>`,
-excluding `.` and `..`; `fs.remove_dir` removes an empty directory only.
+## Platforms and artifacts
 
-`std.path` provides pure string path helpers:
-`path.join`, `path.basename`, `path.dirname`, `path.extension`,
-`path.normalize`, and `path.is_absolute`. The v0.1 behavior uses POSIX-style
-`/` separators and does not query the host filesystem or resolve symlinks.
+Preview archives are built for:
 
-`std.env` provides process environment helpers: `env.args`, `env.get`,
-`env.set`, `env.cwd`, `env.home_dir`, and `env.temp_dir`. `env.get` and
-`env.home_dir` return `Option<string>`; `env.cwd` and `env.temp_dir` return
-`string`; `env.set` mutates the current process environment and panics if the
-platform call fails.
+| Host | Packaged target |
+| --- | --- |
+| Linux x86-64 | `x86_64-unknown-linux-gnu` |
+| macOS Intel | `x86_64-apple-darwin` |
+| macOS Apple silicon | `aarch64-apple-darwin` |
+| Windows x86-64 | `x86_64-pc-windows-msvc` |
 
-`std.math` provides numeric helpers: `math.abs`, `math.min`, and `math.max`
-operate on matching numeric types, while `math.floor`, `math.ceil`,
-`math.round`, `math.sqrt`, `math.pow`, `math.sin`, and `math.cos` operate on
-`f64` values.
+CI additionally links and executes selected Linux arm64 artifacts under QEMU
+and verifies macOS arm64-to-x86-64 cross-links. `--emit-c` supports recognized
+targets even when a cross-linker is unavailable. See
+[`docs/cross-compilation.md`](docs/cross-compilation.md).
 
-`std.num` provides numeric conversion helpers: `num.parse_i64`,
-`num.parse_u64`, and `num.parse_f64` parse strings and return
-`Result<T, NumError>`. `num.to_string` converts `i64`, `i32`, `u32`, `u64`, and
-`f64` values to strings. `num.checked_add`, `num.checked_sub`, and
-`num.checked_mul` return `Option<T>` for matching integer operands;
-`num.wrapping_add`, `num.wrapping_sub`, and `num.wrapping_mul` return the same
-integer type with wraparound semantics. In v0.1, `to_string` is used through
-the `num` module to avoid colliding with `char.to_string`.
+## Repository map
 
-`std.hash` provides stable non-cryptographic FNV-1a helpers:
-`hash.string`, `hash.bytes`, `hash.new`, `hash.write_string`,
-`hash.write_bytes`, and `hash.finish`.
-`HashState` lets callers build the same hash incrementally from multiple
-strings or `Array<u32>` byte chunks. Byte arrays use the same `0..255` element
-convention as `fs.read_bytes`, `fs.write_bytes`, and `crypto.random_bytes`.
+| Path | Responsibility |
+| --- | --- |
+| `crates/nomo_syntax` | AST, lexer, parser, formatter-facing syntax |
+| `crates/nomo_compiler` | Module graph, semantic analysis, typed/lowered IR |
+| `crates/nomo_codegen_c` | IR-specific C99 generation |
+| `crates/nomo_runtime` | Platform-aware C runtime emission and async runtime |
+| `crates/nomo_wasm` | Browser compiler/interpreter ABI and sandbox |
+| `crates/nomo` | User CLI, project orchestration, registry, docs, tests |
+| `crates/nomo_lsp_bridge` | Shared editor queries and signature surfaces |
+| `std/` | Toolchain standard-library sources and intrinsic registry |
+| `examples/` | Executable acceptance projects |
+| `performance/` | Versioned correctness/performance evidence contracts |
+| `scripts/` | Release, governance, benchmark, and WASM verification gates |
 
-`std.crypto` provides cryptographic helpers: `crypto.sha256` and
-`crypto.sha512` take a string and return a lowercase hex digest string.
-`crypto.random_bytes(count: u64) -> Array<u32>` returns OS-generated random
-bytes as `u32` values in the inclusive range `0..255`.
+See [`AGENTS.md`](AGENTS.md) before changing compiler/runtime boundaries.
 
-`std.regex` provides regular expression helpers: `regex.compile`,
-`regex.is_match`, and `regex.captures`. `compile` returns
-`Result<Regex, RegexError>`, so callers use postfix `?` for propagation.
-`captures` returns `Option<Array<string>>` containing the full match followed
-by capture groups.
+## Development checks
 
-`std.collections` provides v0.1 string-specialized collection helpers.
-`StringMap` stores string keys and string values; `StringSet` stores unique
-strings. Use `collections.map_new`, `map_len`, `map_get`, `map_contains`,
-`map_set`, and `map_remove` for maps, and `collections.set_new`, `set_len`,
-`set_contains`, `set_insert`, and `set_remove` for sets. Update helpers return
-the updated collection value.
+Pull requests run a focused smoke matrix; `main` runs the broader multi-platform
+and evidence gates. At minimum:
 
-`std.char` provides ASCII character-class helpers: `char.is_digit`,
-`char.is_alpha`, and `char.is_whitespace`. `char.to_string` converts a Nomo
-`char` scalar to a UTF-8 string.
-
-`std.os` provides target platform helpers: `os.platform`, `os.arch`,
-`os.path_separator`, and `os.line_ending`. The values are determined by the C
-compiler target used for the generated program.
-
-`std.time` provides basic clock helpers and a small `Duration` value type:
-`time.now_millis`, `time.monotonic_millis`, `time.duration_millis`,
-`time.duration_seconds`, `time.duration_as_millis`, `time.format_duration`,
-`time.sleep`, and `time.sleep_millis`. The clock helpers return Unix epoch or
-monotonic milliseconds. `Duration` stores millisecond precision, `format_duration`
-prints the stable v0.1 form such as `1500ms`, and the sleep helpers panic for
-negative durations.
-
-`std.cron` parses bounded five-field UTC expressions and provides
-`cron.matches` plus strict `cron.next_after` schedule calculation. It supports
-wildcards, values, ranges, lists, and wildcard/range steps without depending
-on the host timezone database. The module owns no background scheduler:
-native Agents combine it with sliced `std.time` waits, isolated tasks, and
-optional SQLite checkpoints. The pure calculation path is available in
-browser WASM and does not require application C FFI. See
-`examples/cron_schedule`.
-
-`std.task` provides isolated native workers with one bounded, deep-copied
-string input and result. `task.spawn` accepts only a non-capturing top-level
-`task fn(TaskContext, string) -> string`; `task.join`, cooperative
-`task.cancel`, `task.is_cancelled`, and explicit `task.close` control the
-lifecycle. The compiler rejects task-unsafe transitive effects with `E0821`.
-Native applications do not write C FFI; browser WASM returns
-`runtime_unavailable` without invoking the worker. See
-`examples/isolated_tasks` and `examples/concurrent_openai_compatible`.
-
-`std.sqlite` provides bounded native SQLite persistence without application
-FFI or a host SQLite installation. It exposes opaque database/query handles,
-parameterized single-statement `execute` and `query`, pull-based bounded rows,
-query reset/rebind, and explicit close. The toolchain verifies and compiles the
-pinned SQLite 3.53.3 amalgamation only for programs that use the module.
-SQLite handles are unavailable inside isolated tasks, browser WASM returns
-`runtime_unavailable`, and secret-bearing paths, SQL, bindings, and row data
-are excluded from default errors. See `examples/sqlite_agent_memory` for a
-transactional checkpoint written by one process and restored by another.
-
-`std.process` now separates the owner-affine async contract from the preview
-blocking registry. `process.start(command, timeout)` and
-`process.next_event(child, max_bytes, timeout)` are direct-style suspend
-operations over `ProcessChild`. Queueing stdin, closing stdin, `try_wait`,
-termination request, and `close_child` are synchronous owner-local operations
-that must not wait. P2-PROC-A fixes this public effect, handle identity, C99
-start/resume/frame ABI, and secret-safe capability rejection. P2-PROC-B
-implements the native Unix slice: one lazy bounded worker performs process
-start and reap jobs, while stdin/stdout/stderr remain owner-affine and use
-epoll on Linux or kqueue on macOS. Linux uses `pidfd` when available and a
-single bounded reaper/wakeup source on older kernels; macOS uses
-`EVFILT_PROC`, with the same bounded source covering the exit-registration
-race. It never creates one thread per child or places the old polling registry
-behind a coroutine.
-
-The accepted synchronous implementation remains available for one migration
-window through `BlockingProcessChild` and the explicit
-`process.start_blocking`, `write_stdin_blocking`, `close_stdin_blocking`,
-`next_event_blocking`, `try_wait_blocking`, `terminate_blocking`, and
-`close_child_blocking` names. The shell helpers `spawn`, `status`, `exec`, and
-`output` also remain blocking. Suspend call graphs reject every one of these
-compatibility calls with E0891.
-
-Controlled process payloads and output chunks are limited to 1 MiB,
-`next_event` timeouts are limited to 15 minutes, and output must be valid UTF-8
-without NUL. `ProcessControlError` exposes stable, secret-safe error codes;
-errors and default diagnostics do not copy command arguments, environment,
-cwd, stdin, or child output. The Unix async adapter is toolchain-owned, so
-application code needs no C FFI. Windows P2-PROC-C uses overlapped named pipes,
-one shared bounded process-creation worker, system wait callbacks, and stable
-owner-IOCP operation slots without per-child reader/writer threads. Browser
-WASM rejects the capability before evaluating command operands. The release
-artifact gate executes poison command/timeout operands through
-`process.start`, requires `NOMO-WASM-003`, and verifies that the module has no
-host imports. See
-`examples/async_process_pipe_contract` for capability behavior,
-`examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
-`examples/async_process_pipe_windows` for the native IOCP lifecycle,
-`examples/async_process_stress` for the 16-child capacity gate and repeated
-slot-reuse cleanup,
-`examples/mcp_stdio_async` for a real fragmented/coalesced JSON-RPC loop,
-and `examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking`
-for the explicit blocking migration path.
-
-`std.net` now provides owner-affine direct-style suspend TCP client operations.
-`net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
-`Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
-complete `write`/`write_string` use epoll on Linux, kqueue on macOS, and IOCP
-on Windows without blocking the current-thread executor. Windows uses
-`ConnectEx`, `WSARecv`, and `WSASend` through a fixed 64-slot owner-local IOCP
-operation table. Numeric addresses retain a zero-thread fast path. Hostnames
-use one lazy resolver worker behind a 16-live-job bounded capacity, return
-completion through the owner reactor, try at most 16 resolved addresses in
-resolver order, and share one overall timeout with those connect attempts.
-Unix wakes the owner through a nonblocking pipe; Windows posts a bounded
-completion to the owner IOCP. Reads and writes are limited to 1 MiB, timeouts to
-15 minutes, each stream direction to one pending operation, and write progress
-to 64 KiB per executor poll for fairness. Windows cancellation detaches
-pending payload storage from the coroutine frame while `OVERLAPPED` remains in
-the stable reactor table, requests `CancelIoEx`, and drains late completions
-before reactor shutdown. The browser WASM sandbox has no raw-TCP host
-capability, so `net.connect` returns `NetErrorKind.Unsupported` before
-evaluating its host, port, or timeout operands.
-
-The preview blocking client names are `net.connect_blocking`,
-`TcpStream.read_to_string_blocking`, and
-`TcpStream.write_string_blocking`. `net.listen`, `TcpListener.accept`, and UDP
-remain blocking compatibility APIs. See the
-[standard-library guide](docs/standard-library.md),
-[async runtime guide](docs/async-runtime.md), and
-`examples/async_tcp_connect` / `examples/async_tcp_io`.
-
-`std.http` now reserves the unsuffixed client surface for owner-affine
-direct-style suspension: `http.get`, `post`, `send`, `open_stream`,
-`read_text`, and `next_sse` are `suspend fn` operations. P2-HTTP-A lowers these
-calls through typed start/resume/cancel frame slots and returns the stable,
-secret-safe `runtime_unavailable` error. It deliberately does not call the
-blocking transport. `examples/async_http_contract` and the claim-ineligible
-`performance/async` snapshot lock this ABI boundary while P2-HTTP-B/C add the
-native reactor transport.
-
-The accepted synchronous HTTP/HTTPS implementation remains available for one
-migration window as `get_blocking`, `post_blocking`, `send_blocking`,
-`open_stream_blocking`, `read_text_blocking`, `next_sse_blocking`,
-`cancel_stream_blocking`, and `close_stream_blocking`. It accepts custom
-headers, a total timeout, and a response-body limit. HTTPS verifies
-certificates and host names, redirects are disabled, and errors do not copy
-request headers, bodies, or URL query secrets. Streaming compatibility uses
-`BlockingHttpStream`; see `examples/openai_streaming`.
-
-The HTTP adapter remains toolchain-owned, so application code writes no C FFI
-or linker metadata. The blocking Unix-like adapter uses libcurl and Windows
-uses WinHTTP. `http.listen` creates a blocking plain-HTTP `HttpServer`,
-`http.accept` returns one `HttpExchange` with `method`, `path`, and `body`, and
-`http.respond_string` writes a string response. Use
-`defer http.close_exchange(exchange)` and `defer http.close_server(server)` to
-close server handles on normal returns and `?` early returns. Redirects, binary
-bodies, and multi-connection server helpers remain later slices.
-
-E0870 rejects unsuffixed suspend client calls from a normal `fn` and points to
-the explicit blocking migration name. E0891 rejects every `_blocking` client
-call plus `listen`, `accept`, and `respond_string` from suspend call graphs.
-The source excerpt and call path remain secret-safe.
-
-`std.testing` provides helpers for `#[test]` functions: `testing.assert`,
-`testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool
-condition and string message. `assert_equal` compares matching primitive values
-or strings. `assert_error` passes only when a `Result<T, E>` is `Err`.
-
-`std.debug` provides `debug.print`, `debug.println`, `debug.panic`, and
-`debug.backtrace`. Debug print helpers write to stderr. `debug.panic` uses the
-same panic path as the language builtin. `debug.backtrace` returns a stable
-placeholder string in v0.1.
-
-`std.log` provides `log.debug`, `log.info`, `log.warn`, `log.error`, and
-`log.enabled`. Log helpers write `[level] message` lines to stderr and are
-filtered by `NOMO_LOG`; accepted levels are `debug`, `info`, `warn`, `error`,
-and `off`. The default threshold is `info`.
-
-`std.json` provides bounded parsing, traversal, and construction for all six
-JSON kinds. `JsonValue` stores validated raw JSON text, so
-`json.stringify(json.parse(text)?)` preserves the original document byte for
-byte. `json.kind`, scalar accessors, `array_items`, `object_members`, and
-last-member-wins `get` inspect nested values; `from_*` functions construct
-compact JSON without application-side string concatenation. Documents are
-limited to 8 MiB, 128 container levels, and 262,144 values, and `JsonError`
-contains only a stable code, generic secret-safe message, and byte offset.
-
-`std.jsonrpc` provides bounded JSON-RPC 2.0 envelopes and incremental
-newline-delimited framing for long-lived subprocess protocols. The immutable
-decoder accepts arbitrarily split or coalesced stdout chunks, preserves a
-partial suffix between calls, strips one CR before a delimiter, and returns
-only validated request, notification, success, or error messages. Encoding
-adds exactly one newline. Messages are limited to 1,048,575 bytes, chunks to
-1 MiB, and batches to 4096 messages; stable errors never reproduce protocol
-payloads. `JsonRpcMessage` and `JsonRpcDecoder` are opaque so applications
-cannot bypass validation. `examples/mcp_stdio_async` composes the codec with
-owner-affine `std.process` events and RFC 0039 loop-carried task-local state,
-handling fragmented first responses, coalesced notification/response batches,
-stderr, stdin flush, and final exit without application-side C FFI.
-`examples/mcp_stdio_blocking` remains the explicit preview compatibility path.
-
-`std.cron` provides deterministic UTC calendar scheduling without a global
-runtime scheduler. Expressions and search work are bounded, errors use stable
-secret-safe codes, and `CronSchedule` remains opaque so validation cannot be
-bypassed. Native and browser-WASM calculation results are identical.
-
-`std.array` provides value-semantics `Array<T>` helpers: `Array.new`,
-`Array.len`, `Array.push`, `Array.get`, `Array.set`, `Array.insert`,
-`Array.pop`, `Array.remove`, `Array.clear`, and `Array.iter`. `get`, `pop`,
-and `remove` return `Option<T>`; `set` and `insert` panic when their index is
-out of bounds. `iter` returns a snapshot value accepted by `for ... in`.
-The canonical `std/src/array.nomo` source declares this public surface and
-delegates representation-sensitive operations to the compiler/runtime array
-ABI. The intrinsic manifest pins that ABI as `array-header`.
-
-The core and extension `std/src/*.nomo` files likewise declare public
-signatures and doc comments for IO, filesystem, paths, environment, processes,
-time, cron, numeric helpers, collections, hashing, crypto, JSON, JSON-RPC,
-regex, debug, log, testing, networking, HTTP, and FFI boundary types.
-Host-sensitive behavior continues to use the compiler/runtime builtin backing
-during the source API migration.
-
-`std.string` provides value helpers: `string.len`, `string.concat`,
-`string.is_empty`, `string.contains`, `string.starts_with`, `string.ends_with`,
-`string.split`, `string.trim`, `string.to_lower`, and `string.to_upper`.
-The helpers operate on UTF-8 byte strings; `trim` and case conversion use ASCII
-character classes in v0.1. `string.split(value, separator)` returns
-`Array<string>` and panics if the separator is empty.
-The canonical `std/src/string.nomo` source declares these helpers while the
-runtime retains the immutable reference-counted `string-header` representation.
-
-Diagnostics use stable `E`-prefixed error codes across human output, JSON
-output, LSP diagnostics, and editor quick fixes. The first diagnostic reference
-pages live under [`docs/diagnostics/`](docs/diagnostics/index.md). User-facing
-docs start at [`docs/index.md`](docs/index.md), including the
-[`standard-library`](docs/standard-library.md) reference and
-[`package-management`](docs/package-management.md) guide for manifests,
-workspaces, lockfiles, vendoring, and offline builds. The
-[`editor-integrations`](docs/editor-integrations.md) guide covers installing the
-shared language server and the VS Code, Zed, and JetBrains clients.
-
-## Library crate
-
-The `nomo` library exposes the compiler pipeline for embedding. Key entry points
-include `check_source`, `check_source_text`, `compile_source_to_c`, and
-`build_module_graph` for querying loaded module nodes, imports, and dependency
-order. `project_package_graph` builds the resolved package layer with canonical
-package identities, versions, sources, dependency aliases, dependency-first
-ordering, available source roots, and each source package's public semantic API;
-`project_package_graph_with_options` applies locked/offline resolution rules.
-`build_workspace_graph` adds the workspace layer and aggregates those package
-graphs while preserving member/default-member topology and workspace metadata.
-The library also exposes the `lexer`, `parser`, `ast`, `compiler`, `codegen`,
-`diagnostic`, `incremental`, `semantic`, and `project` modules. The
-`incremental` module owns content fingerprints, target/toolchain-aware query
-keys, dependency edges, transitive invalidation, cache statistics and immutable
-generation snapshots. `PersistentQueryCache` adds schema-versioned atomic disk
-storage, checksummed corruption recovery, and bounded eviction.
-`IncrementalSemanticSession` caches conservative project-check and symbol
-queries while preserving clean-result equivalence.
-The `semantic` module provides
-current-document symbol queries plus project-aware hover, definition, and
-reference queries over local `src/**/*.nomo` modules.
-
-## Tests and examples
-
-```bash
-cargo test --workspace
+```sh
+cargo fmt --check
+cargo clippy --workspace --locked -- -D warnings
+cargo test --workspace --locked
+cargo build --workspace --release --locked
+cargo run --locked --bin nomo -- fmt --check examples
+cargo run --locked --bin nomo -- fmt --check std
+python3 scripts/check_syntax_governance.py --nomo target/release/nomo
+cargo build --locked --release --target wasm32-unknown-unknown -p nomo-wasm
+node scripts/check_browser_wasm.mjs \
+  target/wasm32-unknown-unknown/release/nomo_wasm.wasm
 ```
 
-Runnable sample programs live under [`examples/`](examples/).
+Async and benchmark harness changes also run:
+
+```sh
+python3 -m unittest discover -s scripts/tests
+python3 scripts/benchmarksgame.py --mode correctness \
+  --nomo target/release/nomo --require-clean
+python3 scripts/async_benchmark.py --nomo target/release/nomo --require-clean
+```
+
+Follow repository CI for platform-specific gates; do not replace failed
+evidence by loosening payloads, versions, counters, or thresholds.
+
+## Authoritative documentation
+
+- [English specification](https://github.com/nomo-lang/rfcs/blob/main/en/SPEC.md)
+- [中文规范](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/SPEC.md)
+- [RFC index](https://github.com/nomo-lang/rfcs)
+- [Roadmap](https://github.com/nomo-lang/rfcs/blob/main/ROADMAP.md)
+- [Non-normative whitepaper](https://github.com/nomo-lang/rfcs/blob/main/WHITEPAPER-v0.1.md)
+- [Shared contribution guide](https://github.com/nomo-lang/.github/blob/main/CONTRIBUTING.md)
+
+Language or public CLI changes require an RFC before implementation and must
+update compiler, LSP, grammar, editor, examples, and documentation surfaces.
 
 ## License
 
-MIT. See [LICENSE](LICENSE).
+See [LICENSE](LICENSE).

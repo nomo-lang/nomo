@@ -2,8 +2,8 @@
 
 语言： [English](README.md) | 中文
 
-本目录实现 RFC 0034 的证据契约，但不声称当前 P1 compiler 已经是生产级
-async runtime。P0 manifest 保留两个 control：
+本目录实现 RFC 0034 的证据契约，但不声称当前有界 Preview
+compiler/runtime 已经是生产级 async runtime。P0 manifest 保留两个 control：
 
 - `sync_unused`：编译使用 string、array 与确定性有序 map 的同步程序，并确认
   generated C 不含 async、thread 或 atomic symbol；

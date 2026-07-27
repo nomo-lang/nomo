@@ -3,7 +3,8 @@
 Language: English | [中文](README.zh-CN.md)
 
 This directory implements the evidence contract from RFC 0034. It does not
-claim that the current P1 compiler is a production async runtime. The P0
+claim that the current bounded Preview compiler/runtime is a production async
+runtime. The P0
 manifest keeps these controls:
 
 - `sync_unused`, which compiles a synchronous program using strings, arrays,

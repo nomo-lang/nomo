@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn lowers_suspend_effect_into_typed_ir() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn normalize(value: string) -> string {
     return value
@@ -12,7 +12,7 @@ suspend fn load(value: string) -> string {
     return normalize(value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let value: string = load("ready")
 }
 "#;
@@ -41,13 +41,13 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_suspend_call_from_synchronous_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 suspend fn load() -> string {
     return "ready"
 }
 
-fn main() -> void {
+fn main() {
     let value: string = load()
 }
 "#;
@@ -63,12 +63,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_unsuffixed_async_http_from_synchronous_function_without_leaking_arguments() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 import std.result
 
-fn main() -> void {
+fn main() {
     let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/?token=http-secret-sentinel")
 }
 "#;
@@ -84,13 +84,13 @@ fn main() -> void {
 
 #[test]
 fn preserves_suspend_effect_for_generic_instances() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 suspend fn identity<T>(value: T) -> T {
     return value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let value: string = identity<string>("ready")
 }
 "#;
@@ -107,7 +107,7 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_suspend_method_call_from_synchronous_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Client {
 }
@@ -118,7 +118,7 @@ impl Client {
     }
 }
 
-fn main() -> void {
+fn main() {
     let client: Client = Client {}
     let value: string = client.load()
 }
@@ -133,7 +133,7 @@ fn main() -> void {
 
 #[test]
 fn requires_interface_implementations_to_match_suspend_effect() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Loader {
     suspend fn load(self) -> string
@@ -148,7 +148,7 @@ impl Loader for Client {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -160,7 +160,7 @@ fn main() -> void {
 
 #[test]
 fn suspend_worker_is_not_a_legacy_task_callback() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -168,7 +168,7 @@ suspend fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "ready")
 }
 "#;
@@ -181,13 +181,13 @@ fn main() -> void {
 
 #[test]
 fn synchronous_codegen_has_no_async_runtime_or_frame_metadata() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn helper() -> string {
     return "ready"
 }
 
-fn main() -> void {
+fn main() {
     let value: string = helper()
 }
 "#;
@@ -209,13 +209,13 @@ fn main() -> void {
 
 #[test]
 fn always_ready_suspend_codegen_has_no_async_runtime_or_frame_metadata() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 suspend fn ready() -> string {
     return "ready"
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let value: string = ready()
 }
 "#;
@@ -236,11 +236,11 @@ suspend fn main() -> void {
 
 #[test]
 fn yield_now_requires_a_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-fn main() -> void {
+fn main() {
     task.yield_now()
 }
 "#;
@@ -254,12 +254,12 @@ fn main() -> void {
 
 #[test]
 fn task_sleep_requires_a_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-fn main() -> void {
+fn main() {
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(1))
 }
 "#;
@@ -273,11 +273,11 @@ fn main() -> void {
 
 #[test]
 fn task_sleep_requires_one_duration_argument() {
-    let missing = r#"package app.main
+    let missing = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let waited: Result<void, TaskError> = task.sleep()
 }
 "#;
@@ -289,11 +289,11 @@ suspend fn main() -> void {
             .contains("task.sleep expects 1 argument(s), got 0")
     );
 
-    let wrong_type = r#"package app.main
+    let wrong_type = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let waited: Result<void, TaskError> = task.sleep(1)
 }
 "#;
@@ -305,12 +305,12 @@ suspend fn main() -> void {
 
 #[test]
 fn task_sleep_lowers_a_duration_and_result_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(5))
 }
 "#;
@@ -340,12 +340,12 @@ suspend fn main() -> void {
 
 #[test]
 fn task_deadline_lowers_one_structured_marker_pair_and_cancel_check() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(time.duration_millis(5)) {
         task.check_cancelled()
     }
@@ -383,7 +383,7 @@ fn task_deadline_and_cancel_check_require_suspend_functions() {
         "task.check_cancelled()",
     ] {
         let source = format!(
-            "package app.main\n\nimport std.task\nimport std.time\n\nfn main() -> void {{\n    {body}\n}}\n"
+            "package app\n\nimport std.task\nimport std.time\n\nfn main() {{\n    {body}\n}}\n"
         );
         let error = parse_inline(&source).unwrap_err();
         assert_eq!(error.code, "E0870");
@@ -393,11 +393,11 @@ fn task_deadline_and_cancel_check_require_suspend_functions() {
 
 #[test]
 fn task_deadline_rejects_wrong_duration_and_unsupported_early_exit() {
-    let wrong_duration = r#"package app.main
+    let wrong_duration = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(1) {
         task.check_cancelled()
     }
@@ -407,12 +407,12 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0404");
     assert!(error.message.contains("Duration"));
 
-    let early_return = r#"package app.main
+    let early_return = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(time.duration_millis(1)) {
         return
     }
@@ -425,12 +425,12 @@ suspend fn main() -> void {
 
 #[test]
 fn task_deadline_rejects_nested_structured_scopes_in_the_first_slice() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(time.duration_millis(1)) {
         task.scope {
         }
@@ -444,12 +444,12 @@ suspend fn main() -> void {
 
 #[test]
 fn specifically_imported_task_sleep_lowers_to_the_timer_runtime() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task.sleep
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     let waited: Result<void, TaskError> = sleep(time.duration_millis(0))
 }
 "#;
@@ -470,12 +470,12 @@ suspend fn main() -> void {
 
 #[test]
 fn task_sleep_result_must_be_bound_in_the_current_slice() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.sleep(time.duration_millis(1))
 }
 "#;
@@ -488,11 +488,11 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_blocking_sleep_directly_from_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     time.sleep_millis(1)
 }
 "#;
@@ -507,11 +507,11 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_explicit_blocking_http_from_suspend_without_leaking_arguments() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<HttpResponse, HttpError> = http.get_blocking("https://example.invalid/?token=http-secret-sentinel")
 }
 "#;
@@ -527,18 +527,18 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_specifically_imported_blocking_http_stream_pull() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http.HttpError
 import std.http.BlockingHttpStream
 import std.http.SseEvent
 import std.http.next_sse_blocking
 
-suspend fn poll(stream: BlockingHttpStream) -> void {
+suspend fn poll(stream: BlockingHttpStream) {
     let result: Result<Option<SseEvent>, HttpError> = next_sse_blocking(stream, 1024)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -550,7 +550,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_transitive_blocking_process_call_from_suspend() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 
@@ -558,7 +558,7 @@ fn invoke() -> Result<string, ProcessError> {
     return process.exec("process-secret-sentinel")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<string, ProcessError> = invoke()
 }
 "#;
@@ -573,15 +573,15 @@ suspend fn main() -> void {
 
 #[test]
 fn allows_nonwaiting_process_poll_from_suspend_compatibility_code() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 
-suspend fn observe(child: ProcessChild) -> void {
+suspend fn observe(child: ProcessChild) {
     let result: Result<Option<ProcessExit>, ProcessControlError> = process.try_wait(child)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -590,12 +590,12 @@ fn main() -> void {
 
 #[test]
 fn allows_explicit_blocking_http_in_synchronous_compatibility_code() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 import std.result
 
-fn main() -> void {
+fn main() {
     let result: Result<HttpResponse, HttpError> = http.get_blocking("https://example.invalid/")
 }
 "#;
@@ -605,18 +605,18 @@ fn main() -> void {
 
 #[test]
 fn async_http_surface_lowers_to_typed_placeholder_suspend_abi() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.Array
 import std.http
 import std.result
 
-suspend fn pull(stream: HttpStream) -> void {
+suspend fn pull(stream: HttpStream) {
     let chunk: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 4096)
     let event: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 65536)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let get_result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/get")
     let post_result: Result<HttpResponse, HttpError> = http.post("https://example.invalid/post", "{}")
     let headers: Array<HttpHeader> = Array.new<HttpHeader>()
@@ -675,12 +675,12 @@ suspend fn main() -> void {
 
 #[test]
 fn async_tcp_connect_lowers_to_owner_affine_reactor_registration() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 0)
 }
 "#;
@@ -722,20 +722,20 @@ suspend fn main() -> void {
 
 #[test]
 fn async_process_intrinsics_lower_to_owner_affine_state_machine_abi() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 import std.result
 
-suspend fn launch(command: ProcessCommand) -> void {
+suspend fn launch(command: ProcessCommand) {
     let started: Result<ProcessChild, ProcessControlError> = process.start(command, 100)
 }
 
-suspend fn pull(child: ProcessChild) -> void {
+suspend fn pull(child: ProcessChild) {
     let event: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 100)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -882,16 +882,16 @@ fn main() -> void {
 
 #[test]
 fn rejects_async_process_start_from_synchronous_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 import std.result
 
-fn launch(command_secret_sentinel: ProcessCommand) -> void {
+fn launch(command_secret_sentinel: ProcessCommand) {
     let started: Result<ProcessChild, ProcessControlError> = process.start(command_secret_sentinel, 100)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -905,15 +905,15 @@ fn main() -> void {
 
 #[test]
 fn rejects_blocking_process_migration_api_from_suspend_without_arguments() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 
-suspend fn launch(command: ProcessCommand) -> void {
+suspend fn launch(command: ProcessCommand) {
     let started: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -925,7 +925,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_question_propagation_directly_on_async_tcp_connect_in_the_first_slice() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
@@ -935,7 +935,7 @@ suspend fn connect_once() -> Result<TcpStream, NetError> {
     return Ok(stream)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -951,12 +951,12 @@ fn main() -> void {
 
 #[test]
 fn async_tcp_connect_windows_uses_bounded_resolver_and_owner_affine_iocp() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 100)
 }
 "#;
@@ -1007,12 +1007,12 @@ suspend fn main() -> void {
 
 #[test]
 fn async_tcp_stream_io_lowers_to_bounded_owner_affine_operations() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-suspend fn exercise(stream: TcpStream) -> void {
+suspend fn exercise(stream: TcpStream) {
     let bytes: Result<TcpChunk, NetError> = stream.read(4096, 100)
     let text: Result<TcpTextChunk, NetError> = stream.read_string(4096, 100)
     let wrote_bytes: Result<void, NetError> = stream.write([65, 66, 67], 100)
@@ -1020,7 +1020,7 @@ suspend fn exercise(stream: TcpStream) -> void {
     let shutdown: Result<void, NetError> = stream.shutdown_write()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -1086,18 +1086,18 @@ fn main() -> void {
 
 #[test]
 fn async_tcp_stream_io_windows_uses_overlapped_winsock_and_safe_late_completion_storage() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-suspend fn exercise(stream: TcpStream) -> void {
+suspend fn exercise(stream: TcpStream) {
     let bytes: Result<TcpChunk, NetError> = stream.read(16, 100)
     let wrote: Result<void, NetError> = stream.write_string("secret", 100)
     let shutdown: Result<void, NetError> = stream.shutdown_write()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -1133,16 +1133,16 @@ fn main() -> void {
 
 #[test]
 fn rejects_async_tcp_stream_io_from_synchronous_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-fn read_once(stream: TcpStream) -> void {
+fn read_once(stream: TcpStream) {
     let result: Result<TcpChunk, NetError> = stream.read(16, 100)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -1153,12 +1153,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_async_tcp_connect_from_synchronous_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
 
-fn main() -> void {
+fn main() {
     let result: Result<TcpStream, NetError> = net.connect("127.0.0.1", 9, 100)
 }
 "#;
@@ -1170,11 +1170,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_blocking_tcp_connect_from_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<TcpStream, NetError> = net.connect_blocking("127.0.0.1", 9)
 }
 "#;
@@ -1186,7 +1186,7 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_blocking_tcp_stream_method_from_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
@@ -1195,7 +1195,7 @@ suspend fn read(stream: TcpStream) -> Result<string, NetError> {
     return stream.read_to_string_blocking()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -1210,7 +1210,7 @@ fn main() -> void {
 
 #[test]
 fn allows_user_method_named_like_blocking_tcp_method_without_std_net() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Reader {
     value: string
@@ -1222,7 +1222,7 @@ impl Reader {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let reader: Reader = Reader { value: "local" }
     let text: string = reader.read_to_string_blocking()
 }
@@ -1233,11 +1233,11 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_specifically_imported_blocking_sleep_from_suspend_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time.sleep_millis
 
-suspend fn main() -> void {
+suspend fn main() {
     sleep_millis(1)
 }
 "#;
@@ -1250,19 +1250,19 @@ suspend fn main() -> void {
 
 #[test]
 fn rejects_transitive_blocking_sleep_with_a_secret_safe_call_path() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time
 
-fn pause(secret: string) -> void {
+fn pause(secret: string) {
     time.sleep_millis(1)
 }
 
-fn helper(secret: string) -> void {
+fn helper(secret: string) {
     pause(secret)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     helper("sk-must-not-appear")
 }
 "#;
@@ -1280,17 +1280,17 @@ suspend fn main() -> void {
 
 #[test]
 fn allows_blocking_sleep_from_synchronous_and_legacy_worker_functions() {
-    let synchronous = r#"package app.main
+    let synchronous = r#"package app
 
 import std.time
 
-fn main() -> void {
+fn main() {
     time.sleep_millis(0)
 }
 "#;
     parse_inline(synchronous).unwrap();
 
-    let worker = r#"package app.main
+    let worker = r#"package app
 
 import std.task
 import std.time
@@ -1300,7 +1300,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "ready")
 }
 "#;
@@ -1317,15 +1317,15 @@ fn rejects_blocking_sleep_reached_through_an_imported_public_function() {
     std::fs::create_dir_all(&src).unwrap();
     std::fs::write(
         src.join("worker.nomo"),
-        "package app.worker\n\nimport std.time\n\npub fn pause() -> void {\n    time.sleep_millis(1)\n}\n",
+        "package app.worker\n\nimport std.time\n\npub fn pause() {\n    time.sleep_millis(1)\n}\n",
     )
     .unwrap();
     let main = src.join("main.nomo");
-    let source = r#"package app.main
+    let source = r#"package app
 
 import app.worker
 
-suspend fn main() -> void {
+suspend fn main() {
     pause()
 }
 "#;
@@ -1340,11 +1340,11 @@ suspend fn main() -> void {
 
 #[test]
 fn specifically_imported_yield_now_lowers_to_the_current_thread_executor() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task.yield_now
 
-suspend fn main() -> void {
+suspend fn main() {
     yield_now()
 }
 "#;
@@ -1365,12 +1365,12 @@ suspend fn main() -> void {
 
 #[test]
 fn root_yield_lowers_to_a_stackless_current_thread_executor() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     io.println("before")
     task.yield_now()
     io.println("middle")
@@ -1415,12 +1415,12 @@ suspend fn main() -> void {
 
 #[test]
 fn async_frame_spills_only_live_locals_and_clears_ownership_before_drop() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let live: string = "live"
     let dead: string = "dead"
     let count: u64 = 7
@@ -1467,13 +1467,13 @@ suspend fn main() -> void {
 
 #[test]
 fn async_frame_spills_and_drops_cow_arrays() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let values: Array<i32> = [2, 3, 5]
     task.yield_now()
     io.println(values.len())
@@ -1499,12 +1499,12 @@ suspend fn main() -> void {
 
 #[test]
 fn async_frame_slice_rejects_mutable_locals_and_supports_explicit_panic_cleanup() {
-    let mutable_source = r#"package app.main
+    let mutable_source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let mut message: string = "mutable"
     task.yield_now()
     io.println(message)
@@ -1518,17 +1518,17 @@ suspend fn main() -> void {
             .contains("mutable locals not owned by the supported loop")
     );
 
-    let panic_source = r#"package app.main
+    let panic_source = r#"package app
 
 import std.debug
 import std.task
 
-suspend fn fail(message: string) -> void {
+suspend fn fail(message: string) {
     task.yield_now()
     debug.panic(message)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     fail("cleanup is implemented")
 }
 "#;
@@ -1548,7 +1548,7 @@ suspend fn main() -> void {
     assert!(c.contains("nomo_async_cancel_main(&nomo__frame, &nomo__context);"));
     assert!(c.contains("nomo_panic_string(nomo__panic_message);"));
 
-    let handle_source = r#"package app.main
+    let handle_source = r#"package app
 
 import std.io
 import std.task
@@ -1557,7 +1557,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "input")
     task.yield_now()
     io.println("after")
@@ -1572,7 +1572,7 @@ suspend fn main() -> void {
             .contains("without a P1 frame move/drop implementation")
     );
 
-    let question_outside_scope = r#"package app.main
+    let question_outside_scope = r#"package app
 
 import std.num
 import std.task
@@ -1583,7 +1583,7 @@ suspend fn parse_after_yield() -> Result<i64, NumError> {
     return Ok(value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let value: Result<i64, NumError> = parse_after_yield()
 }
 "#;
@@ -1598,24 +1598,24 @@ suspend fn main() -> void {
 
 #[test]
 fn nested_suspend_calls_lower_to_embedded_stackless_frames() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn leaf() -> void {
+suspend fn leaf() {
     let leaf_value: string = "leaf"
     task.yield_now()
     io.println(leaf_value)
 }
 
-suspend fn helper() -> void {
+suspend fn helper() {
     let child: string = "child"
     leaf()
     io.println(child)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let parent: string = "parent"
     helper()
     io.println(parent)
@@ -1656,7 +1656,7 @@ suspend fn main() -> void {
 
 #[test]
 fn nested_suspend_call_abi_lowers_arguments_and_results() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
@@ -1668,7 +1668,7 @@ suspend fn helper(value: string, count: u64) -> string {
     return owned
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: string = helper("value", 7)
     task.yield_now()
     io.println(result)
@@ -1701,7 +1701,7 @@ suspend fn main() -> void {
 
 #[test]
 fn nested_suspend_slice_rejects_unbound_results_recursion_and_control_flow() {
-    let unbound_source = r#"package app.main
+    let unbound_source = r#"package app
 
 import std.task
 
@@ -1710,7 +1710,7 @@ suspend fn helper() -> string {
     return "value"
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     helper()
 }
 "#;
@@ -1718,20 +1718,20 @@ suspend fn main() -> void {
     assert_eq!(unbound_error.code, "E0876");
     assert!(unbound_error.message.contains("bind the result"));
 
-    let recursive_source = r#"package app.main
+    let recursive_source = r#"package app
 
 import std.task
 
-suspend fn first() -> void {
+suspend fn first() {
     second()
 }
 
-suspend fn second() -> void {
+suspend fn second() {
     task.yield_now()
     first()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     first()
 }
 "#;
@@ -1744,11 +1744,11 @@ suspend fn main() -> void {
     );
     assert!(recursive_error.message.contains("first -> second -> first"));
 
-    let nested_source = r#"package app.main
+    let nested_source = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     for {
         task.yield_now()
     }
@@ -1761,13 +1761,13 @@ suspend fn main() -> void {
 
 #[test]
 fn bounded_suspending_loop_lowers_loop_carried_scalar_and_managed_state() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     let finished_before_loop: string = "finished"
     task.yield_now()
     io.println(finished_before_loop)
@@ -1816,16 +1816,16 @@ suspend fn main() -> void {
 
 #[test]
 fn bounded_suspending_loop_accepts_a_transitive_suspend_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn one_round() -> void {
+suspend fn one_round() {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let mut remaining: u64 = 3
     for remaining > 0 {
         one_round()
@@ -1851,11 +1851,11 @@ suspend fn main() -> void {
 
 #[test]
 fn bounded_suspending_loop_rejects_nested_condition_and_early_exit_shapes() {
-    let nested = r#"package app.main
+    let nested = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let mut running: bool = true
     for running {
         for running {
@@ -1869,7 +1869,7 @@ suspend fn main() -> void {
     assert_eq!(nested_error.code, "E0876");
     assert!(nested_error.message.contains("nested loops"));
 
-    let suspending_condition = r#"package app.main
+    let suspending_condition = r#"package app
 
 import std.task
 
@@ -1878,7 +1878,7 @@ suspend fn ready() -> bool {
     return true
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     for ready() {
         task.yield_now()
     }
@@ -1892,11 +1892,11 @@ suspend fn main() -> void {
             .contains("suspending loop conditions")
     );
 
-    let early_exit = r#"package app.main
+    let early_exit = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let mut running: bool = true
     for running {
         task.yield_now()
@@ -1911,15 +1911,15 @@ suspend fn main() -> void {
 
 #[test]
 fn suspend_call_abi_rejects_mutable_affine_and_root_result_shapes() {
-    let mutable_parameter_source = r#"package app.main
+    let mutable_parameter_source = r#"package app
 
 import std.task
 
-suspend fn helper(mut value: string) -> void {
+suspend fn helper(mut value: string) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     helper("value")
 }
 "#;
@@ -1927,15 +1927,15 @@ suspend fn main() -> void {
     assert_eq!(mutable_error.code, "E0876");
     assert!(mutable_error.message.contains("mutable parameters"));
 
-    let affine_parameter_source = r#"package app.main
+    let affine_parameter_source = r#"package app
 
 import std.task
 
-suspend fn helper(value: Task) -> void {
+suspend fn helper(value: Task) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.yield_now()
 }
 "#;
@@ -1944,7 +1944,7 @@ suspend fn main() -> void {
     assert!(affine_error.message.contains("parameter `value`"));
     assert!(affine_error.message.contains("frame-safe"));
 
-    let root_result_source = r#"package app.main
+    let root_result_source = r#"package app
 
 import std.task
 
@@ -1964,15 +1964,15 @@ suspend fn main() -> string {
 
 #[test]
 fn structured_void_scope_lowers_spawn_and_join_intrinsics() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("value")
         let joined: Result<void, TaskError> = task.join(child)
@@ -2012,22 +2012,22 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_marks_non_copy_arguments_as_publication_moves() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn launch(value: string) -> void {
+suspend fn launch(value: string) {
     task.scope {
         let child = task.spawn worker(value)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
 
@@ -2071,15 +2071,15 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_keeps_copy_arguments_available() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(value: i64) -> void {
+suspend fn worker(value: i64) {
     task.yield_now()
 }
 
-suspend fn launch(value: i64) -> void {
+suspend fn launch(value: i64) {
     task.scope {
         let child = task.spawn worker(value)
         let kept: i64 = value
@@ -2087,7 +2087,7 @@ suspend fn launch(value: i64) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
 
@@ -2108,7 +2108,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_derives_send_for_managed_aggregates() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.task
@@ -2118,18 +2118,18 @@ struct Envelope {
     tags: Array<string>
 }
 
-suspend fn worker(value: Envelope) -> void {
+suspend fn worker(value: Envelope) {
     task.yield_now()
 }
 
-suspend fn launch(value: Envelope) -> void {
+suspend fn launch(value: Envelope) {
     task.scope {
         let child = task.spawn worker(value)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
 
@@ -2153,30 +2153,30 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_rejects_local_and_nested_local_values() {
-    let direct = r#"package app.main
+    let direct = r#"package app
 
 import std.fs
 import std.task
 
-suspend fn worker(file: File) -> void {
+suspend fn worker(file: File) {
     task.yield_now()
 }
 
-suspend fn launch(file: File) -> void {
+suspend fn launch(file: File) {
     task.scope {
         let child = task.spawn worker(file)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let direct_error = parse_inline(direct).unwrap_err();
     assert_eq!(direct_error.code, "E0880");
     assert!(direct_error.message.contains("Local/!Send type `File`"));
 
-    let nested = r#"package app.main
+    let nested = r#"package app
 
 import std.fs
 import std.task
@@ -2185,18 +2185,18 @@ struct Envelope {
     file: File
 }
 
-suspend fn worker(value: Envelope) -> void {
+suspend fn worker(value: Envelope) {
     task.yield_now()
 }
 
-suspend fn launch(value: Envelope) -> void {
+suspend fn launch(value: Envelope) {
     task.scope {
         let child = task.spawn worker(value)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let nested_error = parse_inline(nested).unwrap_err();
@@ -2204,23 +2204,23 @@ suspend fn main() -> void {
     assert!(nested_error.message.contains("Envelope.file"));
     assert!(nested_error.message.contains("Local/!Send type `File`"));
 
-    let process = r#"package app.main
+    let process = r#"package app
 
 import std.process
 import std.task
 
-suspend fn worker(child: ProcessChild) -> void {
+suspend fn worker(child: ProcessChild) {
     task.yield_now()
 }
 
-suspend fn launch(child: ProcessChild) -> void {
+suspend fn launch(child: ProcessChild) {
     task.scope {
         let task_value = task.spawn worker(child)
         let joined: Result<void, TaskError> = task.join(task_value)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let process_error = parse_inline(process).unwrap_err();
@@ -2234,7 +2234,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_rejects_partial_duplicate_and_later_move_uses() {
-    let partial = r#"package app.main
+    let partial = r#"package app
 
 import std.task
 
@@ -2242,18 +2242,18 @@ struct Envelope {
     message: string
 }
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn launch(value: Envelope) -> void {
+suspend fn launch(value: Envelope) {
     task.scope {
         let child = task.spawn worker(value.message)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let partial_error = parse_inline(partial).unwrap_err();
@@ -2264,37 +2264,37 @@ suspend fn main() -> void {
             .contains("cannot move only `value.message`")
     );
 
-    let duplicate = r#"package app.main
+    let duplicate = r#"package app
 
 import std.task
 
-suspend fn worker(left: string, right: string) -> void {
+suspend fn worker(left: string, right: string) {
     task.yield_now()
 }
 
-suspend fn launch(value: string) -> void {
+suspend fn launch(value: string) {
     task.scope {
         let child = task.spawn worker(value, value)
         let joined: Result<void, TaskError> = task.join(child)
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let duplicate_error = parse_inline(duplicate).unwrap_err();
     assert_eq!(duplicate_error.code, "E0881");
     assert!(duplicate_error.message.contains("consumed more than once"));
 
-    let later_use = r#"package app.main
+    let later_use = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn launch(value: string) -> void {
+suspend fn launch(value: string) {
     task.scope {
         let child = task.spawn worker(value)
         let reused: string = value
@@ -2302,7 +2302,7 @@ suspend fn launch(value: string) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let later_error = parse_inline(later_use).unwrap_err();
@@ -2310,15 +2310,15 @@ suspend fn main() -> void {
     assert!(later_error.message.contains("publication move"));
     assert!(later_error.message.contains("structured task.spawn"));
 
-    let after_scope = r#"package app.main
+    let after_scope = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn launch(value: string) -> void {
+suspend fn launch(value: string) {
     task.scope {
         let child = task.spawn worker(value)
         let joined: Result<void, TaskError> = task.join(child)
@@ -2326,14 +2326,14 @@ suspend fn launch(value: string) -> void {
     let reused: string = value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let after_scope_error = parse_inline(after_scope).unwrap_err();
     assert_eq!(after_scope_error.code, "E0881");
     assert!(after_scope_error.message.contains("publication move"));
 
-    let question_use = r#"package app.main
+    let question_use = r#"package app
 
 import std.task
 
@@ -2341,7 +2341,7 @@ fn keep(value: string) -> Result<string, TaskError> {
     return Ok(value)
 }
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
@@ -2354,7 +2354,7 @@ suspend fn launch(value: string) -> Result<void, TaskError> {
     return Ok(void)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let question_error = parse_inline(question_use).unwrap_err();
@@ -2364,17 +2364,17 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_spawn_does_not_consume_reusable_constants() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
 const greeting: string = "hello"
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker(greeting)
         let kept: string = greeting
@@ -2400,7 +2400,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_typed_scope_lowers_task_and_join_result_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -2409,7 +2409,7 @@ suspend fn worker(value: string) -> string {
     return value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("value")
         let joined: Result<string, TaskError> = task.join(child)
@@ -2453,7 +2453,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_cancel_is_suspend_capable_consuming_and_affine() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.task
@@ -2463,7 +2463,7 @@ suspend fn worker(value: string) -> string {
     return value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("managed")
         let cancelled: Result<void, TaskError> = task.cancel(child)
@@ -2527,7 +2527,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_scope_return_after_join_lowers_typed_parent_result() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.task
@@ -2545,7 +2545,7 @@ suspend fn gather() -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let gathered: string = gather()
 }
 "#;
@@ -2575,7 +2575,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_scope_question_join_cancels_live_siblings_and_spills_success_values() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.task
@@ -2595,7 +2595,7 @@ suspend fn gather() -> Result<string, TaskError> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let gathered: Result<string, TaskError> = gather()
 }
 "#;
@@ -2662,25 +2662,25 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_task_scope_rejects_invalid_ownership_and_target_shapes() {
-    let outside_scope = r#"package app.main
+    let outside_scope = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let child = task.spawn worker()
 }
 "#;
     let error = parse_inline(outside_scope).unwrap_err();
     assert_eq!(error.code, "E0871");
 
-    let synchronous_scope = r#"package app.main
+    let synchronous_scope = r#"package app
 
 import std.task
 
-fn main() -> void {
+fn main() {
     task.scope {
     }
 }
@@ -2688,14 +2688,14 @@ fn main() -> void {
     let error = parse_inline(synchronous_scope).unwrap_err();
     assert_eq!(error.code, "E0870");
 
-    let non_suspend_target = r#"package app.main
+    let non_suspend_target = r#"package app
 
 import std.task
 
-fn worker() -> void {
+fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker()
         let joined: Result<void, TaskError> = task.join(child)
@@ -2706,15 +2706,15 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0875");
     assert!(error.message.contains("must be declared `suspend fn`"));
 
-    let panicking_target = r#"package app.main
+    let panicking_target = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
     panic("structured child panic cleanup")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker()
         let joined: Result<void, TaskError> = task.join(child)
@@ -2734,14 +2734,14 @@ suspend fn main() -> void {
     assert!(c.contains("nomo_async_cancel_main(&nomo__frame, &nomo__context);"));
     assert!(c.contains("nomo_async_drop_main(&nomo__frame);"));
 
-    let double_join = r#"package app.main
+    let double_join = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker()
         let first: Result<void, TaskError> = task.join(child)
@@ -2753,15 +2753,15 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0872");
     assert!(error.message.contains("joined more than once"));
 
-    let escaped_handle = r#"package app.main
+    let escaped_handle = r#"package app
 
 import std.io
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker()
         io.println(child)
@@ -2773,14 +2773,14 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0872");
     assert!(error.message.contains("may only be consumed by task.join"));
 
-    let unjoined_handles = r#"package app.main
+    let unjoined_handles = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let zebra = task.spawn worker()
         let alpha = task.spawn worker()
@@ -2818,11 +2818,11 @@ suspend fn main() -> void {
     assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_0, context);"));
     assert!(c.contains("nomo_async_cancel_worker(&frame->nomo_async_child_1, context);"));
 
-    let non_terminal_return = r#"package app.main
+    let non_terminal_return = r#"package app
 
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         return
         let value: i64 = 1
@@ -2833,14 +2833,14 @@ suspend fn main() -> void {
     assert_eq!(error.code, "E0876");
     assert!(error.message.contains("final statement"));
 
-    let unjoined_return = r#"package app.main
+    let unjoined_return = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker()
         return
@@ -2874,11 +2874,11 @@ suspend fn main() -> void {
         "            frame->structured_completed = 1u;"
     )));
 
-    let typed_return_with_temporary_collision = r#"package app.main
+    let typed_return_with_temporary_collision = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
 suspend fn finish() -> string {
@@ -2889,7 +2889,7 @@ suspend fn finish() -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let value: string = finish()
 }
 "#;
@@ -2920,21 +2920,21 @@ suspend fn main() -> void {
             if value == "__nomo_structured_return_value_"
     ));
 
-    let returned_handle = r#"package app.main
+    let returned_handle = r#"package app
 
 import std.task
 
-suspend fn worker() -> void {
+suspend fn worker() {
 }
 
-suspend fn escape() -> void {
+suspend fn escape() {
     task.scope {
         let child = task.spawn worker()
         return child
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
     let error = parse_inline(returned_handle).unwrap_err();
@@ -2944,15 +2944,15 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_void_scope_emits_bounded_fifo_join_wakeup_and_drop_paths() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("value")
         let joined: Result<void, TaskError> = task.join(child)
@@ -2987,7 +2987,7 @@ suspend fn main() -> void {
 
 #[test]
 fn structured_typed_scope_moves_child_result_into_join_once() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -2996,7 +2996,7 @@ suspend fn worker(value: string) -> string {
     return value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("value")
         let joined: Result<string, TaskError> = task.join(child)
@@ -3024,19 +3024,19 @@ suspend fn main() -> void {
 
 #[test]
 fn bounded_channel_builtins_lower_with_inferred_element_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.option
 
-suspend fn exchange(channel_value: Channel<string>, value: string) -> void {
+suspend fn exchange(channel_value: Channel<string>, value: string) {
     let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, value)
     let received: Option<string> = task.receive(channel_value)
     let immediate: ChannelTryReceive<string> = task.try_receive(channel_value)
     task.close(channel_value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let created: Result<Channel<string>, ChannelError> = task.channel<string>(2)
 }
 "#;
@@ -3087,12 +3087,12 @@ suspend fn main() -> void {
 
 #[test]
 fn static_receive_timer_select_lowers_into_typed_ir_and_c99_state_machine() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn choose(channel_value: Channel<string>) -> void {
+suspend fn choose(channel_value: Channel<string>) {
     task.select {
         task.receive(channel_value) => received {
             let value = received
@@ -3103,7 +3103,7 @@ suspend fn choose(channel_value: Channel<string>) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -3159,12 +3159,12 @@ fn main() -> void {
 
 #[test]
 fn static_select_rejects_unsupported_operations_and_early_arm_exits() {
-    let unsupported = r#"package app.main
+    let unsupported = r#"package app
 
 import std.task
 import std.time
 
-suspend fn choose(channel_value: Channel<string>) -> void {
+suspend fn choose(channel_value: Channel<string>) {
     task.select {
         task.send(channel_value, "value") => sent {
             let value = sent
@@ -3175,19 +3175,19 @@ suspend fn choose(channel_value: Channel<string>) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let error = parse_inline(unsupported).unwrap_err();
     assert_eq!(error.code, "E0886");
     assert!(error.message.contains("supports only"));
 
-    let early_exit = r#"package app.main
+    let early_exit = r#"package app
 
 import std.task
 import std.time
 
-suspend fn choose(channel_value: Channel<string>) -> void {
+suspend fn choose(channel_value: Channel<string>) {
     task.select {
         task.receive(channel_value) => received {
             return
@@ -3198,7 +3198,7 @@ suspend fn choose(channel_value: Channel<string>) -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let error = parse_inline(early_exit).unwrap_err();
@@ -3208,12 +3208,12 @@ fn main() -> void {
 
 #[test]
 fn bounded_channel_requires_send_elements() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let created: Result<Channel<TcpStream>, ChannelError> = task.channel<TcpStream>(1)
 }
 "#;
@@ -3225,12 +3225,12 @@ suspend fn main() -> void {
     assert!(error.message.contains("TcpStream"));
     assert!(error.message.contains("Local/!Send"));
 
-    let process = r#"package app.main
+    let process = r#"package app
 
 import std.process
 import std.task
 
-suspend fn main() -> void {
+suspend fn main() {
     let created: Result<Channel<ProcessChild>, ChannelError> = task.channel<ProcessChild>(1)
 }
 "#;
@@ -3245,16 +3245,16 @@ suspend fn main() -> void {
 
 #[test]
 fn channel_send_consumes_a_named_non_copy_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(channel_value: Channel<string>, value: string) -> void {
+suspend fn worker(channel_value: Channel<string>, value: string) {
     let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, value)
     let invalid: string = value
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
 
@@ -3267,15 +3267,15 @@ suspend fn main() -> void {
 
 #[test]
 fn channel_handles_are_shared_across_structured_spawn() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn child(channel_value: Channel<string>) -> void {
+suspend fn child(channel_value: Channel<string>) {
     task.yield_now()
 }
 
-suspend fn parent(channel_value: Channel<string>) -> void {
+suspend fn parent(channel_value: Channel<string>) {
     task.scope {
         let child_task = task.spawn child(channel_value)
         let still_available: Channel<string> = channel_value
@@ -3283,7 +3283,7 @@ suspend fn parent(channel_value: Channel<string>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
 }
 "#;
 

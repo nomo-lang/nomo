@@ -2,11 +2,11 @@ use super::*;
 
 #[test]
 fn accepts_assignment_to_mut_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 1
     count = count + 1
     io.println("done")
@@ -26,9 +26,9 @@ fn main() -> void {
 
 #[test]
 fn accepts_compound_assignment_to_mut_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 1
     count += 2
     count -= 1
@@ -53,9 +53,9 @@ fn main() -> void {
 
 #[test]
 fn accepts_postfix_update_to_mut_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 1
     count++
     count--
@@ -77,11 +77,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_assignment_to_immutable_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let count: i64 = 1
     count = count + 1
     io.println("done")
@@ -94,9 +94,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_postfix_update_to_immutable_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let count: i64 = 1
     count++
 }
@@ -108,9 +108,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_postfix_update_to_non_numeric_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let mut message: string = "hi"
     message++
 }
@@ -122,14 +122,14 @@ fn main() -> void {
 
 #[test]
 fn accepts_assignment_to_mut_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bump(mut value: i64) -> i64 {
     value = value + 1
     return value
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -147,14 +147,14 @@ fn main() -> void {
 
 #[test]
 fn rejects_assignment_to_immutable_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn bump(value: i64) -> i64 {
     value = value + 1
     return value
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -165,17 +165,17 @@ fn main() -> void {
 
 #[test]
 fn rejects_assignment_to_field_of_immutable_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Counter {
     value: i64
 }
 
-fn bump(counter: Counter) -> void {
+fn bump(counter: Counter) {
     counter.value = counter.value + 1
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -189,9 +189,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_duplicate_local_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let count: i64 = 1
     let count: i64 = 2
 }
@@ -203,15 +203,15 @@ fn main() -> void {
 
 #[test]
 fn duplicate_function_diagnostic_uses_second_declaration_span() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn helper() -> void {
+fn helper() {
 }
 
-fn helper() -> void {
+fn helper() {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -220,19 +220,19 @@ fn main() -> void {
     assert_eq!(err.line, 6);
     assert_eq!(err.column, 1);
     assert_eq!(err.length, 1);
-    assert_eq!(err.text, "fn helper() -> void {");
+    assert_eq!(err.text, "fn helper() {");
 }
 
 #[test]
 fn rejects_parameter_shadowing_by_local_binding() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn echo(value: i64) -> i64 {
     let value: i64 = 2
     return value
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -242,7 +242,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_assignment_to_mut_struct_field() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -250,7 +250,7 @@ struct Counter {
     value: i64
 }
 
-fn main() -> void {
+fn main() {
     let mut counter: Counter = Counter { value: 1 }
     counter.value = counter.value + 1
     io.println("done")
@@ -273,13 +273,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_compound_assignment_to_mut_struct_field() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Counter {
     value: i64
 }
 
-fn main() -> void {
+fn main() {
     let mut counter: Counter = Counter { value: 7 }
     counter.value <<= 1
     counter.value >>= 1
@@ -307,13 +307,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_postfix_update_to_mut_struct_field() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Counter {
     value: i64
 }
 
-fn main() -> void {
+fn main() {
     let mut counter: Counter = Counter { value: 7 }
     counter.value++
     counter.value--
@@ -337,7 +337,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_assignment_to_immutable_struct_field() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -345,7 +345,7 @@ struct Counter {
     value: i64
 }
 
-fn main() -> void {
+fn main() {
     let counter: Counter = Counter { value: 1 }
     counter.value = counter.value + 1
     io.println("done")
@@ -358,11 +358,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_assignment_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut count: i64 = 1
     count = "nope"
     io.println("done")

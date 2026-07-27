@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn lowers_bounded_sqlite_lifecycle_calls() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.Array
 import std.sqlite
@@ -21,7 +21,7 @@ fn run() -> Result<void, SqliteError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, SqliteError> = run()
 }
 "#;
@@ -135,7 +135,7 @@ fn validates_every_sqlite_operation_argument_and_result_type() {
     for (body, expected) in cases {
         let body = body.replace("=\n        ", "= ");
         let source = format!(
-            r#"package app.main
+            r#"package app
 
 import std.array.Array
 import std.sqlite
@@ -145,7 +145,7 @@ fn exercise() -> Result<void, SqliteError> {{
     return Ok(void)
 }}
 
-fn main() -> void {{
+fn main() {{
     let result: Result<void, SqliteError> = exercise()
 }}
 "#
@@ -161,11 +161,11 @@ fn main() -> void {{
 
 #[test]
 fn lowers_specifically_imported_sqlite_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.sqlite.open_memory
 
-fn main() -> void {
+fn main() {
     let opened: Result<SqliteDatabase, SqliteError> = open_memory(0)
 }
 "#;
@@ -176,12 +176,12 @@ fn main() -> void {
 
 #[test]
 fn diagnoses_missing_sqlite_type_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn keep(database: SqliteDatabase) -> void {
+fn keep(database: SqliteDatabase) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let error = parse_inline(source).unwrap_err();
@@ -194,11 +194,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_forged_sqlite_handles_and_field_access() {
-    let forged = r#"package app.main
+    let forged = r#"package app
 
 import std.sqlite
 
-fn main() -> void {
+fn main() {
     let database: SqliteDatabase = SqliteDatabase { handle: 1 }
 }
 "#;
@@ -206,7 +206,7 @@ fn main() -> void {
     assert_eq!(error.code, "E0830");
     assert!(error.message.contains("cannot be constructed"));
 
-    let exposed = r#"package app.main
+    let exposed = r#"package app
 
 import std.io
 import std.sqlite
@@ -224,7 +224,7 @@ fn main() -> Result<void, SqliteError> {
 
 #[test]
 fn rejects_sqlite_operations_inside_isolated_tasks_without_leaking_values() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.sqlite
 import std.task
@@ -234,7 +234,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "secret-token")
 }
 "#;
@@ -248,7 +248,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_transitive_sqlite_use_from_isolated_tasks() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.sqlite
 import std.task
@@ -262,7 +262,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return load_state(input)
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "transitive-token")
 }
 "#;
@@ -277,11 +277,11 @@ fn main() -> void {
 
 #[test]
 fn emits_sqlite_runtime_and_shutdown_only_when_used() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.sqlite
 
-fn main() -> void {
+fn main() {
     let opened: Result<SqliteDatabase, SqliteError> = sqlite.open_memory(0)
     return
 }
@@ -292,9 +292,9 @@ fn main() -> void {
     assert!(generated.contains("nomo_fn_main();\n    nomo_sqlite_shutdown();"));
     assert!(!generated.contains("secret-token"));
 
-    let plain = r#"package app.main
+    let plain = r#"package app
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let generated = nomo_codegen_c::emit_c(&parse_inline(plain).unwrap());

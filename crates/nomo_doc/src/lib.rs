@@ -680,7 +680,7 @@ mod tests {
     #[test]
     fn source_docs_preserve_suspend_effects() {
         let path = Path::new("main.nomo");
-        let source = "package app.main\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+        let source = "package app\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
         let ast = parse(path, &lex(path, source).unwrap()).unwrap();
         let module = module_docs(&ast, &extract_doc_comments(source), "main.nomo".to_string());
 

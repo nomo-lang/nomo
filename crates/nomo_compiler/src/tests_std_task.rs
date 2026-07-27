@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn lowers_isolated_task_lifecycle_calls() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -14,7 +14,7 @@ fn worker(context: TaskContext, input: string) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "hello")
 }
 "#;
@@ -46,7 +46,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_task_worker_with_wrong_signature() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -54,7 +54,7 @@ fn worker(input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "hello")
 }
 "#;
@@ -66,12 +66,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_task_callback_type_outside_canonical_std_spawn() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn misuse(worker: task fn(string) -> string) -> void {
+fn misuse(worker: task fn(string) -> string) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -82,11 +82,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_forged_task_handles_and_context_field_access() {
-    let forged = r#"package app.main
+    let forged = r#"package app
 
 import std.task
 
-fn main() -> void {
+fn main() {
     let forged: Task = Task { handle: 1 }
 }
 "#;
@@ -94,7 +94,7 @@ fn main() -> void {
     assert_eq!(error.code, "E0820");
     assert!(error.message.contains("cannot be constructed"));
 
-    let exposed = r#"package app.main
+    let exposed = r#"package app
 
 import std.num
 import std.task
@@ -103,7 +103,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return num.to_string(context.handle)
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "hello")
 }
 "#;
@@ -111,7 +111,7 @@ fn main() -> void {
     assert_eq!(error.code, "E0820");
     assert!(error.message.contains("does not expose its fields"));
 
-    let mutated = r#"package app.main
+    let mutated = r#"package app
 
 import std.task
 
@@ -125,7 +125,7 @@ fn run() -> Result<void, TaskError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, TaskError> = run()
 }
 "#;
@@ -136,7 +136,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_transitive_task_unsafe_effect_with_a_call_path() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
@@ -150,7 +150,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return helper(input)
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "secret")
 }
 "#;
@@ -164,7 +164,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_nested_task_spawn_from_a_worker() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -173,7 +173,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "hello")
 }
 "#;
@@ -185,7 +185,7 @@ fn main() -> void {
 
 #[test]
 fn permits_nonstreaming_http_blocking_migration_in_legacy_native_worker() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 import std.result
@@ -196,7 +196,7 @@ fn worker(context: TaskContext, url: string) -> string {
     return url
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "https://example.invalid/")
 }
 "#;
@@ -206,7 +206,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_local_methods_that_alias_task_safe_value_operations() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.task
@@ -227,7 +227,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return probe.get()
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "secret")
 }
 "#;
@@ -244,7 +244,7 @@ fn main() -> void {
 
 #[test]
 fn emits_task_shutdown_after_an_early_returning_main() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
@@ -252,7 +252,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "hello")
     return
 }

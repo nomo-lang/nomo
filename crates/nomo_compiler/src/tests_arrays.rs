@@ -2,9 +2,9 @@ use super::*;
 
 #[test]
 fn infers_nested_array_literals_and_lowers_index_paths() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let values = [1, 2, 3]
     let mut matrix = [[1, 2], [3, 4]]
     let first: i32 = values[0]
@@ -47,7 +47,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_contextual_empty_array_literal() {
-    let source = "package app.main\nimport std.array\nfn main() -> void {\n    let values: Array<i32> = []\n}\n";
+    let source = "package app\nimport std.array\nfn main() {\n    let values: Array<i32> = []\n}\n";
     let program = parse_inline(source).unwrap();
     let main = program.functions.iter().find(|f| f.name == "main").unwrap();
     assert!(matches!(
@@ -65,7 +65,7 @@ fn accepts_contextual_empty_array_literal() {
 
 #[test]
 fn rejects_untyped_empty_array_literal() {
-    let source = "package app.main\nfn main() -> void {\n    let values = []\n}\n";
+    let source = "package app\nfn main() {\n    let values = []\n}\n";
     let error = parse_inline(source).unwrap_err();
     assert_eq!(error.code, "E0860");
     assert!(error.message.contains("Array<T>"));
@@ -73,7 +73,7 @@ fn rejects_untyped_empty_array_literal() {
 
 #[test]
 fn rejects_mixed_array_literal_elements_without_coercion() {
-    let source = "package app.main\nfn main() -> void {\n    let values = [1, 2 as i64]\n}\n";
+    let source = "package app\nfn main() {\n    let values = [1, 2 as i64]\n}\n";
     let error = parse_inline(source).unwrap_err();
     assert_eq!(error.code, "E0861");
     assert!(error.message.contains("array element 1"));
@@ -83,7 +83,7 @@ fn rejects_mixed_array_literal_elements_without_coercion() {
 
 #[test]
 fn rejects_non_u64_array_index() {
-    let source = "package app.main\nfn main() -> void {\n    let values = [1]\n    let value = values[-1]\n}\n";
+    let source = "package app\nfn main() {\n    let values = [1]\n    let value = values[-1]\n}\n";
     let error = parse_inline(source).unwrap_err();
     assert_eq!(error.code, "E0404");
     assert!(error.message.contains("u64"));
@@ -91,8 +91,7 @@ fn rejects_non_u64_array_index() {
 
 #[test]
 fn rejects_index_assignment_through_immutable_root() {
-    let source =
-        "package app.main\nfn main() -> void {\n    let values = [1]\n    values[0] = 2\n}\n";
+    let source = "package app\nfn main() {\n    let values = [1]\n    values[0] = 2\n}\n";
     let error = parse_inline(source).unwrap_err();
     assert_eq!(error.code, "E0864");
     assert!(error.message.contains("values"));
@@ -100,12 +99,12 @@ fn rejects_index_assignment_through_immutable_root() {
 
 #[test]
 fn accepts_string_array_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<string> = Array.new<string>()
     items.push("first")
     items.push("second")
@@ -167,12 +166,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_i32_array_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     items.push(2)
@@ -228,11 +227,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_extended_array_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     items.insert(1, 2)
@@ -300,12 +299,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_array_iter_method() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     let snapshot: Array<i32> = items.iter()
@@ -346,11 +345,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_mutating_array_method_on_immutable_variable() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
-fn main() -> void {
+fn main() {
     let items: Array<i32> = Array.new<i32>()
     items.push(1)
 }
@@ -363,7 +362,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_struct_array_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
@@ -373,7 +372,7 @@ struct Point {
     y: i32
 }
 
-fn main() -> void {
+fn main() {
     let mut points: Array<Point> = Array.new<Point>()
     points.push(Point { x: 3, y: 4 })
     let first: Option<Point> = points.get(0)
@@ -430,13 +429,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_enum_array_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 import std.option
 
-fn main() -> void {
+fn main() {
     let mut values: Array<Option<i32>> = Array.new<Option<i32>>()
     values.push(Option.Some(7))
     values.push(Option.None)
@@ -497,12 +496,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_arrays_for_all_v0_1_primitive_elements() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut strings: Array<string> = Array.new<string>()
     strings.push("nomo")
     let mut ints: Array<i64> = Array.new<i64>()
@@ -556,25 +555,25 @@ fn main() -> void {
 #[test]
 fn rejects_array_void_in_type_positions_before_codegen() {
     for source in [
-        r#"package app.main
+        r#"package app
 
 import std.array
 
-fn main() -> void {
+fn main() {
     let values: Array<void> = Array.new<void>()
 }
 "#,
-        r#"package app.main
+        r#"package app
 
 import std.array
 
-fn bad(values: Array<void>) -> void {
+fn bad(values: Array<void>) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
-        r#"package app.main
+        r#"package app
 
 import std.array
 
@@ -582,10 +581,10 @@ fn bad() -> Array<void> {
     return Array.new<void>()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
-        r#"package app.main
+        r#"package app
 
 import std.array
 
@@ -593,10 +592,10 @@ struct Bad {
     values: Array<void>
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
-        r#"package app.main
+        r#"package app
 
 import std.array
 
@@ -604,7 +603,7 @@ enum Bad {
     Values(Array<void>)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
     ] {
@@ -616,7 +615,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_generic_array_type_positions_before_instantiation() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
@@ -628,7 +627,7 @@ fn id<T>(values: Array<T>) -> Array<T> {
     return values
 }
 
-fn main() -> void {
+fn main() {
     let values: Array<i32> = Array.new<i32>()
     let copy: Array<i32> = id<i32>(values)
 }
@@ -646,13 +645,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_array_new_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.new
 import std.array.Array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = new<i32>()
     items.push(7)
     let first: Option<i32> = items.get(0)
@@ -685,7 +684,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_array_method_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.env.args
 import std.array.Array
@@ -699,7 +698,7 @@ import std.array.push
 import std.array.remove
 import std.array.set
 
-fn main() -> void {
+fn main() {
     let mut values = args()
     values.push("extra")
     values.insert(1, "middle")
@@ -808,12 +807,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_unqualified_array_new_without_specific_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = new<i32>()
     io.println("done")
 }
@@ -826,11 +825,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_array_method_without_array_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.new
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = new<i32>()
     items.push(1)
 }

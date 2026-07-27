@@ -350,8 +350,6 @@ pub(super) fn is_supported_import(import: &str, external_import_roots: &[String]
         || is_supported_external_import(import, external_import_roots)
 }
 pub(super) fn is_supported_external_import(import: &str, external_import_roots: &[String]) -> bool {
-    let Some((root, _rest)) = import.split_once('.') else {
-        return false;
-    };
+    let root = import.split('.').next().unwrap_or_default();
     root != "std" && external_import_roots.iter().any(|alias| alias == root)
 }

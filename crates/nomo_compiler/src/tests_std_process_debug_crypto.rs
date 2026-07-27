@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn accepts_process_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 import std.result
@@ -17,11 +17,11 @@ fn run() -> Result<string, ProcessError> {
     return process.exec("printf process-ok")
 }
 
-fn quit() -> void {
+fn quit() {
     process.exit(0)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -80,7 +80,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_process_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process.exec
 import std.process.output
@@ -98,7 +98,7 @@ fn run() -> Result<string, ProcessError> {
     return exec("printf process-ok")
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -138,7 +138,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_controlled_process_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.process
 
@@ -166,11 +166,11 @@ fn stop(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
     return process.terminate_blocking(child)
 }
 
-fn close(child: BlockingProcessChild) -> void {
+fn close(child: BlockingProcessChild) {
     process.close_child_blocking(child)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -218,7 +218,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_testing_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.testing
@@ -227,7 +227,7 @@ fn fail() -> Result<i64, string> {
     return Err("boom")
 }
 
-fn main() -> void {
+fn main() {
     testing.assert(true, "expected true")
     testing.assert_equal(1, 1)
     testing.assert_equal("same", "same")
@@ -258,7 +258,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_testing_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 import std.testing.assert
@@ -269,7 +269,7 @@ fn fail() -> Result<i64, string> {
     return Err("boom")
 }
 
-fn main() -> void {
+fn main() {
     assert(true, "expected true")
     assert_equal('n', 'n')
     assert_error(fail())
@@ -288,11 +288,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_testing_assert_non_bool_condition() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.testing
 
-fn main() -> void {
+fn main() {
     testing.assert("nope", "expected bool")
 }
 "#;
@@ -304,11 +304,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_testing_assert_error_non_result() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.testing
 
-fn main() -> void {
+fn main() {
     testing.assert_error(1)
 }
 "#;
@@ -320,15 +320,15 @@ fn main() -> void {
 
 #[test]
 fn accepts_debug_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.debug
 
-fn crash() -> void {
+fn crash() {
     debug.panic("boom")
 }
 
-fn main() -> void {
+fn main() {
     debug.print("debug-")
     debug.println("ok")
     let trace: string = debug.backtrace()
@@ -363,11 +363,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_debug_backtrace_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.debug.backtrace
 
-fn main() -> void {
+fn main() {
     let trace: string = backtrace()
 }
 "#;
@@ -385,11 +385,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_debug_print_non_string_message() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.debug
 
-fn main() -> void {
+fn main() {
     debug.println(1)
 }
 "#;
@@ -401,11 +401,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_log_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.log
 
-fn main() -> void {
+fn main() {
     log.debug("hidden")
     log.info("hello")
     log.warn("careful")
@@ -434,12 +434,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_log_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.log.enabled
 import std.log.info
 
-fn main() -> void {
+fn main() {
     info("hello")
     let enabled: bool = enabled("info")
 }
@@ -463,11 +463,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_log_non_string_message() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.log
 
-fn main() -> void {
+fn main() {
     log.info(1)
 }
 "#;
@@ -479,12 +479,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_hash_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.hash
 import std.array.Array
 
-fn main() -> void {
+fn main() {
     let mut bytes: Array<u32> = Array.new<u32>()
     bytes.push(110 as u32)
     bytes.push(111 as u32)
@@ -562,7 +562,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_hash_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.hash.HashState
 import std.array.Array
@@ -573,7 +573,7 @@ import std.hash.string
 import std.hash.write_bytes
 import std.hash.write_string
 
-fn main() -> void {
+fn main() {
     let mut data: Array<u32> = Array.new<u32>()
     data.push(1 as u32)
     let direct: u64 = string("nomo")
@@ -640,11 +640,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_hash_non_string_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.hash
 
-fn main() -> void {
+fn main() {
     let value: u64 = hash.string(1)
 }
 "#;
@@ -656,11 +656,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_hash_bytes_non_array_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.hash
 
-fn main() -> void {
+fn main() {
     let value: u64 = hash.bytes("nomo")
 }
 "#;
@@ -672,12 +672,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_crypto_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.crypto
 import std.array.Array
 
-fn main() -> void {
+fn main() {
     let sha256: string = crypto.sha256("nomo")
     let sha512: string = crypto.sha512("nomo")
     let bytes: Array<u32> = crypto.random_bytes(4 as u64)
@@ -714,14 +714,14 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_crypto_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.crypto.sha256
 import std.crypto.sha512
 import std.crypto.random_bytes
 import std.array.Array
 
-fn main() -> void {
+fn main() {
     let left: string = sha256("nomo")
     let right: string = sha512("nomo")
     let bytes: Array<u32> = random_bytes(4 as u64)
@@ -755,11 +755,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_crypto_non_string_value() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.crypto
 
-fn main() -> void {
+fn main() {
     let value: string = crypto.sha256(1)
 }
 "#;
@@ -771,12 +771,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_crypto_random_bytes_non_u64_count() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.crypto
 import std.array.Array
 
-fn main() -> void {
+fn main() {
     let value: Array<u32> = crypto.random_bytes("four")
 }
 "#;

@@ -410,7 +410,7 @@ mod tests {
         let root = temp_root("idempotent");
         write_project(
             &root,
-            "package app.main\n\nimport app.remote\n\nfn main() -> void {\n}\n",
+            "package app.main\n\nimport app.remote\n\nfn main() {\n}\n",
             "package app.math\n\nfn value() -> i64 {\n    return 1\n}\n",
         );
         let required = migrate_project_module_roots(&root, true).unwrap_err();
@@ -457,7 +457,7 @@ mod tests {
         let root = temp_root("atomic");
         write_project(
             &root,
-            "package app.main\n\nfn main() -> void {\n}\n",
+            "package app.main\n\nfn main() {\n}\n",
             "package app.math\n\nfn broken(\n",
         );
         let before = fs::read_to_string(root.join("src/main.nomo")).unwrap();
@@ -474,7 +474,7 @@ mod tests {
         let root = temp_root("crlf");
         write_project(
             &root,
-            "package app.main\r\n\r\nimport app.remote\r\n\r\nfn main() -> void {\r\n}\r\n",
+            "package app.main\r\n\r\nimport app.remote\r\n\r\nfn main() {\r\n}\r\n",
             "package app.math\r\n\r\nfn value() -> i64 {\r\n    return 1\r\n}\r\n",
         );
         migrate_project_module_roots(&root, false).unwrap();
@@ -502,7 +502,7 @@ mod tests {
         .unwrap();
         fs::write(
             consumer.join("src/main.nomo"),
-            "package app.main\n\nimport utils.math\n\nfn main() -> void {\n}\n",
+            "package app.main\n\nimport utils.math\n\nfn main() {\n}\n",
         )
         .unwrap();
         fs::write(

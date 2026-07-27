@@ -407,7 +407,7 @@ mod tests {
 
     #[test]
     fn standard_library_symbols_use_canonical_source_files() {
-        let source = "package app.main\n\nimport std.array\nimport std.string.split\n\nfn main() -> void {\n}\n";
+        let source = "package app\n\nimport std.array\nimport std.string.split\n\nfn main() {\n}\n";
         let symbols = standard_library_symbols_for_imports(Path::new("main.nomo"), source).unwrap();
         let array = symbols
             .iter()
@@ -425,7 +425,7 @@ mod tests {
 
     #[test]
     fn sqlite_symbols_use_canonical_source_for_editor_navigation() {
-        let source = "package app.main\n\nimport std.sqlite\n\nfn main() -> void {\n}\n";
+        let source = "package app\n\nimport std.sqlite\n\nfn main() {\n}\n";
         let symbols = standard_library_symbols_for_imports(Path::new("main.nomo"), source).unwrap();
         let database = symbols
             .iter()
@@ -445,7 +445,7 @@ mod tests {
 
     #[test]
     fn symbols_include_signatures_docs_and_ranges() {
-        let source = "package app.main\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
+        let source = "package app\n\n/// Adds numbers.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nstruct User {\n    /// User email address.\n    pub email: string\n}\n\nenum Status {\n    /// Ready state.\n    Ready\n    /// Done state.\n    Done(i32)\n}\n\n/// Displayable values.\npub interface Display {\n    /// Converts to text.\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    /// Writes a C string.\n    fn puts(message: CString) -> i32\n}\n\nimpl User {\n    pub fn email(self) -> string {\n        return self.email\n    }\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -557,7 +557,7 @@ mod tests {
 
     #[test]
     fn symbols_keep_nested_block_doc_comments() {
-        let source = "package app.main\n\n/**\n * Outer docs.\n * /* Nested docs. */\n * Still outer.\n */\npub fn nested() -> void {\n}\n";
+        let source = "package app\n\n/**\n * Outer docs.\n * /* Nested docs. */\n * Still outer.\n */\npub fn nested() {\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
@@ -571,7 +571,7 @@ mod tests {
 
     #[test]
     fn symbols_preserve_generic_interface_bounds() {
-        let source = "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\n/// Renders a display value.\npub fn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n";
+        let source = "package app\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\n/// Renders a display value.\npub fn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n";
 
         let symbols = symbols_for_text(Path::new("main.nomo"), source).unwrap();
         let render = symbols
@@ -588,7 +588,7 @@ mod tests {
 
     #[test]
     fn definition_returns_declaration_range() {
-        let source = "package app.main\n\nfn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n";
+        let source = "package app\n\nfn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n";
 
         let definition = definition_for_text(
             Path::new("main.nomo"),
@@ -618,7 +618,7 @@ mod tests {
 
     #[test]
     fn definition_returns_field_declaration_range() {
-        let source = "package app.main\n\nstruct User {\n    email: string\n}\n\nfn main() -> void {\n    let user: User = User { email: \"hi\" }\n}\n";
+        let source = "package app\n\nstruct User {\n    email: string\n}\n\nfn main() {\n    let user: User = User { email: \"hi\" }\n}\n";
 
         let definition = definition_for_text(
             Path::new("main.nomo"),
@@ -648,7 +648,7 @@ mod tests {
 
     #[test]
     fn standalone_definition_resolves_ambiguous_fields_by_receiver_type() {
-        let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
+        let source = "package app\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(user: User) -> string {\n    return user.name\n}\n";
 
         let definition = definition_for_text(
             Path::new("main.nomo"),
@@ -667,7 +667,7 @@ mod tests {
 
     #[test]
     fn definition_returns_enum_variant_declaration_range() {
-        let source = "package app.main\n\nenum Status {\n    Ok\n    Err(string)\n}\n\nfn main() -> void {\n    let status: Status = Status.Err(\"bad\")\n}\n";
+        let source = "package app\n\nenum Status {\n    Ok\n    Err(string)\n}\n\nfn main() {\n    let status: Status = Status.Err(\"bad\")\n}\n";
 
         let definition = definition_for_text(
             Path::new("main.nomo"),
@@ -697,7 +697,7 @@ mod tests {
 
     #[test]
     fn references_can_exclude_declaration() {
-        let source = "package app.main\n\nstruct User {\n    email: string\n}\n\nfn main() -> void {\n    let user: User = User { email: \"hi\" }\n}\n";
+        let source = "package app\n\nstruct User {\n    email: string\n}\n\nfn main() {\n    let user: User = User { email: \"hi\" }\n}\n";
 
         let references = references_for_text(
             Path::new("main.nomo"),
@@ -745,7 +745,7 @@ mod tests {
         let math = project.root.join("src/math.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package app\n\nimport app.math\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
         write_source(
             &math,
@@ -790,7 +790,7 @@ mod tests {
         let zeta = project.root.join("src/zeta.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.zeta\n\nfn main() -> void {\n    let total: i64 = calculate()\n}\n",
+            "package app\n\nimport app.zeta\n\nfn main() {\n    let total: i64 = calculate()\n}\n",
         );
         write_source(
             &alpha,
@@ -844,7 +844,7 @@ mod tests {
         .unwrap();
         let main = project_root.join("src/main.nomo");
         let dep_module = dependency_root.join("src/path.nomo");
-        let main_source = "package app.main\n\nimport local_utils.path\n\nfn main() -> void {\n    let total: i64 = join(1, 2)\n}\n";
+        let main_source = "package hello\n\nimport local_utils.path\n\nfn main() {\n    let total: i64 = join(1, 2)\n}\n";
         write_source(&main, main_source);
         write_source(
             &dep_module,
@@ -891,7 +891,7 @@ mod tests {
         let missing_private = symbol_at_project_position(
             &project,
             &main,
-            "package app.main\n\nimport local_utils.path\n\nfn main() -> void {\n    let total: i64 = hidden()\n}\n",
+            "package hello\n\nimport local_utils.path\n\nfn main() {\n    let total: i64 = hidden()\n}\n",
             TextPosition {
                 line: 5,
                 character: 23,
@@ -926,7 +926,7 @@ mod tests {
             "[package]\nnamespace = \"fynn\"\nname = \"utils\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         )
         .unwrap();
-        write_source(&project_root.join("src/main.nomo"), "package app.main\n");
+        write_source(&project_root.join("src/main.nomo"), "package app\n");
         write_source(
             &dependency_root.join("src/path.nomo"),
             "package local_utils.path\n\npub struct PathInfo {\n    pub name: string\n    hidden: string\n}\n\npub fn join(a: string, b: string) -> string {\n    return a\n}\n\nfn hidden() -> string {\n    return \"hidden\"\n}\n",
@@ -959,7 +959,7 @@ mod tests {
         let math = project.root.join("src/math.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package app\n\nimport app.math\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
         write_source(
             &math,
@@ -1019,7 +1019,7 @@ mod tests {
         let other = project.root.join("src/other.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.math\n\nfn consume(add: i64) -> i64 {\n    return add\n}\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package app\n\nimport app.math\n\nfn consume(add: i64) -> i64 {\n    return add\n}\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
         write_source(
             &math,
@@ -1062,7 +1062,7 @@ mod tests {
         let broken = project.root.join("src/broken.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package app\n\nimport app.math\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
         write_source(
             &math,
@@ -1093,7 +1093,8 @@ mod tests {
     fn project_navigation_resolves_local_binding_identity() {
         let project = test_project("semantic_local_binding_navigation");
         let main = project.root.join("src/main.nomo");
-        let source = "package app.main\n\nfn main() -> void {\n    let value: i64 = 1\n    io.println(value)\n}\n";
+        let source =
+            "package app\n\nfn main() {\n    let value: i64 = 1\n    io.println(value)\n}\n";
         write_source(&main, source);
 
         let definition = definition_for_project_text(
@@ -1132,7 +1133,7 @@ mod tests {
     fn project_navigation_resolves_fields_and_methods_by_receiver_type() {
         let project = test_project("semantic_receiver_type_navigation");
         let main = project.root.join("src/main.nomo");
-        let source = "package app.main\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user = User { name: \"Ada\" }\n    let team: Team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
+        let source = "package app\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nimpl User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user = User { name: \"Ada\" }\n    let team: Team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
         write_source(&main, source);
 
         let user_field = definition_for_project_text(
@@ -1231,8 +1232,8 @@ mod tests {
         let project = test_project("semantic_cross_module_receiver_type");
         let main = project.root.join("src/main.nomo");
         let models = project.root.join("src/models.nomo");
-        let main_source = "package main\n\nimport main.models\n\nstruct Team {\n    name: string\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user = User { name: \"Ada\" }\n    let team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
-        let models_source = "package main.models\n\npub struct User {\n    pub name: string\n}\n\nimpl User {\n    pub fn label(self) -> string {\n        return self.name\n    }\n}\n";
+        let main_source = "package app\n\nimport app.models\n\nstruct Team {\n    name: string\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user = User { name: \"Ada\" }\n    let team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
+        let models_source = "package app.models\n\npub struct User {\n    pub name: string\n}\n\nimpl User {\n    pub fn label(self) -> string {\n        return self.name\n    }\n}\n";
         write_source(&main, main_source);
         write_source(&models, models_source);
 
@@ -1286,7 +1287,7 @@ mod tests {
     fn project_navigation_resolves_pattern_binding_member_types() {
         let project = test_project("semantic_pattern_receiver_type");
         let main = project.root.join("src/main.nomo");
-        let source = "package app.main\n\nimport std.option\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(maybe: Option<User>) -> string {\n    let Some(user) = maybe else {\n        panic(\"missing\")\n    }\n    return user.name\n}\n\nfn main() -> void {\n}\n";
+        let source = "package app\n\nimport std.option\n\nstruct User {\n    name: string\n}\n\nstruct Team {\n    name: string\n}\n\nfn read(maybe: Option<User>) -> string {\n    let Some(user) = maybe else {\n        panic(\"missing\")\n    }\n    return user.name\n}\n\nfn main() {\n}\n";
         write_source(&main, source);
 
         let definition = definition_for_project_text(
@@ -1322,7 +1323,7 @@ mod tests {
     fn project_navigation_resolves_constrained_generic_methods_to_the_interface() {
         let project = test_project("semantic_interface_receiver_type");
         let main = project.root.join("src/main.nomo");
-        let source = "package app.main\n\ninterface Display {\n    fn label(self) -> string\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.label()\n}\n\nfn main() -> void {\n}\n";
+        let source = "package app\n\ninterface Display {\n    fn label(self) -> string\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.label()\n}\n\nfn main() {\n}\n";
         write_source(&main, source);
 
         let definition = definition_for_project_text(
@@ -1361,7 +1362,7 @@ mod tests {
         let math = project.root.join("src/math.nomo");
         write_source(
             &main,
-            "package app.main\n\nimport app.math\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package app\n\nimport app.math\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
         write_source(
             &math,
@@ -1420,13 +1421,13 @@ mod tests {
         let cli_main = cli.join("src/main.nomo");
         write_source(
             &core_main,
-            "package core.main\n\npub fn sub(a: i64, b: i64) -> i64 {\n    return a - b\n}\n\nfn main() -> void {\n}\n",
+            "package core\n\npub fn sub(a: i64, b: i64) -> i64 {\n    return a - b\n}\n\nfn main() {\n}\n",
         );
         write_source(
             &cli_main,
-            "package cli.main\n\nimport core.main\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n",
+            "package cli\n\nimport core\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n",
         );
-        let core_overlay = "package core.main\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() -> void {\n}\n";
+        let core_overlay = "package core\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n\nfn main() {\n}\n";
         let project = crate::project::discover_project(&core_main).unwrap();
         let workspace = crate::project::discover_workspace(&core_main).unwrap();
 
@@ -1490,11 +1491,12 @@ mod tests {
         .unwrap();
         let app_main = app.join("src/main.nomo");
         let external_main = external.join("src/main.nomo");
-        let app_source = "package app.main\n\nimport external.main\n\nfn main() -> void {\n    let total: i64 = add(1, 2)\n}\n";
+        let app_source =
+            "package app\n\nimport external\n\nfn main() {\n    let total: i64 = add(1, 2)\n}\n";
         write_source(&app_main, app_source);
         write_source(
             &external_main,
-            "package external.main\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+            "package external\n\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
         );
         let project = crate::project::discover_project(&app_main).unwrap();
         let workspace = crate::project::discover_workspace(&app_main).unwrap();
@@ -1528,14 +1530,14 @@ mod tests {
         fs::create_dir_all(root.join("src")).unwrap();
         fs::write(
             root.join("nomo.toml"),
-            "[package]\nnamespace = \"app\"\nname = \"main\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+            "[package]\nnamespace = \"app\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         )
         .unwrap();
         Project {
             main: root.join("src/main.nomo"),
             root,
-            name: "main".to_string(),
-            module_root: "main".to_string(),
+            name: "app".to_string(),
+            module_root: "app".to_string(),
             workspace_root: None,
         }
     }

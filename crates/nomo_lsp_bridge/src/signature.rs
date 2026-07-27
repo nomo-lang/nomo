@@ -223,7 +223,7 @@ mod tests {
 
     #[test]
     fn renders_suspend_effect_in_semantic_signatures() {
-        let source = "package app.main\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+        let source = "package app\n\npub interface Loader {\n    suspend fn load(self) -> string\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
         let symbols = crate::symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
         let method = symbols.iter().find(|symbol| symbol.name == "load").unwrap();
@@ -238,7 +238,7 @@ mod tests {
 
     #[test]
     fn semantic_signatures_omit_declaration_void_but_keep_callable_void() {
-        let source = "package app.main\n\npub interface Sink {\n    fn close(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64) -> void\n}\n\npub fn run(callback: task fn(string) -> void) -> void {\n}\n\npub suspend fn flush() -> void {\n}\n";
+        let source = "package app\n\npub interface Sink {\n    fn close(self)\n}\n\nextern \"C\" {\n    fn release(handle: i64)\n}\n\npub fn run(callback: task fn(string) -> void) {\n}\n\npub suspend fn flush() {\n}\n";
         let symbols = crate::symbols_for_text(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(

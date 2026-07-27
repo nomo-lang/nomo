@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn accepts_struct_literal_and_field_access() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -15,7 +15,7 @@ fn sum(point: Point) -> i64 {
     return point.x + point.y
 }
 
-fn main() -> void {
+fn main() {
     let point: Point = Point { x: 40, y: 2 }
     let answer: i64 = sum(point)
     io.println("done")
@@ -38,7 +38,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_generic_struct_literal_and_field_access() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -46,7 +46,7 @@ struct Box<T> {
     value: T
 }
 
-fn main() -> void {
+fn main() {
     let item: Box<i32> = Box { value: 7 }
     let value: i32 = item.value
     io.println("done")
@@ -81,13 +81,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_direct_recursive_struct_value_field() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Node {
     next: Node
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -99,7 +99,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_recursive_struct_through_option_payload() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 
@@ -107,7 +107,7 @@ struct Node {
     next: Option<Node>
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -119,7 +119,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_recursive_struct_behind_array_boundary() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
@@ -127,7 +127,7 @@ struct Node {
     children: Array<Node>
 }
 
-fn main() -> void {
+fn main() {
     let children: Array<Node> = Array.new<Node>()
     let node: Node = Node { children: children }
 }
@@ -143,7 +143,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_generic_struct_literal_without_type_annotation() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -151,7 +151,7 @@ struct Box<T> {
     value: T
 }
 
-fn main() -> void {
+fn main() {
     let item = Box { value: 7 }
     io.println("done")
 }
@@ -163,7 +163,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_impl_method_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -177,7 +177,7 @@ impl User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { email: "a@nomo.dev" }
     let email: string = user.get_email()
     io.println(email)
@@ -211,7 +211,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_interface_impl_when_methods_match() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -229,7 +229,7 @@ impl Display for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "ok" }
     io.println(user.to_string())
 }
@@ -246,7 +246,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_constrained_generic_static_dispatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Display {
     fn to_string(self) -> string
@@ -266,7 +266,7 @@ fn render<T: Display>(value: T) -> string {
     return value.to_string()
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "bounded" }
     let label: string = render<User>(user)
 }
@@ -290,7 +290,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_constrained_generic_type_without_interface_impl() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Display {
     fn to_string(self) -> string
@@ -304,7 +304,7 @@ fn render<T: Display>(value: T) -> string {
     return "unused"
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "missing" }
     let label: string = render<User>(user)
 }
@@ -323,13 +323,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_unknown_constrained_generic_interface() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn render<T: Display>(value: T) -> T {
     return value
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -341,7 +341,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_concrete_method_outside_generic_interface_bound() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Display {
     fn to_string(self) -> string
@@ -367,7 +367,7 @@ fn render<T: Display>(value: T) -> string {
     return value.secret()
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "private ability" }
     let label: string = render<User>(user)
 }
@@ -382,13 +382,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_extern_c_primitive_call_inside_unsafe() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn abs(value: i32) -> i32
 }
 
-fn main() -> void {
+fn main() {
     unsafe {
         let value: i32 = abs(-7)
     }
@@ -413,13 +413,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_extern_c_call_outside_unsafe() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn abs(value: i32) -> i32
 }
 
-fn main() -> void {
+fn main() {
     let value: i32 = abs(-7)
 }
 "#;
@@ -434,7 +434,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_interface_impl_missing_method() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Display {
     fn to_string(self) -> string
@@ -447,7 +447,7 @@ struct User {
 impl Display for User {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -458,7 +458,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_interface_impl_return_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 interface Display {
     fn to_string(self) -> string
@@ -474,7 +474,7 @@ impl Display for User {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -486,7 +486,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_impl_for_unknown_interface() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct User {
     name: string
@@ -498,7 +498,7 @@ impl Display for User {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -519,7 +519,7 @@ fn accepts_imported_public_interface_impl() {
     )
     .unwrap();
     let main = src.join("main.nomo");
-    let source = r#"package app.main
+    let source = r#"package app
 
 import app.display
 import std.io
@@ -534,7 +534,7 @@ impl Display for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "ok" }
     io.println(user.to_string())
 }
@@ -553,7 +553,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_mut_impl_method_receiver_call() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -562,12 +562,12 @@ struct User {
 }
 
 impl User {
-    pub fn set_email(mut self, email: string) -> void {
+    pub fn set_email(mut self, email: string) {
         self.email = email
     }
 }
 
-fn main() -> void {
+fn main() {
     let mut user: User = User { email: "old@nomo.dev" }
     user.set_email("new@nomo.dev")
     io.println(user.email)
@@ -597,23 +597,23 @@ fn main() -> void {
 
 #[test]
 fn rejects_mut_impl_method_receiver_on_immutable_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Counter {
     value: i32
 }
 
 impl Counter {
-    pub fn bump(mut self) -> void {
+    pub fn bump(mut self) {
         self.value = self.value + 1
     }
 }
 
-fn touch(counter: Counter) -> void {
+fn touch(counter: Counter) {
     counter.bump()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -628,18 +628,18 @@ fn main() -> void {
 
 #[test]
 fn rejects_duplicate_mut_borrow_between_receiver_and_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Counter {
     value: i32
 }
 
 impl Counter {
-    pub fn absorb(mut self, mut other: Counter) -> void {
+    pub fn absorb(mut self, mut other: Counter) {
     }
 }
 
-fn main() -> void {
+fn main() {
     let mut counter: Counter = Counter { value: 1 }
     counter.absorb(mut counter)
 }
@@ -652,7 +652,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_impl_for_non_local_std_struct() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 import std.io
@@ -663,7 +663,7 @@ impl File {
     }
 }
 
-fn main() -> void {
+fn main() {
     io.println("done")
 }
 "#;
@@ -677,7 +677,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_struct_and_enum_with_same_name() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Status {
     code: i32
@@ -687,7 +687,7 @@ enum Status {
     Ok
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -699,7 +699,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_user_type_conflicting_with_imported_std_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 
@@ -707,7 +707,7 @@ struct Result {
     value: i32
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -719,7 +719,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_user_enum_conflicting_with_required_std_result() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 
@@ -727,7 +727,7 @@ enum Result {
     Local
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -740,7 +740,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_user_enum_conflicting_with_required_std_option() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 
@@ -748,7 +748,7 @@ enum Option {
     Local
 }
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
 }
@@ -763,7 +763,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_user_struct_conflicting_with_required_std_fs_error() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 
@@ -771,7 +771,7 @@ struct FsError {
     code: i32
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -784,7 +784,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_pub_declarations_as_visibility_metadata() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -805,7 +805,7 @@ pub fn label(color: Color) -> string {
     }
 }
 
-pub fn main() -> void {
+pub fn main() {
     let user: User = User { id: "42", email: "a@nomo.dev" }
     let color: Color = Color.Red
     let text: string = label(color)
@@ -826,7 +826,7 @@ pub fn main() -> void {
 
 #[test]
 fn rejects_struct_literal_field_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -835,7 +835,7 @@ struct Point {
     y: i64
 }
 
-fn main() -> void {
+fn main() {
     let point: Point = Point { x: "bad", y: 2 }
     io.println("done")
 }
@@ -847,7 +847,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_unknown_struct_field_access() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -856,7 +856,7 @@ struct Point {
     y: i64
 }
 
-fn main() -> void {
+fn main() {
     let point: Point = Point { x: 1, y: 2 }
     let z: i64 = point.z
     io.println("done")

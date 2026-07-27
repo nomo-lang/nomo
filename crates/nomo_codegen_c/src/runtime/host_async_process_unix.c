@@ -2624,6 +2624,23 @@ static int nomo_async_process_event_arm(
         }
         registration->io_count += 1u;
     }
+    /*
+     * A Darwin child can exit after the WNOHANG probe in event_progress but
+     * before EVFILT_PROC is installed. kqueue accepts that registration for a
+     * zombie without necessarily delivering the already-completed edge. Probe
+     * once more after registration so the caller can consume buffered output
+     * and the exit event immediately instead of waiting for the timeout.
+     *
+     * The same check is harmless for pidfd-backed Linux and also closes the
+     * equivalent registration race there.
+     */
+    if (exit_handle >= 0) {
+        nomo_async_process_update_exit(state);
+        if (state->exited != 0u) {
+            nomo_async_process_registration_finish(registration);
+            return 3;
+        }
+    }
     nomo_async_poll timer_status = nomo_async_timer_start(
         &registration->timer,
         timeout_millis,
@@ -2729,6 +2746,23 @@ static nomo_async_poll nomo_async_process_event_start(
         state,
         (int64_t)timeout_millis
     );
+    if (armed == 3) {
+        if (nomo_async_process_event_progress(
+                runtime,
+                state,
+                max_chunk_bytes,
+                result
+            ) == 0) {
+            nomo_async_process_event_release(registration);
+            registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
+            return NOMO_ASYNC_POLL_READY;
+        }
+        armed = nomo_async_process_event_arm(
+            registration,
+            state,
+            (int64_t)timeout_millis
+        );
+    }
     if (armed != 0) {
         nomo_async_process_event_release(registration);
         nomo_async_process_event_error(
@@ -2772,6 +2806,18 @@ static nomo_async_poll nomo_async_process_event_resume(
         nomo_async_process_registration_finish(registration);
         int64_t now = nomo_time_monotonic_millis();
         if (now >= registration->deadline_millis) {
+            if (state->occupied == 1u
+                && state->generation == registration->handle_generation
+                && nomo_async_process_event_progress(
+                    runtime,
+                    state,
+                    registration->max_chunk_bytes,
+                    result
+                ) == 0) {
+                nomo_async_process_event_release(registration);
+                registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
+                return NOMO_ASYNC_POLL_READY;
+            }
             nomo_async_process_event_release(registration);
             nomo_async_process_event_error(
                 result,
@@ -2830,6 +2876,23 @@ static nomo_async_poll nomo_async_process_event_resume(
         state,
         remaining
     );
+    if (armed == 3) {
+        if (nomo_async_process_event_progress(
+                runtime,
+                state,
+                registration->max_chunk_bytes,
+                result
+            ) == 0) {
+            nomo_async_process_event_release(registration);
+            registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
+            return NOMO_ASYNC_POLL_READY;
+        }
+        armed = nomo_async_process_event_arm(
+            registration,
+            state,
+            remaining
+        );
+    }
     if (armed != 0) {
         nomo_async_process_event_release(registration);
         nomo_async_process_event_error(

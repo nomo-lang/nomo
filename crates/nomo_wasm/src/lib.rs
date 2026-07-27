@@ -279,7 +279,7 @@ mod tests {
 
     #[test]
     fn runs_functions_bindings_and_a_bounded_loop() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.num
@@ -288,7 +288,7 @@ fn greeting() -> string {
     return "Hello, WASM"
 }
 
-fn main() -> void {
+fn main() {
     let message: string = greeting()
     let mut i: u64 = 0
     for i < 3 {
@@ -310,7 +310,7 @@ fn main() -> void {
 
     #[test]
     fn runs_three_clause_loop_with_ui64_alias_and_multi_argument_println() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 
@@ -318,7 +318,7 @@ fn greeting() -> string {
     return "Hello, final audit"
 }
 
-fn main() -> void {
+fn main() {
     let message = greeting()
     for let i: ui64 = 0; i < 3; i++ {
         io.println(message, i)
@@ -337,7 +337,7 @@ fn main() -> void {
 
     #[test]
     fn runs_the_p1_cooperative_yield_surface_in_the_browser_sandbox() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
@@ -349,7 +349,7 @@ suspend fn yield_once(result: string) -> string {
     return result
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     io.println("before")
     let result: string = yield_once("after")
     io.println(result)
@@ -368,7 +368,7 @@ suspend fn main() -> void {
 
     #[test]
     fn returns_timer_runtime_unavailable_without_evaluating_the_duration() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.result
@@ -379,7 +379,7 @@ fn duration() -> Duration {
     panic("browser-timer-duration-must-not-run")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let waited: Result<void, TaskError> = task.sleep(duration())
     io.println(result.is_err(waited))
 }
@@ -398,7 +398,7 @@ suspend fn main() -> void {
 
     #[test]
     fn returns_typed_tcp_unavailable_without_evaluating_connect_operands() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.net
@@ -416,7 +416,7 @@ fn timeout() -> u64 {
     panic("browser-tcp-timeout-secret")
 }
 
-fn report(result: Result<TcpStream, NetError>) -> void {
+fn report(result: Result<TcpStream, NetError>) {
     match result {
         Result.Ok(stream) => {
             stream.close()
@@ -432,7 +432,7 @@ fn report(result: Result<TcpStream, NetError>) -> void {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let connected: Result<TcpStream, NetError> = net.connect(host(), port(), timeout())
     report(connected)
 }
@@ -453,7 +453,7 @@ suspend fn main() -> void {
 
     #[test]
     fn returns_channel_constructor_runtime_unavailable_without_evaluating_capacity() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
@@ -469,7 +469,7 @@ fn created_code(result: Result<Channel<string>, ChannelError>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let created: Result<Channel<string>, ChannelError> = task.channel<string>(capacity())
     io.println(created_code(created))
 }
@@ -492,7 +492,7 @@ fn main() -> void {
             "task.close(unavailable_channel())",
         ] {
             let source = format!(
-                r#"package app.main
+                r#"package app
 
 import std.task
 
@@ -504,7 +504,7 @@ fn outgoing() -> string {{
     panic("browser-channel-value-secret")
 }}
 
-suspend fn main() -> void {{
+suspend fn main() {{
     {statement}
 }}
 "#
@@ -540,7 +540,7 @@ suspend fn main() -> void {{
 
     #[test]
     fn rejects_task_deadline_without_evaluating_duration_or_body() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
@@ -550,7 +550,7 @@ fn duration() -> Duration {
     panic("browser-deadline-duration-secret")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(duration()) {
         io.println("browser-deadline-body-secret")
     }
@@ -573,7 +573,7 @@ suspend fn main() -> void {
 
     #[test]
     fn rejects_static_select_without_evaluating_operands_or_arm_bodies() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
@@ -587,7 +587,7 @@ fn duration() -> Duration {
     panic("browser-select-duration-secret")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.select {
         task.receive(channel_value()) => received {
             io.println("browser-select-receive-body-secret")
@@ -616,7 +616,7 @@ suspend fn main() -> void {
 
     #[test]
     fn returns_structured_task_runtime_unavailable_without_invoking_the_child() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.result
@@ -635,7 +635,7 @@ suspend fn gather() -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let gathered: string = gather()
     io.println(gathered)
 }
@@ -650,16 +650,16 @@ suspend fn main() -> void {
 
     #[test]
     fn structured_scope_auto_cancel_does_not_invoke_browser_children() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn child(secret: string) -> void {
+suspend fn child(secret: string) {
     io.println(secret)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child_task = task.spawn child("browser-auto-cancel-secret")
     }
@@ -676,12 +676,12 @@ suspend fn main() -> void {
 
     #[test]
     fn structured_scope_return_cancels_browser_child_before_returning_value() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
 
-suspend fn child(secret: string) -> void {
+suspend fn child(secret: string) {
     io.println(secret)
 }
 
@@ -697,7 +697,7 @@ suspend fn finish(value: string) -> string {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: string = finish("browser returned")
     io.println(result)
 }
@@ -712,14 +712,14 @@ suspend fn main() -> void {
 
     #[test]
     fn structured_scope_question_propagation_cancels_browser_child_before_returning_error() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.num
 import std.result
 import std.task
 
-suspend fn child(secret: string) -> void {
+suspend fn child(secret: string) {
     io.println(secret)
 }
 
@@ -731,7 +731,7 @@ suspend fn finish() -> Result<void, NumError> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let outcome: Result<void, NumError> = finish()
     io.println(result.is_err(outcome))
 }
@@ -746,17 +746,17 @@ suspend fn main() -> void {
 
     #[test]
     fn structured_explicit_cancel_consumes_inert_browser_child() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.result
 import std.task
 
-suspend fn child(secret: string) -> void {
+suspend fn child(secret: string) {
     io.println(secret)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child_task = task.spawn child("browser-explicit-cancel-secret")
         let cancelled: Result<void, TaskError> = task.cancel(child_task)
@@ -774,17 +774,17 @@ suspend fn main() -> void {
 
     #[test]
     fn structured_scope_panic_does_not_invoke_browser_child() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.string
 import std.task
 
-suspend fn child(secret: string) -> void {
+suspend fn child(secret: string) {
     io.println(secret)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child_task = task.spawn child("browser-panic-cancel-secret")
         let prefix: string = "browser"
@@ -810,13 +810,13 @@ suspend fn main() -> void {
 
     #[test]
     fn runs_structured_json_with_native_semantics() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.array.Array
 import std.io
 import std.json
 
-fn main() -> void {
+fn main() {
     let text_result: Result<JsonValue, JsonError> = json.from_string("Nomo\n😀")
     let number_result: Result<JsonValue, JsonError> = json.from_number_text("1e+2")
     match text_result {
@@ -956,7 +956,7 @@ fn main() -> void {
 
     #[test]
     fn runs_std_fmt_templates_and_display_structs() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.fmt
 import std.io
@@ -971,7 +971,7 @@ impl fmt.Display for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "WASM" }
     io.println(fmt.format("Hello, {} {}", user, 7))
     io.println(user)
@@ -986,11 +986,11 @@ fn main() -> void {
 
     #[test]
     fn three_clause_loop_runs_update_after_continue() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     for let i = 0; i < 1; i++ {
         continue
     }
@@ -1005,9 +1005,9 @@ fn main() -> void {
 
     #[test]
     fn stops_infinite_programs_with_fuel() {
-        let source = r#"package app.main
+        let source = r#"package app
 
-fn main() -> void {
+fn main() {
     for {
     }
 }
@@ -1032,11 +1032,11 @@ fn main() -> void {
 
     #[test]
     fn enforces_the_output_limit() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     for {
         io.println("0123456789")
     }
@@ -1063,13 +1063,13 @@ fn main() -> void {
 
     #[test]
     fn rejects_structured_http_without_leaking_request_secrets() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.array.Array
 import std.http
 import std.result
 
-fn main() -> void {
+fn main() {
     let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
     headers.push(HttpHeader {
         name: "Authorization",
@@ -1104,13 +1104,13 @@ fn main() -> void {
 
     #[test]
     fn rejects_http_streaming_without_evaluating_or_leaking_request_secrets() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.array.Array
 import std.http
 import std.result
 
-fn main() -> void {
+fn main() {
     let mut headers: Array<HttpHeader> = Array.new<HttpHeader>()
     headers.push(HttpHeader {
         name: "Authorization",
@@ -1149,12 +1149,12 @@ fn main() -> void {
 
     #[test]
     fn rejects_controlled_processes_without_leaking_command_secrets() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.array.Array
 import std.process
 
-fn main() -> void {
+fn main() {
     let mut args: Array<string> = Array.new<string>()
     args.push("argv-browser-secret")
     let mut environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
@@ -1195,7 +1195,7 @@ fn main() -> void {
 
     #[test]
     fn rejects_async_process_start_before_evaluating_command_operands() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.process
 
@@ -1207,7 +1207,7 @@ fn timeout() -> u64 {
     panic("browser-async-process-timeout-must-not-run")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: Result<ProcessChild, ProcessControlError> = process.start(command(), timeout())
 }
 "#;
@@ -1233,7 +1233,7 @@ suspend fn main() -> void {
 
     #[test]
     fn returns_task_runtime_unavailable_without_invoking_the_worker() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.task
@@ -1242,7 +1242,7 @@ fn worker(context: TaskContext, input: string) -> string {
     panic("worker must not run")
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "browser-task-secret")
     match started {
         Ok(task_value) => {
@@ -1264,12 +1264,12 @@ fn main() -> void {
 
     #[test]
     fn returns_sqlite_runtime_unavailable_without_leaking_paths() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.sqlite
 
-fn main() -> void {
+fn main() {
     let opened: Result<SqliteDatabase, SqliteError> = sqlite.open(
         "browser-secret-agent.db",
         SqliteOpenMode.ReadWriteCreate,
@@ -1295,14 +1295,14 @@ fn main() -> void {
 
     #[test]
     fn matches_native_checked_wrapping_math_and_utf8_semantics() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.math
 import std.num
 import std.string
 
-fn main() -> void {
+fn main() {
     let checked: Option<i64> = num.checked_add(9223372036854775807, 1)
     match checked {
         Option.Some(value) => {
@@ -1330,12 +1330,12 @@ fn main() -> void {
 
     #[test]
     fn executes_value_semantics_array_mutations() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     items.push(2)
@@ -1360,12 +1360,12 @@ fn main() -> void {
 
     #[test]
     fn executes_nested_array_literals_and_copy_on_write_index_assignment() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.num
 
-fn main() -> void {
+fn main() {
     let mut matrix = [[1, 2], [3, 4]]
     let jagged = [[8], [9, 10]]
     let snapshot = matrix
@@ -1383,9 +1383,9 @@ fn main() -> void {
 
     #[test]
     fn reports_stable_array_index_bounds_failure() {
-        let source = r#"package app.main
+        let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let values = [1]
     let missing: i32 = values[1]
 }
@@ -1404,13 +1404,13 @@ fn main() -> void {
 
     #[test]
     fn executes_insertion_ordered_generic_map() {
-        let source = r#"package app.main
+        let source = r#"package app
 
 import std.io
 import std.map
 import std.array
 
-fn main() -> void {
+fn main() {
     let mut values: Map<string, string> = Map.new<string, string>()
     let first: Option<string> = map.set<string, string>(mut values, "b", "two")
     let second: Option<string> = map.set<string, string>(mut values, "a", "one")

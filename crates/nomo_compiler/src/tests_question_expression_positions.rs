@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn accepts_question_in_let_initializer_call_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -16,7 +16,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -57,7 +57,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_struct_literal_field_and_enum_payload() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Label {
     value: string
@@ -72,7 +72,7 @@ fn compute() -> Result<Label, string> {
     return Ok(Label { value: parse_label()? })
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -109,7 +109,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_binary_cast_and_return_ok_call_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_number() -> Result<i32, string> {
     return Ok(1)
@@ -124,7 +124,7 @@ fn compute() -> Result<i32, string> {
     return Ok(wrap(parse_number()?))
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -163,7 +163,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_if_initializer_branch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -178,7 +178,7 @@ fn compute(flag: bool) -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -231,7 +231,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_if_initializer_condition() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_flag() -> Result<bool, string> {
     return Ok(true)
@@ -246,7 +246,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -279,7 +279,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_tail_if_expression_branch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -293,7 +293,7 @@ fn compute(flag: bool) -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -329,7 +329,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_tail_if_expression_condition() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_flag() -> Result<bool, string> {
     return Ok(true)
@@ -343,7 +343,7 @@ fn compute() -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -373,7 +373,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_explicit_return_if_expression() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_flag() -> Result<bool, string> {
     return Ok(true)
@@ -391,7 +391,7 @@ fn compute() -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -436,7 +436,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_return_ok_if_expression() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_flag() -> Result<bool, string> {
     return Ok(true)
@@ -454,7 +454,7 @@ fn compute() -> Result<string, string> {
     })
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -499,7 +499,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_return_ok_match_expression() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -516,7 +516,7 @@ fn compute() -> Result<string, string> {
     })
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -582,7 +582,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_tail_match_expression_arm() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -595,7 +595,7 @@ fn compute(value: Option<string>) -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -656,7 +656,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_tail_match_scrutinee() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn maybe_label() -> Result<Option<string>, string> {
     return Ok(Some("value"))
@@ -669,7 +669,7 @@ fn compute() -> Result<string, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -701,7 +701,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_match_initializer_arm() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn parse_label() -> Result<string, string> {
     return Ok("value")
@@ -715,7 +715,7 @@ fn compute(value: Option<string>) -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -790,7 +790,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_question_in_match_initializer_scrutinee() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 fn maybe_label() -> Result<Option<string>, string> {
     return Ok(Some("value"))
@@ -804,7 +804,7 @@ fn compute() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 

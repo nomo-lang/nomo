@@ -246,7 +246,7 @@ fn test_runner_source(source: &str, function_name: &str) -> String {
     if !runner.ends_with('\n') {
         runner.push('\n');
     }
-    runner.push_str("\nfn main() -> void {\n    ");
+    runner.push_str("\nfn main() {\n    ");
     runner.push_str(function_name);
     runner.push_str("()\n}\n");
     runner

@@ -2,13 +2,13 @@ use super::*;
 
 #[test]
 fn accepts_generic_ordered_map_with_managed_values() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json
 import std.map
 import std.array
 
-fn main() -> void {
+fn main() {
     let mut values: Map<string, JsonValue> = Map.new<string, JsonValue>()
     let old: Option<JsonValue> = map.set<string, JsonValue>(
         mut values,
@@ -43,13 +43,13 @@ fn main() -> void {
 
 #[test]
 fn generic_map_does_not_remove_legacy_string_collections() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.collections
 import std.map
 import std.array
 
-fn main() -> void {
+fn main() {
     let legacy: StringMap = collections.map_new()
     let mut generic: Map<string, string> = Map.new<string, string>()
     let old: Option<string> = map.set<string, string>(mut generic, "language", "nomo")
@@ -63,11 +63,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_collections_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.collections
 
-fn main() -> void {
+fn main() {
     let map: StringMap = collections.map_new()
     let updated: StringMap = collections.map_set(map, "lang", "nomo")
     let found: Option<string> = collections.map_get(updated, "lang")
@@ -154,7 +154,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_collections_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.collections.StringMap
 import std.collections.StringSet
@@ -164,7 +164,7 @@ import std.collections.map_set
 import std.collections.set_insert
 import std.collections.set_new
 
-fn main() -> void {
+fn main() {
     let map: StringMap = map_new()
     let updated: StringMap = map_set(map, "lang", "nomo")
     let found: Option<string> = map_get(updated, "lang")
@@ -214,11 +214,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_char_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.char
 
-fn main() -> void {
+fn main() {
     let digit: bool = char.is_digit('7')
     let alpha: bool = char.is_alpha('N')
     let space: bool = char.is_whitespace(' ')
@@ -264,12 +264,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_char_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.char.is_digit
 import std.char.to_string
 
-fn main() -> void {
+fn main() {
     let digit: bool = is_digit('7')
     let text: string = to_string('N')
 }
@@ -295,11 +295,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_char_builtin_non_char_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.char
 
-fn main() -> void {
+fn main() {
     let value: bool = char.is_digit("7")
 }
 "#;
@@ -312,11 +312,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_os_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.os
 
-fn main() -> void {
+fn main() {
     let platform: string = os.platform()
     let arch: string = os.arch()
     let separator: string = os.path_separator()
@@ -362,12 +362,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_os_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.os.platform
 import std.os.path_separator
 
-fn main() -> void {
+fn main() {
     let platform: string = platform()
     let separator: string = path_separator()
 }
@@ -393,11 +393,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_os_builtin_arguments() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.os
 
-fn main() -> void {
+fn main() {
     let platform: string = os.platform("extra")
 }
 "#;
@@ -409,11 +409,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_time_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time
 
-fn main() -> void {
+fn main() {
     let now: i64 = time.now_millis()
     let monotonic: i64 = time.monotonic_millis()
     let short: Duration = time.duration_millis(1500)
@@ -487,7 +487,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_time_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time.now_millis
 import std.time.duration_millis
@@ -495,7 +495,7 @@ import std.time.duration_as_millis
 import std.time.sleep
 import std.time.sleep_millis
 
-fn main() -> void {
+fn main() {
     let now: i64 = now_millis()
     let duration: Duration = duration_millis(5)
     let millis: i64 = duration_as_millis(duration)
@@ -539,11 +539,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_time_sleep_non_i64_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time
 
-fn main() -> void {
+fn main() {
     time.sleep_millis("soon")
 }
 "#;
@@ -557,11 +557,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_time_sleep_non_duration_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.time
 
-fn main() -> void {
+fn main() {
     time.sleep(1)
 }
 "#;
@@ -575,11 +575,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_num_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
-fn main() -> void {
+fn main() {
     let integer: Result<i64, NumError> = num.parse_i64("42")
     let unsigned: Result<u64, NumError> = num.parse_u64("7")
     let decimal: Result<f64, NumError> = num.parse_f64("3.5")
@@ -627,13 +627,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_num_parse_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num.parse_i64
 import std.num.parse_u64
 import std.num.parse_f64
 
-fn main() -> void {
+fn main() {
     let integer: Result<i64, NumError> = parse_i64("42")
     let unsigned: Result<u64, NumError> = parse_u64("7")
     let decimal: Result<f64, NumError> = parse_f64("3.5")
@@ -667,11 +667,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_num_checked_and_wrapping_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
-fn main() -> void {
+fn main() {
     let checked: Option<i64> = num.checked_add(9223372036854775807, 1)
     let wrapped: i64 = num.wrapping_add(9223372036854775807, 1)
     let checked32: Option<i32> = num.checked_mul(100000 as i32, 100000 as i32)
@@ -736,12 +736,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_num_checked_and_wrapping_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num.checked_add
 import std.num.wrapping_mul
 
-fn main() -> void {
+fn main() {
     let checked: Option<u32> = checked_add(1 as u32, 2 as u32)
     let wrapped: u32 = wrapping_mul(3 as u32, 4 as u32)
 }
@@ -775,11 +775,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_num_parse_non_string_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
-fn main() -> void {
+fn main() {
     let parsed: Result<i64, NumError> = num.parse_i64(42)
 }
 "#;
@@ -793,11 +793,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_num_to_string_non_numeric_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
-fn main() -> void {
+fn main() {
     let text: string = num.to_string(true)
 }
 "#;
@@ -809,11 +809,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_num_checked_mismatched_operands() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
-fn main() -> void {
+fn main() {
     let value: Option<i64> = num.checked_add(1, true)
 }
 "#;
@@ -825,7 +825,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_user_num_error_when_std_num_is_needed() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.num
 
@@ -833,7 +833,7 @@ struct NumError {
     message: string
 }
 
-fn main() -> void {
+fn main() {
     let parsed: Result<i64, NumError> = num.parse_i64("42")
 }
 "#;
@@ -846,11 +846,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_math_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.math
 
-fn main() -> void {
+fn main() {
     let absolute: i64 = math.abs(0 - 7)
     let lower: i32 = math.min(3 as i32, 9 as i32)
     let upper: u64 = math.max(5 as u64, 2 as u64)
@@ -903,12 +903,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_math_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.math.abs
 import std.math.sqrt
 
-fn main() -> void {
+fn main() {
     let value: i64 = abs(0 - 2)
     let root: f64 = sqrt(16.0)
 }
@@ -940,11 +940,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_math_builtin_type_mismatch() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.math
 
-fn main() -> void {
+fn main() {
     let value: f64 = math.sqrt(9)
 }
 "#;
@@ -957,11 +957,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_math_min_mixed_numeric_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.math
 
-fn main() -> void {
+fn main() {
     let value: i64 = math.min(1, 2 as i32)
 }
 "#;
@@ -973,12 +973,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_string_value_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.string
 
-fn main() -> void {
+fn main() {
     let prefix: string = "string "
     let message: string = prefix.concat("methods ok")
     let count: u64 = message.len()
@@ -1008,9 +1008,9 @@ fn main() -> void {
 
 #[test]
 fn rejects_string_value_method_without_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn main() -> void {
+fn main() {
     let message: string = "hello"
     let count: u64 = message.len()
 }
@@ -1023,11 +1023,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_string_concat_method_non_string_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.string
 
-fn main() -> void {
+fn main() {
     let prefix: string = "nomo"
     let message: string = prefix.concat(1)
 }

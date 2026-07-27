@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn lowers_the_complete_cron_surface() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.cron
 
@@ -13,7 +13,7 @@ fn run() -> Result<void, CronError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, CronError> = run()
 }
 "#;
@@ -33,11 +33,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_cron_argument_type_mismatches() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.cron
 
-fn main() -> void {
+fn main() {
     let parsed: Result<CronSchedule, CronError> = cron.parse(1)
 }
 "#;
@@ -48,13 +48,13 @@ fn main() -> void {
 
 #[test]
 fn lowers_specifically_imported_cron_function() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.cron.CronError
 import std.cron.CronSchedule
 import std.cron.parse
 
-fn main() -> void {
+fn main() {
     let parsed: Result<CronSchedule, CronError> = parse("* * * * *")
 }
 "#;
@@ -65,7 +65,7 @@ fn main() -> void {
 
 #[test]
 fn permits_cron_calculation_inside_isolated_tasks() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.cron
 import std.task
@@ -75,7 +75,7 @@ fn worker(context: TaskContext, input: string) -> string {
     return input
 }
 
-fn main() -> void {
+fn main() {
     let started: Result<Task, TaskError> = task.spawn(worker, "* * * * *")
 }
 "#;
@@ -85,11 +85,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_forged_cron_schedules_and_private_field_access() {
-    let forged = r#"package app.main
+    let forged = r#"package app
 
 import std.cron
 
-fn main() -> void {
+fn main() {
     let schedule: CronSchedule = CronSchedule { expression: "* * * * *" }
 }
 "#;
@@ -97,12 +97,12 @@ fn main() -> void {
     assert_eq!(error.code, "E0850");
     assert!(error.message.contains("cannot be constructed"));
 
-    let exposed = r#"package app.main
+    let exposed = r#"package app
 
 import std.cron
 import std.io
 
-fn main() -> void {
+fn main() {
     let parsed: Result<CronSchedule, CronError> = cron.parse("* * * * *")
     match parsed {
         Ok(schedule) => {
@@ -117,7 +117,7 @@ fn main() -> void {
     assert_eq!(error.code, "E0850");
     assert!(error.message.contains("does not expose its fields"));
 
-    let mutated = r#"package app.main
+    let mutated = r#"package app
 
 import std.cron
 
@@ -127,7 +127,7 @@ fn run() -> Result<void, CronError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, CronError> = run()
 }
 "#;
@@ -138,12 +138,12 @@ fn main() -> void {
 
 #[test]
 fn reports_missing_cron_type_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn keep(schedule: CronSchedule) -> void {
+fn keep(schedule: CronSchedule) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
     let error = parse_inline(source).unwrap_err();

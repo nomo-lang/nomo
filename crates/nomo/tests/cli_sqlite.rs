@@ -10,7 +10,7 @@ fn sqlite_persists_between_native_cli_processes() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.sqlite
@@ -47,7 +47,7 @@ fn main() -> Result<void, SqliteError> {
 
     fs::write(
         root.join("src/main.nomo"),
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
@@ -120,13 +120,13 @@ fn sqlite_round_trips_all_values_resets_queries_and_commits_transactions() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
 import std.sqlite
 
-fn print_row(row: SqliteRow) -> void {
+fn print_row(row: SqliteRow) {
     for column in row.columns {
         match column.value {
             SqliteValue.Null => {
@@ -370,13 +370,13 @@ fn sqlite_enforces_request_row_binding_and_lifecycle_limits() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
 import std.sqlite
 
-fn print_error(label: string, result: Result<void, SqliteError>) -> void {
+fn print_error(label: string, result: Result<void, SqliteError>) {
     match result {
         Ok(value) => {
             panic("expected SQLite error")
@@ -549,7 +549,7 @@ fn sqlite_enforces_exact_live_handle_limits_and_recovers_after_overflow() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
@@ -630,13 +630,13 @@ fn sqlite_classifies_native_failures_and_process_exit_cleanup_is_secret_safe() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
 import std.sqlite
 
-fn print_execute_error(label: string, result: Result<SqliteExecuteResult, SqliteError>) -> void {
+fn print_execute_error(label: string, result: Result<SqliteExecuteResult, SqliteError>) {
     match result {
         Ok(unexpected) => {
             panic("expected SQLite execution failure")
@@ -799,7 +799,7 @@ fn main() -> Result<void, SqliteError> {
 
     fs::write(
         root.join("src/main.nomo"),
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.sqlite
@@ -881,7 +881,7 @@ fn sqlite_enforces_exact_path_sql_parameter_value_column_row_and_timeout_limits(
             .join(",")
     );
 
-    let source = r#"package sqlite_fixture.main
+    let source = r#"package sqlite_fixture
 
 import std.array.Array
 import std.io
@@ -1131,7 +1131,7 @@ fn sqlite_wrapper_stress_passes_address_and_leak_sanitizers_when_available() {
 
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.sqlite
@@ -1260,7 +1260,7 @@ fn sqlite_works_through_nomo_test_and_standard_documentation() {
     reset_dir(&root);
     write_project(
         &root,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.array.Array
 import std.sqlite
@@ -1278,7 +1278,7 @@ fn exercise() -> Result<void, SqliteError> {
 }
 
 #[test]
-fn sqlite_runtime_is_available() -> void {
+fn sqlite_runtime_is_available() {
     let result: Result<void, SqliteError> = exercise()
     match result {
         Ok(value) => {
@@ -1289,7 +1289,7 @@ fn sqlite_runtime_is_available() -> void {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#,
     );
@@ -1301,8 +1301,7 @@ fn main() -> void {
         .unwrap();
     assert_success(&tested);
     assert!(
-        normalized_text(&tested.stdout)
-            .contains("ok sqlite_fixture.main.sqlite_runtime_is_available"),
+        normalized_text(&tested.stdout).contains("ok sqlite_fixture.sqlite_runtime_is_available"),
         "{}",
         output_text(&tested)
     );
@@ -1337,20 +1336,20 @@ fn emit_c_materializes_verified_sqlite_sources_only_when_used() {
     let plain_project = root.join("plain");
     write_project(
         &sqlite_project,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
 import std.sqlite
 
-fn main() -> void {
+fn main() {
     let opened: Result<SqliteDatabase, SqliteError> = sqlite.open_memory(0)
 }
 "#,
     );
     write_project(
         &plain_project,
-        r#"package sqlite_fixture.main
+        r#"package sqlite_fixture
 
-fn main() -> void {
+fn main() {
 }
 "#,
     );

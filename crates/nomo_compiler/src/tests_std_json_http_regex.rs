@@ -2,7 +2,7 @@ use super::*;
 
 #[test]
 fn accepts_json_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json
 
@@ -37,7 +37,7 @@ fn main() -> Result<void, JsonError> {
 
 #[test]
 fn accepts_specific_json_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json.JsonError
 import std.json.JsonValue
@@ -72,7 +72,7 @@ fn main() -> Result<void, JsonError> {
 
 #[test]
 fn accepts_structured_json_accessors_and_constructors() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.Array
 import std.json
@@ -141,13 +141,13 @@ fn main() -> Result<void, JsonError> {
 
 #[test]
 fn accepts_specific_structured_json_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json.JsonValue
 import std.json.from_null
 import std.json.is_null
 
-fn main() -> void {
+fn main() {
     let value: JsonValue = from_null()
     let absent: bool = is_null(value)
 }
@@ -179,7 +179,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_http_client_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 
@@ -219,7 +219,7 @@ fn main() -> Result<void, HttpError> {
 
 #[test]
 fn accepts_structured_http_request_builtin() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.Array
 import std.http
@@ -273,7 +273,7 @@ fn main() -> Result<void, HttpError> {
 
 #[test]
 fn accepts_http_streaming_and_sse_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array.Array
 import std.http
@@ -287,7 +287,7 @@ fn stream(request: HttpRequest) -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -346,7 +346,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_http_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http.HttpError
 import std.http.HttpResponse
@@ -380,7 +380,7 @@ fn main() -> Result<void, HttpError> {
 
 #[test]
 fn accepts_http_server_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http
 
@@ -396,7 +396,7 @@ fn serve(host: string, port: i64) -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -453,7 +453,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_http_server_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.http.HttpError
 import std.http.HttpExchange
@@ -473,7 +473,7 @@ fn serve(host: string, port: i64) -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -514,7 +514,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_regex_builtins_with_question() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.regex
 import std.array
@@ -570,7 +570,7 @@ fn main() -> Result<void, RegexError> {
 
 #[test]
 fn accepts_specific_regex_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.regex.Regex
 import std.regex.RegexError
@@ -618,11 +618,11 @@ fn main() -> Result<void, RegexError> {
 
 #[test]
 fn rejects_regex_compile_non_string_pattern() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.regex
 
-fn main() -> void {
+fn main() {
     let parsed: Result<Regex, RegexError> = regex.compile(42)
 }
 "#;
@@ -636,11 +636,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_json_parse_non_string_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.json
 
-fn main() -> void {
+fn main() {
     let parsed: Result<JsonValue, JsonError> = json.parse(42)
 }
 "#;

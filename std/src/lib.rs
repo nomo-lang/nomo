@@ -515,7 +515,7 @@ const ARRAY_DOC_ITEMS: &[StandardDocItem] = &[
     StandardDocItem {
         kind: "function",
         name: "push",
-        signature: "pub fn push<T>(mut self: Array<T>, value: T) -> void",
+        signature: "pub fn push<T>(mut self: Array<T>, value: T)",
         docs: "Appends an element to an array.",
     },
     StandardDocItem {
@@ -527,13 +527,13 @@ const ARRAY_DOC_ITEMS: &[StandardDocItem] = &[
     StandardDocItem {
         kind: "function",
         name: "set",
-        signature: "pub fn set<T>(mut self: Array<T>, index: u64, value: T) -> void",
+        signature: "pub fn set<T>(mut self: Array<T>, index: u64, value: T)",
         docs: "Replaces an element at an index.",
     },
     StandardDocItem {
         kind: "function",
         name: "insert",
-        signature: "pub fn insert<T>(mut self: Array<T>, index: u64, value: T) -> void",
+        signature: "pub fn insert<T>(mut self: Array<T>, index: u64, value: T)",
         docs: "Inserts an element at an index.",
     },
     StandardDocItem {
@@ -551,7 +551,7 @@ const ARRAY_DOC_ITEMS: &[StandardDocItem] = &[
     StandardDocItem {
         kind: "function",
         name: "clear",
-        signature: "pub fn clear<T>(mut self: Array<T>) -> void",
+        signature: "pub fn clear<T>(mut self: Array<T>)",
         docs: "Removes all elements from an array.",
     },
     StandardDocItem {

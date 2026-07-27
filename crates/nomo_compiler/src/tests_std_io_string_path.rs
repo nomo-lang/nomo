@@ -2,11 +2,11 @@ use super::*;
 
 #[test]
 fn accepts_string_variable_println() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let message: string = "Hello, Nomo"
     io.println(message)
 }
@@ -29,7 +29,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_omitted_void_return_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
@@ -59,11 +59,11 @@ fn main() {
 
 #[test]
 fn accepts_specific_println_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io.println
 
-fn main() -> void {
+fn main() {
     println("Hello, Nomo")
 }
 "#;
@@ -81,11 +81,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_eprintln() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.eprintln("error")
 }
 "#;
@@ -102,11 +102,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_print_and_eprint() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     io.print("out")
     io.eprint("err")
 }
@@ -125,12 +125,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_print_and_eprint_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io.print
 import std.io.eprint
 
-fn main() -> void {
+fn main() {
     print("out")
     eprint("err")
 }
@@ -150,11 +150,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_io_read_line_builtin() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 
-fn main() -> void {
+fn main() {
     let result: Result<string, IoError> = io.read_line()
 }
 "#;
@@ -182,11 +182,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_io_read_line_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io.read_line
 
-fn main() -> void {
+fn main() {
     let result: Result<string, IoError> = read_line()
 }
 "#;
@@ -205,12 +205,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_string_len_and_concat_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.string
 
-fn main() -> void {
+fn main() {
     let message: string = string.concat("No", "mo")
     let count: u64 = string.len(message)
     io.println(message)
@@ -239,13 +239,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_string_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io
 import std.string.concat
 import std.string.len
 
-fn main() -> void {
+fn main() {
     let message: string = concat("No", "mo")
     let count: u64 = len(message)
     io.println(message)
@@ -274,12 +274,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_extended_string_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.string
 
-fn main() -> void {
+fn main() {
     let empty: bool = string.is_empty("")
     let contains: bool = string.contains("nomo", "om")
     let starts: bool = string.starts_with("nomo", "no")
@@ -361,14 +361,14 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_extended_string_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.string.contains
 import std.string.split
 import std.string.to_upper
 
-fn main() -> void {
+fn main() {
     let found: bool = contains("nomo", "no")
     let parts: Array<string> = split("no/mo", "/")
     let loud: string = to_upper("nomo")
@@ -405,12 +405,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_extended_string_value_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.array
 import std.string
 
-fn main() -> void {
+fn main() {
     let text: string = " NoMo "
     let empty: bool = text.is_empty()
     let contains: bool = text.contains("No")
@@ -461,11 +461,11 @@ fn main() -> void {
 
 #[test]
 fn accepts_path_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.path
 
-fn main() -> void {
+fn main() {
     let joined: string = path.join("/tmp", "nomo.txt")
     let base: string = path.basename(joined)
     let dir: string = path.dirname(joined)
@@ -529,12 +529,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_path_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.path.basename
 import std.path.is_absolute
 
-fn main() -> void {
+fn main() {
     let name: string = basename("/tmp/nomo.txt")
     let absolute: bool = is_absolute("/tmp")
 }
@@ -561,11 +561,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_path_builtin_non_string_argument() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.path
 
-fn main() -> void {
+fn main() {
     let name: string = path.basename(1)
 }
 "#;

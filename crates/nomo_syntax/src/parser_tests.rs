@@ -4,12 +4,11 @@ use crate::lexer::lex;
 
 #[test]
 fn parses_v0_1_ast() {
-    let source =
-        "package app.main\n\nimport std.io\n\nfn main() -> void {\n    io.println(\"Hello\")\n}\n";
+    let source = "package app\n\nimport std.io\n\nfn main() {\n    io.println(\"Hello\")\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
-    assert_eq!(ast.package, vec!["app", "main"]);
+    assert_eq!(ast.package, vec!["app"]);
     assert_eq!(ast.imports, vec![vec!["std", "io"]]);
     assert!(ast.structs.is_empty());
     assert!(ast.enums.is_empty());
@@ -19,8 +18,7 @@ fn parses_v0_1_ast() {
 
 #[test]
 fn accepts_panic_as_a_contextual_function_name() {
-    let source =
-        "package std.debug\n\npub fn panic(message: string) -> void {\n    panic(message)\n}\n";
+    let source = "package std.debug\n\npub fn panic(message: string) {\n    panic(message)\n}\n";
     let tokens = lex(Path::new("debug.nomo"), source).unwrap();
     let ast = parse(Path::new("debug.nomo"), &tokens).unwrap();
 
@@ -29,7 +27,7 @@ fn accepts_panic_as_a_contextual_function_name() {
 
 #[test]
 fn parses_suspend_functions_methods_and_interface_signatures() {
-    let source = "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
+    let source = "package app\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn run() -> string {\n    return \"ready\"\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -43,15 +41,15 @@ fn parses_suspend_functions_methods_and_interface_signatures() {
 
 #[test]
 fn parses_structured_task_scope_and_direct_spawn_target() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn worker(value: string) -> void {
+suspend fn worker(value: string) {
     task.yield_now()
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let child = task.spawn worker("value")
         let joined = task.join(child)
@@ -85,12 +83,12 @@ suspend fn main() -> void {
 
 #[test]
 fn parses_structured_task_deadline() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main() -> void {
+suspend fn main() {
     task.deadline(time.duration_millis(25)) {
         task.check_cancelled()
     }
@@ -118,12 +116,12 @@ suspend fn main() -> void {
 
 #[test]
 fn parses_static_task_select_arms() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 import std.time
 
-suspend fn main(channel_value: Channel<string>) -> void {
+suspend fn main(channel_value: Channel<string>) {
     task.select {
         task.receive(channel_value) => received {
             let value = received
@@ -161,11 +159,11 @@ suspend fn main(channel_value: Channel<string>) -> void {
 
 #[test]
 fn rejects_static_task_select_outside_the_two_to_eight_arm_range() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.task
 
-suspend fn main(channel_value: Channel<string>) -> void {
+suspend fn main(channel_value: Channel<string>) {
     task.select {
         task.receive(channel_value) => received {
             let value = received
@@ -182,7 +180,7 @@ suspend fn main(channel_value: Channel<string>) -> void {
 
 #[test]
 fn rejects_suspend_extern_functions() {
-    let source = "package app.main\n\nextern \"C\" {\n    suspend fn wait() -> void\n}\n";
+    let source = "package app\n\nextern \"C\" {\n    suspend fn wait()\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let error = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
@@ -192,7 +190,7 @@ fn rejects_suspend_extern_functions() {
 
 #[test]
 fn rejects_wildcard_imports_in_v0_1() {
-    let source = "package app.main\n\nimport std.io.*\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nimport std.io.*\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
@@ -203,7 +201,7 @@ fn rejects_wildcard_imports_in_v0_1() {
 
 #[test]
 fn parses_let_and_variable_reference() {
-    let source = "package app.main\n\nimport std.io\n\nfn main() -> void {\n    let message: string = \"Hello\"\n    io.println(message)\n}\n";
+    let source = "package app\n\nimport std.io\n\nfn main() {\n    let message: string = \"Hello\"\n    io.println(message)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -228,7 +226,7 @@ fn parses_let_and_variable_reference() {
 
 #[test]
 fn parses_function_params_return_and_addition() {
-    let source = "package app.main\n\nfn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n";
+    let source = "package app\n\nfn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -248,7 +246,7 @@ fn parses_function_params_return_and_addition() {
 
 #[test]
 fn parses_binary_arithmetic_precedence() {
-    let source = "package app.main\n\nfn calc(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {\n    return a - b * c / d % e\n}\n";
+    let source = "package app\n\nfn calc(a: i64, b: i64, c: i64, d: i64, e: i64) -> i64 {\n    return a - b * c / d % e\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -270,7 +268,7 @@ fn parses_binary_arithmetic_precedence() {
 
 #[test]
 fn parses_logical_operator_precedence() {
-    let source = "package app.main\n\nfn check(a: bool, b: bool, c: bool) -> bool {\n    return !a && b || c\n}\n";
+    let source = "package app\n\nfn check(a: bool, b: bool, c: bool) -> bool {\n    return !a && b || c\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -293,7 +291,8 @@ fn parses_logical_operator_precedence() {
 
 #[test]
 fn parses_unary_negation_and_parenthesized_expressions() {
-    let source = "package app.main\n\nfn calc(a: i64, b: i64, c: i64) -> i64 {\n    return -(a + b) * -c\n}\n";
+    let source =
+        "package app\n\nfn calc(a: i64, b: i64, c: i64) -> i64 {\n    return -(a + b) * -c\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -319,7 +318,7 @@ fn parses_unary_negation_and_parenthesized_expressions() {
 
 #[test]
 fn parses_bitwise_operator_precedence() {
-    let source = "package app.main\n\nfn mask(a: i64, b: i64, c: i64, d: i64) -> i64 {\n    return a | b ^ c & d << 1\n}\n";
+    let source = "package app\n\nfn mask(a: i64, b: i64, c: i64, d: i64) -> i64 {\n    return a | b ^ c & d << 1\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -349,7 +348,7 @@ fn parses_bitwise_operator_precedence() {
 
 #[test]
 fn parses_omitted_function_return_type_as_void() {
-    let source = "package app.main\n\nfn main() {\n}\n";
+    let source = "package app\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -360,7 +359,7 @@ fn parses_omitted_function_return_type_as_void() {
 
 #[test]
 fn parses_implicit_and_explicit_void_across_declaration_positions() {
-    let source = "package app.main\n\ninterface Sink {\n    fn close(self)\n    suspend fn flush(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64)\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) {\n    }\n\n    suspend fn flush(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) {\n}\n";
+    let source = "package app\n\ninterface Sink {\n    fn close(self)\n    suspend fn flush(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64)\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) {\n    }\n\n    suspend fn flush(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -390,7 +389,7 @@ fn parses_implicit_and_explicit_void_across_declaration_positions() {
 
 #[test]
 fn parses_mut_call_argument() {
-    let source = "package app.main\n\nfn touch(mut count: i64) -> i64 {\n    return count\n}\n\nfn main() -> void {\n    let mut count: i64 = 1\n    let value: i64 = touch(mut count)\n}\n";
+    let source = "package app\n\nfn touch(mut count: i64) -> i64 {\n    return count\n}\n\nfn main() {\n    let mut count: i64 = 1\n    let value: i64 = touch(mut count)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -412,7 +411,7 @@ fn parses_mut_call_argument() {
 
 #[test]
 fn parses_if_expression_and_comparison() {
-    let source = "package app.main\n\nfn label(score: i64) -> string {\n    return if score >= 60 {\n        \"pass\"\n    } else {\n        \"fail\"\n    }\n}\n";
+    let source = "package app\n\nfn label(score: i64) -> string {\n    return if score >= 60 {\n        \"pass\"\n    } else {\n        \"fail\"\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -438,7 +437,7 @@ fn parses_if_expression_and_comparison() {
 
 #[test]
 fn parses_panic_expression() {
-    let source = "package app.main\n\nfn main() -> void {\n    panic(\"boom\")\n}\n";
+    let source = "package app\n\nfn main() {\n    panic(\"boom\")\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -453,7 +452,7 @@ fn parses_panic_expression() {
 
 #[test]
 fn parses_void_expression() {
-    let source = "package app.main\n\nenum Result<T, E> {\n    Ok(T)\n    Err(E)\n}\n\nfn done() -> Result<void, string> {\n    return Result.Ok(void)\n}\n";
+    let source = "package app\n\nenum Result<T, E> {\n    Ok(T)\n    Err(E)\n}\n\nfn done() -> Result<void, string> {\n    return Result.Ok(void)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -468,7 +467,7 @@ fn parses_void_expression() {
 
 #[test]
 fn parses_assignment_statement() {
-    let source = "package app.main\n\nimport std.io\n\nfn main() -> void {\n    let mut count: i64 = 1\n    count = count + 1\n}\n";
+    let source = "package app\n\nimport std.io\n\nfn main() {\n    let mut count: i64 = 1\n    count = count + 1\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -484,8 +483,7 @@ fn parses_assignment_statement() {
 
 #[test]
 fn parses_compound_assignment_statement() {
-    let source =
-        "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    count += 2\n}\n";
+    let source = "package app\n\nfn main() {\n    let mut count: i64 = 1\n    count += 2\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -502,7 +500,7 @@ fn parses_compound_assignment_statement() {
 
 #[test]
 fn parses_compound_field_assignment_statement() {
-    let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value &^= 1\n}\n";
+    let source = "package app\n\nstruct Counter {\n    value: i64\n}\n\nfn main() {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value &^= 1\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -519,8 +517,7 @@ fn parses_compound_field_assignment_statement() {
 
 #[test]
 fn parses_postfix_update_statement() {
-    let source =
-        "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    count++\n}\n";
+    let source = "package app\n\nfn main() {\n    let mut count: i64 = 1\n    count++\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -536,7 +533,7 @@ fn parses_postfix_update_statement() {
 
 #[test]
 fn parses_postfix_field_update_statement() {
-    let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value--\n}\n";
+    let source = "package app\n\nstruct Counter {\n    value: i64\n}\n\nfn main() {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value--\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -552,7 +549,8 @@ fn parses_postfix_field_update_statement() {
 
 #[test]
 fn rejects_postfix_update_as_expression_value() {
-    let source = "package app.main\n\nfn main() -> void {\n    let mut count: i64 = 1\n    let next: i64 = count++\n}\n";
+    let source =
+        "package app\n\nfn main() {\n    let mut count: i64 = 1\n    let next: i64 = count++\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
 
     assert!(parse(Path::new("main.nomo"), &tokens).is_err());
@@ -560,7 +558,7 @@ fn rejects_postfix_update_as_expression_value() {
 
 #[test]
 fn parses_field_assignment_statement() {
-    let source = "package app.main\n\nstruct Counter {\n    value: i64\n}\n\nfn main() -> void {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value = counter.value + 1\n}\n";
+    let source = "package app\n\nstruct Counter {\n    value: i64\n}\n\nfn main() {\n    let mut counter: Counter = Counter { value: 1 }\n    counter.value = counter.value + 1\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -576,7 +574,7 @@ fn parses_field_assignment_statement() {
 
 #[test]
 fn parses_struct_definition_and_literal() {
-    let source = "package app.main\n\nstruct Point {\n    x: i64\n    y: i64\n}\n\nfn main() -> void {\n    let point: Point = Point { x: 1, y: 2 }\n}\n";
+    let source = "package app\n\nstruct Point {\n    x: i64\n    y: i64\n}\n\nfn main() {\n    let point: Point = Point { x: 1, y: 2 }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -594,7 +592,7 @@ fn parses_struct_definition_and_literal() {
 
 #[test]
 fn parses_generic_struct_definition() {
-    let source = "package app.main\n\nstruct Box<T> {\n    value: T\n}\n\nfn main() -> void {\n    let item: Box<i32> = Box { value: 7 }\n}\n";
+    let source = "package app\n\nstruct Box<T> {\n    value: T\n}\n\nfn main() {\n    let item: Box<i32> = Box { value: 7 }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -612,7 +610,7 @@ fn parses_generic_struct_definition() {
 
 #[test]
 fn parses_impl_method_with_self_parameter() {
-    let source = "package app.main\n\nstruct User {\n    email: string\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nstruct User {\n    email: string\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -626,7 +624,7 @@ fn parses_impl_method_with_self_parameter() {
 
 #[test]
 fn parses_pub_declarations_and_fields() {
-    let source = "package app.main\n\npub struct User {\n    pub id: string\n    email: string\n}\n\npub enum Color {\n    Red\n    Blue\n}\n\npub fn main() -> void {\n}\n";
+    let source = "package app\n\npub struct User {\n    pub id: string\n    email: string\n}\n\npub enum Color {\n    Red\n    Blue\n}\n\npub fn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -639,7 +637,7 @@ fn parses_pub_declarations_and_fields() {
 
 #[test]
 fn parses_enum_and_match_expression() {
-    let source = "package app.main\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\"\n        Color.Blue => \"blue\"\n    }\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nenum Color {\n    Red\n    Blue\n}\n\nfn label(color: Color) -> string {\n    return match color {\n        Color.Red => \"red\"\n        Color.Blue => \"blue\"\n    }\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -663,7 +661,7 @@ fn parses_enum_and_match_expression() {
 
 #[test]
 fn parses_payload_enum_and_match_binding() {
-    let source = "package app.main\n\nenum MaybeInt {\n    Some(i64)\n    None\n}\n\nfn value(input: MaybeInt) -> i64 {\n    return match input {\n        MaybeInt.Some(n) => n\n        MaybeInt.None => 0\n    }\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nenum MaybeInt {\n    Some(i64)\n    None\n}\n\nfn value(input: MaybeInt) -> i64 {\n    return match input {\n        MaybeInt.Some(n) => n\n        MaybeInt.None => 0\n    }\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -679,7 +677,7 @@ fn parses_payload_enum_and_match_binding() {
 
 #[test]
 fn parses_generic_enum_type_reference() {
-    let source = "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn main() -> void {\n    let value: Option<i64> = Option.Some(1)\n}\n";
+    let source = "package app\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn main() {\n    let value: Option<i64> = Option.Some(1)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -699,7 +697,7 @@ fn parses_generic_enum_type_reference() {
 
 #[test]
 fn parses_question_postfix() {
-    let source = "package app.main\n\nenum Result<T, E> {\n    Ok(T)\n    Err(E)\n}\n\nfn parse() -> Result<i64, string> {\n    return Result.Ok(1)\n}\n\nfn main() -> void {\n    let value: i64 = parse()?\n}\n";
+    let source = "package app\n\nenum Result<T, E> {\n    Ok(T)\n    Err(E)\n}\n\nfn parse() -> Result<i64, string> {\n    return Result.Ok(1)\n}\n\nfn main() {\n    let value: i64 = parse()?\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -714,7 +712,7 @@ fn parses_question_postfix() {
 
 #[test]
 fn rejects_try_keyword_style_propagation() {
-    let source = "package app.main\n\nfn parse() -> Result<i64, string> {\n    return Ok(1)\n}\n\nfn main() -> Result<i64, string> {\n    return try parse()?\n}\n";
+    let source = "package app\n\nfn parse() -> Result<i64, string> {\n    return Ok(1)\n}\n\nfn main() -> Result<i64, string> {\n    return try parse()?\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
@@ -724,7 +722,7 @@ fn rejects_try_keyword_style_propagation() {
 
 #[test]
 fn parses_float_literal_and_cast_expression() {
-    let source = "package app.main\n\nfn ratio(age: i64) -> f64 {\n    return age as f64\n}\n\nfn main() -> void {\n    let pi: f64 = 3.14\n}\n";
+    let source = "package app\n\nfn ratio(age: i64) -> f64 {\n    return age as f64\n}\n\nfn main() {\n    let pi: f64 = 3.14\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -746,7 +744,7 @@ fn parses_float_literal_and_cast_expression() {
 
 #[test]
 fn parses_match_scrutinee_as_expression() {
-    let source = "package app.main\n\nfn print() -> void {\n    match load()? {\n        Some(text) => {\n            println(text)\n        }\n        None => {\n            println(\"none\")\n        }\n    }\n}\n";
+    let source = "package app\n\nfn print() {\n    match load()? {\n        Some(text) => {\n            println(text)\n        }\n        None => {\n            println(\"none\")\n        }\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -761,7 +759,7 @@ fn parses_match_scrutinee_as_expression() {
 
 #[test]
 fn parses_let_else_statement() {
-    let source = "package app.main\n\nfn label(value: Option<string>) -> string {\n    let Some(text) = value else {\n        return \"missing\"\n    }\n    return text\n}\n";
+    let source = "package app\n\nfn label(value: Option<string>) -> string {\n    let Some(text) = value else {\n        return \"missing\"\n    }\n    return text\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -780,7 +778,7 @@ fn parses_let_else_statement() {
 
 #[test]
 fn parses_if_let_statement() {
-    let source = "package app.main\n\nfn label(value: Option<string>) -> string {\n    if let Some(text) = value {\n        return text\n    } else {\n        return \"missing\"\n    }\n}\n";
+    let source = "package app\n\nfn label(value: Option<string>) -> string {\n    if let Some(text) = value {\n        return text\n    } else {\n        return \"missing\"\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -801,7 +799,7 @@ fn parses_if_let_statement() {
 
 #[test]
 fn parses_multiline_struct_literal() {
-    let source = "package app.main\n\nstruct Point {\n    x: i32\n    y: i32\n}\n\nfn main() -> void {\n    let point: Point = Point {\n        x: 3,\n        y: 4,\n    }\n}\n";
+    let source = "package app\n\nstruct Point {\n    x: i32\n    y: i32\n}\n\nfn main() {\n    let point: Point = Point {\n        x: 3,\n        y: 4,\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -817,8 +815,8 @@ fn parses_multiline_struct_literal() {
 #[test]
 fn rejects_match_wildcards_in_v0_1() {
     for source in [
-        "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        _ => \"wild\"\n        Option.None => \"none\"\n    }\n}\n",
-        "package app.main\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(_) => \"some\"\n        Option.None => \"none\"\n    }\n}\n",
+        "package app\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        _ => \"wild\"\n        Option.None => \"none\"\n    }\n}\n",
+        "package app\n\nenum Option<T> {\n    Some(T)\n    None\n}\n\nfn label(value: Option<i32>) -> string {\n    return match value {\n        Option.Some(_) => \"some\"\n        Option.None => \"none\"\n    }\n}\n",
     ] {
         let tokens = lex(Path::new("main.nomo"), source).unwrap();
         let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
@@ -830,7 +828,7 @@ fn rejects_match_wildcards_in_v0_1() {
 
 #[test]
 fn parses_char_literal() {
-    let source = "package app.main\n\nfn main() -> void {\n    let letter: char = 'N'\n}\n";
+    let source = "package app\n\nfn main() {\n    let letter: char = 'N'\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -845,7 +843,8 @@ fn parses_char_literal() {
 
 #[test]
 fn parses_generic_array_new_call() {
-    let source = "package app.main\n\nfn main() -> void {\n    let items: Array<string> = Array.new<string>()\n}\n";
+    let source =
+        "package app\n\nfn main() {\n    let items: Array<string> = Array.new<string>()\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -868,7 +867,7 @@ fn parses_generic_array_new_call() {
 
 #[test]
 fn parses_generic_function_call() {
-    let source = "package app.main\n\nfn identity<T>(value: T) -> T {\n    return value\n}\n\nfn main() -> void {\n    let value: i32 = identity<i32>(7)\n}\n";
+    let source = "package app\n\nfn identity<T>(value: T) -> T {\n    return value\n}\n\nfn main() {\n    let value: i32 = identity<i32>(7)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -889,7 +888,7 @@ fn parses_generic_function_call() {
 
 #[test]
 fn parses_generic_function_interface_bound() {
-    let source = "package app.main\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\ninterface Display {\n    fn to_string(self) -> string\n}\n\nfn render<T: Display>(value: T) -> string {\n    return value.to_string()\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -903,7 +902,7 @@ fn parses_generic_function_interface_bound() {
 
 #[test]
 fn keeps_less_than_as_comparison_after_name() {
-    let source = "package app.main\n\nfn main() -> void {\n    let left: i32 = 1\n    let right: i32 = 2\n    let ok: bool = left < right\n}\n";
+    let source = "package app\n\nfn main() {\n    let left: i32 = 1\n    let right: i32 = 2\n    let ok: bool = left < right\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -921,7 +920,7 @@ fn keeps_less_than_as_comparison_after_name() {
 
 #[test]
 fn parses_for_loop_four_forms() {
-    let source = "package app.main\n\nfn main() -> void {\n    for {}\n    for done {}\n    for let i: ui64 = 0; i < 10; i++ {}\n    for x in xs {}\n}\n";
+    let source = "package app\n\nfn main() {\n    for {}\n    for done {}\n    for let i: ui64 = 0; i < 10; i++ {}\n    for x in xs {}\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -963,7 +962,7 @@ fn parses_for_loop_four_forms() {
 
 #[test]
 fn parses_break_continue_and_defer() {
-    let source = "package app.main\n\nfn main() -> void {\n    for {\n        break\n        continue\n        defer cleanup()\n    }\n}\n";
+    let source = "package app\n\nfn main() {\n    for {\n        break\n        continue\n        defer cleanup()\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -981,7 +980,7 @@ fn parses_break_continue_and_defer() {
 
 #[test]
 fn parses_top_level_const() {
-    let source = "package app.main\n\nconst MAX: i32 = 100\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nconst MAX: i32 = 100\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -993,7 +992,7 @@ fn parses_top_level_const() {
 
 #[test]
 fn parses_extern_opaque_handle_types() {
-    let source = "package app.main\n\nextern opaque type FileHandle release file_close\nextern opaque type SocketHandle\n\nextern \"C\" {\n    fn file_close(handle: Owned<FileHandle>) -> void\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nextern opaque type FileHandle release file_close\nextern opaque type SocketHandle\n\nextern \"C\" {\n    fn file_close(handle: Owned<FileHandle>)\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1011,7 +1010,7 @@ fn parses_extern_opaque_handle_types() {
 
 #[test]
 fn parses_nested_generic_type_at_end_of_declaration_line() {
-    let source = "package app.main\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn try_open() -> Nullable<Owned<FileHandle>>\n    fn close(handle: Owned<FileHandle>) -> void\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn try_open() -> Nullable<Owned<FileHandle>>\n    fn close(handle: Owned<FileHandle>)\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1023,7 +1022,7 @@ fn parses_nested_generic_type_at_end_of_declaration_line() {
 
 #[test]
 fn parses_extern_c_callback_parameter_type() {
-    let source = "package app.main\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn visit(handle: Borrowed<FileHandle>, callback: extern \"C\" fn(i32, bool) -> i32) -> i32\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\nextern opaque type FileHandle\n\nextern \"C\" {\n    fn visit(handle: Borrowed<FileHandle>, callback: extern \"C\" fn(i32, bool) -> i32) -> i32\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1037,7 +1036,7 @@ fn parses_extern_c_callback_parameter_type() {
 
 #[test]
 fn parses_task_worker_parameter_type_without_reserving_task_as_a_keyword() {
-    let source = "package std.task\n\nstruct TaskContext {\n    handle: u64\n}\n\nfn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> void {\n    task.spawn(worker, input)\n}\n";
+    let source = "package std.task\n\nstruct TaskContext {\n    handle: u64\n}\n\nfn spawn(worker: task fn(TaskContext, string) -> string, input: string) {\n    task.spawn(worker, input)\n}\n";
     let tokens = lex(Path::new("task.nomo"), source).unwrap();
     let ast = parse(Path::new("task.nomo"), &tokens).unwrap();
 
@@ -1058,7 +1057,7 @@ fn parses_task_worker_parameter_type_without_reserving_task_as_a_keyword() {
 
 #[test]
 fn parses_repr_c_struct_attribute() {
-    let source = "package app.main\n\n#[repr(C)]\nstruct Header {\n    tag: i32\n    value: u64\n}\n\nfn main() -> void {\n}\n";
+    let source = "package app\n\n#[repr(C)]\nstruct Header {\n    tag: i32\n    value: u64\n}\n\nfn main() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1068,7 +1067,7 @@ fn parses_repr_c_struct_attribute() {
 
 #[test]
 fn parses_top_level_script_statements_after_declarations() {
-    let source = "package app.main\n\nfn greeting() -> string {\n    return \"hi\"\n}\n\nlet message: string = greeting()\nio.println(message)\n";
+    let source = "package app\n\nfn greeting() -> string {\n    return \"hi\"\n}\n\nlet message: string = greeting()\nio.println(message)\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1080,7 +1079,7 @@ fn parses_top_level_script_statements_after_declarations() {
 
 #[test]
 fn rejects_declarations_after_top_level_script_statements() {
-    let source = "package app.main\n\nio.println(\"hi\")\n\nfn helper() -> void {\n}\n";
+    let source = "package app\n\nio.println(\"hi\")\n\nfn helper() {\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let err = parse(Path::new("main.nomo"), &tokens).unwrap_err();
 
@@ -1090,7 +1089,7 @@ fn rejects_declarations_after_top_level_script_statements() {
 
 #[test]
 fn parser_ast_golden_snapshot() {
-    let source = "package app.main\n\nimport std.option.Option\n\nstruct Box<T> {\n    value: T\n}\n\nenum State {\n    Ready\n    Done(i32)\n}\n\nfn label(value: State) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n";
+    let source = "package app\n\nimport std.option.Option\n\nstruct Box<T> {\n    value: T\n}\n\nenum State {\n    Ready\n    Done(i32)\n}\n\nfn label(value: State) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();
     let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
 
@@ -1099,7 +1098,6 @@ fn parser_ast_golden_snapshot() {
         r#"SourceFile {
     package: [
         "app",
-        "main",
     ],
     imports: [
         [
@@ -1114,7 +1112,6 @@ fn parser_ast_golden_snapshot() {
             repr_c: false,
             package: [
                 "app",
-                "main",
             ],
             name: "Box",
             type_params: [
@@ -1151,7 +1148,6 @@ fn parser_ast_golden_snapshot() {
             public: false,
             package: [
                 "app",
-                "main",
             ],
             name: "State",
             type_params: [],
@@ -1204,7 +1200,6 @@ fn parser_ast_golden_snapshot() {
             is_suspend: false,
             package: [
                 "app",
-                "main",
             ],
             name: "label",
             type_params: [],

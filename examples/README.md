@@ -1,4 +1,4 @@
-# Nomo v0.1 Examples
+# Nomo Preview Examples
 
 Each example is a standalone Nomo project:
 
@@ -7,7 +7,9 @@ nomo check examples/hello
 nomo run examples/hello
 ```
 
-The examples track the v0.1 acceptance matrix in the RFC specification.
+The examples track the current Preview acceptance matrix in the specification
+and implemented RFCs. They are executable implementation evidence, not a
+stable-release or production-readiness claim.
 
 - `hello`: minimal `std.io` output
 - `io_print`: `std.io.print` and `std.io.eprint` output without automatic newlines
@@ -92,7 +94,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `mut_methods`: `mut self` methods writing back through receiver borrows
 - `newline_dot`: line-start `.` continuation for method calls and qualified variants
 - `option_result_lang_items`: nested `Result<Option<T>, E>` through `?`, prelude variants, and `match`
-- `package_path`: non-`app.main` package path through C symbol mangling and runtime execution
+- `package_path`: manifest-derived package root through C symbol mangling and runtime execution
 - `pub_visibility`: `pub` structs, fields, enums, functions, and methods through runtime execution
 - `struct_option_field`: struct fields carrying `Option<T>`
 - `struct_result_field`: struct fields carrying `Result<T, E>`

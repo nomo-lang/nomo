@@ -209,7 +209,7 @@ mod tests {
     #[test]
     fn source_map_keeps_stable_ids_for_overlays() {
         let mut map = SourceMap::new();
-        let first = map.add_file("src/main.nomo", "package app.main\n");
+        let first = map.add_file("src/main.nomo", "package app\n");
         let second = map.add_file("src/util.nomo", "package app.util\n");
         let overlaid = map.add_file("src/main.nomo", "package app.updated\n");
 

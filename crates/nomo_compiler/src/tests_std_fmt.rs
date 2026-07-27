@@ -2,12 +2,12 @@ use super::*;
 
 #[test]
 fn accepts_scalar_formatting_and_compile_time_templates() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fmt
 import std.io
 
-fn main() -> void {
+fn main() {
     let message = fmt.format("name={} count={} debug={:?} braces={{}}", "Nomo", 3, true)
     io.println(message)
 }
@@ -34,12 +34,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_format_function_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fmt.format
 import std.fmt.to_string
 
-fn main() -> void {
+fn main() {
     let first = format("{}", 7)
     let second = to_string(false)
 }
@@ -63,7 +63,7 @@ fn main() -> void {
 
 #[test]
 fn display_and_debug_interfaces_format_user_structs_and_io_values() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fmt
 import std.io
@@ -84,7 +84,7 @@ impl fmt.Debug for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "Nomo" }
     let message = fmt.format("display={} debug={:?}", user, user)
     io.println(user)
@@ -118,7 +118,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_struct_without_required_format_interface() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fmt
 
@@ -126,7 +126,7 @@ struct User {
     name: string
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "Nomo" }
     let message = fmt.to_string(user)
 }
@@ -145,7 +145,7 @@ fn rejects_invalid_format_templates_and_value_counts() {
         ("\"value={}\"", "expects 1 value(s), got 0"),
     ] {
         let source = format!(
-            "package app.main\n\nimport std.fmt\n\nfn main() -> void {{\n    let value = fmt.format({template})\n}}\n"
+            "package app\n\nimport std.fmt\n\nfn main() {{\n    let value = fmt.format({template})\n}}\n"
         );
         let error = parse_inline(&source).unwrap_err();
         assert_eq!(error.code, "E0408");
@@ -155,11 +155,11 @@ fn rejects_invalid_format_templates_and_value_counts() {
 
 #[test]
 fn rejects_dynamic_format_templates() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fmt
 
-fn main() -> void {
+fn main() {
     let template = "{}"
     let value = fmt.format(template, 1)
 }

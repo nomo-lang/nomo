@@ -2,14 +2,14 @@ use super::*;
 
 #[test]
 fn accepts_cstring_and_opaque_extern_boundaries() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.ffi
 
 extern "C" {
     fn puts(message: CString) -> i32
     fn nomo_example_allocate() -> Opaque
-    fn nomo_example_release(handle: Opaque) -> void
+    fn nomo_example_release(handle: Opaque)
 }
 
 fn allocate() -> Opaque {
@@ -18,13 +18,13 @@ fn allocate() -> Opaque {
     }
 }
 
-fn release(handle: Opaque) -> void {
+fn release(handle: Opaque) {
     unsafe {
         nomo_example_release(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let message: CString = CString.from_string("ffi values ok")
     unsafe {
         puts(message)
@@ -72,13 +72,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_nominal_opaque_handle_boundaries() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 
 extern "C" {
     fn file_open() -> FileHandle
-    fn file_close(handle: FileHandle) -> void
+    fn file_close(handle: FileHandle)
 }
 
 fn open() -> FileHandle {
@@ -87,13 +87,13 @@ fn open() -> FileHandle {
     }
 }
 
-fn close(handle: FileHandle) -> void {
+fn close(handle: FileHandle) {
     unsafe {
         file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let handle: FileHandle = open()
     close(handle)
 }
@@ -112,14 +112,14 @@ fn main() -> void {
 
 #[test]
 fn rejects_mixing_nominal_opaque_handles() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 extern opaque type SocketHandle
 
 extern "C" {
     fn file_open() -> FileHandle
-    fn socket_close(handle: SocketHandle) -> void
+    fn socket_close(handle: SocketHandle)
 }
 
 fn open() -> FileHandle {
@@ -128,13 +128,13 @@ fn open() -> FileHandle {
     }
 }
 
-fn close_socket(handle: SocketHandle) -> void {
+fn close_socket(handle: SocketHandle) {
     unsafe {
         socket_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let handle: FileHandle = open()
     close_socket(handle)
 }
@@ -148,11 +148,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_constructing_nominal_opaque_handles() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 
-fn main() -> void {
+fn main() {
     let handle: FileHandle = FileHandle {}
 }
 "#;
@@ -164,12 +164,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_duplicate_nominal_opaque_handle_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 extern opaque type FileHandle
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -180,13 +180,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_nullable_handle_checks_and_explicit_unwrap() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 
 extern "C" {
     fn file_try_open() -> Nullable<FileHandle>
-    fn file_close(handle: FileHandle) -> void
+    fn file_close(handle: FileHandle)
 }
 
 fn try_open() -> Nullable<FileHandle> {
@@ -195,13 +195,13 @@ fn try_open() -> Nullable<FileHandle> {
     }
 }
 
-fn close(handle: FileHandle) -> void {
+fn close(handle: FileHandle) {
     unsafe {
         file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let maybe: Nullable<FileHandle> = try_open()
     let handle: FileHandle = if maybe.is_null() {
         panic("missing handle")
@@ -218,13 +218,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_using_nullable_handle_without_unwrap() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle
 
 extern "C" {
     fn file_try_open() -> Nullable<FileHandle>
-    fn file_close(handle: FileHandle) -> void
+    fn file_close(handle: FileHandle)
 }
 
 fn try_open() -> Nullable<FileHandle> {
@@ -233,13 +233,13 @@ fn try_open() -> Nullable<FileHandle> {
     }
 }
 
-fn close(handle: FileHandle) -> void {
+fn close(handle: FileHandle) {
     unsafe {
         file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let maybe: Nullable<FileHandle> = try_open()
     close(maybe)
 }
@@ -253,13 +253,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_nullable_non_handle_types() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn invalid() -> Nullable<i32>
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -270,14 +270,14 @@ fn main() -> void {
 
 #[test]
 fn accepts_owned_and_borrowed_handle_metadata_with_release_contract() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle release file_close
 
 extern "C" {
     fn file_open() -> Owned<FileHandle>
     fn file_marker(handle: Borrowed<FileHandle>) -> i32
-    fn file_close(handle: Owned<FileHandle>) -> void
+    fn file_close(handle: Owned<FileHandle>)
 }
 
 fn open() -> Owned<FileHandle> {
@@ -292,13 +292,13 @@ fn marker(handle: Borrowed<FileHandle>) -> i32 {
     }
 }
 
-fn close(handle: Owned<FileHandle>) -> void {
+fn close(handle: Owned<FileHandle>) {
     unsafe {
         file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let handle: Owned<FileHandle> = open()
     let value: i32 = marker(handle.borrow())
     close(handle)
@@ -310,15 +310,15 @@ fn main() -> void {
 
 #[test]
 fn rejects_invalid_opaque_handle_release_contract() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle release file_close
 
 extern "C" {
-    fn file_close(handle: FileHandle) -> void
+    fn file_close(handle: FileHandle)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -329,13 +329,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_borrowed_handle_at_owned_release_boundary() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern opaque type FileHandle release file_close
 
 extern "C" {
     fn file_open() -> Owned<FileHandle>
-    fn file_close(handle: Owned<FileHandle>) -> void
+    fn file_close(handle: Owned<FileHandle>)
 }
 
 fn open() -> Owned<FileHandle> {
@@ -344,13 +344,13 @@ fn open() -> Owned<FileHandle> {
     }
 }
 
-fn close(handle: Owned<FileHandle>) -> void {
+fn close(handle: Owned<FileHandle>) {
     unsafe {
         file_close(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let handle: Owned<FileHandle> = open()
     close(handle.borrow())
 }
@@ -362,7 +362,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_non_capturing_extern_c_callback() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn apply(value: i32, callback: extern "C" fn(i32) -> i32) -> i32
@@ -378,7 +378,7 @@ fn call_apply(value: i32) -> i32 {
     }
 }
 
-fn main() -> void {
+fn main() {
     let result: i32 = call_apply(21)
 }
 "#;
@@ -398,7 +398,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_fixed_layout_repr_c_struct_at_extern_boundary() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 #[repr(C)]
 struct Header {
@@ -416,7 +416,7 @@ fn inspect(header: Header) -> i32 {
     }
 }
 
-fn main() -> void {
+fn main() {
     let header: Header = Header {
         tag: 1,
         value: 42,
@@ -430,7 +430,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_repr_struct_at_extern_boundary() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 struct Header {
     tag: i32
@@ -440,7 +440,7 @@ extern "C" {
     fn inspect_header(header: Header) -> i32
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -451,14 +451,14 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_fixed_repr_c_field_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 #[repr(C)]
 struct Header {
     label: string
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -469,7 +469,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_callback_with_mismatched_signature() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn apply(value: i32, callback: extern "C" fn(i32) -> i32) -> i32
@@ -485,7 +485,7 @@ fn call_apply(value: i32) -> i32 {
     }
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -496,12 +496,12 @@ fn main() -> void {
 
 #[test]
 fn rejects_callback_type_escaping_extern_parameter_position() {
-    let source = r#"package app.main
+    let source = r#"package app
 
-fn retain(callback: extern "C" fn(i32) -> i32) -> void {
+fn retain(callback: extern "C" fn(i32) -> i32) {
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -512,13 +512,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_callback_as_extern_return_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn callback_factory() -> extern "C" fn(i32) -> i32
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -529,13 +529,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_ffi_types_without_std_ffi_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
     fn puts(message: CString) -> i32
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -551,7 +551,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_cstring_extern_return_type() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.ffi
 
@@ -559,7 +559,7 @@ extern "C" {
     fn current_name() -> CString
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -571,13 +571,13 @@ fn main() -> void {
 
 #[test]
 fn rejects_string_as_general_extern_parameter() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 extern "C" {
-    fn consume(message: string) -> void
+    fn consume(message: string)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 

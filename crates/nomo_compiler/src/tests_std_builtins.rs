@@ -3,12 +3,12 @@ use super::*;
 #[test]
 fn source_carrier_contract_matches_compiler_injected_carriers() {
     nomo_std::validate_intrinsic_source_contract().unwrap();
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 import std.result
 
-fn main() -> void {
+fn main() {
     let option: Option<i64> = Some(1)
     let result: Result<i64, string> = Ok(1)
 }
@@ -85,11 +85,11 @@ fn source_string_and_array_modules_typecheck_as_library_modules() {
 
 #[test]
 fn rejects_unknown_std_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.typo
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -100,11 +100,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_unknown_specific_std_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.io.flush
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -115,11 +115,11 @@ fn main() -> void {
 
 #[test]
 fn rejects_non_std_import_in_v0_1() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import app.other
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -132,32 +132,32 @@ fn main() -> void {
 fn rejects_std_module_calls_without_imports() {
     for (source, symbol, import) in [
         (
-            "package app.main\nfn main() -> void {\n    let count: u64 = string.len(\"hi\")\n}\n",
+            "package app\nfn main() {\n    let count: u64 = string.len(\"hi\")\n}\n",
             "string.len",
             "std.string",
         ),
         (
-            "package app.main\nfn main() -> void {\n    let result: Result<string, FsError> = fs.read_to_string(\"missing.txt\")\n}\n",
+            "package app\nfn main() {\n    let result: Result<string, FsError> = fs.read_to_string(\"missing.txt\")\n}\n",
             "fs.read_to_string",
             "std.fs",
         ),
         (
-            "package app.main\nfn main() -> void {\n    let value: Option<string> = env.get(\"HOME\")\n}\n",
+            "package app\nfn main() {\n    let value: Option<string> = env.get(\"HOME\")\n}\n",
             "env.get",
             "std.env",
         ),
         (
-            "package app.main\nfn main() -> void {\n    let name: string = path.basename(\"/tmp/nomo.txt\")\n}\n",
+            "package app\nfn main() {\n    let name: string = path.basename(\"/tmp/nomo.txt\")\n}\n",
             "path.basename",
             "std.path",
         ),
         (
-            "package app.main\nfn main() -> void {\n    let value: i64 = math.abs(0 - 1)\n}\n",
+            "package app\nfn main() {\n    let value: i64 = math.abs(0 - 1)\n}\n",
             "math.abs",
             "std.math",
         ),
         (
-            "package app.main\nfn main() -> void {\n    let items = Array.new<i32>()\n}\n",
+            "package app\nfn main() {\n    let items = Array.new<i32>()\n}\n",
             "Array.new",
             "std.array",
         ),
@@ -173,22 +173,22 @@ fn rejects_std_module_calls_without_imports() {
 fn rejects_standard_library_types_without_imports() {
     for (source, type_name, import) in [
         (
-            "package app.main\nfn parse() -> Result<i32, string> {\n    return 1\n}\nfn main() -> void {\n}\n",
+            "package app\nfn parse() -> Result<i32, string> {\n    return 1\n}\nfn main() {\n}\n",
             "Result",
             "std.result",
         ),
         (
-            "package app.main\nfn label(value: Option<i32>) -> void {\n}\nfn main() -> void {\n}\n",
+            "package app\nfn label(value: Option<i32>) {\n}\nfn main() {\n}\n",
             "Option",
             "std.option",
         ),
         (
-            "package app.main\nstruct Bag {\n    items: Array<i32>\n}\nfn main() -> void {\n}\n",
+            "package app\nstruct Bag {\n    items: Array<i32>\n}\nfn main() {\n}\n",
             "Array",
             "std.array",
         ),
         (
-            "package app.main\nfn report(error: FsError) -> void {\n}\nfn main() -> void {\n}\n",
+            "package app\nfn report(error: FsError) {\n}\nfn main() {\n}\n",
             "FsError",
             "std.fs",
         ),
@@ -202,7 +202,7 @@ fn rejects_standard_library_types_without_imports() {
 
 #[test]
 fn accepts_fs_read_and_write_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 import std.io
@@ -226,7 +226,7 @@ fn save_bytes(path: string, bytes: Array<u32>) -> Result<void, FsError> {
     return fs.write_bytes(path, bytes)
 }
 
-fn main() -> void {
+fn main() {
     let write_result: Result<void, FsError> = save("/tmp/nomo-fs-test.txt", "hello")
     let read_result: Result<string, FsError> = load("/tmp/nomo-fs-test.txt")
     let byte_read_result: Result<Array<u32>, FsError> = load_bytes("/tmp/nomo-fs-test.txt")
@@ -285,7 +285,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_fs_open_and_file_close_defer() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 import std.io
@@ -295,7 +295,7 @@ fn close_and_label(file: File) -> string {
     return "ok"
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<File, FsError> = fs.open("/tmp/nomo-file.txt")
     let message: string = match result {
         Result.Ok(file) => close_and_label(file)
@@ -339,7 +339,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_fs_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs.read_to_string
 import std.fs.write_string
@@ -366,7 +366,7 @@ fn save_bytes(path: string, bytes: Array<u32>) -> Result<void, FsError> {
     return write_bytes(path, bytes)
 }
 
-fn main() -> void {
+fn main() {
     let write_result: Result<void, FsError> = save("/tmp/nomo-fs-test.txt", "hello")
     let read_result: Result<string, FsError> = load("/tmp/nomo-fs-test.txt")
     let byte_read_result: Result<Array<u32>, FsError> = load_bytes("/tmp/nomo-fs-test.txt")
@@ -415,7 +415,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_file_read_and_write_string_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 
@@ -426,7 +426,7 @@ fn rewrite(file: File) -> Result<string, FsError> {
     return Ok(text)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -460,7 +460,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_net_tcp_stream_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 
@@ -473,7 +473,7 @@ fn request(host: string, port: i64) -> Result<string, NetError> {
     return Ok(text)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -527,7 +527,7 @@ fn main() -> void {
 
 #[test]
 fn rejects_legacy_unsuffixed_blocking_tcp_stream_methods() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 import std.result
@@ -536,7 +536,7 @@ fn request(stream: TcpStream) -> Result<string, NetError> {
     return stream.read_to_string()
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -547,7 +547,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_net_connect_blocking_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net.connect_blocking
 import std.result
@@ -556,7 +556,7 @@ fn request(host: string, port: i64) -> Result<TcpStream, NetError> {
     return connect_blocking(host, port)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -574,7 +574,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_net_tcp_listener_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 
@@ -587,7 +587,7 @@ fn serve(host: string, port: i64) -> Result<void, NetError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -629,7 +629,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_net_listen_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net.listen
 import std.result
@@ -638,7 +638,7 @@ fn open(host: string, port: i64) -> Result<TcpListener, NetError> {
     return listen(host, port)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -652,7 +652,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_net_udp_socket_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net
 
@@ -664,7 +664,7 @@ fn serve(host: string, port: i64) -> Result<void, NetError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -715,7 +715,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_net_udp_bind_import() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.net.udp_bind
 import std.result
@@ -724,7 +724,7 @@ fn open(host: string, port: i64) -> Result<UdpSocket, NetError> {
     return udp_bind(host, port)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -738,7 +738,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_fs_directory_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs
 import std.array
@@ -753,7 +753,7 @@ fn prepare(path: string) -> Result<Array<string>, FsError> {
     return Ok(entries)
 }
 
-fn main() -> void {
+fn main() {
     let entries: Result<Array<string>, FsError> = prepare("/tmp/nomo-dir")
     io.println("done")
 }
@@ -801,7 +801,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_fs_directory_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.fs.exists
 import std.fs.metadata
@@ -819,7 +819,7 @@ fn prepare(path: string) -> Result<Array<string>, FsError> {
     return Ok(entries)
 }
 
-fn main() -> void {
+fn main() {
 }
 "#;
 
@@ -847,12 +847,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_env_get_builtin() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.env
 import std.io
 
-fn main() -> void {
+fn main() {
     let value: Option<string> = env.get("NOMO_TEST_ENV")
     let message: string = match value {
         Option.Some(text) => text
@@ -877,13 +877,13 @@ fn main() -> void {
 
 #[test]
 fn accepts_env_args_builtin() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.env
 import std.io
 import std.array
 
-fn main() -> void {
+fn main() {
     let args: Array<string> = env.args()
     let first: Option<string> = args.get(1)
     let message: string = match first {
@@ -920,12 +920,12 @@ fn main() -> void {
 
 #[test]
 fn accepts_extended_env_builtins() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.env
 import std.io
 
-fn main() -> void {
+fn main() {
     env.set("NOMO_TEST_ENV", "value")
     let cwd: string = env.cwd()
     let home: Option<string> = env.home_dir()
@@ -969,7 +969,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_specific_env_builtin_imports() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.env.args
 import std.env.cwd
@@ -980,7 +980,7 @@ import std.env.temp_dir
 import std.io
 import std.array
 
-fn main() -> void {
+fn main() {
     set("NOMO_TEST_ENV", "value")
     let values: Array<string> = args()
     let home: Option<string> = get("HOME")
@@ -1046,7 +1046,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_imported_result_lang_item() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.result
 
@@ -1054,7 +1054,7 @@ fn parse() -> Result<i64, string> {
     return Result.Ok(41)
 }
 
-fn main() -> void {
+fn main() {
     let value: Result<i64, string> = parse()
 }
 "#;
@@ -1085,7 +1085,7 @@ fn main() -> void {
 
 #[test]
 fn accepts_imported_option_lang_item() {
-    let source = r#"package app.main
+    let source = r#"package app
 
 import std.option
 import std.io
@@ -1097,7 +1097,7 @@ fn label(value: Option<string>) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: Option<string> = Option.None
     let text: string = label(value)
     io.println(text)

@@ -349,8 +349,11 @@ fn assert_cli_run(example: &Path) {
     }
     assert!(
         output.status.success(),
-        "nomo run failed for {}",
-        example.display()
+        "nomo run failed for {}\nstatus: {}\nstdout:\n{}\nstderr:\n{}",
+        example.display(),
+        output.status,
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
     );
     assert_example_output(example, &output.stdout, &output.stderr);
 }

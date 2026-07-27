@@ -107,7 +107,7 @@ jobs:
       - uses: ilammy/msvc-dev-cmd@v1
       - name: Verify the native C driver
         run: clang --version
-      - name: Run owner-affine numeric TCP lifecycle through IOCP
+      - name: Run owner-affine TCP and hostname lifecycle through IOCP
         run: >-
           cargo test -p nomo --test cli_project
           async_tcp
@@ -166,20 +166,24 @@ jobs:
           $tcpOutput = cargo run --locked --bin nomo -- run examples/async_tcp_connect
           $tcpExit = $LASTEXITCODE
           $tcpText = $tcpOutput -join "`n"
-          if ($tcpExit -ne 0 -or $tcpText -notmatch "^unsupported$") {
+          if ($tcpExit -ne 0 `
+              -or $tcpText -notmatch "^(hostname resolution failed|TCP connect timed out)$") {
             throw "unexpected Windows async TCP result: exit=$tcpExit output=[$tcpText]"
           }
           $tcpPayload = Get-Content -Raw $tcpMetrics | ConvertFrom-Json
           if ($tcpPayload.counters.io_connect_starts -ne 1 `
-              -or $tcpPayload.counters.io_ready_completions -ne 0 `
-              -or $tcpPayload.counters.reactor_registrations -ne 0 `
-              -or $tcpPayload.counters.reactor_deregistrations -ne 0 `
+              -or $tcpPayload.counters.reactor_registrations -lt 1 `
+              -or $tcpPayload.counters.reactor_registrations `
+                  -ne $tcpPayload.counters.reactor_deregistrations `
               -or $tcpPayload.counters.live_reactor_registrations -ne 0 `
               -or $tcpPayload.counters.live_io_handles -ne 0 `
               -or $tcpPayload.counters.live_io_operations -ne 0 `
-              -or $tcpPayload.counters.blocking_pool_initializations -ne 0 `
-              -or $tcpPayload.counters.blocking_threads_started -ne 0 `
-              -or $tcpPayload.counters.blocking_jobs_queued -ne 0 `
+              -or $tcpPayload.counters.blocking_pool_initializations -ne 1 `
+              -or $tcpPayload.counters.blocking_threads_started -ne 1 `
+              -or $tcpPayload.counters.blocking_threads_retired -ne 1 `
+              -or $tcpPayload.counters.blocking_jobs_queued -ne 1 `
+              -or $tcpPayload.counters.blocking_jobs_started -ne 1 `
+              -or $tcpPayload.counters.blocking_jobs_completed -ne 1 `
               -or $tcpPayload.counters.live_blocking_threads -ne 0 `
               -or $tcpPayload.counters.live_blocking_jobs -ne 0) {
             throw "unexpected Windows async TCP counters"

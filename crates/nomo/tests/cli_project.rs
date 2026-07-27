@@ -16947,7 +16947,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn async_tcp_connect_resolves_hostname_on_bounded_pool_and_returns_to_owner() {
     let listener = TcpListener::bind("127.0.0.1:0").unwrap();
@@ -17006,7 +17005,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "connected\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "connected\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -17054,10 +17056,11 @@ suspend fn main() -> void {
         metrics["counters"]["reactor_deregistrations"],
         "reactor registration leak in:\n{metrics}"
     );
+    let minimum_reactor_registrations = 2;
     assert!(
         metrics["counters"]["reactor_registrations"]
             .as_u64()
-            .is_some_and(|value| value >= 2),
+            .is_some_and(|value| value >= minimum_reactor_registrations),
         "resolver and socket did not both register with the reactor:\n{metrics}"
     );
     assert!(
@@ -17066,12 +17069,24 @@ suspend fn main() -> void {
             .is_some_and(|value| value >= 2),
         "resolver and socket did not both return to the owner executor:\n{metrics}"
     );
+    if cfg!(windows) {
+        assert!(
+            metrics["counters"]["iocp_operations_started"]
+                .as_u64()
+                .is_some_and(|value| value >= 1),
+            "hostname candidates did not use IOCP:\n{metrics}"
+        );
+        assert_eq!(
+            metrics["counters"]["iocp_operations_started"],
+            metrics["counters"]["iocp_operations_completed"],
+            "IOCP operation leak in:\n{metrics}"
+        );
+    }
 
     server.join().unwrap();
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn async_tcp_hostname_zero_timeout_does_not_initialize_blocking_pool() {
     let root = temp_test_root("async-tcp-hostname-zero-timeout");
@@ -17129,7 +17144,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "timed out\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -17164,7 +17182,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn async_tcp_hostname_resolution_error_is_typed_bounded_and_secret_safe() {
     let root = temp_test_root("async-tcp-hostname-resolve-error");
@@ -17224,7 +17241,7 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "resolve\nhostname resolution failed\n"
     );
     assert!(
@@ -17264,7 +17281,46 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
+fn compile_delayed_async_resolver_fixture(
+    root: &Path,
+    c_path: &Path,
+    name: &str,
+    delay_millis: u64,
+    asan: bool,
+) -> PathBuf {
+    let bin_path = if cfg!(windows) {
+        root.join(format!("{name}.exe"))
+    } else {
+        root.join(name)
+    };
+    let mut compiler = Command::new(if cfg!(windows) { "clang" } else { "cc" });
+    compiler.arg("-std=c99");
+    if asan {
+        compiler
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g");
+    }
+    compiler
+        .arg(format!(
+            "-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS={delay_millis}"
+        ))
+        .arg(c_path);
+    if cfg!(windows) {
+        compiler.arg("-lws2_32");
+    } else {
+        compiler.arg("-pthread").arg("-lm");
+    }
+    let output = compiler.arg("-o").arg(&bin_path).output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    bin_path
+}
+
 #[test]
 fn async_tcp_resolver_cancels_queued_job_without_waking_dropped_frame() {
     let root = temp_test_root("async-tcp-resolver-cancel");
@@ -17338,30 +17394,9 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&build_output.stderr)
     );
     let c_path = project.join("build/c/main.c");
-    let bin_path = root.join("resolver-cancel");
-    let asan = cc_supports_address_sanitizer(&root);
-    let mut cc = Command::new("cc");
-    cc.arg("-std=c99");
-    if asan {
-        cc.arg("-fsanitize=address")
-            .arg("-fno-omit-frame-pointer")
-            .arg("-g");
-    }
-    let cc_output = cc
-        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=200")
-        .arg(&c_path)
-        .arg("-pthread")
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
-        .output()
-        .unwrap();
-    assert!(
-        cc_output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&cc_output.stdout),
-        String::from_utf8_lossy(&cc_output.stderr)
-    );
+    let asan = cfg!(unix) && cc_supports_address_sanitizer(&root);
+    let bin_path =
+        compile_delayed_async_resolver_fixture(&root, &c_path, "resolver-cancel", 200, asan);
     let metrics = root.join("async-tcp-resolver-cancel-metrics.json");
     let mut run = Command::new(&bin_path);
     run.env("NOMO_ASYNC_METRICS_PATH", &metrics);
@@ -17381,7 +17416,7 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     assert_eq!(
-        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
         "cancelled true\nresolved\n"
     );
     assert!(
@@ -17422,7 +17457,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn async_tcp_resolver_timeout_detaches_running_job_and_cleans_on_completion() {
     let root = temp_test_root("async-tcp-resolver-timeout");
@@ -17478,23 +17512,8 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&build_output.stderr)
     );
     let c_path = project.join("build/c/main.c");
-    let bin_path = root.join("resolver-timeout");
-    let cc_output = Command::new("cc")
-        .arg("-std=c99")
-        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=200")
-        .arg(&c_path)
-        .arg("-pthread")
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
-        .output()
-        .unwrap();
-    assert!(
-        cc_output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&cc_output.stdout),
-        String::from_utf8_lossy(&cc_output.stderr)
-    );
+    let bin_path =
+        compile_delayed_async_resolver_fixture(&root, &c_path, "resolver-timeout", 200, false);
     let metrics = root.join("async-tcp-resolver-timeout-metrics.json");
     let output = Command::new(&bin_path)
         .env("NOMO_ASYNC_METRICS_PATH", &metrics)
@@ -17506,7 +17525,10 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stdout),
         String::from_utf8_lossy(&output.stderr)
     );
-    assert_eq!(String::from_utf8_lossy(&output.stdout), "timed out\n");
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "timed out\n"
+    );
     assert!(
         output.stderr.is_empty(),
         "{}",
@@ -17546,7 +17568,6 @@ suspend fn main() -> void {
     fs::remove_dir_all(&root).unwrap();
 }
 
-#[cfg(unix)]
 #[test]
 fn async_tcp_resolver_queue_saturation_is_typed_and_bounded() {
     const CHILDREN: usize = 17;
@@ -17623,23 +17644,8 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&build_output.stderr)
     );
     let c_path = project.join("build/c/main.c");
-    let bin_path = root.join("resolver-saturation");
-    let cc_output = Command::new("cc")
-        .arg("-std=c99")
-        .arg("-DNOMO_ASYNC_RESOLVER_TEST_DELAY_MILLIS=50")
-        .arg(&c_path)
-        .arg("-pthread")
-        .arg("-lm")
-        .arg("-o")
-        .arg(&bin_path)
-        .output()
-        .unwrap();
-    assert!(
-        cc_output.status.success(),
-        "stdout:\n{}\nstderr:\n{}",
-        String::from_utf8_lossy(&cc_output.stdout),
-        String::from_utf8_lossy(&cc_output.stderr)
-    );
+    let bin_path =
+        compile_delayed_async_resolver_fixture(&root, &c_path, "resolver-saturation", 50, false);
     let metrics = root.join("async-tcp-resolver-saturation-metrics.json");
     let output = Command::new(&bin_path)
         .env("NOMO_ASYNC_METRICS_PATH", &metrics)

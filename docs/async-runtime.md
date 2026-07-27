@@ -59,9 +59,8 @@ non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
 
-The P2-TCP-A/B/C slices plus the focused P2-TCP-D Windows numeric-address
-slice provide direct-style connect, bounded incremental reads, and complete
-writes:
+The P2-TCP-A/B/C/D slices provide direct-style connect, bounded incremental
+reads, and complete writes:
 
 ```nomo
 import std.net
@@ -84,13 +83,13 @@ Linux and macOS attempt each socket in nonblocking mode and suspend through
 generation-checked epoll/kqueue registrations. Windows numeric IPv4/IPv6
 connects use `ConnectEx`; reads and writes use `WSARecv`/`WSASend` and a fixed
 64-slot owner-local IOCP operation table. Numeric addresses do not start an OS
-thread. On Linux and macOS, a hostname of at most 253 bytes enters one lazy
-resolver worker through a 16-live-job bounded capacity; completion returns
+thread. On every native platform, a hostname of at most 253 bytes enters one
+lazy resolver worker through a 16-live-job bounded capacity; completion returns
 through the owner reactor, and up to 16 IPv4/IPv6 candidates are attempted in
-resolver order. Resolution and every candidate share one monotonic deadline
-bounded to 15 minutes. A zero hostname timeout returns inline without
-initializing the pool or reactor. Windows hostnames remain explicit
-`Unsupported` until the remaining P2-TCP-D resolver sub-slice.
+resolver order. Unix uses a nonblocking completion pipe; Windows posts the
+completion to the owner IOCP. Resolution and every candidate share one
+monotonic deadline bounded to 15 minutes. A zero hostname timeout returns
+inline without initializing the pool or reactor.
 `TcpStream` remains bound to its owner executor and is Local/!Send.
 
 Each stream permits one pending read and one pending write; another operation
@@ -316,9 +315,10 @@ On the native C99 backend, a suspend call chain that reaches
 - a bounded 64-slot I/O owner table with slot generations and exclusive close,
   plus one embedded connect registration and timer for each pending TCP
   candidate on epoll/kqueue, or one fixed-table IOCP operation for each
-  Windows numeric connect/read/write submission;
-- one lazy resolver worker behind 16 fixed job slots, a nonblocking owner wake
-  pipe, at most 16 copied address candidates, one overall deadline, and exact
+  Windows connect/read/write submission;
+- one lazy resolver worker behind 16 fixed job slots, a nonblocking Unix owner
+  wake pipe or posted Windows IOCP completion, at most 16 copied address
+  candidates, one overall deadline, and exact
   queue/running/cancelled/completed/live/peak lifecycle counters;
 - one embedded read/write registration per source operation, one pending
   operation per stream direction, one-shot readiness rearming, complete

@@ -955,6 +955,24 @@ def system_capture(command: Sequence[str]) -> Optional[str]:
     return value or None
 
 
+def parse_macos_hardware_profile(
+    profile: str,
+) -> Tuple[Optional[str], Optional[int]]:
+    cpu_model = None
+    physical_cores = None
+    for raw_line in profile.splitlines():
+        key, separator, value = raw_line.strip().partition(":")
+        if not separator:
+            continue
+        if key == "Chip":
+            cpu_model = value.strip() or None
+        elif key == "Total Number of Cores":
+            core_count = value.strip().split(maxsplit=1)[0]
+            if core_count.isdigit():
+                physical_cores = int(core_count)
+    return cpu_model, physical_cores
+
+
 def host_provenance() -> Dict[str, Any]:
     cpu_model = platform.processor() or None
     physical_cores = None
@@ -965,6 +983,19 @@ def host_provenance() -> Dict[str, Any]:
         physical_text = system_capture(["sysctl", "-n", "hw.physicalcpu"])
         if physical_text and physical_text.isdigit():
             physical_cores = int(physical_text)
+        if cpu_model is None or physical_cores is None:
+            profile = system_capture(
+                [
+                    "/usr/sbin/system_profiler",
+                    "SPHardwareDataType",
+                    "-detailLevel",
+                    "mini",
+                ]
+            )
+            if profile is not None:
+                profile_cpu, profile_cores = parse_macos_hardware_profile(profile)
+                cpu_model = cpu_model or profile_cpu
+                physical_cores = physical_cores or profile_cores
     elif Path("/proc/cpuinfo").is_file():
         for line in Path("/proc/cpuinfo").read_text(
             encoding="utf-8", errors="replace"

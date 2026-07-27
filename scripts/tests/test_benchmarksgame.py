@@ -193,6 +193,31 @@ class BenchmarksGameTests(unittest.TestCase):
         ):
             benchmark.validate_compile_command_provenance(builds)
 
+    def test_macos_hardware_profile_falls_back_when_sysctl_is_unavailable(
+        self,
+    ) -> None:
+        profile = """
+Hardware:
+
+    Hardware Overview:
+
+      Model Name: MacBook Pro
+      Chip: Apple M3 Pro
+      Total Number of Cores: 11 (5 Performance and 6 Efficiency)
+"""
+        with mock.patch.object(
+            benchmark.sys,
+            "platform",
+            "darwin",
+        ), mock.patch.object(
+            benchmark,
+            "system_capture",
+            side_effect=[None, None, None, profile],
+        ):
+            host = benchmark.host_provenance()
+        self.assertEqual(host["cpu_model"], "Apple M3 Pro")
+        self.assertEqual(host["physical_core_count"], 11)
+
     def valid_builds(self) -> dict:
         builds = {}
         for workload in benchmark.WORKLOAD_IDS:

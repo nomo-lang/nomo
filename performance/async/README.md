@@ -118,9 +118,22 @@ lifecycle evidence, not a cross-language performance claim.
 bounded start/reap jobs, one lazy worker, owner-reactor process events, and no
 per-child threads or `poll` loop. Native CLI fixtures validate stdin/output/
 exit ordering, timeout reuse, cancellation, termination, secret safety, and
-zero live counters after shutdown. The cross-language workload itself remains
-disabled and non-claim-eligible until it owns a self-contained cross-platform
-child fixture and a fair Go comparison.
+zero live counters after shutdown.
+
+`manifest-p2.json` enables the claim-ineligible P2-PROC-E comparison. Nomo and
+the pinned Go 1.25.12 control both launch the same C99 child fixture, keep one
+child alive, and complete 256 exchanges of the same 63-byte line through
+stdin, stdout, and stderr. Both run with one-core semantics; Linux additionally
+applies process affinity and a 2 GiB virtual-address safety ceiling, while
+every measured sample must remain below a 128 MiB peak-RSS budget. Result
+schema 2 records five wall/CPU/RSS samples, p50/p99/p999, operations per
+second, and Linux peak fd/thread observations. It also records the fixture
+source/binary identities, exact process lifecycle counters, and zero live
+runtime resources. Ratios are reported without changing the fixed design
+targets and never authorize a marketing or performance claim.
+The versioned collector remains POSIX-only because it uses `wait4`; the same
+fixture and Nomo reference are cross-platform, while Windows IOCP performance
+collection remains separate from its existing lifecycle/correctness CI gate.
 
 ## Run
 
@@ -139,6 +152,11 @@ python3 scripts/async_benchmark.py \
   --output performance/results/async-p1.json
 python3 scripts/async_benchmark.py \
   --nomo target/release/nomo \
+  --manifest performance/async/manifest-p2.json \
+  --require-clean \
+  --output performance/results/async-p2.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
   --manifest performance/async/manifest-p3.json \
   --require-clean \
   --output performance/results/async-p3.json
@@ -152,12 +170,12 @@ records SHA-256 identities for the manifest, harness, counter catalog, sources,
 Nomo/Go/C toolchains, and produced binaries. A requested metrics path that
 cannot be opened fails with a generic message and never prints the path.
 
-CI uploads raw P0, P1, and P3 JSON instead of treating hosted-runner timing as a
-stable baseline. Controlled-host evidence must also set
-`NOMO_BENCH_POWER_MODE` and enforce process affinity once that control lands.
-The current samples record per-process wall time, CPU time, and POSIX `wait4`
-peak RSS, but not steady RSS. They test harness and counter plumbing only; no
-Nomo-versus-Go ratio is calculated.
+CI uploads raw P0, P1, P2, and P3 JSON instead of treating hosted-runner timing
+as a stable baseline. P2 enforces Linux process affinity and declared resource
+ceilings, records wall/CPU/RSS plus Linux fd/thread peaks, and calculates the
+fixed Nomo/Go ratios. Hosted-runner ratios remain diagnostic evidence only.
+Controlled-host evidence must also set `NOMO_BENCH_POWER_MODE`; steady RSS
+sampling and a Windows-native resource collector remain later work.
 
 ## Change control
 

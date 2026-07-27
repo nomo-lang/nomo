@@ -94,8 +94,20 @@ host、port 或 timeout operand 求值前。HTTP/SSE 的性能 probe 仍等待�
 start/reap job、唯一的惰性 worker、owner-reactor process event，且没有
 per-child thread 或 `poll` loop。native CLI fixture 会验证 stdin/output/exit
 顺序、timeout 后复用、cancellation、termination、secret safety 与 shutdown
-后的 live counter 全归零。跨语言 workload 本身仍保持禁用且不参与性能声明，
-直到它拥有自包含的跨平台 child fixture 与公平的 Go 对照。
+后的 live counter 全归零。
+
+`manifest-p2.json` 启用不具备性能声明资格的 P2-PROC-E 对照。Nomo 与固定的
+Go 1.25.12 control 都启动同一个 C99 child fixture，复用一个 child，并通过
+stdin、stdout 与 stderr 完成 256 次相同的 63-byte line exchange。两侧都使用
+单核语义；Linux 还会强制 process affinity 与 2 GiB virtual-address 安全上限，
+每个 measured sample 的 peak RSS 都必须低于 128 MiB。result schema 2 会记录
+五次 wall/CPU/RSS sample、p50/p99/p999、每秒 operation，以及 Linux peak
+fd/thread；同时记录 fixture source/binary identity、精确 process lifecycle
+counter 与退出时为零的 live runtime resource。结果会如实计算 ratio，但不会
+修改既定 design target，也不构成 marketing 或 performance claim。
+版本化 collector 仍只支持 POSIX，因为它依赖 `wait4`；同一个 fixture 与 Nomo
+reference 本身保持跨平台，Windows IOCP 的 performance collector 仍与已有的
+lifecycle/correctness CI 门禁分开推进。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。
@@ -117,6 +129,11 @@ python3 scripts/async_benchmark.py \
   --output performance/results/async-p1.json
 python3 scripts/async_benchmark.py \
   --nomo target/release/nomo \
+  --manifest performance/async/manifest-p2.json \
+  --require-clean \
+  --output performance/results/async-p2.json
+python3 scripts/async_benchmark.py \
+  --nomo target/release/nomo \
   --manifest performance/async/manifest-p3.json \
   --require-clean \
   --output performance/results/async-p3.json
@@ -129,11 +146,12 @@ harness 都会失败。每份结果记录 manifest、harness、counter catalog�
 Nomo/Go/C toolchain 与产物 binary 的 SHA-256。请求的 metrics path 无法打开时，
 程序只返回不包含路径的通用错误。
 
-CI 上传原始 P0、P1 与 P3 JSON，不把 hosted runner timing 当成稳定 baseline。
-后续在受控机器采集 release evidence 时还要设置 `NOMO_BENCH_POWER_MODE` 并
-强制 process affinity。当前记录每个 process 的 wall time、CPU time 与 POSIX
-`wait4` peak RSS，但还不记录 steady RSS。这些 sample 只验证 harness 与
-counter 管线，不会计算 Nomo/Go 比率。
+CI 上传原始 P0、P1、P2 与 P3 JSON，不把 hosted runner timing 当成稳定
+baseline。P2 会在 Linux 强制 process affinity 与声明的 resource ceiling，
+记录 wall/CPU/RSS 及 Linux fd/thread peak，并计算固定的 Nomo/Go ratio；
+hosted runner ratio 仍仅是诊断证据。在受控机器采集 release evidence 时还要
+设置 `NOMO_BENCH_POWER_MODE`；steady RSS collector 仍属于后续工作。
+Windows-native resource collector 也仍属于后续工作。
 
 ## 变更控制
 

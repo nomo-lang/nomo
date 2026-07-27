@@ -88,6 +88,21 @@ jobs:
           path: performance/results/async-p1.json
           if-no-files-found: error
 
+      - name: Run P2 process-pipe comparison and resource gates
+        run: >-
+          python3 scripts/async_benchmark.py
+          --nomo target/release/nomo
+          --manifest performance/async/manifest-p2.json
+          --require-clean
+          --output performance/results/async-p2.json
+
+      - name: Upload P2 process-pipe evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-async-p2
+          path: performance/results/async-p2.json
+          if-no-files-found: error
+
       - name: Run P3 bounded-channel and no-cost gates
         run: >-
           python3 scripts/async_benchmark.py

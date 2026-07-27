@@ -26,6 +26,11 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 REPOSITORY_ROOT / "performance" / "async" / "manifest-p1.json"
             ).read_text(encoding="utf-8")
         )
+        self.p2_manifest = json.loads(
+            (
+                REPOSITORY_ROOT / "performance" / "async" / "manifest-p2.json"
+            ).read_text(encoding="utf-8")
+        )
         self.p3_manifest = json.loads(
             (
                 REPOSITORY_ROOT / "performance" / "async" / "manifest-p3.json"
@@ -44,9 +49,24 @@ class AsyncBenchmarkTests(unittest.TestCase):
         benchmark.validate_manifest(self.manifest)
         benchmark.validate_counter_catalog(self.catalog)
         benchmark.validate_manifest(self.p1_manifest)
+        benchmark.validate_manifest(self.p2_manifest)
         benchmark.validate_manifest(self.p3_manifest)
         self.assertEqual(self.p1_manifest["phase"], "P1")
+        self.assertEqual(self.p2_manifest["phase"], "P2")
+        self.assertEqual(self.p2_manifest["result_schema_version"], 2)
         self.assertEqual(self.p3_manifest["phase"], "P3")
+        process_pipe = next(
+            workload
+            for workload in self.p2_manifest["workloads"]
+            if workload["id"] == "process_pipe"
+        )
+        self.assertTrue(process_pipe["enabled"])
+        self.assertIn("go_project", process_pipe)
+        self.assertEqual(process_pipe["operations_per_run"], 256)
+        self.assertEqual(
+            process_pipe["resource_limits"]["peak_rss_budget_bytes"],
+            128 * 1024 * 1024,
+        )
         bounded_channel = next(
             workload
             for workload in self.p3_manifest["workloads"]
@@ -105,6 +125,21 @@ class AsyncBenchmarkTests(unittest.TestCase):
         ):
             benchmark.validate_manifest(manifest)
 
+    def test_manifest_rejects_invalid_resource_budget(self) -> None:
+        manifest = copy.deepcopy(self.p2_manifest)
+        process_pipe = next(
+            workload
+            for workload in manifest["workloads"]
+            if workload["id"] == "process_pipe"
+        )
+        process_pipe["resource_limits"]["peak_rss_budget_bytes"] = 0
+
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "invalid peak_rss_budget_bytes",
+        ):
+            benchmark.validate_manifest(manifest)
+
     def test_timed_run_accepts_an_expected_failure_contract(self) -> None:
         sample, stdout = benchmark.timed_run(
             [
@@ -120,6 +155,52 @@ class AsyncBenchmarkTests(unittest.TestCase):
 
         self.assertEqual(stdout, b"out\n")
         self.assertGreater(sample["wall_ns"], 0)
+
+    def test_schema_two_timed_run_records_resource_observation_fields(self) -> None:
+        sample, _ = benchmark.timed_run(
+            [sys.executable, "-c", "print('ok')"],
+            b"ok\n",
+            b"",
+            0,
+            5.0,
+            result_schema=2,
+        )
+
+        self.assertIn("peak_fd_count", sample)
+        self.assertIn("peak_thread_count", sample)
+
+    def test_schema_two_comparison_reports_fixed_ratios_without_a_claim(self) -> None:
+        implementations = {
+            "nomo": {
+                "stdout_sha256": "a" * 64,
+                "summary": {
+                    "operations_per_second": 200.0,
+                    "wall_p99_ns": 20,
+                    "peak_rss_bytes": 40,
+                },
+            },
+            "go": {
+                "stdout_sha256": "a" * 64,
+                "summary": {
+                    "operations_per_second": 100.0,
+                    "wall_p99_ns": 10,
+                    "peak_rss_bytes": 80,
+                },
+            },
+        }
+
+        comparison = benchmark.compare_implementations(
+            implementations,
+            fixture=None,
+            resource_limits={"requested_cpu_cores": 1},
+            note="evidence only",
+        )
+
+        self.assertTrue(comparison["performed"])
+        self.assertFalse(comparison["claim_allowed"])
+        self.assertEqual(comparison["nomo_over_go"]["throughput_ratio"], 2.0)
+        self.assertEqual(comparison["nomo_over_go"]["p99_wall_ratio"], 2.0)
+        self.assertEqual(comparison["nomo_over_go"]["peak_rss_ratio"], 0.5)
 
     def test_counter_catalog_rejects_duplicate_names(self) -> None:
         catalog = {
@@ -163,6 +244,22 @@ class AsyncBenchmarkTests(unittest.TestCase):
         self.assertEqual(summary["wall_p99_ns"], 50)
         self.assertEqual(summary["wall_p999_ns"], 50)
         self.assertIsNone(summary["peak_rss_bytes"])
+
+        extended = benchmark.summarize_samples(
+            [
+                {
+                    **sample,
+                    "peak_fd_count": 4,
+                    "peak_thread_count": 2,
+                }
+                for sample in samples
+            ],
+            operations_per_run=256,
+            result_schema=2,
+        )
+        self.assertEqual(extended["operations_per_run"], 256)
+        self.assertEqual(extended["peak_fd_count"], 4)
+        self.assertEqual(extended["peak_thread_count"], 2)
 
     def test_static_gate_reports_forbidden_generated_c_symbol(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -269,6 +366,12 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 "poll_calls": 5,
                 "frame_allocations": 0,
             },
+            "counter_minimums": {
+                "cooperative_yields": 2,
+            },
+            "counter_maximums": {
+                "frame_allocations": 0,
+            },
             "unavailable": [
                 "local_retain",
                 "local_release",
@@ -305,6 +408,18 @@ class AsyncBenchmarkTests(unittest.TestCase):
                 expected,
             )
 
+        below_minimum = copy.deepcopy(payload)
+        below_minimum["counters"]["cooperative_yields"] = 1
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "expected at least 2",
+        ):
+            benchmark.validate_runtime_counter_payload(
+                below_minimum,
+                self.catalog,
+                expected,
+            )
+
     def test_p0_result_rejects_a_performance_claim(self) -> None:
         result = {
             "schema": 1,
@@ -318,7 +433,7 @@ class AsyncBenchmarkTests(unittest.TestCase):
 
         with self.assertRaisesRegex(
             benchmark.HarnessError,
-            "pre-reactor result must not allow a performance claim",
+            "must not allow a performance claim",
         ):
             benchmark.validate_result(result, 5)
 

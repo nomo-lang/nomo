@@ -595,7 +595,7 @@ slices. See
 `examples/async_bounded_channel`, `examples/async_static_select`,
 `examples/async_tcp_connect`, `examples/async_tcp_io`, the
 [bilingual async runtime guide](docs/async-runtime.md), RFC 0031, and the
-[P0/P1/P3 async benchmark gates](performance/async/README.md).
+[P0/P1/P2/P3 async benchmark gates](performance/async/README.md).
 
 `std.fmt` owns value-to-text conversion. `fmt.to_string(value)` renders a
 primitive scalar or a struct implementing `fmt.Display`;

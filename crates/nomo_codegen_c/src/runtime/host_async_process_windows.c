@@ -152,6 +152,24 @@ typedef struct {
     size_t cap;
 } nomo_async_process_wide_text;
 
+static void nomo_async_process_trace(const char *stage) {
+    char path[4096];
+    DWORD length = GetEnvironmentVariableA(
+        "NOMO_ASYNC_PROCESS_TRACE_PATH",
+        path,
+        (DWORD)sizeof(path)
+    );
+    if (length == 0u || length >= (DWORD)sizeof(path)) {
+        return;
+    }
+    FILE *trace = fopen(path, "ab");
+    if (trace == NULL) {
+        return;
+    }
+    fprintf(trace, "%s\n", stage);
+    fclose(trace);
+}
+
 static @PROCESS_ERROR@ nomo_async_process_error_value(
     const char *code,
     const char *message
@@ -734,6 +752,7 @@ static int nomo_async_process_make_pipe(
     HANDLE *parent,
     HANDLE *child
 ) {
+    nomo_async_process_trace("pipe begin");
     wchar_t name[128];
     LONG sequence = InterlockedIncrement(&nomo_async_process_pipe_counter);
     int length = _snwprintf_s(
@@ -761,8 +780,10 @@ static int nomo_async_process_make_pipe(
         NULL
     );
     if (server == INVALID_HANDLE_VALUE) {
+        nomo_async_process_trace("pipe create failed");
         return 1;
     }
+    nomo_async_process_trace("pipe created");
     HANDLE connected_event = CreateEventW(NULL, TRUE, FALSE, NULL);
     if (connected_event == NULL) {
         CloseHandle(server);
@@ -772,6 +793,7 @@ static int nomo_async_process_make_pipe(
     memset(&connected_overlapped, 0, sizeof(connected_overlapped));
     connected_overlapped.hEvent = connected_event;
     BOOL connected = ConnectNamedPipe(server, &connected_overlapped);
+    nomo_async_process_trace("pipe connect initiated");
     DWORD connect_error = connected != FALSE
         ? ERROR_SUCCESS
         : GetLastError();
@@ -797,6 +819,7 @@ static int nomo_async_process_make_pipe(
         NULL
     );
     if (client == INVALID_HANDLE_VALUE) {
+        nomo_async_process_trace("pipe client failed");
         if (connect_error == ERROR_IO_PENDING) {
             CancelIoEx(server, &connected_overlapped);
             WaitForSingleObject(connected_event, INFINITE);
@@ -805,6 +828,7 @@ static int nomo_async_process_make_pipe(
         CloseHandle(server);
         return 1;
     }
+    nomo_async_process_trace("pipe client opened");
     if (connect_error == ERROR_IO_PENDING) {
         DWORD wait_status = WaitForSingleObject(connected_event, 5000u);
         DWORD transferred = 0u;
@@ -823,9 +847,11 @@ static int nomo_async_process_make_pipe(
             return 1;
         }
     }
+    nomo_async_process_trace("pipe connected");
     CloseHandle(connected_event);
     *parent = server;
     *child = client;
+    nomo_async_process_trace("pipe done");
     return 0;
 }
 
@@ -850,6 +876,7 @@ static void nomo_async_process_spawn_cleanup(
 static void nomo_async_process_spawn_blocking(
     nomo_async_process_job *job
 ) {
+    nomo_async_process_trace("spawn begin");
     HANDLE stdin_read = NULL;
     HANDLE stdin_write = NULL;
     HANDLE stdout_read = NULL;
@@ -894,8 +921,10 @@ static void nomo_async_process_spawn_blocking(
             &stderr_write
         ) != 0) {
         job->spawn_error = GetLastError();
+        nomo_async_process_trace("spawn pipes failed");
         goto cleanup;
     }
+    nomo_async_process_trace("spawn pipes ready");
     SIZE_T attribute_bytes = 0u;
     InitializeProcThreadAttributeList(NULL, 1u, 0u, &attribute_bytes);
     startup.lpAttributeList =
@@ -941,6 +970,9 @@ static void nomo_async_process_spawn_blocking(
         &startup.StartupInfo,
         &process
     );
+    nomo_async_process_trace(
+        created != FALSE ? "spawn process created" : "spawn process failed"
+    );
     if (!created) {
         job->spawn_error = GetLastError();
         goto cleanup;
@@ -968,6 +1000,7 @@ cleanup:
     free(command_line);
     free(environment);
     free(cwd);
+    nomo_async_process_trace("spawn done");
 }
 
 static DWORD WINAPI nomo_async_process_worker(void *opaque) {
@@ -991,6 +1024,7 @@ static DWORD WINAPI nomo_async_process_worker(void *opaque) {
             (pool->queue_head + 1u) % NOMO_ASYNC_PROCESS_JOB_CAPACITY;
         pool->queue_count -= 1u;
         nomo_async_process_job *job = &pool->jobs[slot];
+        nomo_async_process_trace("worker dequeued");
         if (job->state == NOMO_ASYNC_PROCESS_JOB_CANCELLED) {
             nomo_async_process_command_release(&job->command);
             memset(job, 0, sizeof(*job));
@@ -1007,6 +1041,7 @@ static DWORD WINAPI nomo_async_process_worker(void *opaque) {
         LeaveCriticalSection(&pool->lock);
 
         nomo_async_process_spawn_blocking(job);
+        nomo_async_process_trace("worker spawn returned");
         nomo_async_process_command_release(&job->command);
 
         EnterCriticalSection(&pool->lock);
@@ -1045,6 +1080,7 @@ static DWORD WINAPI nomo_async_process_worker(void *opaque) {
                 1
             );
         }
+        nomo_async_process_trace("worker completion posted");
     }
 }
 
@@ -1052,6 +1088,7 @@ static void nomo_async_process_pool_completion_wake(
     void *owner,
     uint32_t ready
 ) {
+    nomo_async_process_trace("completion wake");
     nomo_async_process_pool *pool =
         (nomo_async_process_pool *)owner;
     if (pool == NULL
@@ -1091,6 +1128,7 @@ static int nomo_async_process_pool_initialize(
     nomo_async_process_pool *pool,
     nomo_async_context *context
 ) {
+    nomo_async_process_trace("pool initialize begin");
     memset(pool, 0, sizeof(*pool));
     pool->context = context;
     InitializeCriticalSection(&pool->lock);
@@ -1123,6 +1161,7 @@ static int nomo_async_process_pool_initialize(
         DeleteCriticalSection(&pool->lock);
         return 1;
     }
+    nomo_async_process_trace("pool initialize done");
     context->blocking_pool_initializations += 1u;
     context->blocking_threads_started += 1u;
     context->live_blocking_threads += 1u;
@@ -1169,6 +1208,7 @@ static int nomo_async_process_pool_submit_start(
     uint32_t *slot_out,
     uint32_t *generation_out
 ) {
+    nomo_async_process_trace("submit begin");
     nomo_async_process_pool *pool = runtime->pool;
     EnterCriticalSection(&pool->lock);
     if (pool->stopping != 0u
@@ -1212,6 +1252,7 @@ static int nomo_async_process_pool_submit_start(
     *generation_out = job->generation;
     WakeConditionVariable(&pool->available);
     LeaveCriticalSection(&pool->lock);
+    nomo_async_process_trace("submit queued");
     runtime->context->blocking_jobs_queued += 1u;
     runtime->context->live_blocking_jobs += 1u;
     if (runtime->context->live_blocking_jobs
@@ -1644,6 +1685,7 @@ static void nomo_async_process_start_complete(
     uint32_t slot,
     uint32_t generation
 ) {
+    nomo_async_process_trace("start complete");
     nomo_async_process_registration *registration =
         (nomo_async_process_registration *)owner;
     if (registration == NULL
@@ -1845,6 +1887,7 @@ static nomo_async_poll nomo_async_process_spawn_start(
     nomo_async_context *context,
     @START_RESULT@ *result
 ) {
+    nomo_async_process_trace("start begin");
     memset(registration, 0, sizeof(*registration));
     context->process_starts += 1u;
     if (timeout_millis == 0u
@@ -1950,6 +1993,7 @@ static nomo_async_poll nomo_async_process_spawn_resume(
     nomo_async_context *context,
     @START_RESULT@ *result
 ) {
+    nomo_async_process_trace("start resume");
     nomo_async_process_runtime *runtime =
         (nomo_async_process_runtime *)context->process_runtime;
     if (registration->timer.expired != 0u) {
@@ -2957,6 +3001,7 @@ static void @CLOSE_CHILD_NAME@(@PROCESS_CHILD@ child) {
 }
 
 static void nomo_async_process_runtime_shutdown(nomo_async_context *context) {
+    nomo_async_process_trace("shutdown begin");
     nomo_async_process_runtime *runtime =
         (nomo_async_process_runtime *)context->process_runtime;
     if (runtime == NULL) {
@@ -2968,6 +3013,7 @@ static void nomo_async_process_runtime_shutdown(nomo_async_context *context) {
     WakeAllConditionVariable(&pool->available);
     LeaveCriticalSection(&pool->lock);
     WaitForSingleObject(pool->worker, INFINITE);
+    nomo_async_process_trace("shutdown worker joined");
     CloseHandle(pool->worker);
 
     for (uint32_t index = 0u;
@@ -3019,4 +3065,5 @@ static void nomo_async_process_runtime_shutdown(nomo_async_context *context) {
     free(pool);
     free(runtime);
     context->process_runtime = NULL;
+    nomo_async_process_trace("shutdown done");
 }

@@ -118,32 +118,11 @@ jobs:
           async_tcp
           --locked
       - name: Run owner-affine process pipes through IOCP
-        timeout-minutes: 2
-        shell: pwsh
-        run: |
-          $trace = Join-Path $env:RUNNER_TEMP "nomo-async-process-trace.log"
-          $env:NOMO_ASYNC_PROCESS_TRACE_PATH = $trace
-          $arguments = @(
-            "test", "-p", "nomo", "--test", "cli_project",
-            "async_process_pipe_contract_is_secret_safe_on_every_target",
-            "--locked", "--", "--exact", "--nocapture"
-          )
-          $test = Start-Process cargo `
-            -ArgumentList $arguments `
-            -PassThru `
-            -NoNewWindow
-          if (-not $test.WaitForExit(60000)) {
-            Write-Host "async process diagnostic timed out"
-            if (Test-Path $trace) {
-              Get-Content $trace
-            }
-            Stop-Process -Id $test.Id -Force
-            exit 1
-          }
-          if (Test-Path $trace) {
-            Get-Content $trace
-          }
-          exit $test.ExitCode
+        timeout-minutes: 5
+        run: >-
+          cargo test -p nomo --test cli_project
+          async_process_
+          --locked
       - name: Run current-thread async call ABI and timer counter probes
         shell: pwsh
         run: |

@@ -515,9 +515,10 @@ static int nomo_async_tcp_iocp_begin(
     registration->deadline_millis = registration->timer.deadline_millis;
     registration->reactor_registration.owner = registration;
     registration->reactor_registration.wake = nomo_async_tcp_io_wake;
-    if (nomo_async_reactor_associate_socket(
-            &registration->context->reactor,
-            handle
+    if (nomo_async_io_handle_associate_reactor(
+            registration->context,
+            registration->handle_slot,
+            registration->handle_generation
         ) != 0) {
         nomo_async_timer_disarm(
             &registration->timer,

@@ -392,7 +392,11 @@ static int nomo_async_tcp_bind_any(nomo_socket handle, int family) {
     registration->owns_handle = 1u;
     registration->reactor_registration.owner = registration;
     registration->reactor_registration.wake = nomo_async_tcp_connect_wake;
-    if (nomo_async_reactor_associate_socket(&context->reactor, handle) != 0) {
+    if (nomo_async_io_handle_associate_reactor(
+            context,
+            handle_slot,
+            handle_generation
+        ) != 0) {
         nomo_async_timer_disarm(&registration->timer, context);
         nomo_async_io_handle_close(context, handle_slot, handle_generation);
         registration->owns_handle = 0u;

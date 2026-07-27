@@ -2571,6 +2571,7 @@ typedef struct {
     uint8_t occupied;
     uint8_t read_busy;
     uint8_t write_busy;
+    uint8_t reactor_associated;
 } nomo_async_io_handle_slot;
 
 struct nomo_async_context {
@@ -2688,6 +2689,7 @@ static int nomo_async_io_handle_insert(
     slot->occupied = 1u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->reactor_associated = 0u;
     *slot_out = selected;
     *generation_out = slot->generation;
     context->live_io_handles += 1u;
@@ -2711,6 +2713,33 @@ static nomo_socket nomo_async_io_handle_get(
     }
     return slot->handle;
 }
+
+#ifdef _WIN32
+static int nomo_async_io_handle_associate_reactor(
+    nomo_async_context *context,
+    uint32_t slot_index,
+    uint32_t generation
+) {
+    if (slot_index >= NOMO_ASYNC_IO_HANDLE_CAPACITY) {
+        return 1;
+    }
+    nomo_async_io_handle_slot *slot = &context->io_handles[slot_index];
+    if (slot->occupied == 0u || slot->generation != generation) {
+        return 1;
+    }
+    if (slot->reactor_associated != 0u) {
+        return 0;
+    }
+    if (nomo_async_reactor_associate_socket(
+            &context->reactor,
+            slot->handle
+        ) != 0) {
+        return 1;
+    }
+    slot->reactor_associated = 1u;
+    return 0;
+}
+#endif
 
 #define NOMO_ASYNC_IO_DIRECTION_READ 1u
 #define NOMO_ASYNC_IO_DIRECTION_WRITE 2u
@@ -2774,6 +2803,7 @@ static void nomo_async_io_handle_close(
     slot->occupied = 0u;
     slot->read_busy = 0u;
     slot->write_busy = 0u;
+    slot->reactor_associated = 0u;
     slot->generation += 1u;
     if (slot->generation == 0u) {
         slot->generation = 1u;

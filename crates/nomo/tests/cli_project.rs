@@ -16907,7 +16907,7 @@ suspend fn main() -> void {
         ("io_cancellations", 0),
         ("io_errors", 0),
         ("live_io_handles", 0),
-        ("peak_live_io_handles", 1),
+        ("peak_live_io_handles", u64::from(!cfg!(windows))),
         ("live_io_operations", 0),
         ("peak_live_io_operations", 0),
         ("retained_io_bytes", 0),

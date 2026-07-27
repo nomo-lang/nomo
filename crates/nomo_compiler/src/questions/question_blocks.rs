@@ -100,6 +100,7 @@ pub(super) fn lower_tail_expr_as_return_block(
         return_type,
         false,
         0,
+        &[],
         &mut out,
     )?;
     Ok(out)

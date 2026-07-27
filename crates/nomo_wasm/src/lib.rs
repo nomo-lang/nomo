@@ -587,13 +587,31 @@ fn duration() -> Duration {
     panic("browser-select-duration-secret")
 }
 
+fn send_value() -> string {
+    panic("browser-select-send-secret")
+}
+
+suspend fn child() -> string {
+    io.println("browser-select-child-body-secret")
+    return "child"
+}
+
 suspend fn main() {
-    task.select {
-        task.receive(channel_value()) => received {
-            io.println("browser-select-receive-body-secret")
-        }
-        task.sleep(duration()) => timeout {
-            io.println("browser-select-timer-body-secret")
+    task.scope {
+        let child_task = task.spawn child()
+        task.select {
+            task.receive(channel_value()) => received {
+                io.println("browser-select-receive-body-secret")
+            }
+            task.send(channel_value(), send_value()) => sent {
+                io.println("browser-select-send-body-secret")
+            }
+            task.join(child_task) => joined {
+                io.println("browser-select-join-body-secret")
+            }
+            task.sleep(duration()) => timeout {
+                io.println("browser-select-timer-body-secret")
+            }
         }
     }
 }
@@ -608,7 +626,9 @@ suspend fn main() {
         assert_eq!(error.code, "NOMO-WASM-003");
         assert!(error.message.contains("task select"));
         assert!(!error.message.contains("browser-select-channel-secret"));
+        assert!(!error.message.contains("browser-select-send-secret"));
         assert!(!error.message.contains("browser-select-duration-secret"));
+        assert!(!error.message.contains("browser-select-child-body-secret"));
         assert!(response.stdout.is_empty());
         assert!(response.stderr.is_empty());
         assert!(response.diagnostic.is_none());

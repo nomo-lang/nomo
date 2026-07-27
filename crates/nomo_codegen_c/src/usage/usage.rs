@@ -652,7 +652,11 @@ pub(super) fn statement_uses_fs_read_to_string(statement: &Statement) -> bool {
                 TaskSelectOperation::Receive { channel, .. } => {
                     expr_uses_fs_read_to_string(channel)
                 }
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_uses_fs_read_to_string(channel) || expr_uses_fs_read_to_string(value)
+                }
                 TaskSelectOperation::Sleep { duration } => expr_uses_fs_read_to_string(duration),
+                TaskSelectOperation::Join { .. } => false,
             };
             operation_uses || arm.body.iter().any(statement_uses_fs_read_to_string)
         }),
@@ -752,7 +756,11 @@ pub(super) fn statement_uses_fs_write_string(statement: &Statement) -> bool {
         Statement::TaskSelect { arms } => arms.iter().any(|arm| {
             let operation_uses = match &arm.operation {
                 TaskSelectOperation::Receive { channel, .. } => expr_uses_fs_write_string(channel),
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_uses_fs_write_string(channel) || expr_uses_fs_write_string(value)
+                }
                 TaskSelectOperation::Sleep { duration } => expr_uses_fs_write_string(duration),
+                TaskSelectOperation::Join { .. } => false,
             };
             operation_uses || arm.body.iter().any(statement_uses_fs_write_string)
         }),
@@ -848,7 +856,11 @@ pub(super) fn statement_uses_fs_open(statement: &Statement) -> bool {
         Statement::TaskSelect { arms } => arms.iter().any(|arm| {
             let operation_uses = match &arm.operation {
                 TaskSelectOperation::Receive { channel, .. } => expr_uses_fs_open(channel),
+                TaskSelectOperation::Send { channel, value, .. } => {
+                    expr_uses_fs_open(channel) || expr_uses_fs_open(value)
+                }
                 TaskSelectOperation::Sleep { duration } => expr_uses_fs_open(duration),
+                TaskSelectOperation::Join { .. } => false,
             };
             operation_uses || arm.body.iter().any(statement_uses_fs_open)
         }),

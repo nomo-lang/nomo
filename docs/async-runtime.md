@@ -343,14 +343,20 @@ returns `runtime_unavailable` without evaluating capacity. Other channel
 operations report a sandbox capability error before evaluating a channel
 operand or send value that would be consumed.
 
-### Static receive/timer select
+### Static receive/send/timer/join select
 
-P3-C adds one compiler-recognized statement with 2 through 8 static arms:
+P3-C/P3-D add one compiler-recognized statement with 2 through 8 static arms:
 
 ```nomo
 task.select {
     task.receive(messages) => message {
         consume(message)
+    }
+    task.send(outbox, staged) => sent {
+        observe(sent)
+    }
+    task.join(child) => joined {
+        consume(joined)
     }
     task.sleep(time.duration_millis(50)) => timeout {
         observe(timeout)
@@ -358,24 +364,34 @@ task.select {
 }
 ```
 
-The first slice accepts only direct `task.receive(Channel<T>)` and
-`task.sleep(Duration)` operations. Every operand evaluates exactly once from
-top to bottom before cancellation/deadline readiness checks. If multiple arms
-are already ready, the first source-order arm wins. Otherwise each arm
-registers against the same owner-local select token; the first successful
-claim eagerly unlinks or disarms every loser and enqueues the owner frame at
-most once. A late loser event cannot execute an arm body.
+The supported operations are direct `task.receive(Channel<T>)`,
+`task.send(Channel<T>, T)`, `task.sleep(Duration)`, and
+`task.join(Task<T>)`. Every operand evaluates exactly once from top to bottom
+before cancellation/deadline readiness checks. A non-Copy named send value is
+staged and publication-moved at the select boundary, so E0887 rejects later
+use even when another arm wins. A selected join handle is likewise affine; a
+losing join unregisters only its waiter and leaves the child under mandatory
+scope cleanup.
 
-Each arm binds its operation result (`Option<T>` or
-`Result<void, TaskError>`) in a non-empty lexical body. This initial lowering
-requires normal fallthrough and rejects `return`, `break`, `continue`, `?`,
-panic, defer, nested scope/deadline/select, and suspending arm bodies with
-E0876. Send/join/select operations and general structured exits remain later
-slices. Browser WASM reports `runtime_unavailable` before evaluating any arm
-operand rather than approximating select sequentially. See
-[`examples/async_static_select`](../examples/async_static_select).
+If multiple arms are already ready, the first source-order arm wins. Otherwise
+each arm registers against the same owner-local select token; the first
+successful claim eagerly unlinks, disarms, or unregisters every loser and
+enqueues the owner frame at most once. Close/send/receive, timer, child
+completion, cancellation, and deadline races therefore have one winner and
+one owner for every staged value or result. A late loser event cannot execute
+an arm body.
 
-## Implemented P1, P2 Reactor/P2-TCP-A/B/C/D-numeric, and P3-B/P3-C Slices
+Each arm binds its typed operation result in a non-empty lexical body. Direct
+arm `return`, direct immutable typed `let value: T = expression?`, and direct
+panic evaluate their payload first and then perform structured child cleanup.
+Break/continue, defer, unsafe, nested scope/deadline/select, nested exits, and
+suspending arm bodies remain E0876. Browser WASM reports
+`runtime_unavailable` before evaluating any arm operand rather than
+approximating select sequentially. See
+[`examples/async_static_select`](../examples/async_static_select) and
+[`examples/async_send_join_select`](../examples/async_send_join_select).
+
+## Implemented P1, P2 Reactor/P2-TCP-A/B/C/D-numeric, and P3-B/P3-C/P3-D Slices
 
 On the native C99 backend, a suspend call chain that reaches
 `task.yield_now()` or `task.sleep(...)` emits:
@@ -424,9 +440,10 @@ On the native C99 backend, a suspend call chain that reaches
   immediate non-positive timeout, saturating monotonic deadline calculation,
   deterministic ready/timeout checks, typed child failure, and child-first
   cancellation cleanup;
-- static receive/timer select tokens with source-order ready arbitration,
-  exactly-once operand evaluation, one owner-frame wake, eager loser cleanup,
-  and no heap task or per-select allocation;
+- static receive/send/timer/join select tokens with source-order ready
+  arbitration, exactly-once operand evaluation, staged send values, affine
+  join handles, one owner-frame wake, eager loser cleanup, and no heap task or
+  per-select allocation;
 - compiler-inserted scope cleanup on normal fallthrough and final `return` that
   cancels unjoined children, removes their ready-queue entries, disarms owned
   timers, and drops their frames before the next statement or return
@@ -561,9 +578,10 @@ then prints and releases the original message before exiting with status 1.
 runtime error while keeping structured child bodies inert. Nested scopes,
 nested scope control flow, non-final scope return, defer/unsafe blocks, `?` in
 other positions, panic nested in another expression, cancellation tokens,
-nested/general deadline exits, cross-shard channels, and general send/join
-select remain later slices. P3-C's static receive/timer select is limited to
-non-empty fallthrough arm bodies without nested suspension.
+nested/general deadline exits and cross-shard channels remain later slices.
+P3-C/P3-D static select supports receive/send/timer/join plus direct arm
+return, typed `?`, and panic; arm bodies remain non-empty and cannot contain
+nested suspension or nested structured control flow.
 E0871, E0872, E0875, and E0876 reject unsupported cases before code
 generation.
 
@@ -600,9 +618,11 @@ wakeup, repeated close, timeout cancellation, typed value recovery,
 cross-suspension handle liveness, exact counters, native C99 and browser
 capability behavior, and AddressSanitizer/UndefinedBehaviorSanitizer cleanup.
 Static-select tests additionally cover source-order immediate readiness,
-suspend-and-wake arbitration, receive/timer loser removal, exact select/live
-resource counters, C99 generation, browser operand suppression, and
-AddressSanitizer cleanup.
+suspend-and-wake arbitration, receive/send/timer/join races, FIFO sender
+promotion, staged-value and affine-handle ownership, closed send, cancellation
+and deadline cleanup, direct structured arm exits, exact select/live resource
+counters, C99 generation, browser operand suppression, and AddressSanitizer
+cleanup.
 The P3 manifest runs the same capacity-eight 32-value exchange against pinned
 single-core Go while keeping the result ineligible for a performance claim.
 Later slices must still prove, rather than assume:
@@ -637,4 +657,6 @@ plus
 The bounded FIFO example is
 [`examples/async_bounded_channel`](../examples/async_bounded_channel).
 The static receive/timer selection example is
-[`examples/async_static_select`](../examples/async_static_select).
+[`examples/async_static_select`](../examples/async_static_select). The P3-D
+send/join selection example is
+[`examples/async_send_join_select`](../examples/async_send_join_select).

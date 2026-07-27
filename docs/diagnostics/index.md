@@ -173,6 +173,7 @@ the same code.
 - [E0881](E0881.md) - binding is used after publication move
 - [E0883](E0883.md) - structural Send derivation fails
 - [E0886](E0886.md) - static select arm count or operation shape is invalid
+- [E0887](E0887.md) - staged send value or affine join handle is reused after select
 - [E0891](E0891.md) - suspend call graph reaches a quarantined blocking operation
 - [E0901](E0901.md) - manifest or project configuration error
 - [E0902](E0902.md) - project source processing error

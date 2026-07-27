@@ -197,7 +197,7 @@
       "name": "select_registrations",
       "unit": "count",
       "available_phase": "P3",
-      "semantics": "Receive and timer operations registered as pending arms of a static owner-local task.select."
+      "semantics": "Receive, send, timer, and join operations registered as pending arms of a static owner-local task.select."
     },
     {
       "name": "select_immediate_wins",

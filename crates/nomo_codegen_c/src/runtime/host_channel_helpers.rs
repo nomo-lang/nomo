@@ -130,6 +130,8 @@ pub(super) fn emit_channel_instance_helpers(
                  nomo_async_context *context;\n\
                  void *frame;\n\
                  nomo_async_poll_fn poll;\n\
+                 nomo_async_select_token *select_token;\n\
+                 uint32_t select_arm;\n\
                  {element} value;\n\
                  uint8_t value_owned;\n\
                  uint8_t registered;\n\
@@ -382,6 +384,31 @@ fn emit_channel_async_queue_helpers(
                      receiver->select_arm\n\
                  ) != 0;\n\
          }}\n\n\
+         static int nomo_channel_send_claim_{suffix}(\n\
+             {send_registration} *sender\n\
+         ) {{\n\
+             return sender->select_token == NULL\n\
+                 || nomo_async_select_claim(\n\
+                     sender->select_token,\n\
+                     sender->select_arm\n\
+                 ) != 0;\n\
+         }}\n\n\
+         static void nomo_channel_send_wake_{suffix}(\n\
+             {send_registration} *sender\n\
+         ) {{\n\
+             if (sender->select_token != NULL) {{\n\
+                 nomo_async_select_wake(sender->select_token);\n\
+                 if (sender->context != NULL) {{\n\
+                     sender->context->channel_wakeups += 1u;\n\
+                 }}\n\
+                 return;\n\
+             }}\n\
+             nomo_channel_wake_{suffix}(\n\
+                 sender->context,\n\
+                 sender->frame,\n\
+                 sender->poll\n\
+             );\n\
+         }}\n\n\
          static void nomo_channel_receive_wake_{suffix}(\n\
              {receive_registration} *receiver\n\
          ) {{\n\
@@ -455,8 +482,15 @@ fn emit_channel_async_queue_helpers(
              }}\n\
          }}\n\n\
          static void nomo_channel_promote_sender_{suffix}({control} *control) {{\n\
+             if (control->count >= control->capacity) {{\n\
+                 return;\n\
+             }}\n\
              {send_registration} *sender = control->send_head;\n\
-             if (sender == NULL || control->count >= control->capacity) {{\n\
+             while (sender != NULL && nomo_channel_send_claim_{suffix}(sender) == 0) {{\n\
+                 nomo_channel_unlink_send_{suffix}(control, sender);\n\
+                 sender = control->send_head;\n\
+             }}\n\
+             if (sender == NULL) {{\n\
                  return;\n\
              }}\n\
              control->send_head = sender->next;\n\
@@ -484,7 +518,7 @@ fn emit_channel_async_queue_helpers(
                      sender->context->peak_live_channel_buffered_elements =\n\
                          sender->context->live_channel_buffered_elements;\n\
                  }}\n\
-                 nomo_channel_wake_{suffix}(sender->context, sender->frame, sender->poll);\n\
+                 nomo_channel_send_wake_{suffix}(sender);\n\
              }}\n\
          }}\n"
     )
@@ -690,6 +724,10 @@ fn emit_channel_close_helper(
             out,
             "\n    while (control->send_head != NULL) {{\n\
                  nomo_channel_send_registration_{suffix} *sender = control->send_head;\n\
+                 if (nomo_channel_send_claim_{suffix}(sender) == 0) {{\n\
+                     nomo_channel_unlink_send_{suffix}(control, sender);\n\
+                     continue;\n\
+                 }}\n\
                  control->send_head = sender->next;\n\
                  sender->next = NULL;\n\
                  sender->registered = 0u;\n\
@@ -699,7 +737,7 @@ fn emit_channel_close_helper(
                  }}\n\
                  sender->ready = 1u;\n\
                  sender->closed = 1u;\n\
-                 nomo_channel_wake_{suffix}(sender->context, sender->frame, sender->poll);\n\
+                 nomo_channel_send_wake_{suffix}(sender);\n\
              }}\n\
              control->send_tail = NULL;\n\
              while (control->receive_head != NULL) {{\n\
@@ -801,7 +839,9 @@ fn emit_channel_async_operations(
              {channel} channel,\n\
              {element} value,\n\
              nomo_async_context *context,\n\
-             {send_result} *result\n\
+             {send_result} *result,\n\
+             nomo_async_select_token *select_token,\n\
+             uint32_t select_arm\n\
          ) {{\n\
              memset(registration, 0, sizeof(*registration));\n\
              {control} *control = nomo_channel_control_from_handle_{suffix}(\n\
@@ -842,6 +882,8 @@ fn emit_channel_async_operations(
              registration->context = context;\n\
              registration->frame = context->current_frame;\n\
              registration->poll = context->current_poll;\n\
+             registration->select_token = select_token;\n\
+             registration->select_arm = select_arm;\n\
              registration->value = attempt.payload.nomo_payload_Full;\n\
              registration->value_owned = 1u;\n\
              registration->registered = 1u;\n\
@@ -889,6 +931,7 @@ fn emit_channel_async_operations(
                      (uint64_t)(uintptr_t)registration->control\n\
                  );\n\
              }}\n\
+             registration->select_token = NULL;\n\
              return NOMO_ASYNC_POLL_READY;\n\
          }}\n\n\
          static void nomo_channel_send_cancel_{suffix}(\n\
@@ -912,10 +955,20 @@ fn emit_channel_async_operations(
         "        registration->value_owned = 0u;\n\
              }}\n\
              registration->active = 0u;\n\
+             registration->select_token = NULL;\n\
              if (registration->context != NULL) {{\n\
                  registration->context->channel_cancellations += 1u;\n\
              }}\n\
              nomo_channel_release_handle((uint64_t)(uintptr_t)registration->control);\n\
+         }}\n\n\
+         static void nomo_channel_send_select_cancel_{suffix}(\n\
+             void *raw_registration,\n\
+             nomo_async_context *context\n\
+         ) {{\n\
+             (void)context;\n\
+             nomo_channel_send_cancel_{suffix}(\n\
+                 ({send_registration} *)raw_registration\n\
+             );\n\
          }}\n"
     )
     .unwrap();

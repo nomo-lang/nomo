@@ -223,6 +223,19 @@ pub(super) fn ensure_publication_binding_available(
     let Some((line, boundary)) = publication_move_site(scope, name) else {
         return Ok(());
     };
+    if boundary == "task.select send arm" {
+        return Err(Diagnostic::new(
+            "E0887",
+            format!(
+                "binding `{name}` is unavailable after it was staged by the task.select send arm at line {line}; the winning result or select cleanup owns the value"
+            ),
+            path,
+            span.line,
+            span.column,
+            span.length,
+            &span.text,
+        ));
+    }
     Err(Diagnostic::new(
         "E0881",
         format!(

@@ -308,14 +308,20 @@ capacity 的情况下返回 `runtime_unavailable`；其他 channel operation 会
 求值可能被消费的 channel operand 或 send value 前报告 sandbox capability
 error。
 
-### 静态 receive/timer select
+### 静态 receive/send/timer/join select
 
-P3-C 增加一个由编译器识别、包含 2 到 8 个静态 arm 的 statement：
+P3-C/P3-D 增加一个由编译器识别、包含 2 到 8 个静态 arm 的 statement：
 
 ```nomo
 task.select {
     task.receive(messages) => message {
         consume(message)
+    }
+    task.send(outbox, staged) => sent {
+        observe(sent)
+    }
+    task.join(child) => joined {
+        consume(joined)
     }
     task.sleep(time.duration_millis(50)) => timeout {
         observe(timeout)
@@ -323,22 +329,31 @@ task.select {
 }
 ```
 
-首个切片只接受直接 `task.receive(Channel<T>)` 与 `task.sleep(Duration)`
-operation。全部 operand 会先按源码从上到下各求值一次，再执行
-cancellation/deadline readiness 检查。若多个 arm 已 ready，则源码中最靠前的
-arm 获胜；否则全部 arm 会注册到同一个 owner-local select token。第一个成功
-claim 会立即 unlink 或 disarm 所有 loser，并保证 owner frame 最多只入队一次；
-迟到的 loser event 不会执行 arm body。
+支持的 operation 是直接 `task.receive(Channel<T>)`、
+`task.send(Channel<T>, T)`、`task.sleep(Duration)` 与
+`task.join(Task<T>)`。全部 operand 会先按源码从上到下各求值一次，再执行
+cancellation/deadline readiness 检查。非 Copy 的具名 send value 会先 staged，
+并在 select 边界 publication-move；即使其他 arm 获胜，之后再次使用也会得到
+E0887。参与 select 的 join handle 同样是 affine；losing join 只注销 waiter，
+child 仍由 scope 的强制清理负责。
 
-每个 arm 会在非空 lexical body 中绑定 operation result（`Option<T>` 或
-`Result<void, TaskError>`）。首个 lowering 要求 normal fallthrough，并以
-E0876 拒绝 `return`、`break`、`continue`、`?`、panic、defer、嵌套
-scope/deadline/select 以及会挂起的 arm body。send/join select 与 general
-structured exit 留到后续切片。Browser WASM 会在求值任何 arm operand 前报告
+若多个 arm 已 ready，则源码中最靠前的 arm 获胜；否则全部 arm 会注册到同一个
+owner-local select token。第一个成功 claim 会立即 unlink、disarm 或
+unregister 所有 loser，并保证 owner frame 最多只入队一次。close/send/receive、
+timer、child completion、cancellation 与 deadline race 因此只会产生一个
+winner，并且每个 staged value/result 只有一个 owner；迟到的 loser event
+不会执行 arm body。
+
+每个 arm 会在非空 lexical body 中绑定类型化 operation result。arm 顶层直接
+`return`、不可变且显式类型的 `let value: T = expression?` 与直接 panic 会先
+求值 payload，再执行 structured child cleanup。`break`/`continue`、defer、
+unsafe、嵌套 scope/deadline/select、嵌套 exit 与会挂起的 arm body 仍得到
+E0876。Browser WASM 会在求值任何 arm operand 前报告
 `runtime_unavailable`，不会用顺序执行伪装 select。示例见
-[`examples/async_static_select`](../examples/async_static_select)。
+[`examples/async_static_select`](../examples/async_static_select) 与
+[`examples/async_send_join_select`](../examples/async_send_join_select)。
 
-## 已实现的 P1、P2 Reactor/P2-TCP-A/B/C/D-数值地址与 P3-B/P3-C 小切片
+## 已实现的 P1、P2 Reactor/P2-TCP-A/B/C/D-数值地址与 P3-B/P3-C/P3-D 小切片
 
 Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的 suspend
 调用链时会生成：
@@ -383,9 +398,10 @@ Native C99 后端遇到最终到达 `task.yield_now()` 或 `task.sleep(...)` 的
 - 每个 suspend function 可有一个非嵌套 `task.deadline(Duration)` scope，
   覆盖非正时长立即 timeout、饱和 monotonic deadline 计算、确定性的
   ready/timeout 检查、typed child failure 与 child-first cancellation cleanup；
-- static receive/timer select token，覆盖源码顺序 ready arbitration、operand
-  恰好一次求值、owner frame 单次 wake、eager loser cleanup，且不创建 heap
-  task 或 per-select allocation；
+- static receive/send/timer/join select token，覆盖源码顺序 ready
+  arbitration、operand 恰好一次求值、staged send value、affine join handle、
+  owner frame 单次 wake、eager loser cleanup，且不创建 heap task 或
+  per-select allocation；
 - 编译器在 normal fallthrough 与最终 `return` 的 scope 边界插入清理：取消未
   join child、从 ready queue 移除其 entry、disarm timer，并在执行 scope
   后语句或完成 return 前 drop frame；
@@ -495,9 +511,9 @@ entry、解除 timer、drop 全部 frame、执行 runtime shutdown 与 metrics e
 路径。Browser WASM 返回同样的 runtime error，同时仍不执行 structured child
 body。嵌套 scope、scope 内嵌套控制流、非最终 scope return、defer/unsafe、
 其他位置的 `?`、其他表达式内部的 panic、取消 token、嵌套/通用 deadline
-exit、跨 shard channel 与通用 send/join select 仍属于后续切片。P3-C 的
-static receive/timer select 仅支持非空、normal fallthrough 且不包含嵌套
-suspension 的 arm body。
+exit 与跨 shard channel 仍属于后续切片。P3-C/P3-D 的 static select 支持
+receive/send/timer/join，以及 arm 顶层直接 return、类型化 `?` 与 panic；arm
+仍须非空且不可包含嵌套 suspension 或嵌套 structured control flow。
 E0871、E0872、E0875 与 E0876 会在 codegen 前拒绝这些情况。
 
 既有 `task.spawn` 仍是兼容用的隔离 native worker API，不是新的 async task
@@ -530,8 +546,10 @@ repeated close、timeout cancellation、typed value recovery、跨 suspension
 handle liveness、精确 counter、native C99/browser capability 行为与
 AddressSanitizer/UndefinedBehaviorSanitizer cleanup。
 static-select 测试还会覆盖源码顺序 immediate readiness、suspend-and-wake
-arbitration、receive/timer loser removal、精确 select/live resource counter、
-C99 生成、browser operand suppression 与 AddressSanitizer cleanup。
+arbitration、receive/send/timer/join race、sender FIFO promotion、staged value
+与 affine handle ownership、closed send、cancellation/deadline cleanup、arm
+顶层 structured exit、精确 select/live resource counter、C99 生成、browser
+operand suppression 与 AddressSanitizer cleanup。
 P3 manifest 会把同一个
 容量 8、32 个值的 exchange 与固定单核 Go 对照执行，但结果仍不具备
 performance claim 资格。
@@ -561,4 +579,6 @@ P0/P1/P2/P3 控制组与原始证据格式位于
 有界 FIFO 示例位于
 [`examples/async_bounded_channel`](../examples/async_bounded_channel)。
 静态 receive/timer 选择示例位于
-[`examples/async_static_select`](../examples/async_static_select)。
+[`examples/async_static_select`](../examples/async_static_select)。P3-D
+send/join 选择示例位于
+[`examples/async_send_join_select`](../examples/async_send_join_select)。

@@ -212,6 +212,7 @@ fn emits_question_return_with_cleanup_on_error_and_success() {
                             name: "parse".to_string(),
                             args: Vec::new(),
                         },
+                        early_exit_actions: Vec::new(),
                     },
                 ],
             },

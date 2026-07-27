@@ -460,7 +460,7 @@ fn validate_p1_suspend_function_shape(
 
     Err(Diagnostic::new(
         "E0876",
-        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, one non-nested `for condition` loop with a non-suspending condition, direct suspend calls, direct loop-carried owned assignments, and fallthrough-only control, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, 2 through 8-arm fallthrough `task.select` over direct receive/sleep operations, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters, mutable locals not owned by the supported loop, recursive suspension, nested suspending control flow, suspending loop conditions, nested loops, loop early exits, `?` or panic in other expression positions, deadline return/`?`/panic, select early exits, and non-final early control transfers require a later slice",
+        "the current nested-frame slice supports immutable top-level locals, frame-safe immutable parameters/results, standalone void suspend calls, `let`-bound value suspend calls, one non-nested `for condition` loop with a non-suspending condition, direct suspend calls, direct loop-carried owned assignments, `let`-bound `task.sleep(Duration)`, `task.send`, and `task.receive` results, 2 through 8-arm static `task.select` over direct receive/send/sleep/join operations with direct return/panic/`?` exits, normal task.scope cancellation cleanup, one non-nested fallthrough task.deadline block, direct immutable `?` bindings inside task.scope, direct explicit panic statements, and a final task.scope return that cancels unjoined children in non-generic `suspend fn` functions; async `main` still returns `void`, while mutable parameters, mutable locals not owned by the supported loop, recursive suspension, nested suspending control flow, suspending loop conditions, nested loops, loop early exits, nested select exits, deadline return/`?`/panic, `?` or panic in other expression positions, and non-final early control transfers outside select require a later slice",
         path,
         function.span.line,
         function.span.column,
@@ -1278,21 +1278,37 @@ fn ast_static_select_shape_supported(
     (2..=8).contains(&arms.len())
         && arms.iter().all(|arm| {
             !arm.body.is_empty()
-                && arm.body.iter().all(|statement| {
-                    !matches!(
-                        statement,
-                        Stmt::Return { .. }
-                            | Stmt::Break { .. }
-                            | Stmt::Continue { .. }
-                            | Stmt::Defer { .. }
-                            | Stmt::TaskScope { .. }
-                            | Stmt::TaskDeadline { .. }
-                            | Stmt::TaskSelect { .. }
-                            | Stmt::Unsafe { .. }
-                    ) && !ast_statement_any_expr(statement, |candidate| {
+                && arm.body.iter().all(|statement| match statement {
+                    Stmt::Return { value, .. } => value.as_ref().is_none_or(|value| {
+                        !ast_expr_contains_suspension(value, imports, suspending_functions)
+                            && !matches!(value, AstExpr::Panic { .. })
+                    }),
+                    Stmt::Let {
+                        mutable: false,
+                        value: AstExpr::Question { expr },
+                        ..
+                    } => {
+                        !ast_expr_contains_suspension(expr, imports, suspending_functions)
+                            && !ast_expr_contains_frame_exit(expr)
+                    }
+                    Stmt::Expr {
+                        expr: AstExpr::Panic { message },
+                        ..
+                    } => {
+                        !ast_expr_contains_suspension(message, imports, suspending_functions)
+                            && !ast_expr_contains_frame_exit(message)
+                    }
+                    Stmt::Break { .. }
+                    | Stmt::Continue { .. }
+                    | Stmt::Defer { .. }
+                    | Stmt::TaskScope { .. }
+                    | Stmt::TaskDeadline { .. }
+                    | Stmt::TaskSelect { .. }
+                    | Stmt::Unsafe { .. } => false,
+                    _ => !ast_statement_any_expr(statement, |candidate| {
                         ast_expr_is_direct_suspension(candidate, imports, suspending_functions)
                             || ast_expr_contains_frame_exit(candidate)
-                    })
+                    }),
                 })
         })
 }

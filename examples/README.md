@@ -46,6 +46,7 @@ stable-release or production-readiness claim.
 - `async_structured_panic_cleanup`: a spawned child panic that preserves its managed message while the root cancels a sibling with an armed timer and drops every frame before terminating
 - `async_bounded_channel`: P3-B capacity-one FIFO backpressure with scope-owned producer/consumer tasks and an idempotent close
 - `async_static_select`: P3-C source-ordered static receive/timer selection with one owner-frame wake and eager loser cleanup
+- `async_send_join_select`: P3-D staged send and affine join selection with pending winner linearization, direct structured exits, and loser cleanup
 - `async_tcp_connect`: P2-TCP-A/C/D owner-affine connect with a bounded native hostname resolver, typed `Resolve` result, and posted IOCP completion on Windows
 - `async_tcp_io`: P2-TCP-B/D bounded incremental read and complete write against a local TCP echo fixture, including IOCP on Windows
 - `async_process_pipe_contract`: cross-target async process capability example; native targets report a secret-safe missing-executable error, while the release-WASM gate proves browser rejection before command operands run

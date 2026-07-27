@@ -3158,7 +3158,108 @@ fn main() {
 }
 
 #[test]
-fn static_select_rejects_unsupported_operations_and_early_arm_exits() {
+fn static_send_join_select_lowers_staged_and_affine_ownership() {
+    let source = r#"package app
+
+import std.task
+import std.time
+
+suspend fn child() -> string {
+    task.yield_now()
+    return "child"
+}
+
+suspend fn choose(channel_value: Channel<string>) {
+    let payload: string = "value"
+    task.scope {
+        let child_handle = task.spawn child()
+        task.select {
+            task.send(channel_value, payload) => sent {
+                let value = sent
+            }
+            task.join(child_handle) => joined {
+                let value = joined
+            }
+        }
+    }
+}
+
+fn main() {
+}
+"#;
+    let program = parse_inline(source).unwrap();
+    let choose = program
+        .functions
+        .iter()
+        .find(|function| function.name == "choose")
+        .unwrap();
+    let Statement::TaskSelect { arms } = &choose.body[2] else {
+        panic!("expected static send/join select");
+    };
+    let TaskSelectOperation::Send {
+        value,
+        element_type: ValueType::String,
+        ..
+    } = &arms[0].operation
+    else {
+        panic!("expected static send arm");
+    };
+    assert!(matches!(
+        value.as_ref(),
+        ValueExpr::Call { name, .. } if name == BUILTIN_TASK_PUBLICATION_MOVE_EXPR
+    ));
+    assert!(matches!(
+        &arms[1].operation,
+        TaskSelectOperation::Join { handle } if handle == "child_handle"
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_async_select_send_value_owned_"));
+    assert!(c.contains("nomo_channel_send_select_cancel_string"));
+    assert!(c.contains("nomo_async_join_select_cancel_child"));
+    assert!(c.contains("structured_waiter_select_token"));
+}
+
+#[test]
+fn static_select_accepts_direct_return_and_rejects_invalid_or_nested_exits() {
+    let early_exit = r#"package app
+
+import std.task
+import std.time
+
+suspend fn choose(channel_value: Channel<string>) -> string {
+    task.select {
+        task.send(channel_value, "value") => sent {
+            return "send"
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            return "timer"
+        }
+    }
+    return "unreachable"
+}
+
+fn main() {
+}
+"#;
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        early_exit,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("frame->nomo_async_result = nomo_string_literal(\"send\")"));
+    assert!(c.contains("frame->nomo_async_result = nomo_string_literal(\"timer\")"));
+
     let unsupported = r#"package app
 
 import std.task
@@ -3166,8 +3267,8 @@ import std.time
 
 suspend fn choose(channel_value: Channel<string>) {
     task.select {
-        task.send(channel_value, "value") => sent {
-            let value = sent
+        task.check_cancelled() => checked {
+            let value = checked
         }
         task.sleep(time.duration_millis(5)) => timeout {
             let value = timeout
@@ -3182,7 +3283,7 @@ fn main() {
     assert_eq!(error.code, "E0886");
     assert!(error.message.contains("supports only"));
 
-    let early_exit = r#"package app
+    let nested_exit = r#"package app
 
 import std.task
 import std.time
@@ -3190,7 +3291,9 @@ import std.time
 suspend fn choose(channel_value: Channel<string>) {
     task.select {
         task.receive(channel_value) => received {
-            return
+            for {
+                return
+            }
         }
         task.sleep(time.duration_millis(5)) => timeout {
             let value = timeout
@@ -3201,9 +3304,143 @@ suspend fn choose(channel_value: Channel<string>) {
 fn main() {
 }
 "#;
-    let error = parse_inline(early_exit).unwrap_err();
+    let error = parse_inline(nested_exit).unwrap_err();
     assert_eq!(error.code, "E0876");
-    assert!(error.message.contains("select early exits"));
+    assert!(error.message.contains("direct arm statements"));
+}
+
+#[test]
+fn static_select_reports_e0887_for_moved_values_and_join_handles_after_select() {
+    let moved_value = r#"package app
+
+import std.task
+import std.time
+
+suspend fn choose(channel_value: Channel<string>) {
+    let payload: string = "value"
+    task.select {
+        task.send(channel_value, payload) => sent {
+            let value = sent
+        }
+        task.sleep(time.duration_millis(5)) => timeout {
+            let value = timeout
+        }
+    }
+    let escaped: string = payload
+}
+
+fn main() {
+}
+"#;
+    let error = parse_inline(moved_value).unwrap_err();
+    assert_eq!(error.code, "E0887");
+    assert!(error.message.contains("staged"));
+
+    let join_handle = r#"package app
+
+import std.task
+import std.time
+
+suspend fn child() -> string {
+    task.yield_now()
+    return "child"
+}
+
+suspend fn choose(channel_value: Channel<string>) {
+    task.scope {
+        let child_handle = task.spawn child()
+        task.select {
+            task.receive(channel_value) => received {
+                let value = received
+            }
+            task.join(child_handle) => joined {
+                let value = joined
+            }
+        }
+        let joined: Result<string, TaskError> = task.join(child_handle)
+    }
+}
+
+fn main() {
+}
+"#;
+    let error = parse_inline(join_handle).unwrap_err();
+    assert_eq!(error.code, "E0887");
+    assert!(error.message.contains("unavailable after task.select"));
+}
+
+#[test]
+fn static_select_early_question_and_panic_paths_carry_structured_cleanup() {
+    let source = r#"package app
+
+import std.result
+import std.task
+import std.time
+
+fn fail() -> Result<string, string> {
+    return Result.Err("failed")
+}
+
+suspend fn child() -> string {
+    task.yield_now()
+    return "child"
+}
+
+suspend fn choose(channel_value: Channel<string>) -> Result<string, string> {
+    task.scope {
+        let child_handle = task.spawn child()
+        task.select {
+            task.send(channel_value, "value") => sent {
+                let value: string = fail()?
+                return Result.Ok(value)
+            }
+            task.join(child_handle) => joined {
+                panic("boom")
+            }
+        }
+    }
+    return Result.Ok("fallthrough")
+}
+
+fn main() {
+}
+"#;
+    let program = parse_inline(source).unwrap();
+    let choose = program
+        .functions
+        .iter()
+        .find(|function| function.name == "choose")
+        .unwrap();
+    let Statement::TaskSelect { arms } = &choose.body[1] else {
+        panic!("expected task.select after the structured spawn");
+    };
+    assert!(matches!(
+        &arms[0].body[0],
+        Statement::QuestionLet {
+            early_exit_actions,
+            ..
+        } if early_exit_actions.len() == 1
+    ));
+    assert!(matches!(
+        arms[1].body.as_slice(),
+        [
+            Statement::Let { .. },
+            Statement::Expr(ValueExpr::Call { name, .. }),
+            Statement::Panic(ValueExpr::Variable(_))
+        ] if name == BUILTIN_TASK_STRUCTURED_CANCEL_EXPR
+    ));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    assert!(c.contains("nomo_async_question_result_"));
+    assert!(c.contains("context->pending_reason = NOMO_ASYNC_PENDING_PANIC"));
+    assert!(c.contains("nomo_async_cancel_child"));
 }
 
 #[test]

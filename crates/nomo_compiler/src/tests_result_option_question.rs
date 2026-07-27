@@ -117,6 +117,7 @@ fn main() {
             result_type: ValueType::Enum(ref result_name, ref result_args),
             return_type: ValueType::Enum(ref return_name, ref return_args),
             result_expr: ValueExpr::Call { ref name, .. },
+            ..
         } if result_name == "Option"
             && result_args == &vec![ValueType::String]
             && return_name == "Option"
@@ -155,6 +156,7 @@ fn main() {
             result_type: ValueType::Enum(ref result_name, ref result_args),
             return_type: ValueType::Enum(ref return_name, ref return_args),
             result_expr: ValueExpr::Call { ref name, .. },
+            ..
         } if result_name == "Result"
             && result_args == &vec![ValueType::Int, ValueType::String]
             && return_name == "Result"

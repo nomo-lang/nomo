@@ -96,6 +96,17 @@
       "note": "Proves source-ordered owner-local receive/timer arbitration, one suspended wake, eager loser cleanup, and zero live registrations at exit."
     },
     {
+      "id": "send_join_select_probe",
+      "kind": "runtime_counter_gate",
+      "available_phase": "P3",
+      "enabled": true,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/send_join_select_probe",
+      "expected_stdout": "send\nsent\npending send\npending\nchild\nchild\nlosing join cleaned\n",
+      "snapshot": "snapshots/send-join-select-probe.json",
+      "note": "Proves staged send publication, affine join selection, pending winner linearization, eager loser cleanup, and zero live registrations without thread or atomic symbols."
+    },
+    {
       "id": "task_spawn_complete",
       "kind": "required_async_workload",
       "available_phase": "P1",

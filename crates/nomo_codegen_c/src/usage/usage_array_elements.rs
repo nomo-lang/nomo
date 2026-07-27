@@ -277,9 +277,19 @@ pub(super) fn collect_statement_array_elements(
                         collect_type_array_elements(element_type, seen, out);
                         collect_expr_array_elements(channel, seen, out);
                     }
+                    TaskSelectOperation::Send {
+                        channel,
+                        value,
+                        element_type,
+                    } => {
+                        collect_type_array_elements(element_type, seen, out);
+                        collect_expr_array_elements(channel, seen, out);
+                        collect_expr_array_elements(value, seen, out);
+                    }
                     TaskSelectOperation::Sleep { duration } => {
                         collect_expr_array_elements(duration, seen, out);
                     }
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 for stmt in &arm.body {
                     collect_statement_array_elements(stmt, seen, out);

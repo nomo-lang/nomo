@@ -86,7 +86,10 @@ one positive timer register against one token, a later direct handoff wins,
 both losers are removed before a single owner-frame wake, and all waiter/timer
 live counters return to zero. The probe validates exact select counters and
 forbids thread or atomic symbols; it is a correctness gate, not a benchmark
-claim.
+claim. `send_join_select_probe` extends that gate with staged send publication,
+affine join ownership, immediate and suspended winner linearization, implicit
+losing-child cleanup, and exact zero-live-registration counters. It is likewise
+claim-ineligible.
 
 The first P2 foundation emits epoll for Linux, kqueue for macOS, and IOCP for
 Windows. Existing positive timers now use the normalized reactor wait instead

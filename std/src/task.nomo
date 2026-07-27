@@ -155,22 +155,33 @@ pub fn try_receive<T>(channel_value: Channel<T>) -> ChannelTryReceive<T> {
 /// join. Browser WASM currently rejects the scope without evaluating duration
 /// or body.
 ///
-/// Static receive/timer selection is also compiler recognized:
+/// Static receive/send/timer/join selection is also compiler recognized:
 ///
 /// task.select {
 ///     task.receive(channel_value) => received {
 ///         consume(received)
+///     }
+///     task.send(channel_value, staged) => sent {
+///         observe(sent)
+///     }
+///     task.join(child) => joined {
+///         consume(joined)
 ///     }
 ///     task.sleep(duration) => timeout {
 ///         observe(timeout)
 ///     }
 /// }
 ///
-/// The first P3-C slice accepts 2 through 8 `task.receive`/`task.sleep` arms.
-/// Operands evaluate once from top to bottom, an already-ready arm wins in
-/// source order, and a suspended winner eagerly removes every loser before
-/// waking the owner frame. Arm bodies must be non-empty and fall through.
-/// Browser WASM reports `runtime_unavailable` before evaluating operands.
+/// P3-C/P3-D accept 2 through 8 direct `task.receive`, `task.send`,
+/// `task.sleep`, or `task.join` arms. Operands evaluate once from top to
+/// bottom, an already-ready arm wins in source order, and a suspended winner
+/// eagerly removes every loser before waking the owner frame. A send value is
+/// staged and consumed at the select boundary; a selected join handle is
+/// affine and cannot be reused after the statement. Losing join arms only
+/// unregister their waiter, leaving the child to mandatory scope cleanup.
+/// Direct arm `return`, typed `?`, and panic use structured cleanup; nested
+/// suspension or nested structured control flow remains unsupported. Browser
+/// WASM reports `runtime_unavailable` before evaluating operands.
 /// Starts a non-capturing top-level worker with one deeply copied string input.
 pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> Result<Task, TaskError> {
     return task.spawn(worker, input)

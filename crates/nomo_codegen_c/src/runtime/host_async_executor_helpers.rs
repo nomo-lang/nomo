@@ -1072,6 +1072,10 @@ fn async_cancel_ident(function: &str) -> String {
     format!("nomo_async_cancel_{function}")
 }
 
+fn async_join_select_cancel_ident(function: &str) -> String {
+    format!("nomo_async_join_select_cancel_{function}")
+}
+
 fn async_drop_ident(function: &str) -> String {
     format!("nomo_async_drop_{function}")
 }
@@ -1312,6 +1316,18 @@ fn async_select_receive_registration_field(index: usize, arm: usize) -> String {
     format!("nomo_async_select_receive_registration_{index}_{arm}")
 }
 
+fn async_select_send_registration_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_send_registration_{index}_{arm}")
+}
+
+fn async_select_send_value_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_send_value_{index}_{arm}")
+}
+
+fn async_select_send_value_owned_field(index: usize, arm: usize) -> String {
+    format!("nomo_async_select_send_value_owned_{index}_{arm}")
+}
+
 fn async_select_timer_field(index: usize, arm: usize) -> String {
     format!("nomo_async_select_timer_{index}_{arm}")
 }
@@ -1350,6 +1366,8 @@ fn emit_async_frame_type(
              nomo_async_context *context;\n\
              void *structured_waiter_frame;\n\
              nomo_async_poll_fn structured_waiter_poll;\n\
+             nomo_async_select_token *structured_waiter_select_token;\n\
+             uint32_t structured_waiter_select_arm;\n\
              uint8_t initialized;\n\
              uint8_t started;\n\
              uint8_t dropped;\n\
@@ -1414,6 +1432,19 @@ fn emit_async_frame_type(
                         out.push_str(&async_select_receive_registration_field(index, arm_index));
                         out.push_str(";\n");
                     }
+                    TaskSelectOperation::Send { element_type, .. } => {
+                        out.push_str("    nomo_channel_send_registration_");
+                        out.push_str(&c_type_name_part(element_type));
+                        out.push(' ');
+                        out.push_str(&async_select_send_registration_field(index, arm_index));
+                        out.push_str(";\n    ");
+                        out.push_str(&c_type(element_type));
+                        out.push(' ');
+                        out.push_str(&async_select_send_value_field(index, arm_index));
+                        out.push_str(";\n    uint8_t ");
+                        out.push_str(&async_select_send_value_owned_field(index, arm_index));
+                        out.push_str(";\n");
+                    }
                     TaskSelectOperation::Sleep { .. } => {
                         out.push_str("    nomo_async_timer_registration ");
                         out.push_str(&async_select_timer_field(index, arm_index));
@@ -1421,6 +1452,7 @@ fn emit_async_frame_type(
                         out.push_str(&async_select_timer_outcome_field(index, arm_index));
                         out.push_str(";\n");
                     }
+                    TaskSelectOperation::Join { .. } => {}
                 }
                 out.push_str("    ");
                 out.push_str(&c_type(&arm.binding_type));
@@ -2281,7 +2313,29 @@ fn emit_structured_completion(out: &mut String, indent: usize) {
     write_indent(out, indent);
     out.push_str("frame->structured_completed = 1u;\n");
     write_indent(out, indent);
-    out.push_str("if (frame->structured_waiter_frame != NULL) {\n");
+    out.push_str("if (frame->structured_waiter_select_token != NULL) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("nomo_async_select_token *nomo_join_select_token =\n");
+    write_indent(out, indent + 2);
+    out.push_str("frame->structured_waiter_select_token;\n");
+    write_indent(out, indent + 1);
+    out.push_str("uint32_t nomo_join_select_arm = frame->structured_waiter_select_arm;\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_waiter_select_token = NULL;\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_waiter_frame = NULL;\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->structured_waiter_poll = NULL;\n");
+    write_indent(out, indent + 1);
+    out.push_str(
+        "if (nomo_async_select_claim(nomo_join_select_token, nomo_join_select_arm) != 0) {\n",
+    );
+    write_indent(out, indent + 2);
+    out.push_str("nomo_async_select_wake(nomo_join_select_token);\n");
+    write_indent(out, indent + 1);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str("} else if (frame->structured_waiter_frame != NULL) {\n");
     write_indent(out, indent + 1);
     out.push_str(
         "if (nomo_async_ready_enqueue(\n\
@@ -2305,6 +2359,23 @@ fn emit_structured_completion(out: &mut String, indent: usize) {
     out.push_str("frame->structured_waiter_poll = NULL;\n");
     write_indent(out, indent);
     out.push_str("}\n");
+}
+
+fn emit_async_join_select_cancel_function(out: &mut String, function: &Function) {
+    out.push_str("static void ");
+    out.push_str(&async_join_select_cancel_ident(&function.name));
+    out.push_str("(void *raw_frame, nomo_async_context *context) {\n    (void)context;\n    ");
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(" *frame = (");
+    out.push_str(&async_frame_ident(&function.name));
+    out.push_str(
+        " *)raw_frame;\n\
+             frame->structured_waiter_frame = NULL;\n\
+             frame->structured_waiter_poll = NULL;\n\
+             frame->structured_waiter_select_token = NULL;\n\
+             frame->structured_waiter_select_arm = 0u;\n\
+         }\n\n",
+    );
 }
 
 fn emit_async_deadline_failure(
@@ -2535,6 +2606,8 @@ fn emit_async_cancel_function(
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
+             frame->structured_waiter_select_token = NULL;\n\
+             frame->structured_waiter_select_arm = 0u;\n\
              frame->structured_completed = 1u;\n\
              frame->state = UINT32_MAX;\n\
          }\n\n",
@@ -2680,6 +2753,31 @@ fn emit_async_select_operands(
                 emit_expr(out, channel);
                 out.push_str(";\n");
             }
+            TaskSelectOperation::Send {
+                channel,
+                value,
+                element_type,
+            } => {
+                out.push_str(&c_type(&ValueType::Struct(
+                    "Channel".to_string(),
+                    vec![element_type.clone()],
+                )));
+                out.push(' ');
+                out.push_str(&async_select_channel_local(index, arm_index));
+                out.push_str(" = ");
+                emit_expr(out, channel);
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_select_send_value_field(index, arm_index));
+                out.push_str(" = ");
+                emit_expr(out, value);
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_select_send_value_owned_field(index, arm_index));
+                out.push_str(" = 1u;\n");
+            }
             TaskSelectOperation::Sleep { duration } => {
                 out.push_str("int64_t ");
                 out.push_str(&async_select_duration_local(index, arm_index));
@@ -2687,6 +2785,7 @@ fn emit_async_select_operands(
                 emit_expr(out, duration);
                 out.push_str(").nomo_member_millis;\n");
             }
+            TaskSelectOperation::Join { .. } => {}
         }
     }
 }
@@ -2696,6 +2795,8 @@ fn emit_async_select_start(
     index: usize,
     state: u32,
     arms: &[TaskSelectArm],
+    function: &Function,
+    functions: &HashMap<&str, &Function>,
     indent: usize,
 ) {
     let token = async_select_token_field(index);
@@ -2757,6 +2858,72 @@ fn emit_async_select_start(
                 out.push_str(&suffix);
                 out.push_str(");\n");
             }
+            TaskSelectOperation::Send { element_type, .. } => {
+                let suffix = c_type_name_part(element_type);
+                let registration = async_select_send_registration_field(index, arm_index);
+                write_indent(out, indent);
+                out.push_str("nomo_async_poll nomo_async_select_send_status_");
+                out.push_str(&index.to_string());
+                out.push('_');
+                out.push_str(&arm_index.to_string());
+                out.push_str(" = nomo_channel_send_start_");
+                out.push_str(&suffix);
+                out.push_str("(&frame->");
+                out.push_str(&registration);
+                out.push_str(", ");
+                out.push_str(&async_select_channel_local(index, arm_index));
+                out.push_str(", frame->");
+                out.push_str(&async_select_send_value_field(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_select_result_field(index, arm_index));
+                out.push_str(", &frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u);\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_select_send_value_owned_field(index, arm_index));
+                out.push_str(" = 0u;\n");
+                write_indent(out, indent);
+                out.push_str("if (nomo_async_select_send_status_");
+                out.push_str(&index.to_string());
+                out.push('_');
+                out.push_str(&arm_index.to_string());
+                out.push_str(" == NOMO_ASYNC_POLL_READY) {\n");
+                write_indent(out, indent + 1);
+                out.push_str("frame->");
+                out.push_str(&async_select_result_owned_field(index, arm_index));
+                out.push_str(" = 1u;\n");
+                write_indent(out, indent + 1);
+                out.push_str("if (nomo_async_select_immediate_win(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == 0) {\n");
+                write_indent(out, indent + 2);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 2);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 1);
+                out.push_str("}\n");
+                write_indent(out, indent + 1);
+                out.push_str("goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("}\n");
+                write_indent(out, indent);
+                out.push_str("nomo_async_select_register(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u, &frame->");
+                out.push_str(&registration);
+                out.push_str(", nomo_channel_send_select_cancel_");
+                out.push_str(&suffix);
+                out.push_str(");\n");
+            }
             TaskSelectOperation::Sleep { .. } => {
                 let timer = async_select_timer_field(index, arm_index);
                 let outcome = async_select_timer_outcome_field(index, arm_index);
@@ -2806,6 +2973,80 @@ fn emit_async_select_start(
                 out.push_str(&timer);
                 out.push_str(", nomo_async_timer_select_cancel);\n");
             }
+            TaskSelectOperation::Join { handle } => {
+                let spawn_index = structured_spawn_index(function, handle)
+                    .expect("validated task.select join handle has a spawn");
+                let spawn = statement_structured_spawn(&function.body[spawn_index])
+                    .expect("task.select join spawn exists");
+                let callee = functions
+                    .get(spawn.callee)
+                    .expect("validated task.select join target exists");
+                write_indent(out, indent);
+                out.push_str("if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_completed != 0u) {\n");
+                emit_structured_join_result_materialize(
+                    out,
+                    spawn_index,
+                    &async_select_result_field(index, arm_index),
+                    &async_select_result_owned_field(index, arm_index),
+                    &arm.binding_type,
+                    &callee.return_type,
+                    indent + 1,
+                );
+                write_indent(out, indent + 1);
+                out.push_str("context->task_joins += 1u;\n");
+                write_indent(out, indent + 1);
+                out.push_str("if (nomo_async_select_immediate_win(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u) == 0) {\n");
+                write_indent(out, indent + 2);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 2);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 1);
+                out.push_str("}\n");
+                write_indent(out, indent + 1);
+                out.push_str("goto nomo_async_resume_");
+                out.push_str(&state.to_string());
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("}\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_waiter_frame = context->current_frame;\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_waiter_poll = context->current_poll;\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_waiter_select_token = &frame->");
+                out.push_str(&token);
+                out.push_str(";\n");
+                write_indent(out, indent);
+                out.push_str("frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_waiter_select_arm = ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u;\n");
+                write_indent(out, indent);
+                out.push_str("nomo_async_select_register(&frame->");
+                out.push_str(&token);
+                out.push_str(", ");
+                out.push_str(&arm_index.to_string());
+                out.push_str("u, &frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(", ");
+                out.push_str(&async_join_select_cancel_ident(spawn.callee));
+                out.push_str(");\n");
+                write_indent(out, indent);
+                out.push_str("context->join_suspensions += 1u;\n");
+            }
         }
     }
     write_indent(out, indent);
@@ -2821,6 +3062,7 @@ fn emit_async_select_resume_and_body(
     index: usize,
     arms: &[TaskSelectArm],
     function: &Function,
+    functions: &HashMap<&str, &Function>,
     frame_locals: &[AsyncFrameLocal],
     indent: usize,
 ) {
@@ -2881,6 +3123,27 @@ fn emit_async_select_resume_and_body(
                 out.push_str(&async_select_result_owned_field(index, arm_index));
                 out.push_str(" = 1u;\n");
             }
+            TaskSelectOperation::Send { element_type, .. } => {
+                let suffix = c_type_name_part(element_type);
+                write_indent(out, indent + 2);
+                out.push_str("if (nomo_channel_send_resume_");
+                out.push_str(&suffix);
+                out.push_str("(&frame->");
+                out.push_str(&async_select_send_registration_field(index, arm_index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_select_result_field(index, arm_index));
+                out.push_str(") == NOMO_ASYNC_POLL_PENDING) {\n");
+                write_indent(out, indent + 3);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 3);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 2);
+                out.push_str("}\n");
+                write_indent(out, indent + 2);
+                out.push_str("frame->");
+                out.push_str(&async_select_result_owned_field(index, arm_index));
+                out.push_str(" = 1u;\n");
+            }
             TaskSelectOperation::Sleep { .. } => {
                 write_indent(out, indent + 2);
                 out.push_str("if (nomo_async_timer_resume(&frame->");
@@ -2902,6 +3165,36 @@ fn emit_async_select_resume_and_body(
                     indent + 2,
                 );
             }
+            TaskSelectOperation::Join { handle } => {
+                let spawn_index = structured_spawn_index(function, handle)
+                    .expect("validated task.select join handle has a spawn");
+                let spawn = statement_structured_spawn(&function.body[spawn_index])
+                    .expect("task.select join spawn exists");
+                let callee = functions
+                    .get(spawn.callee)
+                    .expect("validated task.select join target exists");
+                write_indent(out, indent + 2);
+                out.push_str("if (frame->");
+                out.push_str(&async_child_field(spawn_index));
+                out.push_str(".structured_completed == 0u) {\n");
+                write_indent(out, indent + 3);
+                out.push_str("context->runtime_failed = 1u;\n");
+                write_indent(out, indent + 3);
+                out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                write_indent(out, indent + 2);
+                out.push_str("}\n");
+                emit_structured_join_result_materialize(
+                    out,
+                    spawn_index,
+                    &async_select_result_field(index, arm_index),
+                    &async_select_result_owned_field(index, arm_index),
+                    &arm.binding_type,
+                    &callee.return_type,
+                    indent + 2,
+                );
+                write_indent(out, indent + 2);
+                out.push_str("context->task_joins += 1u;\n");
+            }
         }
         write_indent(out, indent + 1);
         out.push_str("}\n");
@@ -2911,6 +3204,29 @@ fn emit_async_select_resume_and_body(
         out.push_str(", ");
         out.push_str(&arm_index.to_string());
         out.push_str("u);\n");
+        for (send_arm_index, send_arm) in arms.iter().enumerate() {
+            let TaskSelectOperation::Send { element_type, .. } = &send_arm.operation else {
+                continue;
+            };
+            emit_async_owned_field_drop(
+                out,
+                element_type,
+                &async_select_send_value_owned_field(index, send_arm_index),
+                &async_select_send_value_field(index, send_arm_index),
+                indent + 1,
+            );
+        }
+        if let TaskSelectOperation::Join { handle } = &arm.operation {
+            let spawn_index = structured_spawn_index(function, handle)
+                .expect("validated task.select join handle has a spawn");
+            let spawn = statement_structured_spawn(&function.body[spawn_index])
+                .expect("task.select join spawn exists");
+            write_indent(out, indent + 1);
+            out.push_str(&async_drop_ident(spawn.callee));
+            out.push_str("(&frame->");
+            out.push_str(&async_child_field(spawn_index));
+            out.push_str(");\n");
+        }
         write_indent(out, indent + 1);
         out.push_str(&c_type(&arm.binding_type));
         out.push(' ');
@@ -2928,20 +3244,19 @@ fn emit_async_select_resume_and_body(
         if let Some(local) = local_array(&arm.binding, &arm.binding_type) {
             active_arrays.push(local);
         }
-        emit_block(
+        let arm_exits = emit_async_select_arm_body(
             out,
+            function,
+            index,
+            arm_index,
             &arm.body,
             indent + 1,
-            &[],
-            &function.return_type,
-            &active_arrays,
-            0,
-            0,
-            0,
-            0,
+            active_arrays,
         );
-        if value_type_needs_release(&arm.binding_type) {
-            emit_value_release_binding(out, &arm.binding, &arm.binding_type, indent + 1);
+        if arm_exits {
+            write_indent(out, indent);
+            out.push_str("}\n");
+            continue;
         }
         write_indent(out, indent + 1);
         out.push_str("goto nomo_async_select_done_");
@@ -2967,10 +3282,280 @@ fn emit_async_select_resume_and_body(
     }
 }
 
+fn emit_async_select_arm_body(
+    out: &mut String,
+    function: &Function,
+    select_index: usize,
+    arm_index: usize,
+    body: &[Statement],
+    indent: usize,
+    mut local_owned: Vec<LocalArray>,
+) -> bool {
+    for (statement_index, statement) in body.iter().enumerate() {
+        if let Some(cancel) = statement_structured_cancel(statement) {
+            emit_async_structured_cancel(out, function, cancel.handle, indent);
+            continue;
+        }
+        if let Statement::QuestionLet {
+            carrier,
+            name,
+            value_type,
+            result_type,
+            return_type,
+            result_expr,
+            early_exit_actions,
+        } = statement
+        {
+            let unique_index = select_index
+                .saturating_mul(1_000)
+                .saturating_add(arm_index.saturating_mul(100))
+                .saturating_add(statement_index);
+            emit_async_question_let(
+                out,
+                function,
+                unique_index,
+                *carrier,
+                name,
+                value_type,
+                result_type,
+                return_type,
+                result_expr,
+                early_exit_actions,
+                &local_owned,
+                indent,
+            );
+            if let Some(local) = local_array(name, value_type) {
+                local_owned.push(local);
+            }
+            continue;
+        }
+        if let Statement::QuestionReturn {
+            carrier,
+            ok_type,
+            result_type,
+            return_type,
+            result_expr,
+            early_exit_actions,
+        } = statement
+        {
+            emit_async_select_question_return(
+                out,
+                function,
+                select_index,
+                arm_index,
+                *carrier,
+                ok_type,
+                result_type,
+                return_type,
+                result_expr,
+                early_exit_actions,
+                &local_owned,
+                indent,
+            );
+            return true;
+        }
+        if let Statement::Return(value) = statement {
+            match value {
+                Some(value) => emit_async_return_value(out, function, value, &local_owned, indent),
+                None => {
+                    debug_assert_eq!(function.return_type, ValueType::Void);
+                    emit_async_local_releases(out, &local_owned, &[], indent);
+                    emit_structured_completion(out, indent);
+                    write_indent(out, indent);
+                    out.push_str("frame->state = UINT32_MAX;\n");
+                    write_indent(out, indent);
+                    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+                }
+            }
+            return true;
+        }
+        if let Statement::Panic(message) = statement {
+            emit_async_select_panic(out, select_index, arm_index, message, &local_owned, indent);
+            return true;
+        }
+        emit_stmt(
+            out,
+            statement,
+            indent,
+            &[],
+            &function.return_type,
+            &local_owned,
+            0,
+            0,
+            0,
+            0,
+        );
+        if let Some(local) = local_array_from_statement(statement) {
+            local_owned.push(local);
+        }
+    }
+    emit_async_local_releases(out, &local_owned, &[], indent);
+    false
+}
+
+#[allow(clippy::too_many_arguments)]
+fn emit_async_select_question_return(
+    out: &mut String,
+    function: &Function,
+    select_index: usize,
+    arm_index: usize,
+    carrier: QuestionCarrier,
+    ok_type: &ValueType,
+    result_type: &ValueType,
+    return_type: &ValueType,
+    result_expr: &ValueExpr,
+    early_exit_actions: &[ValueExpr],
+    local_owned: &[LocalArray],
+    indent: usize,
+) {
+    let ValueType::Enum(result_name, result_args) = result_type else {
+        unreachable!("question result must be an enum carrier")
+    };
+    let ValueType::Enum(return_name, return_args) = return_type else {
+        unreachable!("question propagation requires an enum return type")
+    };
+    let (early_variant, payload_variant) = match carrier {
+        QuestionCarrier::Result => ("Err", "Ok"),
+        QuestionCarrier::Option => ("None", "Some"),
+    };
+    let temporary = format!("nomo_async_select_question_{select_index}_{arm_index}");
+    write_indent(out, indent);
+    out.push_str(&c_type(result_type));
+    out.push(' ');
+    out.push_str(&temporary);
+    out.push_str(" = ");
+    emit_expr(out, result_expr);
+    out.push_str(";\n");
+    write_indent(out, indent);
+    out.push_str("if (");
+    out.push_str(&temporary);
+    out.push_str(".tag == ");
+    out.push_str(&c_enum_variant_ident(
+        result_name,
+        result_args,
+        early_variant,
+    ));
+    out.push_str(") {\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->");
+    out.push_str(async_result_field());
+    out.push_str(" = (");
+    out.push_str(&c_enum_ident(return_name, return_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident(
+        return_name,
+        return_args,
+        early_variant,
+    ));
+    if carrier == QuestionCarrier::Result {
+        out.push_str(", .payload.");
+        out.push_str(&c_payload_ident("Err"));
+        out.push_str(" = ");
+        out.push_str(&temporary);
+        out.push_str(".payload.");
+        out.push_str(&c_payload_ident("Err"));
+    }
+    out.push_str("};\n");
+    write_indent(out, indent);
+    out.push_str("} else {\n");
+    write_indent(out, indent + 1);
+    out.push_str(&c_payload_type(ok_type));
+    out.push_str(" nomo_async_select_question_ok = ");
+    out.push_str(&temporary);
+    out.push_str(".payload.");
+    out.push_str(&c_payload_ident(payload_variant));
+    out.push_str(";\n");
+    write_indent(out, indent + 1);
+    out.push_str("frame->");
+    out.push_str(async_result_field());
+    out.push_str(" = (");
+    out.push_str(&c_enum_ident(return_name, return_args));
+    out.push_str("){.tag = ");
+    out.push_str(&c_enum_variant_ident(
+        return_name,
+        return_args,
+        payload_variant,
+    ));
+    out.push_str(", .payload.");
+    out.push_str(&c_payload_ident(payload_variant));
+    out.push_str(" = nomo_async_select_question_ok};\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    if expr_may_share_array_storage(result_expr) && value_type_needs_release(return_type) {
+        emit_value_retain_in_place(
+            out,
+            return_type,
+            &format!("frame->{}", async_result_field()),
+            indent,
+        );
+    }
+    if value_type_needs_release(return_type) {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(async_result_owned_field());
+        out.push_str(" = 1u;\n");
+    }
+    for action in early_exit_actions {
+        let handle = structured_cancel_handle(action)
+            .expect("task.select question-return actions are validated cancellations");
+        emit_async_structured_cancel(out, function, handle, indent);
+    }
+    emit_async_local_releases(out, local_owned, &[], indent);
+    emit_structured_completion(out, indent);
+    write_indent(out, indent);
+    out.push_str("frame->state = UINT32_MAX;\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_READY;\n");
+}
+
+fn emit_async_select_panic(
+    out: &mut String,
+    select_index: usize,
+    arm_index: usize,
+    message: &ValueExpr,
+    local_owned: &[LocalArray],
+    indent: usize,
+) {
+    let temporary = format!("nomo_async_select_panic_{select_index}_{arm_index}");
+    write_indent(out, indent);
+    out.push_str("nomo_string ");
+    out.push_str(&temporary);
+    out.push_str(" = ");
+    emit_expr(out, message);
+    out.push_str(";\n");
+    if expr_may_share_array_storage(message) {
+        emit_value_retain_in_place(out, &ValueType::String, &temporary, indent);
+    }
+    write_indent(out, indent);
+    out.push_str("if (context->panic_message_owned == 0u) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("context->panic_message = ");
+    out.push_str(&temporary);
+    out.push_str(";\n");
+    write_indent(out, indent + 1);
+    out.push_str("context->panic_message_owned = 1u;\n");
+    write_indent(out, indent);
+    out.push_str("} else {\n");
+    write_indent(out, indent + 1);
+    out.push_str("nomo_string_release(");
+    out.push_str(&temporary);
+    out.push_str(");\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str("context->panicking = 1u;\n");
+    emit_async_local_releases(out, local_owned, &[], indent);
+    write_indent(out, indent);
+    out.push_str("context->pending_reason = NOMO_ASYNC_PENDING_PANIC;\n");
+    write_indent(out, indent);
+    out.push_str("return NOMO_ASYNC_POLL_PENDING;\n");
+}
+
 fn emit_structured_join_result_materialize(
     out: &mut String,
     spawn_index: usize,
-    join_index: usize,
+    result_field: &str,
+    result_owned_field: &str,
     result_type: &ValueType,
     child_return_type: &ValueType,
     indent: usize,
@@ -2978,7 +3563,7 @@ fn emit_structured_join_result_materialize(
     let ValueType::Enum(_, result_args) = result_type else {
         unreachable!("structured join result is always a Result enum");
     };
-    let result = format!("frame->{}", async_join_result_field(join_index));
+    let result = format!("frame->{result_field}");
     write_indent(out, indent);
     out.push_str("memset(&");
     out.push_str(&result);
@@ -3056,7 +3641,7 @@ fn emit_structured_join_result_materialize(
     out.push_str("}\n");
     write_indent(out, indent);
     out.push_str("frame->");
-    out.push_str(&async_join_result_owned_field(join_index));
+    out.push_str(result_owned_field);
     out.push_str(" = 1u;\n");
 }
 
@@ -4389,6 +4974,7 @@ pub(super) fn emit_async_function(
         })
         .unwrap_or_default();
     emit_async_frame_type(out, function, &frame_locals, async_names);
+    emit_async_join_select_cancel_function(out, function);
     out.push_str("static nomo_async_poll ");
     out.push_str(&async_poll_ident(&function.name));
     out.push_str(
@@ -4626,6 +5212,18 @@ pub(super) fn emit_async_function(
             }
             if let Some(arms) = select {
                 emit_async_select_operands(out, index, arms, 3);
+                for arm in arms {
+                    if let TaskSelectOperation::Send { value, .. } = &arm.operation {
+                        emit_async_publication_move_transfer(
+                            out,
+                            value,
+                            function,
+                            &frame_locals,
+                            &mut local_owned,
+                            3,
+                        );
+                    }
+                }
                 if statement_is_within_async_deadline(function, index) {
                     emit_async_deadline_due_check(out, function, async_names, 3);
                 }
@@ -4738,7 +5336,7 @@ pub(super) fn emit_async_function(
             out.push_str(&state.to_string());
             out.push_str("u;\n");
             if let Some(arms) = select {
-                emit_async_select_start(out, index, state, arms, 3);
+                emit_async_select_start(out, index, state, arms, function, functions, 3);
             } else if statement_is_async_yield(statement) {
                 out.push_str("            context->yield_count += 1u;\n");
                 out.push_str("            context->pending_reason = NOMO_ASYNC_PENDING_YIELD;\n");
@@ -4872,7 +5470,7 @@ pub(super) fn emit_async_function(
                 out.push_str(", context, &frame->");
                 out.push_str(&async_channel_result_field(index));
                 out.push_str(
-                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                    ", NULL, 0u) == NOMO_ASYNC_POLL_PENDING) {\n\
                                  return NOMO_ASYNC_POLL_PENDING;\n\
                              }\n",
                 );
@@ -4944,7 +5542,8 @@ pub(super) fn emit_async_function(
                 emit_structured_join_result_materialize(
                     out,
                     spawn_index,
-                    index,
+                    &async_join_result_field(index),
+                    &async_join_result_owned_field(index),
                     join.value_type,
                     &callee.return_type,
                     3,
@@ -5123,7 +5722,8 @@ pub(super) fn emit_async_function(
                 emit_structured_join_result_materialize(
                     out,
                     spawn_index,
-                    index,
+                    &async_join_result_field(index),
+                    &async_join_result_owned_field(index),
                     join.value_type,
                     &callee.return_type,
                     3,
@@ -5165,7 +5765,15 @@ pub(super) fn emit_async_function(
                 out.push_str(":\n            ;\n");
             }
             if let Some(arms) = select {
-                emit_async_select_resume_and_body(out, index, arms, function, &frame_locals, 3);
+                emit_async_select_resume_and_body(
+                    out,
+                    index,
+                    arms,
+                    function,
+                    functions,
+                    &frame_locals,
+                    3,
+                );
             }
             segment_start = index + 1;
             let segment_end = next_async_suspend(function, segment_start, async_names);
@@ -5619,7 +6227,11 @@ pub(super) fn emit_async_function(
              frame->",
         );
         out.push_str(&async_child_field(index));
-        out.push_str(".structured_waiter_poll = NULL;\n    ");
+        out.push_str(".structured_waiter_poll = NULL;\n    frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(".structured_waiter_select_token = NULL;\n    frame->");
+        out.push_str(&async_child_field(index));
+        out.push_str(".structured_waiter_select_arm = 0u;\n    ");
         out.push_str(&async_drop_ident(spawn.callee));
         out.push_str("(&frame->");
         out.push_str(&async_child_field(index));
@@ -5678,6 +6290,15 @@ pub(super) fn emit_async_function(
             continue;
         };
         for (arm_index, arm) in arms.iter().enumerate().rev() {
+            if let TaskSelectOperation::Send { element_type, .. } = &arm.operation {
+                emit_async_owned_field_drop(
+                    out,
+                    element_type,
+                    &async_select_send_value_owned_field(index, arm_index),
+                    &async_select_send_value_field(index, arm_index),
+                    1,
+                );
+            }
             emit_async_owned_field_drop(
                 out,
                 &arm.binding_type,

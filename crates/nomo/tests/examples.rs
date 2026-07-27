@@ -37,6 +37,7 @@ const REQUIRED_V0_1_EXAMPLES: &[&str] = &[
     "async_publication_move",
     "async_bounded_channel",
     "async_static_select",
+    "async_send_join_select",
     "async_structured_void",
     "async_structured_results",
     "async_structured_return",
@@ -1528,6 +1529,9 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "async_publication_move" => "publication\n",
         "async_bounded_channel" => "first\nsecond\n",
         "async_static_select" => "winner\n",
+        "async_send_join_select" => {
+            "send\nsent\npending send\npending\nchild\nchild\nlosing join cleaned\n"
+        }
         "async_structured_results" => {
             "left before\nright before\nleft after\nright after\nleft right\n"
         }

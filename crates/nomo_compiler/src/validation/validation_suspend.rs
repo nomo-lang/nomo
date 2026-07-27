@@ -50,6 +50,7 @@ fn validate_suspend_blocking_function<'a>(
                 let mut call_path = visiting.join(" -> ");
                 call_path.push_str(" -> ");
                 call_path.push_str(operation);
+                let safe_excerpt = format!("{operation}(...)");
                 return Err(Diagnostic::new(
                     "E0891",
                     format!(
@@ -57,9 +58,9 @@ fn validate_suspend_blocking_function<'a>(
                     ),
                     path,
                     span.line,
-                    span.column,
-                    span.length,
-                    &span.text,
+                    1,
+                    safe_excerpt.len(),
+                    safe_excerpt,
                 ));
             }
             let Some(name) = callee.last() else {
@@ -84,6 +85,34 @@ fn blocking_suspend_operation(callee: &[String], imports: &[String]) -> Option<&
         callee.to_vec()
     };
     match resolved.as_slice() {
+        [module, operation]
+            if module == "http"
+                && imports_std_operation(imports, "http", operation)
+                && blocking_http_operation(operation).is_some() =>
+        {
+            blocking_http_operation(operation)
+        }
+        [root, module, operation]
+            if root == "std"
+                && module == "http"
+                && blocking_http_operation(operation).is_some() =>
+        {
+            blocking_http_operation(operation)
+        }
+        [module, operation]
+            if module == "process"
+                && imports_std_operation(imports, "process", operation)
+                && blocking_process_operation(operation).is_some() =>
+        {
+            blocking_process_operation(operation)
+        }
+        [root, module, operation]
+            if root == "std"
+                && module == "process"
+                && blocking_process_operation(operation).is_some() =>
+        {
+            blocking_process_operation(operation)
+        }
         [_, operation]
             if operation == "read_to_string_blocking"
                 && imports.iter().any(|item| item == "std.net") =>
@@ -134,6 +163,43 @@ fn blocking_suspend_operation(callee: &[String], imports: &[String]) -> Option<&
                 "time.sleep_millis"
             })
         }
+        _ => None,
+    }
+}
+
+fn imports_std_operation(imports: &[String], module: &str, operation: &str) -> bool {
+    let module_import = format!("std.{module}");
+    let operation_import = format!("{module_import}.{operation}");
+    imports
+        .iter()
+        .any(|item| item == &module_import || item == &operation_import)
+}
+
+fn blocking_http_operation(operation: &str) -> Option<&'static str> {
+    match operation {
+        "get" => Some("http.get"),
+        "post" => Some("http.post"),
+        "send" => Some("http.send"),
+        "open_stream" => Some("http.open_stream"),
+        "read_text" => Some("http.read_text"),
+        "next_sse" => Some("http.next_sse"),
+        "listen" => Some("http.listen"),
+        "accept" => Some("http.accept"),
+        "respond_string" => Some("http.respond_string"),
+        _ => None,
+    }
+}
+
+fn blocking_process_operation(operation: &str) -> Option<&'static str> {
+    match operation {
+        "spawn" => Some("process.spawn"),
+        "status" => Some("process.status"),
+        "exec" => Some("process.exec"),
+        "output" => Some("process.output"),
+        "start" => Some("process.start"),
+        "next_event" => Some("process.next_event"),
+        "terminate" => Some("process.terminate"),
+        "close_child" => Some("process.close_child"),
         _ => None,
     }
 }
@@ -1353,4 +1419,47 @@ fn ir_statement_structured_spawn_target(statement: &Statement) -> Option<&str> {
         return None;
     };
     name.strip_prefix(BUILTIN_TASK_STRUCTURED_SPAWN_PREFIX)
+}
+
+#[cfg(test)]
+mod blocking_compatibility_tests {
+    use super::{blocking_http_operation, blocking_process_operation};
+
+    #[test]
+    fn classifies_the_rfc_0032_blocking_quarantine_exactly() {
+        let http = [
+            ("get", "http.get"),
+            ("post", "http.post"),
+            ("send", "http.send"),
+            ("open_stream", "http.open_stream"),
+            ("read_text", "http.read_text"),
+            ("next_sse", "http.next_sse"),
+            ("listen", "http.listen"),
+            ("accept", "http.accept"),
+            ("respond_string", "http.respond_string"),
+        ];
+        for (operation, path) in http {
+            assert_eq!(blocking_http_operation(operation), Some(path));
+        }
+        for operation in ["cancel_stream", "close_stream", "close_server"] {
+            assert_eq!(blocking_http_operation(operation), None);
+        }
+
+        let process = [
+            ("spawn", "process.spawn"),
+            ("status", "process.status"),
+            ("exec", "process.exec"),
+            ("output", "process.output"),
+            ("start", "process.start"),
+            ("next_event", "process.next_event"),
+            ("terminate", "process.terminate"),
+            ("close_child", "process.close_child"),
+        ];
+        for (operation, path) in process {
+            assert_eq!(blocking_process_operation(operation), Some(path));
+        }
+        for operation in ["write_stdin", "close_stdin", "try_wait"] {
+            assert_eq!(blocking_process_operation(operation), None);
+        }
+    }
 }

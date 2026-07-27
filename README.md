@@ -783,6 +783,12 @@ toolchain-owned adapters, so application code needs no C FFI. Browser WASM
 rejects controlled process calls before evaluating their arguments. See
 `examples/process_controlled`.
 
+Suspend call graphs reject the blocking shell helpers plus `process.start`,
+`process.next_event`, `process.terminate`, and `process.close_child` with
+E0891. The focused owner-affine process-pipe surface will replace those
+compatibility calls; wrapping them in a coroutine is not a nonblocking
+implementation.
+
 `std.net` now provides owner-affine direct-style suspend TCP client operations.
 `net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
 `Result<TcpStream, NetError>`; bounded `TcpStream.read`/`read_string` and
@@ -838,6 +844,11 @@ Windows uses WinHTTP. Browser WASM rejects network access with the stable
 `defer http.close_exchange(exchange)` and `defer http.close_server(server)` to
 close server handles on normal returns and `?` early returns. Redirects, binary
 bodies, and multi-connection server helpers remain later slices.
+
+HTTP request/stream/server progress is still synchronous. E0891 rejects
+`http.get`, `post`, `send`, `open_stream`, `read_text`, `next_sse`, `listen`,
+`accept`, and `respond_string` from suspend call graphs until an owner-affine
+reactor-backed replacement passes the RFC 0034 native gates.
 
 `std.testing` provides helpers for `#[test]` functions: `testing.assert`,
 `testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool

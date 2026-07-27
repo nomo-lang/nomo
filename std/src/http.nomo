@@ -91,21 +91,25 @@ pub struct SseEvent {
 }
 
 /// Performs one bounded blocking HTTP or HTTPS request.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn send(request: HttpRequest) -> Result<HttpResponse, HttpError> {
     return http.send(request)
 }
 
 /// Opens a bounded blocking HTTP or HTTPS text response stream.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn open_stream(request: HttpRequest, idle_timeout_millis: u64) -> Result<HttpStream, HttpError> {
     return http.open_stream(request, idle_timeout_millis)
 }
 
 /// Pulls one 4-byte-to-1-MiB bounded UTF-8 text chunk from a response stream.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn read_text(stream: HttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError> {
     return http.read_text(stream, max_chunk_bytes)
 }
 
 /// Pulls and parses the next positive, at-most-1-MiB Server-Sent Event.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError> {
     return http.next_sse(stream, max_event_bytes)
 }
@@ -121,26 +125,31 @@ pub fn close_stream(stream: HttpStream) -> void {
 }
 
 /// Performs a blocking HTTP GET request.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn get(url: string) -> Result<HttpResponse, HttpError> {
     return http.get(url)
 }
 
 /// Performs a blocking HTTP POST request with a string body.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn post(url: string, body: string) -> Result<HttpResponse, HttpError> {
     return http.post(url, body)
 }
 
 /// Binds a blocking HTTP server.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn listen(host: string, port: i64) -> Result<HttpServer, HttpError> {
     return http.listen(host, port)
 }
 
 /// Accepts the next HTTP request.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn accept(server: HttpServer) -> Result<HttpExchange, HttpError> {
     return http.accept(server)
 }
 
 /// Sends a string response for an accepted exchange.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn respond_string(exchange: HttpExchange, status: i64, body: string) -> Result<void, HttpError> {
     return http.respond_string(exchange, status, body)
 }

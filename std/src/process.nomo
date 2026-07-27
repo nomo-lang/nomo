@@ -65,26 +65,31 @@ pub fn exit(code: i64) -> void {
 }
 
 /// Legacy blocking shell helper that runs a command and returns its status.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn spawn(command: string) -> Result<i32, ProcessError> {
     return process.spawn(command)
 }
 
 /// Legacy blocking shell helper that runs a command and returns its status.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn status(command: string) -> Result<i32, ProcessError> {
     return process.status(command)
 }
 
 /// Legacy blocking shell helper that returns standard output.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn exec(command: string) -> Result<string, ProcessError> {
     return process.exec(command)
 }
 
 /// Legacy blocking shell helper that captures both output streams.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn output(command: string) -> Result<ProcessOutput, ProcessError> {
     return process.output(command)
 }
 
 /// Starts a shell-free, long-lived child process.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn start(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError> {
     return process.start(command)
 }
@@ -100,6 +105,7 @@ pub fn close_stdin(child: ProcessChild) -> Result<void, ProcessControlError> {
 }
 
 /// Pulls the next standard-I/O, flush, or exit event.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError> {
     return process.next_event(child, max_chunk_bytes, timeout_millis)
 }
@@ -110,11 +116,13 @@ pub fn try_wait(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessContr
 }
 
 /// Forces the direct child to terminate.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn terminate(child: ProcessChild) -> Result<void, ProcessControlError> {
     return process.terminate(child)
 }
 
 /// Idempotently closes and reaps a controlled child.
+/// Suspend call graphs reject this compatibility API with E0891.
 pub fn close_child(child: ProcessChild) -> void {
     process.close_child(child)
 }

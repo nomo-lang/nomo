@@ -1130,6 +1130,42 @@ fn nomo_check_rejects_transitive_blocking_sleep_from_suspend_module_graph() {
 }
 
 #[test]
+fn nomo_check_rejects_transitive_blocking_http_from_suspend_module_graph() {
+    let root = temp_test_root("check-suspend-blocking-http");
+    reset_dir(&root);
+    let project = root.join("hello");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nnamespace = \"local\"\nname = \"hello\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/worker.nomo"),
+        "package app.worker\n\nimport std.http\nimport std.result\n\npub fn request() -> Result<HttpResponse, HttpError> {\n    return http.get(\"https://example.invalid/?token=cli-http-secret-sentinel\")\n}\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        "package app.main\n\nimport app.worker\nimport std.http\nimport std.result\n\nsuspend fn main() -> void {\n    let response: Result<HttpResponse, HttpError> = request()\n}\n",
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("check")
+        .arg(&project)
+        .output()
+        .unwrap();
+
+    assert!(!output.status.success());
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(stderr.contains("E0891"), "{stderr}");
+    assert!(stderr.contains("main -> request -> http.get"), "{stderr}");
+    assert!(!stderr.contains("cli-http-secret-sentinel"), "{stderr}");
+    fs::remove_dir_all(&root).unwrap();
+}
+
+#[test]
 fn nomo_test_json_reports_failures() {
     let root = temp_test_root("test-json-failure");
     reset_dir(&root);

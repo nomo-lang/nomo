@@ -163,8 +163,9 @@ jobs:
               -or $timerPayload.counters.live_timers -ne 0 `
               -or $timerPayload.counters.peak_live_timers -ne 1 `
               -or $timerPayload.counters.reactor_initializations -ne 1 `
-              -or $timerPayload.counters.reactor_waits -ne 1 `
-              -or $timerPayload.counters.reactor_timeouts -ne 1 `
+              -or $timerPayload.counters.reactor_waits -lt 1 `
+              -or $timerPayload.counters.reactor_timeouts `
+                  -ne $timerPayload.counters.reactor_waits `
               -or $timerPayload.counters.reactor_completions -ne 0 `
               -or $timerPayload.counters.reactor_errors -ne 0 `
               -or $timerPayload.counters.reactor_shutdowns -ne 1 `

@@ -251,6 +251,29 @@ pub(super) fn resolve_specific_value_builtin(
         "next_sse" if imports.iter().any(|item| item == "std.http.next_sse") => {
             vec!["http".to_string(), "next_sse".to_string()]
         }
+        "cancel_stream" if imports.iter().any(|item| item == "std.http.cancel_stream") => {
+            vec!["http".to_string(), "cancel_stream".to_string()]
+        }
+        "close_stream" if imports.iter().any(|item| item == "std.http.close_stream") => {
+            vec!["http".to_string(), "close_stream".to_string()]
+        }
+        operation
+            if matches!(
+                operation,
+                "get_blocking"
+                    | "post_blocking"
+                    | "send_blocking"
+                    | "open_stream_blocking"
+                    | "read_text_blocking"
+                    | "next_sse_blocking"
+                    | "cancel_stream_blocking"
+                    | "close_stream_blocking"
+            ) && imports
+                .iter()
+                .any(|item| item == &format!("std.http.{operation}")) =>
+        {
+            vec!["http".to_string(), operation.to_string()]
+        }
         "listen" if imports.iter().any(|item| item == "std.http.listen") => {
             vec!["http".to_string(), "listen".to_string()]
         }

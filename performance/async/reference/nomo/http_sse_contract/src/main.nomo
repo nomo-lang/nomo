@@ -1,0 +1,36 @@
+package http_sse_contract.main
+
+import std.array.Array
+import std.http
+import std.io
+
+fn report(result: Result<HttpResponse, HttpError>) -> void {
+    match result {
+        Ok(response) => {
+            io.println("async-http", response.status)
+        }
+        Err(error) => {
+            io.println("async-http", error.code)
+        }
+    }
+}
+
+suspend fn pull(stream: HttpStream) -> void {
+    let chunk: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 4096)
+    let event: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 65536)
+}
+
+suspend fn main() -> void {
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://example.invalid/v1/chat/completions",
+        headers: headers,
+        body: "{}",
+        timeout_millis: 1000,
+        max_response_bytes: 4096
+    }
+    let response: Result<HttpResponse, HttpError> = http.send(request)
+    let stream: Result<HttpStream, HttpError> = http.open_stream(request, 1000)
+    report(response)
+}

@@ -161,6 +161,7 @@ const HASH_ITEMS: &[&str] = &[
     "write_string",
 ];
 const HTTP_ITEMS: &[&str] = &[
+    "BlockingHttpStream",
     "HttpError",
     "HttpExchange",
     "HttpHeader",
@@ -172,17 +173,25 @@ const HTTP_ITEMS: &[&str] = &[
     "SseEvent",
     "accept",
     "cancel_stream",
+    "cancel_stream_blocking",
     "close_exchange",
     "close_server",
     "close_stream",
+    "close_stream_blocking",
     "get",
+    "get_blocking",
     "listen",
     "next_sse",
+    "next_sse_blocking",
     "open_stream",
+    "open_stream_blocking",
     "post",
+    "post_blocking",
     "read_text",
+    "read_text_blocking",
     "respond_string",
     "send",
+    "send_blocking",
 ];
 const IO_ITEMS: &[&str] = &["eprint", "eprintln", "print", "println", "read_line"];
 const JSON_ITEMS: &[&str] = &[
@@ -691,7 +700,7 @@ pub const MODULES: &[StandardModule] = &[
     },
     StandardModule {
         path: "std.http",
-        docs: "bounded blocking HTTP/HTTPS, text streaming, SSE, and basic plain-HTTP server helpers",
+        docs: "owner-affine suspend HTTP/HTTPS client, explicit blocking compatibility, text streaming, SSE, and basic blocking plain-HTTP server helpers",
         items: HTTP_ITEMS,
         doc_items: &[],
     },
@@ -1394,7 +1403,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 334);
+        assert_eq!(imports.len(), 343);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
@@ -1406,6 +1415,8 @@ mod tests {
         assert!(is_supported_import("std.process.BlockingProcessChild"));
         assert!(is_supported_import("std.process.start_blocking"));
         assert!(is_supported_import("std.net.connect_blocking"));
+        assert!(is_supported_import("std.http.BlockingHttpStream"));
+        assert!(is_supported_import("std.http.send_blocking"));
         assert!(is_supported_import("std.net.TcpChunk"));
         assert!(is_supported_import("std.net.TcpTextChunk"));
         assert!(is_supported_import("std.task.yield_now"));

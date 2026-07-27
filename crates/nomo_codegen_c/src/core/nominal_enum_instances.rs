@@ -385,7 +385,9 @@ fn collect_http_call_enums(
 ) {
     let http_error = ValueType::Struct("HttpError".to_string(), Vec::new());
     match name {
-        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR | BUILTIN_HTTP_SEND_EXPR => {
+        BUILTIN_HTTP_GET_BLOCKING_EXPR
+        | BUILTIN_HTTP_POST_BLOCKING_EXPR
+        | BUILTIN_HTTP_SEND_BLOCKING_EXPR => {
             push_enum_instance(
                 seen,
                 out,
@@ -396,13 +398,33 @@ fn collect_http_call_enums(
                 ],
             );
         }
-        BUILTIN_HTTP_OPEN_STREAM_EXPR
+        BUILTIN_HTTP_GET_EXPR
+        | BUILTIN_HTTP_POST_EXPR
+        | BUILTIN_HTTP_SEND_EXPR
+        | BUILTIN_HTTP_OPEN_STREAM_EXPR
         | BUILTIN_HTTP_READ_TEXT_EXPR
         | BUILTIN_HTTP_NEXT_SSE_EXPR
         | BUILTIN_HTTP_CANCEL_STREAM_EXPR
         | BUILTIN_HTTP_CLOSE_STREAM_EXPR => {
             let response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
             let stream = ValueType::Struct("HttpStream".to_string(), Vec::new());
+            let chunk = ValueType::Struct("HttpStreamChunk".to_string(), Vec::new());
+            let event = ValueType::Struct("SseEvent".to_string(), Vec::new());
+            let event_option = ValueType::Enum("Option".to_string(), vec![event.clone()]);
+            push_enum_instance(seen, out, "Result", &[response, http_error.clone()]);
+            push_enum_instance(seen, out, "Result", &[stream, http_error.clone()]);
+            push_enum_instance(seen, out, "Result", &[chunk, http_error.clone()]);
+            push_enum_instance(seen, out, "Option", &[event]);
+            push_enum_instance(seen, out, "Option", &[ValueType::U64]);
+            push_enum_instance(seen, out, "Result", &[event_option, http_error]);
+        }
+        BUILTIN_HTTP_OPEN_STREAM_BLOCKING_EXPR
+        | BUILTIN_HTTP_READ_TEXT_BLOCKING_EXPR
+        | BUILTIN_HTTP_NEXT_SSE_BLOCKING_EXPR
+        | BUILTIN_HTTP_CANCEL_STREAM_BLOCKING_EXPR
+        | BUILTIN_HTTP_CLOSE_STREAM_BLOCKING_EXPR => {
+            let response = ValueType::Struct("HttpResponse".to_string(), Vec::new());
+            let stream = ValueType::Struct("BlockingHttpStream".to_string(), Vec::new());
             let chunk = ValueType::Struct("HttpStreamChunk".to_string(), Vec::new());
             let event = ValueType::Struct("SseEvent".to_string(), Vec::new());
             let event_option = ValueType::Enum("Option".to_string(), vec![event.clone()]);

@@ -184,6 +184,27 @@ fn main() -> void {
 }
 
 #[test]
+fn permits_nonstreaming_http_blocking_migration_in_legacy_native_worker() {
+    let source = r#"package app.main
+
+import std.http
+import std.result
+import std.task
+
+fn worker(context: TaskContext, url: string) -> string {
+    let response: Result<HttpResponse, HttpError> = http.get_blocking(url)
+    return url
+}
+
+fn main() -> void {
+    let started: Result<Task, TaskError> = task.spawn(worker, "https://example.invalid/")
+}
+"#;
+
+    parse_inline(source).unwrap();
+}
+
+#[test]
 fn rejects_local_methods_that_alias_task_safe_value_operations() {
     let source = r#"package app.main
 

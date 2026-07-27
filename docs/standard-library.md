@@ -462,7 +462,8 @@ The compiler checks the worker's transitive call graph. Local computation,
 managed values created inside the worker, arrays, strings, JSON, JSON-RPC,
 cron calculation, regex,
 collections, hashing, crypto, numeric/path/OS helpers, monotonic time/sleep,
-`task.is_cancelled`, and nonstreaming `http.get`/`post`/`send` are accepted.
+`task.is_cancelled`, and nonstreaming `http.get_blocking`/`post_blocking`/
+`send_blocking` are accepted.
 Unsafe/extern/FFI calls, nested tasks, filesystem/environment/process/TCP/UDP,
 console/log/debug/testing, formatting through user implementations, wall-clock
 time, HTTP streaming/server handles, value methods with unknown effects, and
@@ -1009,18 +1010,28 @@ For the preview migration window, `connect_blocking`,
 behavior. A suspend call graph reaching one of them reports E0891. Listener
 accept and UDP remain blocking pending focused follow-up slices.
 
-`std.http` provides a bounded blocking HTTP/HTTPS client and basic plain-HTTP
-server helpers:
+`std.http` reserves its unsuffixed client surface for owner-affine direct-style
+suspension and retains explicit blocking migration helpers:
 
 ```nomo
-http.send(request: HttpRequest) -> Result<HttpResponse, HttpError>
-http.get(url: string) -> Result<HttpResponse, HttpError>
-http.post(url: string, body: string) -> Result<HttpResponse, HttpError>
-http.open_stream(request: HttpRequest, idle_timeout_millis: u64) -> Result<HttpStream, HttpError>
-http.read_text(stream: HttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError>
-http.next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError>
+suspend http.send(request: HttpRequest) -> Result<HttpResponse, HttpError>
+suspend http.get(url: string) -> Result<HttpResponse, HttpError>
+suspend http.post(url: string, body: string) -> Result<HttpResponse, HttpError>
+suspend http.open_stream(request: HttpRequest, idle_timeout_millis: u64) -> Result<HttpStream, HttpError>
+suspend http.read_text(stream: HttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError>
+suspend http.next_sse(stream: HttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError>
 http.cancel_stream(stream: HttpStream) -> void
 http.close_stream(stream: HttpStream) -> void
+
+http.send_blocking(request: HttpRequest) -> Result<HttpResponse, HttpError>
+http.get_blocking(url: string) -> Result<HttpResponse, HttpError>
+http.post_blocking(url: string, body: string) -> Result<HttpResponse, HttpError>
+http.open_stream_blocking(request: HttpRequest, idle_timeout_millis: u64) -> Result<BlockingHttpStream, HttpError>
+http.read_text_blocking(stream: BlockingHttpStream, max_chunk_bytes: u64) -> Result<HttpStreamChunk, HttpError>
+http.next_sse_blocking(stream: BlockingHttpStream, max_event_bytes: u64) -> Result<Option<SseEvent>, HttpError>
+http.cancel_stream_blocking(stream: BlockingHttpStream) -> void
+http.close_stream_blocking(stream: BlockingHttpStream) -> void
+
 http.listen(host: string, port: i64) -> Result<HttpServer, HttpError>
 http.accept(server: HttpServer) -> Result<HttpExchange, HttpError>
 http.respond_string(exchange: HttpExchange, status: i64, body: string) -> Result<void, HttpError>
@@ -1028,12 +1039,18 @@ http.close_server(server: HttpServer) -> void
 http.close_exchange(exchange: HttpExchange) -> void
 ```
 
-Suspend call graphs reject `get`, `post`, `send`, `open_stream`, `read_text`,
-`next_sse`, `listen`, `accept`, and `respond_string` with E0891. The current
-native adapters drive libcurl/WinHTTP or blocking server progress
-synchronously; wrapping these calls in a coroutine would still occupy the
-executor. Close and cancel helpers remain immediate current-thread
-compatibility operations until the focused owner-affine HTTP RFC lands.
+P2-HTTP-A lowers the six unsuffixed suspend operations through typed
+start/resume/cancel coroutine slots. This first migration slice returns ready
+`HttpError { code: "runtime_unavailable", ... }` and never calls
+libcurl/WinHTTP. It establishes evaluation, frame ownership, cancellation,
+drop, diagnostics, and ABI contracts without pretending that blocking network
+progress is asynchronous. The native reactor transport follows in
+P2-HTTP-B/C.
+
+A normal `fn` calling an unsuffixed suspend client operation receives E0870
+with the matching `_blocking` migration name. Suspend call graphs reject all
+eight `_blocking` client operations plus `listen`, `accept`, and
+`respond_string` with E0891.
 
 `HttpRequest` contains `method`, `url`, `headers`, `body`, `timeout_millis`,
 and `max_response_bytes`. v0.1 accepts `GET` and `POST`. `HttpResponse`
@@ -1042,32 +1059,34 @@ successful transport responses. `HttpError.code` is one of
 `invalid_request`, `runtime_unavailable`, `dns`, `connect`, `tls`, `timeout`,
 `response_too_large`, `protocol`, or `transport`.
 
-`open_stream` returns after the response head is available. For streaming
-requests, `HttpRequest.timeout_millis` bounds connect, TLS, request send, and
+`open_stream_blocking` returns after the response head is available. For
+compatibility streaming requests, `HttpRequest.timeout_millis` bounds connect,
+TLS, request send, and
 response-head receipt; `idle_timeout_millis` bounds each later pull that makes
-no progress. `HttpStream` exposes `status` and ordered `headers`.
+no progress. `BlockingHttpStream` exposes `status` and ordered `headers`.
 `max_response_bytes` remains a cumulative body limit with a 128 MiB hard
 ceiling.
 
-`read_text` returns non-empty UTF-8 chunks without splitting a Unicode scalar,
+`read_text_blocking` returns non-empty UTF-8 chunks without splitting a Unicode scalar,
 then `{ data: "", done: true }` at EOF. `max_chunk_bytes` is from 4 bytes
-through 1 MiB. `next_sse` parses CRLF, CR, and LF framing, a leading BOM,
+through 1 MiB. `next_sse_blocking` parses CRLF, CR, and LF framing, a leading BOM,
 comments, multi-line `data`, `event`, persistent `id`, and decimal `retry`
 fields. Its positive `max_event_bytes` limit has a 1 MiB ceiling. `[DONE]`
 remains ordinary event data for the application to interpret. The first
-`read_text` or `next_sse` call selects the stream mode; mixing modes returns
+`read_text_blocking` or `next_sse_blocking` call selects the stream mode; mixing modes returns
 `invalid_request`.
 
-Register `defer http.close_stream(stream)` immediately after opening.
-`close_stream` and cooperative `cancel_stream` are idempotent, including for
+Register `defer http.close_stream_blocking(stream)` immediately after a
+blocking open. `close_stream_blocking` and cooperative
+`cancel_stream_blocking` are idempotent, including for
 copied stale handles. Cancellation takes effect between blocking pulls;
 `idle_timeout_millis` bounds a currently blocked pull. Reads after close or
 cancel return `invalid_request`.
 
 HTTPS verifies certificates and host names through platform trust. There is no
 insecure mode, redirects are disabled, response headers are limited to 64 KiB,
-and response bodies have a hard 128 MiB ceiling. `get` and `post` use a
-30-second timeout and an 8 MiB response limit. Header names and values are
+and response bodies have a hard 128 MiB ceiling. `get_blocking` and
+`post_blocking` use a 30-second timeout and an 8 MiB response limit. Header names and values are
 validated before I/O; callers may set `Authorization` and `Content-Type` but
 may not override framing headers such as `Host` or `Content-Length`.
 On Unix-like targets, `NOMO_HTTP_CA_BUNDLE` adds a PEM trust root for
@@ -1077,9 +1096,10 @@ uses its current-user and machine certificate stores instead.
 The native adapter is owned by the toolchain runtime, so Nomo applications do
 not declare C FFI or linker flags to use HTTPS. Native Unix-like targets use a
 compatible libcurl runtime and Windows uses WinHTTP. The browser WASM sandbox
-does not grant network access in v0.1; calling these helpers returns the stable
-`NOMO-WASM-003` capability error without evaluating or logging request secrets.
-A browser host-capability design remains a later RFC.
+does not grant the blocking compatibility client network access in v0.1;
+calling those helpers returns the stable `NOMO-WASM-003` capability error
+without evaluating or logging request secrets. The unsuffixed suspend browser
+boundary remains P2-HTTP-E.
 
 Use `defer http.close_exchange(exchange)` and
 `defer http.close_server(server)` so cleanup runs on both normal returns and

@@ -21,6 +21,8 @@ RFC acceptance gate 已经通过。
   定义 owner-affine 异步 process pipe 及其阻塞 API 迁移。
 - [RFC 0039](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0039-loop-carried-coroutine-state-and-suspension-safe-mutation.md)
   定义受限 loop-carried coroutine state 与 suspension-safe mutation。
+- [RFC 0040](https://github.com/nomo-lang/rfcs/blob/main/zh-CN/rfcs/0040-owner-affine-async-http-and-sse-migration.md)
+  定义 owner-affine HTTP/SSE 挂起与显式 blocking 迁移。
 
 [English](async-runtime.md)
 
@@ -49,8 +51,8 @@ suspend fn main() -> void {
 只声明或调用 always-ready suspend 函数不会创建 executor。
 
 编译器还会拒绝传递调用图最终到达隔离清单中 blocking compatibility API 的
-`suspend fn`。E0891 覆盖 blocking sleep/TCP compatibility call、HTTP/HTTPS
-request 与 stream progress、blocking HTTP server progress、legacy shell helper，
+`suspend fn`。E0891 覆盖 blocking sleep/TCP compatibility call、显式
+HTTP/HTTPS `_blocking` client 与 stream progress、blocking HTTP server progress、legacy shell helper，
 以及可能 spawn、wait、terminate 或 reap 的 process lifecycle operation。它只
 报告函数/API 调用路径，绝不回显参数值。同步函数与旧的隔离 worker 仍可使用
 阻塞 API。非阻塞
@@ -58,6 +60,15 @@ request 与 stream progress、blocking HTTP server progress、legacy shell helpe
 current-thread backend。duration 只求值一次；非正时长 inline 完成，正时长注册
 owner-local monotonic timer。browser sandbox 在 host-driven timer backend
 落地前返回稳定的 `runtime_unavailable` result。
+
+P2-HTTP-A 将无后缀的 `http.get`、`post`、`send`、`open_stream`、
+`read_text` 与 `next_sse` 保留为 direct-style suspend API。C99 lowering 会为
+每个 operation 生成带类型的 registration/result frame slot，以及 start、
+resume、cancel 和结果只释放一次的路径。这个 contract 切片会立即返回
+secret-safe `runtime_unavailable`，并且不会调用 libcurl/WinHTTP；真正的
+owner-reactor transport 属于 P2-HTTP-B/C。旧实现只通过显式 `_blocking`
+名称与 `BlockingHttpStream` 保留。示例见
+[`examples/async_http_contract`](../examples/async_http_contract)。
 
 P2-TCP-A/B/C/D 还提供 direct-style connect、有界增量读取与完整写入：
 
@@ -203,7 +214,7 @@ structured spawn 现在是 publication boundary。编译器会为每个 child �
 | --- | --- |
 | 数值、`bool`、`char` | Copy；源 binding 仍可使用 |
 | `string`、`CString`、`Array<T>`、`Map<K,V>`、普通 struct/enum | 所有嵌套类型均为 Send 时可发布；命名 binding 会被消费 |
-| `File`、socket、HTTP server/exchange/stream、`ProcessChild`、`BlockingProcessChild`、SQLite/task/FFI handle | Local/!Send，直接拒绝 |
+| `File`、socket、HTTP server/exchange/`HttpStream`/`BlockingHttpStream`、`ProcessChild`、`BlockingProcessChild`、SQLite/task/FFI handle | Local/!Send，直接拒绝 |
 
 ```nomo
 let message: AgentMessage = build_message()

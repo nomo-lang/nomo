@@ -62,6 +62,27 @@ fn main() -> void {
 }
 
 #[test]
+fn rejects_unsuffixed_async_http_from_synchronous_function_without_leaking_arguments() {
+    let source = r#"package app.main
+
+import std.http
+import std.result
+
+fn main() -> void {
+    let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/?token=http-secret-sentinel")
+}
+"#;
+
+    let error = parse_inline(source).unwrap_err();
+
+    assert_eq!(error.code, "E0870");
+    assert!(error.message.contains("suspend function `http.get`"));
+    assert!(error.message.contains("http.get_blocking"));
+    assert!(!error.message.contains("http-secret-sentinel"));
+    assert_eq!(error.text, "http.get(...)");
+}
+
+#[test]
 fn preserves_suspend_effect_for_generic_instances() {
     let source = r#"package app.main
 
@@ -485,23 +506,23 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn rejects_blocking_http_from_suspend_without_leaking_arguments() {
+fn rejects_explicit_blocking_http_from_suspend_without_leaking_arguments() {
     let source = r#"package app.main
 
 import std.http
 
 suspend fn main() -> void {
-    let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/?token=http-secret-sentinel")
+    let result: Result<HttpResponse, HttpError> = http.get_blocking("https://example.invalid/?token=http-secret-sentinel")
 }
 "#;
 
     let error = parse_inline(source).unwrap_err();
 
     assert_eq!(error.code, "E0891");
-    assert!(error.message.contains("main -> http.get"));
+    assert!(error.message.contains("main -> http.get_blocking"));
     assert!(error.message.contains("nonblocking suspend equivalent"));
     assert!(!error.message.contains("http-secret-sentinel"));
-    assert_eq!(error.text, "http.get(...)");
+    assert_eq!(error.text, "http.get_blocking(...)");
 }
 
 #[test]
@@ -509,12 +530,12 @@ fn rejects_specifically_imported_blocking_http_stream_pull() {
     let source = r#"package app.main
 
 import std.http.HttpError
-import std.http.HttpStream
+import std.http.BlockingHttpStream
 import std.http.SseEvent
-import std.http.next_sse
+import std.http.next_sse_blocking
 
-suspend fn poll(stream: HttpStream) -> void {
-    let result: Result<Option<SseEvent>, HttpError> = next_sse(stream, 1024)
+suspend fn poll(stream: BlockingHttpStream) -> void {
+    let result: Result<Option<SseEvent>, HttpError> = next_sse_blocking(stream, 1024)
 }
 
 fn main() -> void {
@@ -524,7 +545,7 @@ fn main() -> void {
     let error = parse_inline(source).unwrap_err();
 
     assert_eq!(error.code, "E0891");
-    assert!(error.message.contains("poll -> http.next_sse"));
+    assert!(error.message.contains("poll -> http.next_sse_blocking"));
 }
 
 #[test]
@@ -568,18 +589,88 @@ fn main() -> void {
 }
 
 #[test]
-fn allows_blocking_http_in_synchronous_compatibility_code() {
+fn allows_explicit_blocking_http_in_synchronous_compatibility_code() {
     let source = r#"package app.main
 
 import std.http
 import std.result
 
 fn main() -> void {
-    let result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/")
+    let result: Result<HttpResponse, HttpError> = http.get_blocking("https://example.invalid/")
 }
 "#;
 
     parse_inline(source).unwrap();
+}
+
+#[test]
+fn async_http_surface_lowers_to_typed_placeholder_suspend_abi() {
+    let source = r#"package app.main
+
+import std.array.Array
+import std.http
+import std.result
+
+suspend fn pull(stream: HttpStream) -> void {
+    let chunk: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 4096)
+    let event: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 65536)
+}
+
+suspend fn main() -> void {
+    let get_result: Result<HttpResponse, HttpError> = http.get("https://example.invalid/get")
+    let post_result: Result<HttpResponse, HttpError> = http.post("https://example.invalid/post", "{}")
+    let headers: Array<HttpHeader> = Array.new<HttpHeader>()
+    let request: HttpRequest = HttpRequest {
+        method: "POST",
+        url: "https://example.invalid/v1/chat/completions",
+        headers: headers,
+        body: "{}",
+        timeout_millis: 1000,
+        max_response_bytes: 4096
+    }
+    let send_result: Result<HttpResponse, HttpError> = http.send(request)
+    let stream_result: Result<HttpStream, HttpError> = http.open_stream(request, 1000)
+}
+"#;
+
+    let program = parse_inline(source).unwrap();
+    let main = program
+        .functions
+        .iter()
+        .find(|function| function.name == "main")
+        .unwrap();
+    assert!(main.is_suspend);
+    assert!(main.body.iter().any(|statement| matches!(
+        statement,
+        Statement::Let {
+            initializer: ValueExpr::Call { name, args },
+            ..
+        } if name == BUILTIN_HTTP_SEND_EXPR && args.len() == 1
+    )));
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+    for symbol in [
+        "nomo_async_http_get_start",
+        "nomo_async_http_post_resume",
+        "nomo_async_http_send_start",
+        "nomo_async_http_open_stream_resume",
+        "nomo_async_http_read_text_start",
+        "nomo_async_http_next_sse_resume",
+        "nomo_async_http_cancel",
+        "nomo_async_http_runtime_shutdown",
+    ] {
+        assert!(c.contains(symbol), "missing generated C symbol `{symbol}`");
+    }
+    assert!(c.contains("runtime_unavailable"));
+    assert!(!c.contains("curl_easy_perform"));
+    assert!(!c.contains("WinHttpSendRequest"));
 }
 
 #[test]

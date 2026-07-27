@@ -9,6 +9,7 @@ pub(super) fn function_uses_async_runtime(function: &Function) -> bool {
                     || expr_is_async_tcp_connect(expr)
                     || expr_is_async_tcp_io(expr)
                     || expr_is_async_process(expr)
+                    || expr_is_async_http(expr)
                     || expr_is_async_channel_send(expr)
                     || expr_is_async_channel_receive(expr)
                     || expr_is_async_check_cancelled(expr)
@@ -180,6 +181,19 @@ fn expr_is_async_process(expr: &ValueExpr) -> bool {
         ValueExpr::Call { name, args }
             if (name == BUILTIN_PROCESS_START_EXPR && args.len() == 2)
                 || (name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3)
+    )
+}
+
+fn expr_is_async_http(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, args }
+            if (name == BUILTIN_HTTP_GET_EXPR && args.len() == 1)
+                || (name == BUILTIN_HTTP_POST_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_SEND_EXPR && args.len() == 1)
+                || (name == BUILTIN_HTTP_OPEN_STREAM_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_READ_TEXT_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_NEXT_SSE_EXPR && args.len() == 2)
     )
 }
 
@@ -393,6 +407,71 @@ fn statement_async_process(statement: &Statement) -> Option<AsyncProcessOperatio
         _ => return None,
     };
     Some(AsyncProcessOperation {
+        kind,
+        args,
+        binding,
+        value_type,
+    })
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AsyncHttpKind {
+    Get,
+    Post,
+    Send,
+    OpenStream,
+    ReadText,
+    NextSse,
+}
+
+impl AsyncHttpKind {
+    fn operation_name(self) -> &'static str {
+        match self {
+            Self::Get => "get",
+            Self::Post => "post",
+            Self::Send => "send",
+            Self::OpenStream => "open_stream",
+            Self::ReadText => "read_text",
+            Self::NextSse => "next_sse",
+        }
+    }
+
+    fn start_function(self) -> String {
+        format!("nomo_async_http_{}_start", self.operation_name())
+    }
+
+    fn resume_function(self) -> String {
+        format!("nomo_async_http_{}_resume", self.operation_name())
+    }
+}
+
+#[derive(Debug, Clone, Copy)]
+struct AsyncHttpOperation<'a> {
+    kind: AsyncHttpKind,
+    args: &'a [ValueExpr],
+    binding: &'a str,
+    value_type: &'a ValueType,
+}
+
+fn statement_async_http(statement: &Statement) -> Option<AsyncHttpOperation<'_>> {
+    let Statement::Let {
+        name: binding,
+        value_type,
+        initializer: ValueExpr::Call { name, args },
+    } = statement
+    else {
+        return None;
+    };
+    let kind = match (name.as_str(), args.len()) {
+        (BUILTIN_HTTP_GET_EXPR, 1) => AsyncHttpKind::Get,
+        (BUILTIN_HTTP_POST_EXPR, 2) => AsyncHttpKind::Post,
+        (BUILTIN_HTTP_SEND_EXPR, 1) => AsyncHttpKind::Send,
+        (BUILTIN_HTTP_OPEN_STREAM_EXPR, 2) => AsyncHttpKind::OpenStream,
+        (BUILTIN_HTTP_READ_TEXT_EXPR, 2) => AsyncHttpKind::ReadText,
+        (BUILTIN_HTTP_NEXT_SSE_EXPR, 2) => AsyncHttpKind::NextSse,
+        _ => return None,
+    };
+    Some(AsyncHttpOperation {
         kind,
         args,
         binding,
@@ -809,6 +888,7 @@ fn statement_contains_async_suspend(statement: &Statement, async_names: &BTreeSe
                 || expr_is_async_tcp_connect(expr)
                 || expr_is_async_tcp_io(expr)
                 || expr_is_async_process(expr)
+                || expr_is_async_http(expr)
                 || expr_is_async_channel_send(expr)
                 || expr_is_async_channel_receive(expr)
                 || expr_is_async_check_cancelled(expr)
@@ -825,6 +905,7 @@ fn statement_is_async_suspend(statement: &Statement, async_names: &BTreeSet<Stri
         || statement_async_tcp_connect(statement).is_some()
         || statement_async_tcp_io(statement).is_some()
         || statement_async_process(statement).is_some()
+        || statement_async_http(statement).is_some()
         || statement_async_channel_send(statement).is_some()
         || statement_async_channel_receive(statement).is_some()
         || statement_task_select(statement).is_some()
@@ -1071,6 +1152,122 @@ fn async_process_start_status_temp(index: usize) -> String {
     format!("nomo_async_process_start_status_{index}")
 }
 
+fn async_http_registration_field(index: usize) -> String {
+    format!("nomo_async_http_registration_{index}")
+}
+
+fn async_http_result_field(index: usize) -> String {
+    format!("nomo_async_http_result_{index}")
+}
+
+fn async_http_result_owned_field(index: usize) -> String {
+    format!("nomo_async_http_result_owned_{index}")
+}
+
+fn async_http_operand_temp(index: usize, operand_index: usize) -> String {
+    format!("nomo_async_http_operand_{index}_{operand_index}")
+}
+
+fn async_http_start_status_temp(index: usize) -> String {
+    format!("nomo_async_http_start_status_{index}")
+}
+
+fn async_http_retained_operand_type(
+    kind: AsyncHttpKind,
+    operand_index: usize,
+) -> Option<ValueType> {
+    match (kind, operand_index) {
+        (AsyncHttpKind::Get, 0) | (AsyncHttpKind::Post, 0 | 1) => Some(ValueType::String),
+        (AsyncHttpKind::Send | AsyncHttpKind::OpenStream, 0) => {
+            Some(ValueType::Struct("HttpRequest".to_string(), Vec::new()))
+        }
+        _ => None,
+    }
+}
+
+fn emit_async_http_operands(
+    out: &mut String,
+    index: usize,
+    operation: AsyncHttpOperation<'_>,
+    indent: usize,
+) {
+    for (operand_index, operand) in operation.args.iter().enumerate() {
+        let Some(value_type) = async_http_retained_operand_type(operation.kind, operand_index)
+        else {
+            continue;
+        };
+        write_indent(out, indent);
+        out.push_str(&c_type(&value_type));
+        out.push(' ');
+        out.push_str(&async_http_operand_temp(index, operand_index));
+        out.push_str(" = ");
+        emit_expr(out, operand);
+        out.push_str(";\n");
+        emit_value_retain_value_if_needed(
+            out,
+            &async_http_operand_temp(index, operand_index),
+            &value_type,
+            operand,
+            indent,
+        );
+    }
+}
+
+fn emit_async_http_start(
+    out: &mut String,
+    index: usize,
+    operation: AsyncHttpOperation<'_>,
+    state: u32,
+    indent: usize,
+) {
+    write_indent(out, indent);
+    out.push_str("nomo_async_poll ");
+    out.push_str(&async_http_start_status_temp(index));
+    out.push_str(" = ");
+    out.push_str(&operation.kind.start_function());
+    out.push_str("(&frame->");
+    out.push_str(&async_http_registration_field(index));
+    for (operand_index, operand) in operation.args.iter().enumerate() {
+        out.push_str(", ");
+        if async_http_retained_operand_type(operation.kind, operand_index).is_some() {
+            out.push_str(&async_http_operand_temp(index, operand_index));
+        } else {
+            emit_expr(out, operand);
+        }
+    }
+    out.push_str(", context, &frame->");
+    out.push_str(&async_http_result_field(index));
+    out.push_str(");\n");
+    for operand_index in 0..operation.args.len() {
+        let Some(value_type) = async_http_retained_operand_type(operation.kind, operand_index)
+        else {
+            continue;
+        };
+        emit_value_release_in_place(
+            out,
+            &value_type,
+            &async_http_operand_temp(index, operand_index),
+            indent,
+        );
+    }
+    write_indent(out, indent);
+    out.push_str("if (");
+    out.push_str(&async_http_start_status_temp(index));
+    out.push_str(" == NOMO_ASYNC_POLL_PENDING) {\n");
+    write_indent(out, indent + 1);
+    out.push_str("return NOMO_ASYNC_POLL_PENDING;\n");
+    write_indent(out, indent);
+    out.push_str("}\n");
+    write_indent(out, indent);
+    out.push_str("frame->");
+    out.push_str(&async_http_result_owned_field(index));
+    out.push_str(" = 1u;\n");
+    write_indent(out, indent);
+    out.push_str("goto nomo_async_resume_");
+    out.push_str(&state.to_string());
+    out.push_str(";\n");
+}
+
 fn async_join_result_field(index: usize) -> String {
     format!("nomo_async_join_result_{index}")
 }
@@ -1304,6 +1501,17 @@ fn emit_async_frame_type(
             out.push_str(&async_process_result_field(index));
             out.push_str(";\n    uint8_t ");
             out.push_str(&async_process_result_owned_field(index));
+            out.push_str(";\n");
+        }
+        if let Some(operation) = statement_async_http(statement) {
+            out.push_str("    nomo_async_http_registration ");
+            out.push_str(&async_http_registration_field(index));
+            out.push_str(";\n    ");
+            out.push_str(&c_type(operation.value_type));
+            out.push(' ');
+            out.push_str(&async_http_result_field(index));
+            out.push_str(";\n    uint8_t ");
+            out.push_str(&async_http_result_owned_field(index));
             out.push_str(";\n");
         }
         if statement_structured_join(statement).is_some() {
@@ -1797,6 +2005,57 @@ fn emit_async_process_result_binding(
     }
 }
 
+fn emit_async_http_result_binding(
+    out: &mut String,
+    index: usize,
+    operation: AsyncHttpOperation<'_>,
+    frame_locals: &[AsyncFrameLocal],
+    local_owned: &mut Vec<LocalArray>,
+    indent: usize,
+) {
+    if let Some(frame_local) = frame_locals
+        .iter()
+        .find(|local| local.declaration_index == index)
+    {
+        write_indent(out, indent);
+        out.push_str("frame->");
+        out.push_str(&async_frame_value_field(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_http_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_frame_owned_field(operation.binding));
+            out.push_str(" = frame->");
+            out.push_str(&async_http_result_owned_field(index));
+            out.push_str(";\n");
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_http_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        emit_async_frame_alias(out, frame_local, indent);
+    } else {
+        write_indent(out, indent);
+        out.push_str(&c_type(operation.value_type));
+        out.push(' ');
+        out.push_str(&c_var_ident(operation.binding));
+        out.push_str(" = frame->");
+        out.push_str(&async_http_result_field(index));
+        out.push_str(";\n");
+        if value_type_needs_release(operation.value_type) {
+            write_indent(out, indent);
+            out.push_str("frame->");
+            out.push_str(&async_http_result_owned_field(index));
+            out.push_str(" = 0u;\n");
+        }
+        if let Some(local) = local_array(operation.binding, operation.value_type) {
+            local_owned.push(local);
+        }
+    }
+}
+
 fn emit_async_tcp_connect_cancellations(out: &mut String, function: &Function, indent: usize) {
     for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_tcp_connect(statement).is_none() {
@@ -1829,6 +2088,18 @@ fn emit_async_process_cancellations(out: &mut String, function: &Function, inden
         write_indent(out, indent);
         out.push_str("nomo_async_process_cancel(&frame->");
         out.push_str(&async_process_registration_field(index));
+        out.push_str(", context);\n");
+    }
+}
+
+fn emit_async_http_cancellations(out: &mut String, function: &Function, indent: usize) {
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_http(statement).is_none() {
+            continue;
+        }
+        write_indent(out, indent);
+        out.push_str("nomo_async_http_cancel(&frame->");
+        out.push_str(&async_http_registration_field(index));
         out.push_str(", context);\n");
     }
 }
@@ -2073,6 +2344,7 @@ fn emit_async_deadline_failure(
     emit_async_tcp_connect_cancellations(out, function, indent);
     emit_async_tcp_io_cancellations(out, function, indent);
     emit_async_process_cancellations(out, function, indent);
+    emit_async_http_cancellations(out, function, indent);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -2169,6 +2441,7 @@ fn emit_async_child_failure_propagation(
     emit_async_tcp_connect_cancellations(out, function, indent + 1);
     emit_async_tcp_io_cancellations(out, function, indent + 1);
     emit_async_process_cancellations(out, function, indent + 1);
+    emit_async_http_cancellations(out, function, indent + 1);
     for (index, statement) in function.body.iter().enumerate().rev() {
         let Some(spawn) = statement_structured_spawn(statement) else {
             continue;
@@ -2258,6 +2531,7 @@ fn emit_async_cancel_function(
     emit_async_tcp_connect_cancellations(out, function, 1);
     emit_async_tcp_io_cancellations(out, function, 1);
     emit_async_process_cancellations(out, function, 1);
+    emit_async_http_cancellations(out, function, 1);
     out.push_str(
         "    frame->structured_waiter_frame = NULL;\n\
              frame->structured_waiter_poll = NULL;\n\
@@ -4334,6 +4608,7 @@ pub(super) fn emit_async_function(
             let tcp_connect = statement_async_tcp_connect(statement);
             let tcp_io = statement_async_tcp_io(statement);
             let process = statement_async_process(statement);
+            let http = statement_async_http(statement);
             let channel_send = statement_async_channel_send(statement);
             let channel_receive = statement_async_channel_receive(statement);
             let select = statement_task_select(statement);
@@ -4434,6 +4709,9 @@ pub(super) fn emit_async_function(
                     &operation.args[0],
                     3,
                 );
+            }
+            if let Some(operation) = http {
+                emit_async_http_operands(out, index, operation, 3);
             }
             let moved_to_frame = frame_locals
                 .iter()
@@ -4580,6 +4858,8 @@ pub(super) fn emit_async_function(
                 out.push_str("            goto nomo_async_resume_");
                 out.push_str(&state.to_string());
                 out.push_str(";\n");
+            } else if let Some(operation) = http {
+                emit_async_http_start(out, index, operation, state, 3);
             } else if let Some(send) = channel_send {
                 out.push_str("            if (nomo_channel_send_start_");
                 out.push_str(send.suffix);
@@ -4763,6 +5043,22 @@ pub(super) fn emit_async_function(
                 out.push_str(&async_process_result_owned_field(index));
                 out.push_str(" = 1u;\n");
             }
+            if let Some(operation) = http {
+                out.push_str("            if (");
+                out.push_str(&operation.kind.resume_function());
+                out.push_str("(&frame->");
+                out.push_str(&async_http_registration_field(index));
+                out.push_str(", context, &frame->");
+                out.push_str(&async_http_result_field(index));
+                out.push_str(
+                    ") == NOMO_ASYNC_POLL_PENDING) {\n\
+                                 return NOMO_ASYNC_POLL_PENDING;\n\
+                             }\n",
+                );
+                out.push_str("            frame->");
+                out.push_str(&async_http_result_owned_field(index));
+                out.push_str(" = 1u;\n");
+            }
             if sleep.is_some() {
                 out.push_str("            if (nomo_async_timer_resume(&frame->");
                 out.push_str(&async_timer_field(index));
@@ -4856,6 +5152,7 @@ pub(super) fn emit_async_function(
                 || tcp_connect.is_some()
                 || tcp_io.is_some()
                 || process.is_some()
+                || http.is_some()
                 || channel_send.is_some()
                 || channel_receive.is_some()
                 || call.is_some()
@@ -4979,6 +5276,16 @@ pub(super) fn emit_async_function(
             }
             if let Some(operation) = process {
                 emit_async_process_result_binding(
+                    out,
+                    index,
+                    operation,
+                    &frame_locals,
+                    &mut local_owned,
+                    3,
+                );
+            }
+            if let Some(operation) = http {
+                emit_async_http_result_binding(
                     out,
                     index,
                     operation,
@@ -5340,6 +5647,15 @@ pub(super) fn emit_async_function(
         out.push_str(", frame->context);\n    }\n");
     }
     for (index, statement) in function.body.iter().enumerate().rev() {
+        if statement_async_http(statement).is_none() {
+            continue;
+        }
+        out.push_str("    if (frame->context != NULL) {\n");
+        out.push_str("        nomo_async_http_cancel(&frame->");
+        out.push_str(&async_http_registration_field(index));
+        out.push_str(", frame->context);\n    }\n");
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
         if statement_async_process(statement).is_none() {
             continue;
         }
@@ -5404,6 +5720,18 @@ pub(super) fn emit_async_function(
             operation.value_type,
             &async_process_result_owned_field(index),
             &async_process_result_field(index),
+            1,
+        );
+    }
+    for (index, statement) in function.body.iter().enumerate().rev() {
+        let Some(operation) = statement_async_http(statement) else {
+            continue;
+        };
+        emit_async_owned_field_drop(
+            out,
+            operation.value_type,
+            &async_http_result_owned_field(index),
+            &async_http_result_field(index),
             1,
         );
     }

@@ -1142,7 +1142,7 @@ fn nomo_check_rejects_transitive_blocking_http_from_suspend_module_graph() {
     .unwrap();
     fs::write(
         project.join("src/worker.nomo"),
-        "package app.worker\n\nimport std.http\nimport std.result\n\npub fn request() -> Result<HttpResponse, HttpError> {\n    return http.get(\"https://example.invalid/?token=cli-http-secret-sentinel\")\n}\n",
+        "package app.worker\n\nimport std.http\nimport std.result\n\npub fn request() -> Result<HttpResponse, HttpError> {\n    return http.get_blocking(\"https://example.invalid/?token=cli-http-secret-sentinel\")\n}\n",
     )
     .unwrap();
     fs::write(
@@ -19277,9 +19277,9 @@ import std.http
 import std.io
 
 fn request() -> Result<void, HttpError> {
-    let first: HttpResponse = http.get("http://127.0.0.1:__PORT__/hello")?
+    let first: HttpResponse = http.get_blocking("http://127.0.0.1:__PORT__/hello")?
     io.println(first.body)
-    let second: HttpResponse = http.post("http://127.0.0.1:__PORT__/echo", "post-body")?
+    let second: HttpResponse = http.post_blocking("http://127.0.0.1:__PORT__/echo", "post-body")?
     io.println(second.body)
     return Ok(void)
 }
@@ -19393,7 +19393,7 @@ fn invalid_header() -> void {
         timeout_millis: 1000,
         max_response_bytes: 1024
     }
-    let result: Result<HttpResponse, HttpError> = http.send(request)
+    let result: Result<HttpResponse, HttpError> = http.send_blocking(request)
     match result {
         Ok(response) => {
             io.println("invalid unexpected-ok")
@@ -19414,7 +19414,7 @@ fn body_limit() -> void {
         timeout_millis: 1000,
         max_response_bytes: 8
     }
-    let result: Result<HttpResponse, HttpError> = http.send(request)
+    let result: Result<HttpResponse, HttpError> = http.send_blocking(request)
     match result {
         Ok(response) => {
             io.println("body unexpected-ok")
@@ -19435,7 +19435,7 @@ fn request_timeout() -> void {
         timeout_millis: 100,
         max_response_bytes: 1024
     }
-    let result: Result<HttpResponse, HttpError> = http.send(request)
+    let result: Result<HttpResponse, HttpError> = http.send_blocking(request)
     match result {
         Ok(response) => {
             io.println("timeout unexpected-ok")
@@ -19460,7 +19460,7 @@ fn tls_failure() -> void {
         timeout_millis: 1000,
         max_response_bytes: 1024
     }
-    let result: Result<HttpResponse, HttpError> = http.send(request)
+    let result: Result<HttpResponse, HttpError> = http.send_blocking(request)
     match result {
         Ok(response) => {
             io.println("tls unexpected-ok")
@@ -19610,10 +19610,10 @@ fn run() -> Result<void, HttpError> {
         timeout_millis: 1000,
         max_response_bytes: 1048576
     }
-    let stream: HttpStream = http.open_stream(request, 1000)?
-    defer http.close_stream(stream)
+    let stream: BlockingHttpStream = http.open_stream_blocking(request, 1000)?
+    defer http.close_stream_blocking(stream)
 
-    let first: Option<SseEvent> = http.next_sse(stream, 1024)?
+    let first: Option<SseEvent> = http.next_sse_blocking(stream, 1024)?
     match first {
         Some(event) => {
             io.println(event.event)
@@ -19626,7 +19626,7 @@ fn run() -> Result<void, HttpError> {
         }
     }
 
-    let second: Option<SseEvent> = http.next_sse(stream, 1024)?
+    let second: Option<SseEvent> = http.next_sse_blocking(stream, 1024)?
     match second {
         Some(event) => {
             io.println(event.event)
@@ -19639,7 +19639,7 @@ fn run() -> Result<void, HttpError> {
         }
     }
 
-    let third: Option<SseEvent> = http.next_sse(stream, 1024)?
+    let third: Option<SseEvent> = http.next_sse_blocking(stream, 1024)?
     match third {
         Some(event) => {
             io.println("unexpected third event")
@@ -19739,8 +19739,8 @@ fn finish_text(text: string, chunks: u64) -> Result<void, HttpError> {
     return Ok(void)
 }
 
-fn collect_text(stream: HttpStream, text: string, chunks: u64) -> Result<void, HttpError> {
-    let chunk: HttpStreamChunk = http.read_text(stream, 4)?
+fn collect_text(stream: BlockingHttpStream, text: string, chunks: u64) -> Result<void, HttpError> {
+    let chunk: HttpStreamChunk = http.read_text_blocking(stream, 4)?
     return if chunk.done {
         finish_text(text, chunks)
     } else {
@@ -19758,10 +19758,10 @@ fn run() -> Result<void, HttpError> {
         timeout_millis: 1000,
         max_response_bytes: 1024
     }
-    let stream: HttpStream = http.open_stream(request, 1000)?
+    let stream: BlockingHttpStream = http.open_stream_blocking(request, 1000)?
     collect_text(stream, "", 0)?
 
-    let mixed: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 1024)
+    let mixed: Result<Option<SseEvent>, HttpError> = http.next_sse_blocking(stream, 1024)
     match mixed {
         Ok(event) => {
             io.println("unexpected mixed mode")
@@ -19771,9 +19771,9 @@ fn run() -> Result<void, HttpError> {
         }
     }
 
-    http.close_stream(stream)
-    http.close_stream(stream)
-    let closed: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 4)
+    http.close_stream_blocking(stream)
+    http.close_stream_blocking(stream)
+    let closed: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 4)
     match closed {
         Ok(chunk) => {
             io.println("unexpected closed read")
@@ -19934,12 +19934,12 @@ fn request_for(url: string, max_response_bytes: u64) -> HttpRequest {
 }
 
 fn response_limit() -> Result<void, HttpError> {
-    let stream: HttpStream = http.open_stream(
+    let stream: BlockingHttpStream = http.open_stream_blocking(
         request_for("http://127.0.0.1:__LIMIT_PORT__/large?api_key=query-secret", 8),
         1000
     )?
-    defer http.close_stream(stream)
-    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    defer http.close_stream_blocking(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 1024)
     match result {
         Ok(chunk) => {
             io.println("limit unexpected-ok")
@@ -19952,12 +19952,12 @@ fn response_limit() -> Result<void, HttpError> {
 }
 
 fn idle_timeout() -> Result<void, HttpError> {
-    let stream: HttpStream = http.open_stream(
+    let stream: BlockingHttpStream = http.open_stream_blocking(
         request_for("http://127.0.0.1:__TIMEOUT_PORT__/slow?token=timeout-secret", 1024),
         100
     )?
-    defer http.close_stream(stream)
-    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    defer http.close_stream_blocking(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 1024)
     match result {
         Ok(chunk) => {
             io.println("timeout unexpected-ok")
@@ -19970,12 +19970,12 @@ fn idle_timeout() -> Result<void, HttpError> {
 }
 
 fn invalid_utf8() -> Result<void, HttpError> {
-    let stream: HttpStream = http.open_stream(
+    let stream: BlockingHttpStream = http.open_stream_blocking(
         request_for("http://127.0.0.1:__UTF8_PORT__/invalid", 1024),
         1000
     )?
-    defer http.close_stream(stream)
-    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    defer http.close_stream_blocking(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 1024)
     match result {
         Ok(chunk) => {
             io.println("utf8 unexpected-ok")
@@ -19988,11 +19988,11 @@ fn invalid_utf8() -> Result<void, HttpError> {
 }
 
 fn canceled_stream() -> Result<void, HttpError> {
-    let stream: HttpStream = http.open_stream(
+    let stream: BlockingHttpStream = http.open_stream_blocking(
         request_for("http://127.0.0.1:__CANCEL_PORT__/cancel", 1024),
         1000
     )?
-    let invalid_limit: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 3)
+    let invalid_limit: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 3)
     match invalid_limit {
         Ok(chunk) => {
             io.println("chunk-limit unexpected-ok")
@@ -20001,9 +20001,9 @@ fn canceled_stream() -> Result<void, HttpError> {
             io.println("chunk-limit", err.code, err.message)
         }
     }
-    http.cancel_stream(stream)
-    http.cancel_stream(stream)
-    let result: Result<HttpStreamChunk, HttpError> = http.read_text(stream, 1024)
+    http.cancel_stream_blocking(stream)
+    http.cancel_stream_blocking(stream)
+    let result: Result<HttpStreamChunk, HttpError> = http.read_text_blocking(stream, 1024)
     match result {
         Ok(chunk) => {
             io.println("cancel unexpected-ok")
@@ -20016,12 +20016,12 @@ fn canceled_stream() -> Result<void, HttpError> {
 }
 
 fn oversized_sse_event() -> Result<void, HttpError> {
-    let stream: HttpStream = http.open_stream(
+    let stream: BlockingHttpStream = http.open_stream_blocking(
         request_for("http://127.0.0.1:__SSE_LIMIT_PORT__/events", 1024),
         1000
     )?
-    defer http.close_stream(stream)
-    let result: Result<Option<SseEvent>, HttpError> = http.next_sse(stream, 8)
+    defer http.close_stream_blocking(stream)
+    let result: Result<Option<SseEvent>, HttpError> = http.next_sse_blocking(stream, 8)
     match result {
         Ok(event) => {
             io.println("sse-limit unexpected-ok")

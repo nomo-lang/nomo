@@ -833,13 +833,30 @@ mod tests {
             .unwrap();
         let get = http.items.iter().find(|item| item.name == "get").unwrap();
         assert_eq!(get.source, "std/src/http.nomo");
-        assert!(get.docs.contains("blocking HTTP GET"));
+        assert_eq!(
+            get.signature,
+            "pub suspend fn get(url: string) -> Result<HttpResponse, HttpError>"
+        );
+        assert!(get.docs.contains("owner-affine HTTP GET"));
         let send = http.items.iter().find(|item| item.name == "send").unwrap();
         assert_eq!(
             send.signature,
-            "pub fn send(request: HttpRequest) -> Result<HttpResponse, HttpError>"
+            "pub suspend fn send(request: HttpRequest) -> Result<HttpResponse, HttpError>"
         );
-        assert!(send.docs.contains("bounded blocking HTTP or HTTPS"));
+        assert!(
+            send.docs
+                .contains("bounded owner-affine HTTP or HTTPS request")
+        );
+        let get_blocking = http
+            .items
+            .iter()
+            .find(|item| item.name == "get_blocking")
+            .unwrap();
+        assert_eq!(
+            get_blocking.signature,
+            "pub fn get_blocking(url: string) -> Result<HttpResponse, HttpError>"
+        );
+        assert!(get_blocking.docs.contains("blocking HTTP GET"));
         let request = http
             .items
             .iter()

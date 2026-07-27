@@ -838,38 +838,37 @@ remain blocking compatibility APIs. See the
 [async runtime guide](docs/async-runtime.md), and
 `examples/async_tcp_connect` / `examples/async_tcp_io`.
 
-`std.http` provides a bounded blocking HTTP/HTTPS client in v0.1.
-`http.send(HttpRequest)` accepts `GET` and `POST`, custom application headers,
-a total timeout, and a response-body limit. HTTPS verifies certificates and
-host names, redirects are disabled, and `HttpResponse` exposes numeric
-`status`, ordered `headers`, and `body`. The compatibility `http.get` and
-`http.post` helpers use a 30-second timeout and an 8 MiB body limit.
-`HttpError.code` provides stable transport categories without copying request
-headers, bodies, or URL query secrets into errors.
+`std.http` now reserves the unsuffixed client surface for owner-affine
+direct-style suspension: `http.get`, `post`, `send`, `open_stream`,
+`read_text`, and `next_sse` are `suspend fn` operations. P2-HTTP-A lowers these
+calls through typed start/resume/cancel frame slots and returns the stable,
+secret-safe `runtime_unavailable` error. It deliberately does not call the
+blocking transport. `examples/async_http_contract` and the claim-ineligible
+`performance/async` snapshot lock this ABI boundary while P2-HTTP-B/C add the
+native reactor transport.
 
-`http.open_stream` returns an `HttpStream` after the response head and supports
-bounded pull-based UTF-8 chunks through `http.read_text` or parsed SSE events
-through `http.next_sse`. Each stream has a per-pull idle timeout plus the
-request's cumulative response limit. The first consuming call selects raw-text
-or SSE mode. `close_stream` and cooperative `cancel_stream` are idempotent;
-callers should register `defer http.close_stream(stream)` immediately after
-open. See `examples/openai_streaming` for a native OpenAI-compatible HTTPS/SSE
-loop that stops on `[DONE]`.
+The accepted synchronous HTTP/HTTPS implementation remains available for one
+migration window as `get_blocking`, `post_blocking`, `send_blocking`,
+`open_stream_blocking`, `read_text_blocking`, `next_sse_blocking`,
+`cancel_stream_blocking`, and `close_stream_blocking`. It accepts custom
+headers, a total timeout, and a response-body limit. HTTPS verifies
+certificates and host names, redirects are disabled, and errors do not copy
+request headers, bodies, or URL query secrets. Streaming compatibility uses
+`BlockingHttpStream`; see `examples/openai_streaming`.
 
-The native HTTP adapter is toolchain-owned; application code does not write C
-FFI or linker metadata. Unix-like targets use a compatible libcurl runtime and
-Windows uses WinHTTP. Browser WASM rejects network access with the stable
-`NOMO-WASM-003` capability error. `http.listen` creates a plain-HTTP `HttpServer`,
+The HTTP adapter remains toolchain-owned, so application code writes no C FFI
+or linker metadata. The blocking Unix-like adapter uses libcurl and Windows
+uses WinHTTP. `http.listen` creates a blocking plain-HTTP `HttpServer`,
 `http.accept` returns one `HttpExchange` with `method`, `path`, and `body`, and
 `http.respond_string` writes a string response. Use
 `defer http.close_exchange(exchange)` and `defer http.close_server(server)` to
 close server handles on normal returns and `?` early returns. Redirects, binary
 bodies, and multi-connection server helpers remain later slices.
 
-HTTP request/stream/server progress is still synchronous. E0891 rejects
-`http.get`, `post`, `send`, `open_stream`, `read_text`, `next_sse`, `listen`,
-`accept`, and `respond_string` from suspend call graphs until an owner-affine
-reactor-backed replacement passes the RFC 0034 native gates.
+E0870 rejects unsuffixed suspend client calls from a normal `fn` and points to
+the explicit blocking migration name. E0891 rejects every `_blocking` client
+call plus `listen`, `accept`, and `respond_string` from suspend call graphs.
+The source excerpt and call path remain secret-safe.
 
 `std.testing` provides helpers for `#[test]` functions: `testing.assert`,
 `testing.assert_equal`, and `testing.assert_error`. `assert` accepts a bool

@@ -1,0 +1,29 @@
+{
+  "schema": 1,
+  "gate": "p2-http-a-owner-affine-suspend-abi-contract",
+  "required_absent_generated_c_patterns": [
+    "curl_easy_perform",
+    "curl_multi_poll",
+    "WinHttpSendRequest",
+    "CreateThread",
+    "__atomic_",
+    "Interlocked",
+    "stdatomic.h"
+  ],
+  "required_generated_c_pattern_counts": {
+    "static nomo_async_poll nomo_async_http_get_start": 1,
+    "static nomo_async_poll nomo_async_http_post_start": 1,
+    "static nomo_async_poll nomo_async_http_send_start": 1,
+    "static nomo_async_poll nomo_async_http_open_stream_start": 1,
+    "static nomo_async_poll nomo_async_http_read_text_start": 1,
+    "static nomo_async_poll nomo_async_http_next_sse_start": 1,
+    "static void nomo_async_http_cancel": 1,
+    "static void nomo_async_http_runtime_shutdown": 1,
+    "owner-affine async HTTP is unavailable in this runtime slice": 1
+  },
+  "runtime_counters": {
+    "available": false,
+    "available_phase": "P2",
+    "reason": "P2-HTTP-A validates the typed frame, cancellation and lifecycle ABI only; P2-HTTP-B/C will add native reactor transport and measurable counters"
+  }
+}

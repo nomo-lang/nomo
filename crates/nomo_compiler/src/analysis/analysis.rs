@@ -142,6 +142,7 @@ pub(super) fn standard_struct_names(
         names.push(("UdpSocket".to_string(), 0));
     }
     if needs.http {
+        names.push(("BlockingHttpStream".to_string(), 0));
         names.push(("HttpExchange".to_string(), 0));
         names.push(("HttpError".to_string(), 0));
         names.push(("HttpHeader".to_string(), 0));
@@ -535,6 +536,26 @@ pub(super) fn inject_standard_types(
         structs.push(StructType {
             package: "std.http".to_string(),
             name: "HttpStream".to_string(),
+            type_params: Vec::new(),
+            fields: vec![
+                StructField {
+                    name: "status".to_string(),
+                    value_type: ValueType::Int,
+                },
+                StructField {
+                    name: "headers".to_string(),
+                    value_type: ValueType::Array(Box::new(ValueType::Struct(
+                        "HttpHeader".to_string(),
+                        Vec::new(),
+                    ))),
+                },
+            ],
+        });
+    }
+    if needs.http && !structs.iter().any(|item| item.name == "BlockingHttpStream") {
+        structs.push(StructType {
+            package: "std.http".to_string(),
+            name: "BlockingHttpStream".to_string(),
             type_params: Vec::new(),
             fields: vec![
                 StructField {

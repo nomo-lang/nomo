@@ -66,8 +66,8 @@ pub(super) fn emit_http_client_helpers(out: &mut String) {
             "@MAX_RESPONSE_MEMBER@",
             &c_member_ident("max_response_bytes"),
         )
-        .replace("@SEND_NAME@", &c_fn_ident(BUILTIN_HTTP_SEND_EXPR))
-        .replace("@GET_NAME@", &c_fn_ident(BUILTIN_HTTP_GET_EXPR))
-        .replace("@POST_NAME@", &c_fn_ident(BUILTIN_HTTP_POST_EXPR));
+        .replace("@SEND_NAME@", &c_fn_ident(BUILTIN_HTTP_SEND_BLOCKING_EXPR))
+        .replace("@GET_NAME@", &c_fn_ident(BUILTIN_HTTP_GET_BLOCKING_EXPR))
+        .replace("@POST_NAME@", &c_fn_ident(BUILTIN_HTTP_POST_BLOCKING_EXPR));
     out.push_str(&rendered);
 }

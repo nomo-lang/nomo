@@ -1083,7 +1083,7 @@ fn main() -> void {
         timeout_millis: 1000,
         max_response_bytes: 1024
     }
-    let result: Result<HttpResponse, HttpError> = http.send(request)
+    let result: Result<HttpResponse, HttpError> = http.send_blocking(request)
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());
@@ -1124,7 +1124,7 @@ fn main() -> void {
         timeout_millis: 1000,
         max_response_bytes: 1024
     }
-    let result: Result<HttpStream, HttpError> = http.open_stream(request, 1000)
+    let result: Result<BlockingHttpStream, HttpError> = http.open_stream_blocking(request, 1000)
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());

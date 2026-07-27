@@ -180,10 +180,11 @@ pub(super) fn uses_net_udp_bind(program: &Program) -> bool {
 
 pub(super) fn uses_http_client(program: &Program) -> bool {
     program.functions.iter().any(|function| {
-        function
-            .body
-            .iter()
-            .any(|statement| statement_contains_expr(statement, expr_is_http_client_call))
+        function.body.iter().any(|statement| {
+            statement_contains_expr(statement, |expr| {
+                expr_is_http_client_call(expr) || expr_is_http_stream_call(expr)
+            })
+        })
     })
 }
 
@@ -193,6 +194,34 @@ pub(super) fn uses_http_stream(program: &Program) -> bool {
             .body
             .iter()
             .any(|statement| statement_contains_expr(statement, expr_is_http_stream_call))
+    })
+}
+
+pub(super) fn uses_async_http_surface(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_async_http_surface_call))
+    })
+}
+
+pub(super) fn uses_async_http_suspend(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function.body.iter().any(|statement| {
+            statement_contains_expr(statement, |expr| {
+                matches!(
+                    expr,
+                    ValueExpr::Call { name, args }
+                        if (name == BUILTIN_HTTP_GET_EXPR && args.len() == 1)
+                            || (name == BUILTIN_HTTP_POST_EXPR && args.len() == 2)
+                            || (name == BUILTIN_HTTP_SEND_EXPR && args.len() == 1)
+                            || (name == BUILTIN_HTTP_OPEN_STREAM_EXPR && args.len() == 2)
+                            || (name == BUILTIN_HTTP_READ_TEXT_EXPR && args.len() == 2)
+                            || (name == BUILTIN_HTTP_NEXT_SSE_EXPR && args.len() == 2)
+                )
+            })
+        })
     })
 }
 

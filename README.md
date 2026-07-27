@@ -794,7 +794,10 @@ cwd, stdin, or child output. The Unix async adapter is toolchain-owned, so
 application code needs no C FFI. Windows P2-PROC-C uses overlapped named pipes,
 one shared bounded process-creation worker, system wait callbacks, and stable
 owner-IOCP operation slots without per-child reader/writer threads. Browser
-WASM rejects the capability before evaluating command operands. See
+WASM rejects the capability before evaluating command operands. The release
+artifact gate executes poison command/timeout operands through
+`process.start`, requires `NOMO-WASM-003`, and verifies that the module has no
+host imports. See
 `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
 `examples/async_process_pipe_windows` for the native IOCP lifecycle,

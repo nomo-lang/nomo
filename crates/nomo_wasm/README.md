@@ -28,6 +28,11 @@ node scripts/check_browser_wasm.mjs \
   target/wasm32-unknown-unknown/release/nomo_wasm.wasm
 ```
 
+The verifier inspects the final release module for zero host imports and runs
+an async `process.start` probe whose command and timeout operands panic if
+evaluated. The artifact must return `NOMO-WASM-003` for the process capability
+without evaluating or leaking either operand.
+
 The raw ABI exports allocation, check/run, and result-buffer functions so the
 module does not need JavaScript glue generation:
 

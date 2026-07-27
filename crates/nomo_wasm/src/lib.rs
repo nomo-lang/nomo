@@ -1194,6 +1194,44 @@ fn main() -> void {
     }
 
     #[test]
+    fn rejects_async_process_start_before_evaluating_command_operands() {
+        let source = r#"package app.main
+
+import std.process
+
+fn command() -> ProcessCommand {
+    panic("browser-async-process-command-must-not-run")
+}
+
+fn timeout() -> u64 {
+    panic("browser-async-process-timeout-must-not-run")
+}
+
+suspend fn main() -> void {
+    let result: Result<ProcessChild, ProcessControlError> = process.start(command(), timeout())
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "runtime_error", "{response:#?}");
+        let error = response
+            .runtime_error
+            .as_ref()
+            .expect("async process start should return a capability error");
+        assert_eq!(error.code, "NOMO-WASM-003");
+        assert!(error.message.contains("process"));
+        assert!(error.message.contains("browser sandbox"));
+        assert!(!error.message.contains("__nomo_process_start_async"));
+        for secret in [
+            "browser-async-process-command-must-not-run",
+            "browser-async-process-timeout-must-not-run",
+        ] {
+            assert!(!error.message.contains(secret), "{error:#?}");
+            assert!(!response.stderr.contains(secret), "{response:#?}");
+        }
+    }
+
+    #[test]
     fn returns_task_runtime_unavailable_without_invoking_the_worker() {
         let source = r#"package app.main
 

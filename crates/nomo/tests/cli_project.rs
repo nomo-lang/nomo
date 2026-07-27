@@ -15745,7 +15745,7 @@ fn main() -> void {
 }
 
 #[test]
-fn async_process_pipe_contract_reports_secret_safe_spawn_error() {
+fn async_process_pipe_contract_is_secret_safe_on_every_target() {
     let root = temp_test_root("async-process-pipe-contract");
     reset_dir(&root);
     let project = root.join("async_process_pipe_contract");
@@ -15804,7 +15804,12 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    assert_eq!(stdout, "spawn failed to start process\n");
+    let expected = if cfg!(windows) {
+        "unsupported async process pipes are not available in this runtime slice\n"
+    } else {
+        "spawn failed to start process\n"
+    };
+    assert_eq!(stdout, expected);
     assert!(!stdout.contains("process-command-secret-sentinel"));
     assert!(output.stderr.is_empty());
 

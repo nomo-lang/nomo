@@ -465,7 +465,7 @@ pub(super) fn emit_env_args_helper(out: &mut String) {
 
 pub(super) fn emit_process_control_helpers(out: &mut String) {
     let process_env_type = ValueType::Struct("ProcessEnv".to_string(), Vec::new());
-    let process_child_type = ValueType::Struct("ProcessChild".to_string(), Vec::new());
+    let process_child_type = ValueType::Struct("BlockingProcessChild".to_string(), Vec::new());
     let process_exit_type = ValueType::Struct("ProcessExit".to_string(), Vec::new());
     let process_event_type = ValueType::Enum("ProcessEvent".to_string(), Vec::new());
     let control_error_type = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
@@ -490,7 +490,10 @@ pub(super) fn emit_process_control_helpers(out: &mut String) {
     let rendered = include_str!("host_process_control.c")
         .replace("@PROCESS_ENV@", &c_struct_ident("ProcessEnv", &[]))
         .replace("@PROCESS_COMMAND@", &c_struct_ident("ProcessCommand", &[]))
-        .replace("@PROCESS_CHILD@", &c_struct_ident("ProcessChild", &[]))
+        .replace(
+            "@PROCESS_CHILD@",
+            &c_struct_ident("BlockingProcessChild", &[]),
+        )
         .replace("@PROCESS_EXIT@", &c_struct_ident("ProcessExit", &[]))
         .replace("@PROCESS_EVENT@", &c_enum_ident("ProcessEvent", &[]))
         .replace(
@@ -617,30 +620,33 @@ pub(super) fn emit_process_control_helpers(out: &mut String) {
         .replace("@CODE_MEMBER@", &c_member_ident("code"))
         .replace("@SIGNAL_MEMBER@", &c_member_ident("signal"))
         .replace("@MESSAGE_MEMBER@", &c_member_ident("message"))
-        .replace("@START_NAME@", &c_fn_ident(BUILTIN_PROCESS_START_EXPR))
+        .replace(
+            "@START_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_START_BLOCKING_EXPR),
+        )
         .replace(
             "@WRITE_STDIN_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_WRITE_STDIN_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR),
         )
         .replace(
             "@CLOSE_STDIN_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_CLOSE_STDIN_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR),
         )
         .replace(
             "@NEXT_EVENT_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_NEXT_EVENT_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR),
         )
         .replace(
             "@TRY_WAIT_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_TRY_WAIT_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR),
         )
         .replace(
             "@TERMINATE_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_TERMINATE_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR),
         )
         .replace(
             "@CLOSE_CHILD_NAME@",
-            &c_fn_ident(BUILTIN_PROCESS_CLOSE_CHILD_EXPR),
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR),
         );
     out.push_str(&rendered);
 }

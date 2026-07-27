@@ -1169,7 +1169,7 @@ fn main() -> void {
         env: environment,
         inherit_env: false
     }
-    let result: Result<ProcessChild, ProcessControlError> = process.start(command)
+    let result: Result<BlockingProcessChild, ProcessControlError> = process.start_blocking(command)
 }
 "#;
         let response = run_source(source, ExecutionLimits::default());
@@ -1182,7 +1182,7 @@ fn main() -> void {
         assert_eq!(error.code, "NOMO-WASM-003");
         assert!(error.message.contains("process"));
         assert!(error.message.contains("browser sandbox"));
-        assert!(!error.message.contains("__nomo_process_start"));
+        assert!(!error.message.contains("__nomo_process_start_blocking"));
         for secret in [
             "argv-browser-secret",
             "environment-browser-secret",

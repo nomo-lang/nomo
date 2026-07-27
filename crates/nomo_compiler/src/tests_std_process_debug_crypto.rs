@@ -142,32 +142,32 @@ fn accepts_controlled_process_builtins() {
 
 import std.process
 
-fn launch(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError> {
-    return process.start(command)
+fn launch(command: ProcessCommand) -> Result<BlockingProcessChild, ProcessControlError> {
+    return process.start_blocking(command)
 }
 
-fn write(child: ProcessChild) -> Result<void, ProcessControlError> {
-    return process.write_stdin(child, "message\n")
+fn write(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
+    return process.write_stdin_blocking(child, "message\n")
 }
 
-fn close_input(child: ProcessChild) -> Result<void, ProcessControlError> {
-    return process.close_stdin(child)
+fn close_input(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
+    return process.close_stdin_blocking(child)
 }
 
-fn pull(child: ProcessChild) -> Result<ProcessEvent, ProcessControlError> {
-    return process.next_event(child, 4096, 1000)
+fn pull(child: BlockingProcessChild) -> Result<ProcessEvent, ProcessControlError> {
+    return process.next_event_blocking(child, 4096, 1000)
 }
 
-fn observe(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessControlError> {
-    return process.try_wait(child)
+fn observe(child: BlockingProcessChild) -> Result<Option<ProcessExit>, ProcessControlError> {
+    return process.try_wait_blocking(child)
 }
 
-fn stop(child: ProcessChild) -> Result<void, ProcessControlError> {
-    return process.terminate(child)
+fn stop(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
+    return process.terminate_blocking(child)
 }
 
-fn close(child: ProcessChild) -> void {
-    process.close_child(child)
+fn close(child: BlockingProcessChild) -> void {
+    process.close_child_blocking(child)
 }
 
 fn main() -> void {
@@ -179,6 +179,7 @@ fn main() -> void {
         "ProcessEnv",
         "ProcessCommand",
         "ProcessChild",
+        "BlockingProcessChild",
         "ProcessExit",
         "ProcessControlError",
     ] {
@@ -186,12 +187,12 @@ fn main() -> void {
     }
     assert!(program.enums.iter().any(|item| item.name == "ProcessEvent"));
     for (function_name, intrinsic) in [
-        ("launch", BUILTIN_PROCESS_START_EXPR),
-        ("write", BUILTIN_PROCESS_WRITE_STDIN_EXPR),
-        ("close_input", BUILTIN_PROCESS_CLOSE_STDIN_EXPR),
-        ("pull", BUILTIN_PROCESS_NEXT_EVENT_EXPR),
-        ("observe", BUILTIN_PROCESS_TRY_WAIT_EXPR),
-        ("stop", BUILTIN_PROCESS_TERMINATE_EXPR),
+        ("launch", BUILTIN_PROCESS_START_BLOCKING_EXPR),
+        ("write", BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR),
+        ("close_input", BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR),
+        ("pull", BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR),
+        ("observe", BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR),
+        ("stop", BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR),
     ] {
         let function = program
             .functions
@@ -211,7 +212,7 @@ fn main() -> void {
     assert!(matches!(
         &close.body[0],
         Statement::Expr(ValueExpr::Call { name, .. })
-            if name == BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+            if name == BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR
     ));
 }
 

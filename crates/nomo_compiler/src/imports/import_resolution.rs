@@ -401,6 +401,55 @@ pub(super) fn resolve_specific_value_builtin(
         "close_child" if imports.iter().any(|item| item == "std.process.close_child") => {
             vec!["process".to_string(), "close_child".to_string()]
         }
+        "start_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.start_blocking") =>
+        {
+            vec!["process".to_string(), "start_blocking".to_string()]
+        }
+        "write_stdin_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.write_stdin_blocking") =>
+        {
+            vec!["process".to_string(), "write_stdin_blocking".to_string()]
+        }
+        "close_stdin_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.close_stdin_blocking") =>
+        {
+            vec!["process".to_string(), "close_stdin_blocking".to_string()]
+        }
+        "next_event_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.next_event_blocking") =>
+        {
+            vec!["process".to_string(), "next_event_blocking".to_string()]
+        }
+        "try_wait_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.try_wait_blocking") =>
+        {
+            vec!["process".to_string(), "try_wait_blocking".to_string()]
+        }
+        "terminate_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.terminate_blocking") =>
+        {
+            vec!["process".to_string(), "terminate_blocking".to_string()]
+        }
+        "close_child_blocking"
+            if imports
+                .iter()
+                .any(|item| item == "std.process.close_child_blocking") =>
+        {
+            vec!["process".to_string(), "close_child_blocking".to_string()]
+        }
         "is_cancelled" if imports.iter().any(|item| item == "std.task.is_cancelled") => {
             vec!["task".to_string(), "is_cancelled".to_string()]
         }

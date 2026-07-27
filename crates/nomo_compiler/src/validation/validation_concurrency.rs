@@ -404,7 +404,7 @@ fn is_publication_local_struct(item: &StructType) -> bool {
             ("std.fs", "File")
                 | ("std.net", "TcpStream" | "TcpListener" | "UdpSocket")
                 | ("std.http", "HttpServer" | "HttpExchange" | "HttpStream")
-                | ("std.process", "ProcessChild")
+                | ("std.process", "ProcessChild" | "BlockingProcessChild")
                 | ("std.task", "Task" | "TaskContext")
                 | ("std.sqlite", "SqliteDatabase" | "SqliteQuery")
         )

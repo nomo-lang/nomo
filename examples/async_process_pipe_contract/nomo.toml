@@ -1,0 +1,3 @@
+[package]
+name = "async_process_pipe_contract"
+version = "0.1.0"

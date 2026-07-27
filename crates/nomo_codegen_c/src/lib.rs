@@ -41,6 +41,8 @@ mod expressions;
 mod host_async_blocking_pool_helpers;
 #[path = "runtime/host_async_executor_helpers.rs"]
 mod host_async_executor_helpers;
+#[path = "runtime/host_async_process_helpers.rs"]
+mod host_async_process_helpers;
 #[path = "runtime/host_async_tcp_connect_helpers.rs"]
 mod host_async_tcp_connect_helpers;
 #[path = "runtime/host_async_tcp_io_helpers.rs"]
@@ -141,6 +143,7 @@ use expression_string_char::*;
 use expressions::*;
 use host_async_blocking_pool_helpers::*;
 use host_async_executor_helpers::*;
+use host_async_process_helpers::*;
 use host_async_tcp_connect_helpers::*;
 use host_async_tcp_io_helpers::*;
 use host_async_tcp_windows_helpers::*;
@@ -250,13 +253,20 @@ const BUILTIN_SQLITE_NEXT_EXPR: &str = "__nomo_sqlite_next";
 const BUILTIN_SQLITE_RESET_EXPR: &str = "__nomo_sqlite_reset";
 const BUILTIN_SQLITE_CLOSE_QUERY_EXPR: &str = "__nomo_sqlite_close_query";
 const BUILTIN_SQLITE_CLOSE_EXPR: &str = "__nomo_sqlite_close";
-const BUILTIN_PROCESS_START_EXPR: &str = "__nomo_process_start";
+const BUILTIN_PROCESS_START_EXPR: &str = "__nomo_process_start_async";
 const BUILTIN_PROCESS_WRITE_STDIN_EXPR: &str = "__nomo_process_write_stdin";
 const BUILTIN_PROCESS_CLOSE_STDIN_EXPR: &str = "__nomo_process_close_stdin";
-const BUILTIN_PROCESS_NEXT_EVENT_EXPR: &str = "__nomo_process_next_event";
+const BUILTIN_PROCESS_NEXT_EVENT_EXPR: &str = "__nomo_process_next_event_async";
 const BUILTIN_PROCESS_TRY_WAIT_EXPR: &str = "__nomo_process_try_wait";
 const BUILTIN_PROCESS_TERMINATE_EXPR: &str = "__nomo_process_terminate";
 const BUILTIN_PROCESS_CLOSE_CHILD_EXPR: &str = "__nomo_process_close_child";
+const BUILTIN_PROCESS_START_BLOCKING_EXPR: &str = "__nomo_process_start_blocking";
+const BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR: &str = "__nomo_process_write_stdin_blocking";
+const BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR: &str = "__nomo_process_close_stdin_blocking";
+const BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR: &str = "__nomo_process_next_event_blocking";
+const BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR: &str = "__nomo_process_try_wait_blocking";
+const BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR: &str = "__nomo_process_terminate_blocking";
+const BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR: &str = "__nomo_process_close_child_blocking";
 
 pub const BUNDLED_SQLITE3_C: &[u8] = include_bytes!("../vendor/sqlite/sqlite3.c");
 pub const BUNDLED_SQLITE3_H: &[u8] = include_bytes!("../vendor/sqlite/sqlite3.h");

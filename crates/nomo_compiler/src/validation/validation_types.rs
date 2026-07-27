@@ -299,6 +299,7 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_struct(path, structs, "NumError")?;
     }
     if needs.process {
+        reject_user_std_struct(path, structs, "BlockingProcessChild")?;
         reject_user_std_struct(path, structs, "ProcessChild")?;
         reject_user_std_struct(path, structs, "ProcessCommand")?;
         reject_user_std_struct(path, structs, "ProcessControlError")?;

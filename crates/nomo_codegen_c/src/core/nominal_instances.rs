@@ -339,11 +339,19 @@ fn collect_process_call_structs(
             | BUILTIN_PROCESS_TRY_WAIT_EXPR
             | BUILTIN_PROCESS_TERMINATE_EXPR
             | BUILTIN_PROCESS_CLOSE_CHILD_EXPR
+            | BUILTIN_PROCESS_START_BLOCKING_EXPR
+            | BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR
+            | BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR
+            | BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR
+            | BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR
+            | BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR
+            | BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR
     ) {
         for item in [
             "ProcessEnv",
             "ProcessCommand",
             "ProcessChild",
+            "BlockingProcessChild",
             "ProcessExit",
             "ProcessControlError",
         ] {

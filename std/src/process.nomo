@@ -34,8 +34,13 @@ pub struct ProcessCommand {
     pub inherit_env: bool
 }
 
-/// Opaque controlled child-process handle.
+/// Opaque owner-affine asynchronous child-process handle.
 pub struct ProcessChild {
+    handle: u64
+}
+
+/// Opaque compatibility handle for the preview blocking process registry.
+pub struct BlockingProcessChild {
     handle: u64
 }
 
@@ -88,10 +93,10 @@ pub fn output(command: string) -> Result<ProcessOutput, ProcessError> {
     return process.output(command)
 }
 
-/// Starts a shell-free, long-lived child process.
-/// Suspend call graphs reject this compatibility API with E0891.
-pub fn start(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError> {
-    return process.start(command)
+/// Starts a shell-free, owner-affine child without blocking the executor.
+pub suspend fn start(command: ProcessCommand, timeout_millis: u64) -> Result<ProcessChild, ProcessControlError> {
+    let result: Result<ProcessChild, ProcessControlError> = process.start(command, timeout_millis)
+    return result
 }
 
 /// Queues one bounded UTF-8 payload for the child's standard input.
@@ -104,10 +109,10 @@ pub fn close_stdin(child: ProcessChild) -> Result<void, ProcessControlError> {
     return process.close_stdin(child)
 }
 
-/// Pulls the next standard-I/O, flush, or exit event.
-/// Suspend call graphs reject this compatibility API with E0891.
-pub fn next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError> {
-    return process.next_event(child, max_chunk_bytes, timeout_millis)
+/// Pulls the next standard-I/O, flush, or exit event without blocking the executor.
+pub suspend fn next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError> {
+    let result: Result<ProcessEvent, ProcessControlError> = process.next_event(child, max_chunk_bytes, timeout_millis)
+    return result
 }
 
 /// Observes child exit without consuming the final event.
@@ -115,14 +120,54 @@ pub fn try_wait(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessContr
     return process.try_wait(child)
 }
 
-/// Forces the direct child to terminate.
-/// Suspend call graphs reject this compatibility API with E0891.
+/// Makes one non-waiting forced-termination request for the direct child.
 pub fn terminate(child: ProcessChild) -> Result<void, ProcessControlError> {
     return process.terminate(child)
 }
 
-/// Idempotently closes and reaps a controlled child.
-/// Suspend call graphs reject this compatibility API with E0891.
+/// Idempotently closes the owner handle and transfers any reap to the runtime.
 pub fn close_child(child: ProcessChild) -> void {
     process.close_child(child)
+}
+
+/// Starts a child through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn start_blocking(command: ProcessCommand) -> Result<BlockingProcessChild, ProcessControlError> {
+    return process.start_blocking(command)
+}
+
+/// Writes through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn write_stdin_blocking(child: BlockingProcessChild, data: string) -> Result<void, ProcessControlError> {
+    return process.write_stdin_blocking(child, data)
+}
+
+/// Closes stdin through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn close_stdin_blocking(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
+    return process.close_stdin_blocking(child)
+}
+
+/// Waits for one event through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn next_event_blocking(child: BlockingProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError> {
+    return process.next_event_blocking(child, max_chunk_bytes, timeout_millis)
+}
+
+/// Observes exit through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn try_wait_blocking(child: BlockingProcessChild) -> Result<Option<ProcessExit>, ProcessControlError> {
+    return process.try_wait_blocking(child)
+}
+
+/// Terminates through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn terminate_blocking(child: BlockingProcessChild) -> Result<void, ProcessControlError> {
+    return process.terminate_blocking(child)
+}
+
+/// Closes and reaps through the preview blocking compatibility registry.
+/// Suspend call graphs reject this compatibility API with E0891.
+pub fn close_child_blocking(child: BlockingProcessChild) -> void {
+    process.close_child_blocking(child)
 }

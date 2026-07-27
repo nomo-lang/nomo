@@ -276,6 +276,7 @@ const PATH_ITEMS: &[&str] = &[
     "normalize",
 ];
 const PROCESS_ITEMS: &[&str] = &[
+    "BlockingProcessChild",
     "ProcessChild",
     "ProcessCommand",
     "ProcessControlError",
@@ -285,17 +286,24 @@ const PROCESS_ITEMS: &[&str] = &[
     "ProcessExit",
     "ProcessOutput",
     "close_child",
+    "close_child_blocking",
     "close_stdin",
+    "close_stdin_blocking",
     "exec",
     "exit",
     "next_event",
+    "next_event_blocking",
     "output",
     "spawn",
     "start",
+    "start_blocking",
     "status",
     "terminate",
+    "terminate_blocking",
     "try_wait",
+    "try_wait_blocking",
     "write_stdin",
+    "write_stdin_blocking",
 ];
 const REGEX_ITEMS: &[&str] = &["Regex", "RegexError", "captures", "compile", "is_match"];
 const RESULT_ITEMS: &[&str] = &[
@@ -1386,7 +1394,7 @@ mod tests {
     #[test]
     fn standard_import_registry_is_sorted_unique_and_complete() {
         let imports = all_imports();
-        assert_eq!(imports.len(), 326);
+        assert_eq!(imports.len(), 334);
         assert!(imports.windows(2).all(|pair| pair[0] < pair[1]));
         assert!(imports.iter().all(|import| is_supported_import(import)));
         assert!(!is_supported_import("std.io.IoError"));
@@ -1395,6 +1403,8 @@ mod tests {
         assert!(is_supported_import("std.cron.next_after"));
         assert!(is_supported_import("std.map.Map"));
         assert!(is_supported_import("std.net.connect"));
+        assert!(is_supported_import("std.process.BlockingProcessChild"));
+        assert!(is_supported_import("std.process.start_blocking"));
         assert!(is_supported_import("std.net.connect_blocking"));
         assert!(is_supported_import("std.net.TcpChunk"));
         assert!(is_supported_import("std.net.TcpTextChunk"));

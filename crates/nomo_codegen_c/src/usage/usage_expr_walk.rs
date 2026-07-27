@@ -442,6 +442,20 @@ pub(super) fn expr_is_process_control_call(expr: &ValueExpr) -> bool {
     matches!(
         expr,
         ValueExpr::Call { name, .. }
+            if name == BUILTIN_PROCESS_START_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_WRITE_STDIN_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_CLOSE_STDIN_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_NEXT_EVENT_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_TRY_WAIT_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_TERMINATE_BLOCKING_EXPR
+                || name == BUILTIN_PROCESS_CLOSE_CHILD_BLOCKING_EXPR
+    )
+}
+
+pub(super) fn expr_is_async_process_surface_call(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. }
             if name == BUILTIN_PROCESS_START_EXPR
                 || name == BUILTIN_PROCESS_WRITE_STDIN_EXPR
                 || name == BUILTIN_PROCESS_CLOSE_STDIN_EXPR

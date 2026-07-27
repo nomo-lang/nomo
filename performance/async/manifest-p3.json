@@ -142,7 +142,11 @@
       "kind": "required_async_workload",
       "available_phase": "P2",
       "enabled": false,
-      "claim_eligible": false
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/process_pipe_contract",
+      "expected_stdout": "unsupported\n",
+      "snapshot": "snapshots/process-pipe-contract.json",
+      "note": "P2-PROC-A fixture locks the suspend lowering and zero-thread ready unsupported path; it remains disabled until native process-pipe counters land."
     },
     {
       "id": "connection_churn",

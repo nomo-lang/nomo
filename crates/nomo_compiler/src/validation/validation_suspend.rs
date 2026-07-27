@@ -196,10 +196,13 @@ fn blocking_process_operation(operation: &str) -> Option<&'static str> {
         "status" => Some("process.status"),
         "exec" => Some("process.exec"),
         "output" => Some("process.output"),
-        "start" => Some("process.start"),
-        "next_event" => Some("process.next_event"),
-        "terminate" => Some("process.terminate"),
-        "close_child" => Some("process.close_child"),
+        "start_blocking" => Some("process.start_blocking"),
+        "write_stdin_blocking" => Some("process.write_stdin_blocking"),
+        "close_stdin_blocking" => Some("process.close_stdin_blocking"),
+        "next_event_blocking" => Some("process.next_event_blocking"),
+        "try_wait_blocking" => Some("process.try_wait_blocking"),
+        "terminate_blocking" => Some("process.terminate_blocking"),
+        "close_child_blocking" => Some("process.close_child_blocking"),
         _ => None,
     }
 }
@@ -903,7 +906,7 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
             ("std.fs", "File")
                 | ("std.net", "TcpListener" | "UdpSocket")
                 | ("std.http", "HttpServer" | "HttpExchange" | "HttpStream")
-                | ("std.process", "ProcessChild")
+                | ("std.process", "BlockingProcessChild")
                 | ("std.task", "Task" | "TaskContext")
                 | ("std.sqlite", "SqliteDatabase" | "SqliteQuery")
         )
@@ -921,6 +924,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
             || ast_expr_is_direct_net_connect(candidate, imports)
             || ast_expr_is_direct_tcp_stream_io(candidate, imports)
+            || ast_expr_is_direct_process_suspend(candidate, imports)
             || ast_expr_is_direct_channel_suspend(candidate, imports)
             || ast_expr_is_check_cancelled(candidate, imports)
             || ast_expr_is_structured_join(candidate)
@@ -1103,6 +1107,9 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_tcp_stream_io(expr, imports) {
         return true;
     }
+    if ast_expr_is_direct_process_suspend(expr, imports) {
+        return true;
+    }
     if ast_expr_is_direct_channel_suspend(expr, imports) {
         return true;
     }
@@ -1169,6 +1176,51 @@ fn ast_expr_is_direct_tcp_stream_io(expr: &AstExpr, imports: &[String]) -> bool 
             !ast_expr_contains_suspension(argument, imports, &HashSet::new())
                 && !ast_expr_contains_frame_exit(argument)
         })
+}
+
+fn ast_expr_is_direct_process_suspend(expr: &AstExpr, imports: &[String]) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    let operation = match callee.as_slice() {
+        [module, operation]
+            if module == "process"
+                && imports_std_operation(imports, "process", operation)
+                && matches!(operation.as_str(), "start" | "next_event") =>
+        {
+            Some(operation.as_str())
+        }
+        [root, module, operation]
+            if root == "std"
+                && module == "process"
+                && matches!(operation.as_str(), "start" | "next_event") =>
+        {
+            Some(operation.as_str())
+        }
+        [operation]
+            if matches!(operation.as_str(), "start" | "next_event")
+                && imports
+                    .iter()
+                    .any(|item| item == &format!("std.process.{operation}")) =>
+        {
+            Some(operation.as_str())
+        }
+        _ => None,
+    };
+    operation.is_some_and(|operation| {
+        let expected_args = if operation == "start" { 2 } else { 3 };
+        type_args.is_empty()
+            && args.len() == expected_args
+            && args.iter().all(|argument| {
+                !ast_expr_contains_suspension(argument, imports, &HashSet::new())
+                    && !ast_expr_contains_frame_exit(argument)
+            })
+    })
 }
 
 fn ast_expr_is_direct_channel_suspend(expr: &AstExpr, imports: &[String]) -> bool {
@@ -1386,6 +1438,8 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
                 || (name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3)
+                || (name == BUILTIN_PROCESS_START_EXPR && args.len() == 2)
+                || (name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3)
                 || (matches!(
                     name.as_str(),
                     BUILTIN_TCP_STREAM_READ_EXPR
@@ -1450,15 +1504,26 @@ mod blocking_compatibility_tests {
             ("status", "process.status"),
             ("exec", "process.exec"),
             ("output", "process.output"),
-            ("start", "process.start"),
-            ("next_event", "process.next_event"),
-            ("terminate", "process.terminate"),
-            ("close_child", "process.close_child"),
+            ("start_blocking", "process.start_blocking"),
+            ("write_stdin_blocking", "process.write_stdin_blocking"),
+            ("close_stdin_blocking", "process.close_stdin_blocking"),
+            ("next_event_blocking", "process.next_event_blocking"),
+            ("try_wait_blocking", "process.try_wait_blocking"),
+            ("terminate_blocking", "process.terminate_blocking"),
+            ("close_child_blocking", "process.close_child_blocking"),
         ];
         for (operation, path) in process {
             assert_eq!(blocking_process_operation(operation), Some(path));
         }
-        for operation in ["write_stdin", "close_stdin", "try_wait"] {
+        for operation in [
+            "start",
+            "write_stdin",
+            "close_stdin",
+            "next_event",
+            "try_wait",
+            "terminate",
+            "close_child",
+        ] {
             assert_eq!(blocking_process_operation(operation), None);
         }
     }

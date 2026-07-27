@@ -139,7 +139,10 @@ Windows P2-PROC-C 使用关联到 owner IOCP 的 overlapped named pipe。一个�
 有界 worker 负责创建进程，`RegisterWaitForSingleObject` 将带 generation 校验
 的退出 completion 回投同一个 IOCP。stdin 与两条输出流使用稳定的 reactor
 operation slot，并由 `CancelIoEx` 排空延迟 completion；async 路径不会为每个
-child 创建 reader/writer thread。
+child 创建 reader/writer thread。`iocp_operations_started` 只统计已被系统
+接受、后续会交付 completion 的操作；`live_iocp_operations` 还覆盖系统调用
+即时尝试期间预留的 slot，因此同步 EOF 或启动失败只释放容量，不会虚构一条
+已提交操作。
 
 RFC 0024 行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，
 并全部由 E0891 隔离。示例见

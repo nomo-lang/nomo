@@ -2374,7 +2374,10 @@ static int nomo_async_process_event_issue_read(
         }
         return 3;
     }
-    nomo_async_reactor_mark_submitted(io);
+    nomo_async_reactor_mark_submitted(
+        &registration->context->reactor,
+        io
+    );
     return 0;
 }
 
@@ -2787,7 +2790,10 @@ static int nomo_async_process_stdin_issue(
         nomo_async_reactor_deregister(&state->context->reactor, io);
         return 1;
     }
-    nomo_async_reactor_mark_submitted(io);
+    nomo_async_reactor_mark_submitted(
+        &state->context->reactor,
+        io
+    );
     return 0;
 }
 

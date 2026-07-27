@@ -156,7 +156,10 @@ lazy bounded worker performs process creation, while `RegisterWaitForSingleObjec
 posts generation-checked exit completion back to the same IOCP. Stdin and
 both output streams use stable reactor operation slots plus `CancelIoEx`
 late-completion draining; the async path creates no per-child reader or writer
-threads.
+threads. `iocp_operations_started` counts only operations accepted for
+completion delivery, while `live_iocp_operations` also covers a slot reserved
+during the immediate system-call attempt; a synchronous EOF or start failure
+therefore releases capacity without fabricating a submitted operation.
 
 RFC 0024 behavior remains temporarily available only through
 `BlockingProcessChild` and explicit `_blocking` names, all quarantined by

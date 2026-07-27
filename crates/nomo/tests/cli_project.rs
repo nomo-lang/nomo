@@ -15123,8 +15123,9 @@ int main(int argc, char **argv) {
         }
         fputs("{\"jsonrpc\":\"2.0\",\"method\":\"notifications/progress\",\"params\":{\"step\":1}}\n", stdout);
         fputs("{\"jsonrpc\":\"2.0\",\"id\":2,\"result\":{\"tools\":[]}}\n", stdout);
-        fputs("mcp-fixture-complete\n", stderr);
         fflush(stdout);
+        nomo_fixture_sleep(100UL);
+        fputs("mcp-fixture-complete\n", stderr);
         fflush(stderr);
         nomo_fixture_sleep(100UL);
         return 0;

@@ -143,13 +143,22 @@ until the general suspend-question lowering slice lands. P2-TCP-F implements
 P2-PROC-A separates the process contracts. `process.start(command, timeout)`
 and `process.next_event(child, max_bytes, timeout)` are suspend intrinsics over
 an owner-affine Local/!Send `ProcessChild`; their C99 frames carry typed
-start/resume/cancel state and exactly-once result ownership. The current native
-path completes inline with a secret-safe `unsupported` result and emits no
-blocking registry or helper thread. RFC 0024 behavior remains temporarily
-available only through `BlockingProcessChild` and explicit `_blocking` names,
-all quarantined by E0891. P2-PROC-B will replace the ready placeholder with
-bounded start jobs and epoll/kqueue pipe registrations. See
-[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract).
+start/resume/cancel state and exactly-once result ownership. P2-PROC-B
+implements the Unix native path with one lazy bounded process worker for
+start/reap jobs and owner-reactor registrations for nonblocking pipes. Linux
+uses epoll plus `pidfd` when available, falling back to one bounded
+reaper/wakeup source; macOS uses kqueue plus `EVFILT_PROC`, with that same
+source closing the exit-registration race. Event timeout and task cancellation
+remove interests exactly once while preserving the child and pending stdin
+suffix. Close never waits, and runtime shutdown reaps every child. Windows
+remains a secret-safe ready `unsupported` capability until P2-PROC-C.
+
+RFC 0024 behavior remains temporarily available only through
+`BlockingProcessChild` and explicit `_blocking` names, all quarantined by
+E0891. See
+[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)
+and
+[`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix).
 
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:

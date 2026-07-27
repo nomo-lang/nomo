@@ -14877,6 +14877,15 @@ int main(int argc, char **argv) {
         printf("inherited:%s\n", inherited == NULL ? "" : inherited);
         return 0;
     }
+    if (strcmp(mode, "async") == 0) {
+        char line[4096];
+        if (fgets(line, sizeof(line), stdin) == NULL) {
+            return 2;
+        }
+        printf("async:%s", line);
+        fflush(stdout);
+        return 0;
+    }
     if (strcmp(mode, "mcp") == 0) {
         char line[65536];
         fputs("mcp-fixture-ready\n", stderr);
@@ -15736,7 +15745,7 @@ fn main() -> void {
 }
 
 #[test]
-fn async_process_pipe_contract_is_ready_unsupported_without_blocking_runtime() {
+fn async_process_pipe_contract_is_secret_safe_on_every_target() {
     let root = temp_test_root("async-process-pipe-contract");
     reset_dir(&root);
     let project = root.join("async_process_pipe_contract");
@@ -15795,10 +15804,12 @@ suspend fn main() -> void {
         String::from_utf8_lossy(&output.stderr)
     );
     let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
-    assert_eq!(
-        stdout,
+    let expected = if cfg!(windows) {
         "unsupported async process pipes are not available in this runtime slice\n"
-    );
+    } else {
+        "spawn failed to start process\n"
+    };
+    assert_eq!(stdout, expected);
     assert!(!stdout.contains("process-command-secret-sentinel"));
     assert!(output.stderr.is_empty());
 
@@ -15830,10 +15841,582 @@ suspend fn main() -> void {
         assert!(c.contains(symbol), "missing {symbol}");
     }
     assert!(!c.contains("nomo_process_control_states"));
-    assert!(!c.contains("pthread_create"));
     assert!(!c.contains("CreateThread"));
+    if cfg!(windows) {
+        assert!(!c.contains("pthread_create"));
+        assert!(c.contains("async process pipes are not available"));
+    } else {
+        assert!(c.contains("pthread_create"));
+        assert!(c.contains("nomo_async_process_runtime_shutdown"));
+        assert!(c.contains("nomo_async_process_event_wake"));
+        assert!(c.contains("nomo_async_process_pool_watch"));
+        assert!(c.contains("NOMO_ASYNC_REACTOR_PROCESS"));
+        assert!(!c.contains("#include <poll.h>"));
+        #[cfg(target_os = "macos")]
+        assert!(c.contains("EVFILT_PROC"));
+        #[cfg(target_os = "linux")]
+        assert!(c.contains("SYS_pidfd_open"));
+    }
 
     fs::remove_dir_all(&root).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn async_process_pipe_unix_runs_owner_affine_stdio_and_reaps_cleanly() {
+    let root = temp_test_root("async-process-pipe-unix");
+    reset_dir(&root);
+    let fixture_binary = build_controlled_process_fixture(&root);
+    let metrics = root.join("metrics.json");
+    let source_example =
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../examples/async_process_pipe_unix");
+    let example = root.join("async_process_pipe_unix");
+    fs::create_dir_all(example.join("src")).unwrap();
+    fs::copy(source_example.join("nomo.toml"), example.join("nomo.toml")).unwrap();
+    fs::copy(
+        source_example.join("src/main.nomo"),
+        example.join("src/main.nomo"),
+    )
+    .unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(example)
+        .env("NOMO_PROCESS_FIXTURE", fixture_binary)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "stdin flushed\nasync:hello from Nomo\nexit 0 0\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("process_starts", 1u64),
+        ("process_start_completions", 1),
+        ("process_events", 3),
+        ("process_stdin_writes", 1),
+        ("process_terminations", 0),
+        ("process_cancellations", 0),
+        ("process_timeouts", 0),
+        ("process_errors", 0),
+        ("live_process_handles", 0),
+        ("peak_live_process_handles", 1),
+        ("live_process_operations", 0),
+        ("peak_live_process_operations", 1),
+        ("retained_process_bytes", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("live_reactor_registrations", 0),
+        ("reactor_errors", 0),
+        ("live_timers", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+    assert!(
+        metrics["counters"]["peak_retained_process_bytes"]
+            .as_u64()
+            .unwrap()
+            >= "hello from Nomo\n".len() as u64
+    );
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn async_process_protocol_error_closes_child_without_leaking_output() {
+    let root = temp_test_root("async-process-protocol-error");
+    reset_dir(&root);
+    let fixture_binary = build_controlled_process_fixture(&root);
+    let project = root.join("async_process_protocol_error");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_process_protocol_error\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_process_protocol_error.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+fn command(program: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("invalid-utf8")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand {
+        program: program,
+        args: args,
+        cwd: None,
+        env: environment,
+        inherit_env: true
+    }
+}
+
+fn require_program(value: Option<string>) -> string {
+    match value {
+        Some(program) => {
+            return program
+        }
+        None => {
+            panic("missing process fixture")
+        }
+    }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_void(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn report_event(value: Result<ProcessEvent, ProcessControlError>) -> void {
+    match value {
+        Ok(event) => {
+            panic("invalid output was accepted")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+
+fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void {
+    match value {
+        Ok(status) => {
+            panic("protocol error left child open")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let program: string = require_program(env.get("NOMO_PROCESS_FIXTURE"))
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 5000)
+    let child: ProcessChild = require_child(started)
+    require_void(process.close_stdin(child))
+    let event: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 5000)
+    report_event(event)
+    report_wait(process.try_wait(child))
+    process.close_child(child)
+}
+"#,
+    )
+    .unwrap();
+    let metrics = root.join("metrics.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_PROCESS_FIXTURE", fixture_binary)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let stdout = String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n");
+    assert_eq!(stdout, "protocol\nclosed\n");
+    assert!(!stdout.contains('\u{fffd}'));
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("process_starts", 1u64),
+        ("process_start_completions", 1),
+        ("process_events", 1),
+        ("process_errors", 1),
+        ("live_process_handles", 0),
+        ("live_process_operations", 0),
+        ("retained_process_bytes", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("live_reactor_registrations", 0),
+        ("reactor_errors", 0),
+        ("live_timers", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(windows))]
+fn compile_delayed_async_process_fixture(
+    root: &Path,
+    c_path: &Path,
+    delay_millis: u64,
+    asan: bool,
+) -> PathBuf {
+    let bin_path = root.join("async-process-cancel");
+    let mut compiler = Command::new("cc");
+    compiler.arg("-std=c99");
+    if asan {
+        compiler
+            .arg("-fsanitize=address")
+            .arg("-fno-omit-frame-pointer")
+            .arg("-g");
+    }
+    let output = compiler
+        .arg(format!(
+            "-DNOMO_ASYNC_PROCESS_TEST_DELAY_MILLIS={delay_millis}"
+        ))
+        .arg(c_path)
+        .arg("-pthread")
+        .arg("-lm")
+        .arg("-o")
+        .arg(&bin_path)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    bin_path
+}
+
+#[cfg(not(windows))]
+#[test]
+fn async_process_start_cancels_queued_job_without_waking_dropped_frame() {
+    let root = temp_test_root("async-process-start-cancel");
+    reset_dir(&root);
+    let project = root.join("async_process_start_cancel");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_process_start_cancel\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_process_start_cancel.main
+
+import std.array.Array
+import std.io
+import std.process
+import std.result
+import std.task
+
+fn command() -> ProcessCommand {
+    let args: Array<string> = Array.new<string>()
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand {
+        program: "process-cancel-secret-sentinel",
+        args: args,
+        cwd: None,
+        env: environment,
+        inherit_env: true
+    }
+}
+
+fn report(started: Result<ProcessChild, ProcessControlError>) -> void {
+    match started {
+        Ok(child) => {
+            process.close_child(child)
+            panic("missing process unexpectedly started")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+
+suspend fn launch() -> void {
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(), 5000)
+    report(started)
+}
+
+suspend fn gate() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    task.scope {
+        let first = task.spawn launch()
+        let second = task.spawn launch()
+        let gate_task = task.spawn gate()
+        let gate_joined: Result<void, TaskError> = task.join(gate_task)
+        let cancelled: Result<void, TaskError> = task.cancel(second)
+        io.println("cancelled", result.is_ok(cancelled))
+        let joined: Result<void, TaskError> = task.join(first)
+    }
+}
+"#,
+    )
+    .unwrap();
+
+    let build_output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert!(
+        build_output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&build_output.stdout),
+        String::from_utf8_lossy(&build_output.stderr)
+    );
+    let c_path = project.join("build/c/main.c");
+    let asan = cc_supports_address_sanitizer(&root);
+    let bin_path = compile_delayed_async_process_fixture(&root, &c_path, 200, asan);
+    let metrics = root.join("metrics.json");
+    let mut run = Command::new(bin_path);
+    run.env("NOMO_ASYNC_METRICS_PATH", &metrics);
+    if asan {
+        run.env("ASAN_OPTIONS", "detect_leaks=0:abort_on_error=1");
+    }
+    let output = run.output().unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "cancelled true\nspawn\n"
+    );
+    let stderr = String::from_utf8_lossy(&output.stderr);
+    assert!(
+        !stderr.contains("process-cancel-secret-sentinel"),
+        "{stderr}"
+    );
+
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("process_starts", 2u64),
+        ("process_start_completions", 0),
+        ("process_cancellations", 1),
+        ("process_errors", 1),
+        ("blocking_jobs_queued", 2),
+        ("blocking_jobs_started", 1),
+        ("blocking_jobs_completed", 1),
+        ("blocking_jobs_cancelled", 1),
+        ("live_process_handles", 0),
+        ("live_process_operations", 0),
+        ("retained_process_bytes", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("live_reactor_registrations", 0),
+        ("reactor_errors", 0),
+        ("live_timers", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(not(windows))]
+#[test]
+fn async_process_event_timeout_keeps_child_usable_and_close_reaps() {
+    let root = temp_test_root("async-process-event-timeout");
+    reset_dir(&root);
+    let fixture_binary = build_controlled_process_fixture(&root);
+    let project = root.join("async_process_event_timeout");
+    fs::create_dir_all(project.join("src")).unwrap();
+    fs::write(
+        project.join("nomo.toml"),
+        "[package]\nname = \"async_process_event_timeout\"\nversion = \"0.1.0\"\n",
+    )
+    .unwrap();
+    fs::write(
+        project.join("src/main.nomo"),
+        r#"package async_process_event_timeout.main
+
+import std.array.Array
+import std.env
+import std.io
+import std.process
+
+fn command(program: string) -> ProcessCommand {
+    let mut args: Array<string> = Array.new<string>()
+    args.push("stall")
+    let environment: Array<ProcessEnv> = Array.new<ProcessEnv>()
+    return ProcessCommand {
+        program: program,
+        args: args,
+        cwd: None,
+        env: environment,
+        inherit_env: true
+    }
+}
+
+fn require_program(value: Option<string>) -> string {
+    match value {
+        Some(program) => {
+            return program
+        }
+        None => {
+            panic("missing process fixture")
+        }
+    }
+}
+
+fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChild {
+    match value {
+        Ok(child) => {
+            return child
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn require_void(value: Result<void, ProcessControlError>) -> void {
+    match value {
+        Ok(done) => {
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+fn report_timeout(value: Result<ProcessEvent, ProcessControlError>) -> void {
+    match value {
+        Ok(event) => {
+            panic("process event unexpectedly completed")
+        }
+        Err(error) => {
+            io.println(error.code)
+        }
+    }
+}
+
+fn report_wait(value: Result<Option<ProcessExit>, ProcessControlError>) -> void {
+    match value {
+        Ok(status) => {
+            match status {
+                Some(exit) => {
+                    panic("process exited unexpectedly")
+                }
+                None => {
+                    io.println("running")
+                }
+            }
+        }
+        Err(error) => {
+            panic(error.message)
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let program: string = require_program(env.get("NOMO_PROCESS_FIXTURE"))
+    let started: Result<ProcessChild, ProcessControlError> = process.start(command(program), 5000)
+    let child: ProcessChild = require_child(started)
+    require_void(process.close_stdin(child))
+    let timed: Result<ProcessEvent, ProcessControlError> = process.next_event(child, 4096, 50)
+    report_timeout(timed)
+    report_wait(process.try_wait(child))
+    require_void(process.terminate(child))
+    process.close_child(child)
+}
+"#,
+    )
+    .unwrap();
+    let metrics = root.join("metrics.json");
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .env("NOMO_PROCESS_FIXTURE", fixture_binary)
+        .env("NOMO_ASYNC_METRICS_PATH", &metrics)
+        .output()
+        .unwrap();
+    assert!(
+        output.status.success(),
+        "stdout:\n{}\nstderr:\n{}",
+        String::from_utf8_lossy(&output.stdout),
+        String::from_utf8_lossy(&output.stderr)
+    );
+    assert_eq!(
+        String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n"),
+        "timeout\nrunning\n"
+    );
+    assert!(
+        output.stderr.is_empty(),
+        "{}",
+        String::from_utf8_lossy(&output.stderr)
+    );
+    let metrics: serde_json::Value = serde_json::from_slice(&fs::read(metrics).unwrap()).unwrap();
+    for (name, expected) in [
+        ("process_starts", 1u64),
+        ("process_start_completions", 1),
+        ("process_events", 1),
+        ("process_terminations", 1),
+        ("process_cancellations", 0),
+        ("process_timeouts", 1),
+        ("process_errors", 1),
+        ("live_process_handles", 0),
+        ("live_process_operations", 0),
+        ("retained_process_bytes", 0),
+        ("live_blocking_threads", 0),
+        ("live_blocking_jobs", 0),
+        ("live_reactor_registrations", 0),
+        ("reactor_errors", 0),
+        ("live_timers", 0),
+    ] {
+        assert_eq!(
+            metrics["counters"][name], expected,
+            "unexpected {name} in:\n{metrics}"
+        );
+    }
+
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]

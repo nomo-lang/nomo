@@ -564,6 +564,90 @@
       "unit": "count",
       "available_phase": "P2",
       "semantics": "Maximum simultaneous live blocking jobs."
+    },
+    {
+      "name": "process_starts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Owner-affine asynchronous process start operations requested."
+    },
+    {
+      "name": "process_start_completions",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Asynchronous process starts that produced a live owner-affine child handle."
+    },
+    {
+      "name": "process_events",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Incremental process event operations requested."
+    },
+    {
+      "name": "process_stdin_writes",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Bounded process stdin payloads accepted for owner-side nonblocking delivery."
+    },
+    {
+      "name": "process_terminations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Non-waiting direct-child termination requests accepted."
+    },
+    {
+      "name": "process_cancellations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Pending process start or event registrations cancelled by frame cleanup."
+    },
+    {
+      "name": "process_timeouts",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Process start or event operations completed with the stable timeout error."
+    },
+    {
+      "name": "process_errors",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Process operations completed with a stable secret-safe error."
+    },
+    {
+      "name": "live_process_handles",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Owner-affine child handles live at the observation point."
+    },
+    {
+      "name": "peak_live_process_handles",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous owner-affine child handles."
+    },
+    {
+      "name": "live_process_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Process start or event registrations currently suspended."
+    },
+    {
+      "name": "peak_live_process_operations",
+      "unit": "count",
+      "available_phase": "P2",
+      "semantics": "Maximum simultaneous suspended process operations."
+    },
+    {
+      "name": "retained_process_bytes",
+      "unit": "bytes",
+      "available_phase": "P2",
+      "semantics": "Process stdin and output bytes retained by owner-side handle state."
+    },
+    {
+      "name": "peak_retained_process_bytes",
+      "unit": "bytes",
+      "available_phase": "P2",
+      "semantics": "Maximum process stdin and output bytes retained simultaneously."
     }
   ]
 }

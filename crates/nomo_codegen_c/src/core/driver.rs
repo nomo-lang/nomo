@@ -332,7 +332,7 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         out.push('\n');
     }
     if uses_async_process_surface(program) {
-        emit_async_process_helpers(&mut out, uses_async_process_suspend(program));
+        emit_async_process_helpers(&mut out, uses_async_process_suspend(program), target);
         out.push('\n');
     }
     if uses_async_net_connect(program) {
@@ -459,6 +459,9 @@ pub fn emit_c_for_target(program: &Program, target: &TargetTriple) -> String {
         }
         if uses_async_net_connect(program) {
             out.push_str("    nomo_async_blocking_pool_shutdown(&nomo__context);\n");
+        }
+        if uses_async_process_surface(program) {
+            out.push_str("    nomo_async_process_runtime_shutdown(&nomo__context);\n");
         }
         out.push_str("    nomo_async_io_handle_shutdown(&nomo__context);\n");
         out.push_str("    nomo_async_reactor_shutdown(&nomo__context.reactor);\n");

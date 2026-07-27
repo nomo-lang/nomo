@@ -1,6 +1,14 @@
 use super::*;
 
-pub(super) fn emit_async_process_helpers(out: &mut String, include_suspend_abi: bool) {
+pub(super) fn emit_async_process_helpers(
+    out: &mut String,
+    include_suspend_abi: bool,
+    target: &nomo_target::TargetTriple,
+) {
+    if include_suspend_abi && target.operating_system() != nomo_target::OperatingSystem::Windows {
+        emit_async_process_unix_helpers(out);
+        return;
+    }
     let process_child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
     let process_command = ValueType::Struct("ProcessCommand".to_string(), Vec::new());
     let process_error = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
@@ -159,6 +167,226 @@ pub(super) fn emit_async_process_helpers(out: &mut String, include_suspend_abi: 
     }
 
     emit_async_process_nonwaiting_helpers(out, &process_child, &void_result, &wait_result);
+    if include_suspend_abi {
+        out.push_str(
+            "\nstatic void nomo_async_process_runtime_shutdown(\n\
+                 nomo_async_context *context\n\
+             ) {\n\
+                 context->process_runtime = NULL;\n\
+             }\n",
+        );
+    }
+}
+
+fn emit_async_process_unix_helpers(out: &mut String) {
+    let process_env = ValueType::Struct("ProcessEnv".to_string(), Vec::new());
+    let process_child = ValueType::Struct("ProcessChild".to_string(), Vec::new());
+    let process_command = ValueType::Struct("ProcessCommand".to_string(), Vec::new());
+    let process_error = ValueType::Struct("ProcessControlError".to_string(), Vec::new());
+    let process_event = ValueType::Enum("ProcessEvent".to_string(), Vec::new());
+    let process_exit = ValueType::Struct("ProcessExit".to_string(), Vec::new());
+    let exit_option = ValueType::Enum("Option".to_string(), vec![process_exit.clone()]);
+    let start_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![process_child, process_error.clone()],
+    );
+    let void_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![ValueType::Void, process_error.clone()],
+    );
+    let event_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![process_event, process_error.clone()],
+    );
+    let wait_result = ValueType::Enum(
+        "Result".to_string(),
+        vec![exit_option.clone(), process_error],
+    );
+    let rendered = include_str!("host_async_process_unix.c")
+        .replace("@PROCESS_ENV@", &c_type(&process_env))
+        .replace("@PROCESS_CHILD@", &c_struct_ident("ProcessChild", &[]))
+        .replace("@PROCESS_COMMAND@", &c_type(&process_command))
+        .replace(
+            "@PROCESS_ERROR@",
+            &c_struct_ident("ProcessControlError", &[]),
+        )
+        .replace("@PROCESS_EVENT@", &c_enum_ident("ProcessEvent", &[]))
+        .replace("@PROCESS_EXIT@", &c_struct_ident("ProcessExit", &[]))
+        .replace("@EXIT_OPTION@", &c_type(&exit_option))
+        .replace("@START_RESULT@", &c_type(&start_result))
+        .replace("@VOID_RESULT@", &c_type(&void_result))
+        .replace("@EVENT_RESULT@", &c_type(&event_result))
+        .replace("@WAIT_RESULT@", &c_type(&wait_result))
+        .replace(
+            "@START_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Struct("ProcessChild".to_string(), Vec::new()),
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@START_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Struct("ProcessChild".to_string(), Vec::new()),
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Err",
+            ),
+        )
+        .replace(
+            "@VOID_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@VOID_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Void,
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Err",
+            ),
+        )
+        .replace(
+            "@EVENT_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Enum("ProcessEvent".to_string(), Vec::new()),
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@EVENT_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    ValueType::Enum("ProcessEvent".to_string(), Vec::new()),
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Err",
+            ),
+        )
+        .replace(
+            "@WAIT_OK@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    exit_option.clone(),
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Ok",
+            ),
+        )
+        .replace(
+            "@WAIT_ERR@",
+            &c_enum_variant_ident(
+                "Result",
+                &[
+                    exit_option,
+                    ValueType::Struct("ProcessControlError".to_string(), Vec::new()),
+                ],
+                "Err",
+            ),
+        )
+        .replace(
+            "@CWD_SOME@",
+            &c_enum_variant_ident("Option", &[ValueType::String], "Some"),
+        )
+        .replace(
+            "@EXIT_SOME@",
+            &c_enum_variant_ident(
+                "Option",
+                &[ValueType::Struct("ProcessExit".to_string(), Vec::new())],
+                "Some",
+            ),
+        )
+        .replace(
+            "@EXIT_NONE@",
+            &c_enum_variant_ident(
+                "Option",
+                &[ValueType::Struct("ProcessExit".to_string(), Vec::new())],
+                "None",
+            ),
+        )
+        .replace(
+            "@EVENT_STDIN_FLUSHED@",
+            &c_enum_variant_ident("ProcessEvent", &[], "StdinFlushed"),
+        )
+        .replace(
+            "@EVENT_STDOUT@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Stdout"),
+        )
+        .replace(
+            "@EVENT_STDERR@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Stderr"),
+        )
+        .replace(
+            "@EVENT_EXITED@",
+            &c_enum_variant_ident("ProcessEvent", &[], "Exited"),
+        )
+        .replace("@OK_PAYLOAD@", &c_payload_ident("Ok"))
+        .replace("@ERR_PAYLOAD@", &c_payload_ident("Err"))
+        .replace("@SOME_PAYLOAD@", &c_payload_ident("Some"))
+        .replace("@STDOUT_PAYLOAD@", &c_payload_ident("Stdout"))
+        .replace("@STDERR_PAYLOAD@", &c_payload_ident("Stderr"))
+        .replace("@EXITED_PAYLOAD@", &c_payload_ident("Exited"))
+        .replace("@PROGRAM_MEMBER@", &c_member_ident("program"))
+        .replace("@ARGS_MEMBER@", &c_member_ident("args"))
+        .replace("@CWD_MEMBER@", &c_member_ident("cwd"))
+        .replace("@ENV_MEMBER@", &c_member_ident("env"))
+        .replace("@INHERIT_ENV_MEMBER@", &c_member_ident("inherit_env"))
+        .replace("@NAME_MEMBER@", &c_member_ident("name"))
+        .replace("@VALUE_MEMBER@", &c_member_ident("value"))
+        .replace("@HANDLE_MEMBER@", &c_member_ident("handle"))
+        .replace("@OWNER_MEMBER@", &c_member_ident("owner"))
+        .replace("@SLOT_MEMBER@", &c_member_ident("slot"))
+        .replace("@GENERATION_MEMBER@", &c_member_ident("generation"))
+        .replace("@CODE_MEMBER@", &c_member_ident("code"))
+        .replace("@SIGNAL_MEMBER@", &c_member_ident("signal"))
+        .replace("@MESSAGE_MEMBER@", &c_member_ident("message"))
+        .replace("@START_NAME@", &c_fn_ident(BUILTIN_PROCESS_START_EXPR))
+        .replace(
+            "@WRITE_STDIN_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_WRITE_STDIN_EXPR),
+        )
+        .replace(
+            "@CLOSE_STDIN_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_STDIN_EXPR),
+        )
+        .replace(
+            "@NEXT_EVENT_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_NEXT_EVENT_EXPR),
+        )
+        .replace(
+            "@TRY_WAIT_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_TRY_WAIT_EXPR),
+        )
+        .replace(
+            "@TERMINATE_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_TERMINATE_EXPR),
+        )
+        .replace(
+            "@CLOSE_CHILD_NAME@",
+            &c_fn_ident(BUILTIN_PROCESS_CLOSE_CHILD_EXPR),
+        );
+    out.push_str(&rendered);
 }
 
 fn emit_async_process_error_result_helper(

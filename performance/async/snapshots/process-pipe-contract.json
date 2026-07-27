@@ -1,10 +1,10 @@
 {
   "schema": 1,
-  "gate": "p2-proc-a-process-pipe-lowering-contract",
+  "gate": "p2-proc-b-unix-process-pipe-runtime-contract",
   "required_absent_generated_c_patterns": [
     "nomo_process_control_states",
-    "pthread_create",
     "CreateThread",
+    "#include <poll.h>",
     "__atomic_",
     "Interlocked",
     "stdatomic.h"
@@ -14,6 +14,10 @@
     "static nomo_async_poll nomo_async_process_spawn_resume": 1,
     "static nomo_async_poll nomo_async_process_event_start": 1,
     "static nomo_async_poll nomo_async_process_event_resume": 1,
+    "static void nomo_async_process_event_wake": 1,
+    "static void nomo_async_process_runtime_shutdown": 1,
+    "static int nomo_async_process_pool_watch": 1,
+    "pthread_create": 1,
     "nomo_async_process_command_": 5,
     "nomo_struct_ProcessCommand_retain(nomo_async_process_command_": 1,
     "nomo_struct_ProcessCommand_release(nomo_async_process_command_": 1
@@ -21,6 +25,6 @@
   "runtime_counters": {
     "available": false,
     "available_phase": "P2",
-    "reason": "P2-PROC-A fixes the suspend ABI and ready unsupported path; native process registrations and lifecycle counters arrive with the Unix implementation"
+    "reason": "Unix lifecycle counters are validated by native CLI fixtures; the fair benchmark probe remains disabled until it owns a self-contained cross-platform child fixture"
   }
 }

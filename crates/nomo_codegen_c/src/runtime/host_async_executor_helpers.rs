@@ -2806,9 +2806,24 @@ struct nomo_async_context {
     uint64_t peak_live_blocking_threads;
     uint64_t live_blocking_jobs;
     uint64_t peak_live_blocking_jobs;
+    uint64_t process_starts;
+    uint64_t process_start_completions;
+    uint64_t process_events;
+    uint64_t process_stdin_writes;
+    uint64_t process_terminations;
+    uint64_t process_cancellations;
+    uint64_t process_timeouts;
+    uint64_t process_errors;
+    uint64_t live_process_handles;
+    uint64_t peak_live_process_handles;
+    uint64_t live_process_operations;
+    uint64_t peak_live_process_operations;
+    uint64_t retained_process_bytes;
+    uint64_t peak_retained_process_bytes;
     uint32_t next_timer_generation;
     uint32_t next_io_handle_generation;
     void *blocking_pool;
+    void *process_runtime;
     void *current_frame;
     nomo_async_poll_fn current_poll;
     nomo_async_pending_reason pending_reason;
@@ -3722,7 +3737,21 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         "    \"live_blocking_threads\": %" PRIu64 ",\n"
         "    \"peak_live_blocking_threads\": %" PRIu64 ",\n"
         "    \"live_blocking_jobs\": %" PRIu64 ",\n"
-        "    \"peak_live_blocking_jobs\": %" PRIu64 "\n"
+        "    \"peak_live_blocking_jobs\": %" PRIu64 ",\n"
+        "    \"process_starts\": %" PRIu64 ",\n"
+        "    \"process_start_completions\": %" PRIu64 ",\n"
+        "    \"process_events\": %" PRIu64 ",\n"
+        "    \"process_stdin_writes\": %" PRIu64 ",\n"
+        "    \"process_terminations\": %" PRIu64 ",\n"
+        "    \"process_cancellations\": %" PRIu64 ",\n"
+        "    \"process_timeouts\": %" PRIu64 ",\n"
+        "    \"process_errors\": %" PRIu64 ",\n"
+        "    \"live_process_handles\": %" PRIu64 ",\n"
+        "    \"peak_live_process_handles\": %" PRIu64 ",\n"
+        "    \"live_process_operations\": %" PRIu64 ",\n"
+        "    \"peak_live_process_operations\": %" PRIu64 ",\n"
+        "    \"retained_process_bytes\": %" PRIu64 ",\n"
+        "    \"peak_retained_process_bytes\": %" PRIu64 "\n"
         "  },\n"
         "  \"unavailable\": {\n"
         "    \"local_retain\": \"ARC primitive instrumentation is not implemented in this P1 slice\",\n"
@@ -3820,7 +3849,21 @@ static int nomo_async_metrics_export(const nomo_async_context *context) {
         context->live_blocking_threads,
         context->peak_live_blocking_threads,
         context->live_blocking_jobs,
-        context->peak_live_blocking_jobs
+        context->peak_live_blocking_jobs,
+        context->process_starts,
+        context->process_start_completions,
+        context->process_events,
+        context->process_stdin_writes,
+        context->process_terminations,
+        context->process_cancellations,
+        context->process_timeouts,
+        context->process_errors,
+        context->live_process_handles,
+        context->peak_live_process_handles,
+        context->live_process_operations,
+        context->peak_live_process_operations,
+        context->retained_process_bytes,
+        context->peak_retained_process_bytes
     );
     int close_status = fclose(output);
     return write_status < 0 || close_status != 0;

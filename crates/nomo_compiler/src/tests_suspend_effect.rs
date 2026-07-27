@@ -630,7 +630,7 @@ suspend fn main() -> void {
 }
 
 #[test]
-fn async_process_intrinsics_lower_to_ready_owner_affine_state_machine_abi() {
+fn async_process_intrinsics_lower_to_owner_affine_state_machine_abi() {
     let source = r#"package app.main
 
 import std.process
@@ -689,28 +689,54 @@ fn main() -> void {
         "nomo_async_process_event_start",
         "nomo_async_process_event_resume",
         "nomo_async_process_cancel",
-        "async process pipes are not available in this runtime slice",
         "nomo_async_process_command_0",
     ] {
         assert!(c.contains(expected), "missing generated helper {expected}");
     }
     assert!(c.contains("nomo_async_process_result_owned_0 = 1u"));
     assert!(!c.contains("nomo_process_control_states"));
-    assert!(!c.contains("pthread_create"));
     assert!(!c.contains("CreateThread"));
+    if cfg!(windows) {
+        assert!(c.contains("async process pipes are not available"));
+        assert!(!c.contains("pthread_create"));
+    } else {
+        assert!(c.contains("pthread_create"));
+        assert!(c.contains("nomo_async_process_pool_watch"));
+        assert!(c.contains("NOMO_ASYNC_REACTOR_PROCESS"));
+        assert!(!c.contains("async process pipes are not available"));
+    }
 
-    for target in [
+    for target_text in [
         "x86_64-unknown-linux-gnu",
         "aarch64-apple-darwin",
         "x86_64-pc-windows-msvc",
     ] {
-        let target = target.parse::<nomo_target::TargetTriple>().unwrap();
+        let target = target_text.parse::<nomo_target::TargetTriple>().unwrap();
         let target_c = codegen::emit_c_for_target(&program, &target);
         assert!(target_c.contains("nomo_async_process_spawn_start"));
         assert!(target_c.contains("nomo_async_process_event_start"));
         assert!(!target_c.contains("nomo_process_control_states"));
-        assert!(!target_c.contains("pthread_create"));
         assert!(!target_c.contains("CreateThread"));
+        match target_text {
+            "x86_64-unknown-linux-gnu" => {
+                assert!(target_c.contains("pthread_create"));
+                assert!(target_c.contains("epoll_create(1)"));
+                assert!(target_c.contains("SYS_pidfd_open"));
+                assert!(target_c.contains("extern long syscall(long number, ...);"));
+                assert!(!target_c.contains("async process pipes are not available"));
+            }
+            "aarch64-apple-darwin" => {
+                assert!(target_c.contains("pthread_create"));
+                assert!(target_c.contains("kqueue()"));
+                assert!(target_c.contains("EVFILT_PROC"));
+                assert!(!target_c.contains("async process pipes are not available"));
+            }
+            "x86_64-pc-windows-msvc" => {
+                assert!(!target_c.contains("pthread_create"));
+                assert!(target_c.contains("async process pipes are not available"));
+            }
+            _ => unreachable!(),
+        }
     }
 }
 

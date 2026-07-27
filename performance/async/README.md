@@ -108,11 +108,12 @@ and `WSASend` over a fixed 64-slot owner-local IOCP operation table, plus
 bounded resolver completion posted to the owner IOCP. Its metrics distinguish
 submitted, completed, cancelled, live, and peak IOCP operations; cancellation
 detaches payload storage before frame drop and shutdown drains late
-completions. The cross-language `tcp_echo` workload remains disabled until the dedicated
-benchmark slice defines a fair server and connection matrix. HTTP/SSE and
-process-pipe registrations remain disabled until their focused slices land.
-This is correctness and lifecycle evidence, not a cross-language performance
-claim.
+completions. The browser fixture proves typed `Unsupported` capability
+rejection before host, port, or timeout operand evaluation. The cross-language
+`tcp_echo` workload remains disabled until the dedicated benchmark slice
+defines a fair server and connection matrix. HTTP/SSE and process-pipe
+registrations remain disabled until their focused slices land. This is
+correctness and lifecycle evidence, not a cross-language performance claim.
 
 ## Run
 

@@ -83,6 +83,11 @@ completion pipe，Windows 向 owner IOCP 投递 completion。解析与所有 can
 返回，且不会初始化 pool 或 reactor。`TcpStream` 固定到 owner executor，
 属于 Local/!Send。
 
+browser WASM sandbox 不暴露 raw TCP。它会在求值 `net.connect` 的 host、port
+或 timeout operand 前返回 `NetErrorKind.Unsupported`，因此被拒绝的 capability
+call 不会执行或诊断 operand secret。未来的 host-driven adapter 也必须保持相同
+的 typed bounded contract。
+
 每条 stream 同时最多有一个 pending read 和一个 pending write；同方向冲突
 返回 `Busy`。`read` 返回一块 `Array<u32>` 字节，`read_string` 校验一块
 UTF-8，二者都不会隐式 read-to-EOF。每个 payload 最大 1 MiB。write 仅跨

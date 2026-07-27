@@ -87,9 +87,9 @@ P2-TCP-D Windows 切片增加 `ConnectEx`、`WSARecv` 与 `WSASend`，
 并使用 owner-local 64 槽固定 IOCP operation table；metrics 会分别记录
 submitted、completed、cancelled、live 与 peak operation，cancellation 会在
 frame drop 前转移 payload storage，shutdown 会 drain late completion。
-HTTP/SSE 与
-process-pipe registration 仍等待各自的聚焦小切片。这是 correctness/lifecycle
-证据，不是跨语言性能声明。
+browser fixture 会验证 typed `Unsupported` capability rejection 发生在
+host、port 或 timeout operand 求值前。HTTP/SSE 与 process-pipe registration
+仍等待各自的聚焦小切片。这是 correctness/lifecycle 证据，不是跨语言性能声明。
 mutable/affine suspend 参数、非最终 return、其他位置的 `?`、嵌套表达式或
 runtime-originated panic unwind、取消传播与多任务 timer-wheel workload
 仍未完成。

@@ -1039,6 +1039,16 @@ static DWORD WINAPI nomo_async_process_worker(void *opaque) {
                 pool->active_start_jobs -= 1u;
             }
             LeaveCriticalSection(&pool->lock);
+            if (nomo_async_reactor_post(
+                    &pool->context->reactor,
+                    &pool->completion_registration,
+                    NOMO_ASYNC_REACTOR_PROCESS
+                ) != 0) {
+                InterlockedExchange8(
+                    (volatile char *)&pool->context->runtime_failed,
+                    1
+                );
+            }
             continue;
         }
         job->state = NOMO_ASYNC_PROCESS_JOB_RUNNING;
@@ -1069,6 +1079,16 @@ static DWORD WINAPI nomo_async_process_worker(void *opaque) {
                 stdout_read,
                 stderr_read
             );
+            if (nomo_async_reactor_post(
+                    &pool->context->reactor,
+                    &pool->completion_registration,
+                    NOMO_ASYNC_REACTOR_PROCESS
+                ) != 0) {
+                InterlockedExchange8(
+                    (volatile char *)&pool->context->runtime_failed,
+                    1
+                );
+            }
             continue;
         }
         job->state = NOMO_ASYNC_PROCESS_JOB_COMPLETED;
@@ -1122,9 +1142,19 @@ static void nomo_async_process_pool_completion_wake(
         }
         LeaveCriticalSection(&pool->lock);
         if (complete == NULL) {
-            return;
+            break;
         }
         complete(completion_owner, slot, generation);
+    }
+    uint32_t active_jobs = 0u;
+    EnterCriticalSection(&pool->lock);
+    active_jobs = pool->active_jobs;
+    LeaveCriticalSection(&pool->lock);
+    if (active_jobs == 0u) {
+        nomo_async_reactor_post_deactivate(
+            &pool->context->reactor,
+            &pool->completion_registration
+        );
     }
 }
 
@@ -1142,13 +1172,6 @@ static int nomo_async_process_pool_initialize(
         nomo_async_process_pool_completion_wake;
     pool->completion_registration.interests =
         NOMO_ASYNC_REACTOR_PROCESS;
-    if (nomo_async_reactor_post_activate(
-            &context->reactor,
-            &pool->completion_registration
-        ) != 0) {
-        DeleteCriticalSection(&pool->lock);
-        return 1;
-    }
     pool->worker = CreateThread(
         NULL,
         0u,
@@ -1158,10 +1181,6 @@ static int nomo_async_process_pool_initialize(
         NULL
     );
     if (pool->worker == NULL) {
-        nomo_async_reactor_post_deactivate(
-            &context->reactor,
-            &pool->completion_registration
-        );
         DeleteCriticalSection(&pool->lock);
         return 1;
     }
@@ -1204,6 +1223,21 @@ static nomo_async_process_runtime *nomo_async_process_runtime_get(
     return runtime;
 }
 
+static void nomo_async_process_pool_maybe_idle(
+    nomo_async_process_pool *pool
+) {
+    uint32_t active_jobs = 0u;
+    EnterCriticalSection(&pool->lock);
+    active_jobs = pool->active_jobs;
+    LeaveCriticalSection(&pool->lock);
+    if (active_jobs == 0u) {
+        nomo_async_reactor_post_deactivate(
+            &pool->context->reactor,
+            &pool->completion_registration
+        );
+    }
+}
+
 static int nomo_async_process_pool_submit_start(
     nomo_async_process_runtime *runtime,
     nomo_async_process_command_copy *command,
@@ -1231,6 +1265,13 @@ static int nomo_async_process_pool_submit_start(
         }
     }
     if (selected == NOMO_ASYNC_PROCESS_JOB_CAPACITY) {
+        LeaveCriticalSection(&pool->lock);
+        return 2;
+    }
+    if (nomo_async_reactor_post_activate(
+            &pool->context->reactor,
+            &pool->completion_registration
+        ) != 0) {
         LeaveCriticalSection(&pool->lock);
         return 2;
     }
@@ -1317,6 +1358,7 @@ static void nomo_async_process_pool_cancel_start(
         if (runtime->context->live_blocking_jobs > 0u) {
             runtime->context->live_blocking_jobs -= 1u;
         }
+        nomo_async_process_pool_maybe_idle(pool);
     }
 }
 
@@ -1359,6 +1401,7 @@ static int nomo_async_process_pool_take_start(
     if (runtime->context->live_blocking_jobs > 0u) {
         runtime->context->live_blocking_jobs -= 1u;
     }
+    nomo_async_process_pool_maybe_idle(pool);
     return 0;
 }
 

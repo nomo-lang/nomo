@@ -397,6 +397,61 @@ suspend fn main() -> void {
     }
 
     #[test]
+    fn returns_typed_tcp_unavailable_without_evaluating_connect_operands() {
+        let source = r#"package app.main
+
+import std.io
+import std.net
+import std.result
+
+fn host() -> string {
+    panic("browser-tcp-host-secret")
+}
+
+fn port() -> i64 {
+    panic("browser-tcp-port-secret")
+}
+
+fn timeout() -> u64 {
+    panic("browser-tcp-timeout-secret")
+}
+
+fn report(result: Result<TcpStream, NetError>) -> void {
+    match result {
+        Result.Ok(stream) => {
+            stream.close()
+            panic("browser TCP unexpectedly connected")
+        }
+        Result.Err(error) => {
+            if let NetErrorKind.Unsupported = error.kind {
+                io.println("unsupported")
+            } else {
+                panic("browser TCP returned the wrong error kind")
+            }
+        }
+    }
+}
+
+suspend fn main() -> void {
+    let connected: Result<TcpStream, NetError> = net.connect(host(), port(), timeout())
+    report(connected)
+}
+"#;
+        let response = run_source(source, ExecutionLimits::default());
+
+        assert_eq!(response.status, "success", "{response:#?}");
+        assert_eq!(response.stdout, "unsupported\n");
+        for secret in [
+            "browser-tcp-host-secret",
+            "browser-tcp-port-secret",
+            "browser-tcp-timeout-secret",
+        ] {
+            assert!(!response.stderr.contains(secret), "{response:#?}");
+        }
+        assert!(response.diagnostic.is_none());
+    }
+
+    #[test]
     fn returns_channel_constructor_runtime_unavailable_without_evaluating_capacity() {
         let source = r#"package app.main
 

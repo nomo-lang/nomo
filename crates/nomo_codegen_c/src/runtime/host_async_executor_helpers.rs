@@ -4106,7 +4106,10 @@ pub(super) fn emit_async_function(
         .map(|condition_index| {
             frame_locals
                 .iter()
-                .filter(|local| local.declaration_index < condition_index)
+                .filter(|local| {
+                    local.declaration_index < condition_index
+                        && local.last_use_index >= condition_index
+                })
                 .map(|local| local.name.clone())
                 .collect::<BTreeSet<_>>()
         })

@@ -907,6 +907,8 @@ blocking migration.
 See `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for native owner-affine stdin/output/exit,
 `examples/async_process_pipe_windows` for the corresponding IOCP path,
+`examples/async_process_stress` for deterministic capacity saturation and
+post-close slot reuse,
 `examples/mcp_stdio_async` for incremental JSON-RPC composition, and
 `examples/process_controlled_blocking` for two queued stdin messages and
 multiplexed compatibility handling.

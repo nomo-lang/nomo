@@ -1677,6 +1677,9 @@ import std.task
 import std.time
 
 suspend fn main() -> void {
+    let finished_before_loop: string = "finished"
+    task.yield_now()
+    io.println(finished_before_loop)
     let mut remaining: u64 = 3
     let mut message: string = "initial"
     for remaining > 0 {
@@ -1705,11 +1708,54 @@ suspend fn main() -> void {
     assert!(c.contains("frame->nomo_async_local_nomo_message"));
     assert!(c.contains("nomo_async_assign_nomo_message_"));
     assert!(c.contains("nomo_string_release(frame->nomo_async_local_nomo_message);"));
+    let condition = c
+        .split("nomo_async_loop_condition_0:")
+        .nth(1)
+        .unwrap()
+        .split("nomo_async_loop_after_0:")
+        .next()
+        .unwrap();
+    assert!(!condition.contains("nomo_finished_before_loop = frame->"));
     assert_eq!(
         c.matches("nomo_async_frame_main nomo__frame = {0};")
             .count(),
         1
     );
+}
+
+#[test]
+fn bounded_suspending_loop_accepts_a_transitive_suspend_call() {
+    let source = r#"package app.main
+
+import std.io
+import std.task
+
+suspend fn one_round() -> void {
+    task.yield_now()
+}
+
+suspend fn main() -> void {
+    let mut remaining: u64 = 3
+    for remaining > 0 {
+        one_round()
+        remaining = remaining - 1
+    }
+    io.println(remaining)
+}
+"#;
+
+    let c = compile_source_text_to_c_with_project_modules(
+        Path::new("main.nomo"),
+        source,
+        None,
+        &[],
+        &[],
+    )
+    .unwrap();
+
+    assert!(c.contains("nomo_async_loop_condition_0:"));
+    assert!(c.contains("nomo_async_child_"));
+    assert!(c.contains("goto nomo_async_loop_condition_0;"));
 }
 
 #[test]

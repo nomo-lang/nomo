@@ -804,6 +804,8 @@ host imports. See
 `examples/async_process_pipe_contract` for capability behavior,
 `examples/async_process_pipe_unix` for real owner-affine stdin/output/exit,
 `examples/async_process_pipe_windows` for the native IOCP lifecycle,
+`examples/async_process_stress` for the 16-child capacity gate and repeated
+slot-reuse cleanup,
 `examples/mcp_stdio_async` for a real fragmented/coalesced JSON-RPC loop,
 and `examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking`
 for the explicit blocking migration path.

@@ -164,6 +164,9 @@ owner-local、non-atomic。示例见
 与
 [`examples/async_process_pipe_unix`](../examples/async_process_pipe_unix) 或
 [`examples/async_process_pipe_windows`](../examples/async_process_pipe_windows)。
+[`examples/async_process_stress`](../examples/async_process_stress) 会达到
+16 个 child 的容量上限，验证类型化 `limit` 结果，关闭全部 child，然后连续完成
+32 次 round trip，并确认没有保留 process/runtime 资源。
 [`examples/mcp_stdio_async`](../examples/mcp_stdio_async) 使用该 loop 形态组合
 fragmented/coalesced JSON-RPC process output。
 

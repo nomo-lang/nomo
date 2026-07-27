@@ -669,7 +669,8 @@ payloads, method names, ids, error data, or other secret-bearing values.
 Native C and browser WASM implement the same pure codec. The module does not
 launch processes itself. Compose it with the shell-free `std.process`
 controlled API, write only encoded messages to child stdin, feed only stdout
-to the decoder, and route stderr separately as logs. See `examples/mcp_stdio`
+to the decoder, and route stderr separately as logs. See
+`examples/mcp_stdio_blocking`
 for a two-request MCP client that handles fragmented/coalesced output and
 correlates response ids without application-side C FFI.
 
@@ -795,6 +796,14 @@ pub struct ProcessCommand {
     pub inherit_env: bool
 }
 
+pub struct ProcessChild {
+    handle: u64
+}
+
+pub struct BlockingProcessChild {
+    handle: u64
+}
+
 pub struct ProcessExit {
     pub code: i32
     pub signal: i32
@@ -812,16 +821,33 @@ pub enum ProcessEvent {
     Exited(ProcessExit)
 }
 
-process.start(command: ProcessCommand) -> Result<ProcessChild, ProcessControlError>
+suspend process.start(command: ProcessCommand, timeout_millis: u64) -> Result<ProcessChild, ProcessControlError>
 process.write_stdin(child: ProcessChild, data: string) -> Result<void, ProcessControlError>
 process.close_stdin(child: ProcessChild) -> Result<void, ProcessControlError>
-process.next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError>
+suspend process.next_event(child: ProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError>
 process.try_wait(child: ProcessChild) -> Result<Option<ProcessExit>, ProcessControlError>
 process.terminate(child: ProcessChild) -> Result<void, ProcessControlError>
 process.close_child(child: ProcessChild) -> void
+
+process.start_blocking(command: ProcessCommand) -> Result<BlockingProcessChild, ProcessControlError>
+process.write_stdin_blocking(child: BlockingProcessChild, data: string) -> Result<void, ProcessControlError>
+process.close_stdin_blocking(child: BlockingProcessChild) -> Result<void, ProcessControlError>
+process.next_event_blocking(child: BlockingProcessChild, max_chunk_bytes: u64, timeout_millis: u64) -> Result<ProcessEvent, ProcessControlError>
+process.try_wait_blocking(child: BlockingProcessChild) -> Result<Option<ProcessExit>, ProcessControlError>
+process.terminate_blocking(child: BlockingProcessChild) -> Result<void, ProcessControlError>
+process.close_child_blocking(child: BlockingProcessChild) -> void
 ```
 
-`start` invokes `program` directly and never a shell. A program containing a
+`start` and `next_event` are suspend intrinsics. `ProcessChild` is owner-affine
+and Local/!Send; `BlockingProcessChild` is a distinct compatibility identity
+and cannot be passed to the async API. P2-PROC-A fixes operand evaluation,
+frame ownership, start/resume/cancel ABI, effect diagnostics, and a
+secret-safe ready `unsupported` path. It does not place the synchronous
+registry behind a suspend signature. Native epoll/kqueue process pipes and
+bounded process-start jobs arrive in P2-PROC-B.
+
+The `_blocking` compatibility path invokes `program` directly and never a
+shell. A program containing a
 path separator is resolved directly; a bare name is searched in the final
 child `PATH`. `cwd = None` inherits the current directory. With
 `inherit_env = true`, explicit entries override inherited variables; with
@@ -842,23 +868,23 @@ both streams reach EOF. Invalid UTF-8 or NUL is a `protocol` error and closes
 the child. After `Exited`, `try_wait`, `terminate`, and `close_child` remain
 safe; another `next_event` returns `invalid_request`.
 
-Call `defer process.close_child(child)` immediately after `start`.
-`close_child` is idempotent and forcibly terminates and reaps a child that is
+Call `defer process.close_child_blocking(child)` immediately after
+`start_blocking`. `close_child_blocking` is idempotent and forcibly terminates and reaps a child that is
 still running. `ProcessControlError.code` is one of `invalid_request`, `busy`,
-`spawn`, `io`, `timeout`, `protocol`, or `runtime_unavailable`. Its message and
-default diagnostics never include program, argv, environment, cwd, stdin,
-stdout, or stderr values. Native Unix-like and Windows adapters are owned by
-the toolchain; application code declares no C FFI. Browser WASM rejects this
-controlled API before argument evaluation.
+`unsupported`, `closed`, `limit`, `spawn`, `io`, `timeout`, `protocol`, or
+`reactor` on the async surface. The blocking preview can additionally return
+`runtime_unavailable`. Messages and default diagnostics never include program,
+argv, environment, cwd, stdin, stdout, or stderr values. Native Unix-like and
+Windows adapters are owned by the toolchain; application code declares no C
+FFI. Browser WASM rejects this controlled API before argument evaluation.
 
-Suspend call graphs reject the shell helpers plus `start`, `next_event`,
-`terminate`, and `close_child` with E0891 because they may spawn, wait,
-terminate, or reap on the current OS thread. The bounded queueing operations
-`write_stdin` and `close_stdin`, plus the non-consuming `try_wait`, remain
-current-thread compatibility calls until the focused owner-affine process RFC
-lands; they are not evidence of cross-shard safety.
+Suspend call graphs reject the shell helpers and every `_blocking` controlled
+call with E0891. Synchronous calls to the new `start` or `next_event` report
+E0870 and guide callers to mark the function `suspend` or choose the explicit
+blocking migration.
 
-See `examples/process_controlled` for two queued stdin messages and
+See `examples/async_process_pipe_contract` for the P2-PROC-A ABI and
+`examples/process_controlled_blocking` for two queued stdin messages and
 multiplexed output/exit handling.
 
 `std.net` provides the first owner-affine async TCP client slice plus explicit

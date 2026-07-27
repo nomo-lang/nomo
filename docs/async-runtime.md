@@ -140,6 +140,17 @@ until the general suspend-question lowering slice lands. P2-TCP-F implements
 `shutdown_write` through `SHUT_WR` on Unix and `SD_SEND` on Windows. See
 [`examples/async_tcp_io`](../examples/async_tcp_io).
 
+P2-PROC-A separates the process contracts. `process.start(command, timeout)`
+and `process.next_event(child, max_bytes, timeout)` are suspend intrinsics over
+an owner-affine Local/!Send `ProcessChild`; their C99 frames carry typed
+start/resume/cancel state and exactly-once result ownership. The current native
+path completes inline with a secret-safe `unsupported` result and emits no
+blocking registry or helper thread. RFC 0024 behavior remains temporarily
+available only through `BlockingProcessChild` and explicit `_blocking` names,
+all quarantined by E0891. P2-PROC-B will replace the ready placeholder with
+bounded start jobs and epoll/kqueue pipe registrations. See
+[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract).
+
 The first structured-concurrency slice uses an explicit lexical scope and
 explicit concurrency creation while keeping child calls direct-style:
 
@@ -176,7 +187,7 @@ override it in this slice:
 | --- | --- |
 | numeric, `bool`, `char` | Copy; the source binding remains available |
 | `string`, `CString`, `Array<T>`, `Map<K,V>`, ordinary structs/enums | Send when every nested type is Send; a named binding is consumed |
-| `File`, sockets, HTTP server/exchange/stream, `ProcessChild`, SQLite/task/FFI handles | Local/!Send and rejected |
+| `File`, sockets, HTTP server/exchange/stream, `ProcessChild`, `BlockingProcessChild`, SQLite/task/FFI handles | Local/!Send and rejected |
 
 ```nomo
 let message: AgentMessage = build_message()

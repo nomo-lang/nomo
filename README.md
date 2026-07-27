@@ -763,31 +763,33 @@ SQLite handles are unavailable inside isolated tasks, browser WASM returns
 are excluded from default errors. See `examples/sqlite_agent_memory` for a
 transactional checkpoint written by one process and restored by another.
 
-`std.process` keeps the blocking shell helpers `process.spawn`,
-`process.status`, `process.exec`, and `process.output` for source
-compatibility. New long-lived integrations should use `ProcessCommand` with
-`process.start`: it launches one executable without a shell, accepts explicit
-argv, cwd, and environment policy, and returns an opaque `ProcessChild`.
-`process.write_stdin` queues one bounded UTF-8 payload, while
-`process.next_event` multiplexes `StdinFlushed`, incremental `Stdout` and
-`Stderr`, and final `Exited` events with a caller-selected timeout.
-`process.try_wait`, `process.terminate`, `process.close_stdin`, and the
-idempotent `process.close_child` provide explicit lifecycle control.
+`std.process` now separates the owner-affine async contract from the preview
+blocking registry. `process.start(command, timeout)` and
+`process.next_event(child, max_bytes, timeout)` are direct-style suspend
+operations over `ProcessChild`. Queueing stdin, closing stdin, `try_wait`,
+termination request, and `close_child` are synchronous owner-local operations
+that must not wait. P2-PROC-A fixes this public effect, handle identity, C99
+start/resume/frame ABI, and secret-safe ready `unsupported` result. Native
+reactor-backed process creation and pipes arrive in P2-PROC-B; the current
+placeholder does not wrap the old polling runtime in a coroutine.
+
+The accepted synchronous implementation remains available for one migration
+window through `BlockingProcessChild` and the explicit
+`process.start_blocking`, `write_stdin_blocking`, `close_stdin_blocking`,
+`next_event_blocking`, `try_wait_blocking`, `terminate_blocking`, and
+`close_child_blocking` names. The shell helpers `spawn`, `status`, `exec`, and
+`output` also remain blocking. Suspend call graphs reject every one of these
+compatibility calls with E0891.
 
 Controlled process payloads and output chunks are limited to 1 MiB,
 `next_event` timeouts are limited to 15 minutes, and output must be valid UTF-8
 without NUL. `ProcessControlError` exposes stable, secret-safe error codes;
 errors and default diagnostics do not copy command arguments, environment,
 cwd, stdin, or child output. Unix-like and Windows native programs use
-toolchain-owned adapters, so application code needs no C FFI. Browser WASM
-rejects controlled process calls before evaluating their arguments. See
-`examples/process_controlled`.
-
-Suspend call graphs reject the blocking shell helpers plus `process.start`,
-`process.next_event`, `process.terminate`, and `process.close_child` with
-E0891. The focused owner-affine process-pipe surface will replace those
-compatibility calls; wrapping them in a coroutine is not a nonblocking
-implementation.
+toolchain-owned adapters, so application code needs no C FFI. See
+`examples/async_process_pipe_contract` for the P2-PROC-A ABI and
+`examples/process_controlled_blocking` plus `examples/mcp_stdio_blocking` for
+the explicit migration path.
 
 `std.net` now provides owner-affine direct-style suspend TCP client operations.
 `net.connect` accepts numeric IPv4/IPv6 addresses or hostnames and returns
@@ -882,7 +884,8 @@ only validated request, notification, success, or error messages. Encoding
 adds exactly one newline. Messages are limited to 1,048,575 bytes, chunks to
 1 MiB, and batches to 4096 messages; stable errors never reproduce protocol
 payloads. `JsonRpcMessage` and `JsonRpcDecoder` are opaque so applications
-cannot bypass validation. See `examples/mcp_stdio` for a native MCP
+cannot bypass validation. See `examples/mcp_stdio_blocking` for the preview
+native blocking MCP
 initialize and `tools/list` exchange composed with `std.process`, with no
 application-side C FFI.
 

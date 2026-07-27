@@ -125,6 +125,16 @@ E0876。P2-TCP-F 在 Unix 通过 `SHUT_WR`、在 Windows 通过 `SD_SEND` 实现
 `shutdown_write`。示例见
 [`examples/async_tcp_io`](../examples/async_tcp_io)。
 
+P2-PROC-A 已拆分进程契约。`process.start(command, timeout)` 与
+`process.next_event(child, max_bytes, timeout)` 是基于 owner-affine、
+Local/!Send `ProcessChild` 的 suspend intrinsic；其 C99 frame 带有类型化的
+start/resume/cancel 状态和恰好一次的结果所有权。当前 native 路径会 inline
+返回 secret-safe `unsupported`，且不会发出阻塞注册表或辅助线程。RFC 0024
+行为仅通过 `BlockingProcessChild` 与显式 `_blocking` 名称临时保留，并全部由
+E0891 隔离。P2-PROC-B 将用有界 start job 与 epoll/kqueue pipe registration
+替换 ready 占位路径。示例见
+[`examples/async_process_pipe_contract`](../examples/async_process_pipe_contract)。
+
 第一个结构化并发小切片使用显式词法 scope，并只在 spawn 点显式创建并发：
 
 ```nomo
@@ -158,7 +168,7 @@ structured spawn 现在是 publication boundary。编译器会为每个 child �
 | --- | --- |
 | 数值、`bool`、`char` | Copy；源 binding 仍可使用 |
 | `string`、`CString`、`Array<T>`、`Map<K,V>`、普通 struct/enum | 所有嵌套类型均为 Send 时可发布；命名 binding 会被消费 |
-| `File`、socket、HTTP server/exchange/stream、`ProcessChild`、SQLite/task/FFI handle | Local/!Send，直接拒绝 |
+| `File`、socket、HTTP server/exchange/stream、`ProcessChild`、`BlockingProcessChild`、SQLite/task/FFI handle | Local/!Send，直接拒绝 |
 
 ```nomo
 let message: AgentMessage = build_message()

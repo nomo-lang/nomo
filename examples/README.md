@@ -26,8 +26,8 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `file_handle`: `std.fs.open`, `File.close`, and `defer`
 - `std_path`: `std.path` join, component extraction, normalization, and absolute checks
 - `std_process`: `std.process` spawn, status, exec, and captured output helpers
-- `process_controlled`: shell-free long-lived child process with queued stdin and multiplexed stdout/stderr events
-- `mcp_stdio`: bounded newline-framed JSON-RPC initialization and `tools/list` exchange with a local MCP stdio server
+- `process_controlled_blocking`: preview compatibility example for shell-free queued stdin and multiplexed stdout/stderr
+- `mcp_stdio_blocking`: preview compatibility example for bounded newline-framed JSON-RPC over a blocking child
 - `isolated_tasks`: bounded native task workers with deep-copied string messages, join, cancellation observation, and explicit close
 - `suspend_ready`: P0 direct-style `suspend fn` effect on an always-ready call chain; no executor or suspension primitive yet
 - `async_yield`: P1 direct-style nested stackless frames driven by the current-thread executor across two cooperative yields
@@ -45,6 +45,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_static_select`: P3-C source-ordered static receive/timer selection with one owner-frame wake and eager loser cleanup
 - `async_tcp_connect`: P2-TCP-A/C/D owner-affine connect with a bounded native hostname resolver, typed `Resolve` result, and posted IOCP completion on Windows
 - `async_tcp_io`: P2-TCP-B/D bounded incremental read and complete write against a local TCP echo fixture, including IOCP on Windows
+- `async_process_pipe_contract`: P2-PROC-A suspend ABI probe; reports `unsupported` until the native reactor-backed process slice lands
 - `sqlite_memory`: bounded in-memory SQLite execution, parameter binding, pull-based rows, and explicit handle lifetime
 - `sqlite_agent_memory`: durable parameterized Agent checkpoint storage, explicit transactions, and a second-process read
 - `std_time`: `std.time` duration helpers and zero-duration sleep

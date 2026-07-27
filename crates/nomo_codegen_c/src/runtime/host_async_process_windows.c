@@ -1542,6 +1542,7 @@ static void nomo_async_process_handle_storage_release(
     nomo_async_process_runtime *runtime,
     nomo_async_process_handle_state *state
 ) {
+    nomo_async_process_trace("handle release begin");
     if (state->event_registration != NULL) {
         nomo_async_process_cancel(
             (nomo_async_process_registration *)
@@ -1595,6 +1596,7 @@ static void nomo_async_process_handle_storage_release(
     uint32_t generation = state->generation;
     memset(state, 0, sizeof(*state));
     state->generation = generation;
+    nomo_async_process_trace("handle release done");
 }
 
 static int nomo_async_process_handle_reserve(
@@ -1713,6 +1715,7 @@ static void nomo_async_process_start_complete(
 static void nomo_async_process_release_reserved(
     nomo_async_process_registration *registration
 ) {
+    nomo_async_process_trace("reserved release begin");
     nomo_async_process_runtime *runtime =
         registration->context == NULL
         ? NULL
@@ -1720,6 +1723,7 @@ static void nomo_async_process_release_reserved(
             registration->context->process_runtime;
     if (runtime == NULL
         || registration->handle_slot >= NOMO_ASYNC_PROCESS_HANDLE_CAPACITY) {
+        nomo_async_process_trace("reserved release skipped");
         return;
     }
     nomo_async_process_handle_state *state =
@@ -1729,6 +1733,7 @@ static void nomo_async_process_release_reserved(
         && state->process == NULL) {
         nomo_async_process_handle_storage_release(runtime, state);
     }
+    nomo_async_process_trace("reserved release done");
 }
 
 static VOID CALLBACK nomo_async_process_wait_callback(
@@ -2038,6 +2043,7 @@ static nomo_async_poll nomo_async_process_spawn_resume(
             &stderr_read,
             &spawn_error
         ) != 0) {
+        nomo_async_process_trace("start resume completion lost");
         nomo_async_process_release_reserved(registration);
         nomo_async_process_start_error(
             result,
@@ -2046,10 +2052,14 @@ static nomo_async_poll nomo_async_process_spawn_resume(
         );
         context->process_errors += 1u;
         registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
+        nomo_async_process_trace("start resume completion error ready");
         return NOMO_ASYNC_POLL_READY;
     }
+    nomo_async_process_trace("start resume completion taken");
     if (spawn_error != ERROR_SUCCESS || process == NULL) {
+        nomo_async_process_trace("start resume spawn failed");
         nomo_async_process_release_reserved(registration);
+        nomo_async_process_trace("start resume reserved released");
         nomo_async_process_start_error(
             result,
             "spawn",
@@ -2057,6 +2067,7 @@ static nomo_async_poll nomo_async_process_spawn_resume(
         );
         context->process_errors += 1u;
         registration->kind = NOMO_ASYNC_PROCESS_REGISTRATION_NONE;
+        nomo_async_process_trace("start resume spawn error ready");
         return NOMO_ASYNC_POLL_READY;
     }
     if (nomo_async_process_activate_handle(

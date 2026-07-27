@@ -545,6 +545,64 @@ static int nomo_async_reactor_associate_socket(
     return 0;
 }
 
+static int nomo_async_reactor_post(
+    nomo_async_reactor *reactor,
+    nomo_async_reactor_registration *registration,
+    uint32_t interests
+) {
+    if (registration == NULL
+        || registration->wake == NULL
+        || nomo_async_reactor_init(reactor) != 0) {
+        return 1;
+    }
+    registration->interests = interests;
+    if (PostQueuedCompletionStatus(
+            reactor->handle,
+            0u,
+            (ULONG_PTR)registration,
+            NULL
+        ) == FALSE) {
+        reactor->errors += 1u;
+        return 1;
+    }
+    return 0;
+}
+
+static int nomo_async_reactor_post_activate(
+    nomo_async_reactor *reactor,
+    nomo_async_reactor_registration *registration
+) {
+    if (registration == NULL
+        || registration->wake == NULL
+        || nomo_async_reactor_init(reactor) != 0) {
+        return 1;
+    }
+    if (registration->active != 0u) {
+        return 0;
+    }
+    registration->active = 1u;
+    reactor->registrations += 1u;
+    reactor->live_registrations += 1u;
+    if (reactor->live_registrations > reactor->peak_live_registrations) {
+        reactor->peak_live_registrations = reactor->live_registrations;
+    }
+    return 0;
+}
+
+static void nomo_async_reactor_post_deactivate(
+    nomo_async_reactor *reactor,
+    nomo_async_reactor_registration *registration
+) {
+    if (registration == NULL || registration->active == 0u) {
+        return;
+    }
+    registration->active = 0u;
+    reactor->deregistrations += 1u;
+    if (reactor->live_registrations > 0u) {
+        reactor->live_registrations -= 1u;
+    }
+}
+
 static int nomo_async_reactor_register(
     nomo_async_reactor *reactor,
     nomo_async_reactor_registration *registration,
@@ -689,7 +747,7 @@ static int nomo_async_iocp_dispatch(
         registration->transferred = transferred;
         registration->error = completed != FALSE ? ERROR_SUCCESS : error;
         nomo_async_iocp_release(reactor, operation);
-        if (registration->wake != NULL) {
+        if (registration->active != 0u && registration->wake != NULL) {
             registration->wake(registration->owner, registration->interests);
         }
     } else {
@@ -732,6 +790,19 @@ static int nomo_async_reactor_wait(
             error,
             had_completion
         );
+    }
+    if (completed != FALSE && completion_key != 0u) {
+        nomo_async_reactor_registration *registration =
+            (nomo_async_reactor_registration *)completion_key;
+        reactor->completions += 1u;
+        *had_completion = 1u;
+        if (registration->wake != NULL) {
+            registration->wake(
+                registration->owner,
+                registration->interests
+            );
+        }
+        return 0;
     }
     if (error == WAIT_TIMEOUT) {
         reactor->timeouts += 1u;
@@ -819,6 +890,10 @@ mod tests {
         assert!(emitted.contains("GetQueuedCompletionStatus"));
         assert!(emitted.contains("#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u"));
         assert!(emitted.contains("static int nomo_async_reactor_register"));
+        assert!(emitted.contains("static int nomo_async_reactor_post"));
+        assert!(emitted.contains("PostQueuedCompletionStatus"));
+        assert!(emitted.contains("nomo_async_reactor_post_activate"));
+        assert!(emitted.contains("nomo_async_reactor_post_deactivate"));
         assert!(emitted.contains("CancelIoEx"));
         assert!(emitted.contains("CONTAINING_RECORD"));
         assert!(emitted.contains("while (reactor->live_iocp_operations > 0u)"));

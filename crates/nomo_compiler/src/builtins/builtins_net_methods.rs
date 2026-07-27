@@ -196,6 +196,26 @@ pub(super) fn lower_tcp_stream_value_method(
                 },
             ))
         }
+        "shutdown_write" => {
+            if !args.is_empty() {
+                return Err(Diagnostic::new(
+                    "E0407",
+                    "`TcpStream.shutdown_write` does not accept arguments",
+                    path,
+                    span.line,
+                    span.column,
+                    span.length,
+                    &span.text,
+                ));
+            }
+            Ok((
+                ValueType::Enum("Result".to_string(), vec![ValueType::Void, net_error]),
+                ValueExpr::Call {
+                    name: BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR.to_string(),
+                    args: vec![receiver_expr],
+                },
+            ))
+        }
         "close" => {
             if !args.is_empty() {
                 return Err(Diagnostic::new(

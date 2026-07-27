@@ -220,6 +220,7 @@ const BUILTIN_TCP_STREAM_READ_EXPR: &str = "__nomo_tcp_stream_read_async";
 const BUILTIN_TCP_STREAM_READ_STRING_EXPR: &str = "__nomo_tcp_stream_read_string_async";
 const BUILTIN_TCP_STREAM_WRITE_EXPR: &str = "__nomo_tcp_stream_write_async";
 const BUILTIN_TCP_STREAM_WRITE_STRING_EXPR: &str = "__nomo_tcp_stream_write_string_async";
+const BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR: &str = "__nomo_tcp_stream_shutdown_write";
 const BUILTIN_TASK_SPAWN_EXPR: &str = "__nomo_task_spawn";
 const BUILTIN_TASK_IS_CANCELLED_EXPR: &str = "__nomo_task_is_cancelled";
 const BUILTIN_TASK_JOIN_EXPR: &str = "__nomo_task_join";

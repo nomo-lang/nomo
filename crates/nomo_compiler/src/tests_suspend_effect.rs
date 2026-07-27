@@ -625,6 +625,7 @@ suspend fn exercise(stream: TcpStream) -> void {
     let text: Result<TcpTextChunk, NetError> = stream.read_string(4096, 100)
     let wrote_bytes: Result<void, NetError> = stream.write([65, 66, 67], 100)
     let wrote_text: Result<void, NetError> = stream.write_string("ready", 100)
+    let shutdown: Result<void, NetError> = stream.shutdown_write()
 }
 
 fn main() -> void {
@@ -655,6 +656,7 @@ fn main() -> void {
             BUILTIN_TCP_STREAM_READ_STRING_EXPR,
             BUILTIN_TCP_STREAM_WRITE_EXPR,
             BUILTIN_TCP_STREAM_WRITE_STRING_EXPR,
+            BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR,
         ]
     );
 
@@ -677,6 +679,12 @@ fn main() -> void {
         "nomo_async_tcp_write_string_resume",
         "nomo_async_io_handle_acquire",
         "nomo_async_tcp_io_cancel",
+        "nomo_tcp_stream_shutdown_write",
+        "nomo_async_io_handle_shutdown_write_callback",
+        "if (slot->write_busy != 0u)",
+        "if (slot->write_shutdown != 0u)",
+        "shutdown(slot->handle, NOMO_SOCKET_SHUTDOWN_WRITE)",
+        "slot->write_shutdown = 1u",
         "NOMO_ASYNC_TCP_SEND_FLAGS",
         "NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u",
     ] {
@@ -694,6 +702,7 @@ import std.result
 suspend fn exercise(stream: TcpStream) -> void {
     let bytes: Result<TcpChunk, NetError> = stream.read(16, 100)
     let wrote: Result<void, NetError> = stream.write_string("secret", 100)
+    let shutdown: Result<void, NetError> = stream.shutdown_write()
 }
 
 fn main() -> void {
@@ -713,6 +722,9 @@ fn main() -> void {
         "CancelIoEx",
         "nomo_async_reactor_detach_buffer",
         "nomo_async_io_handle_associate_reactor",
+        "nomo_tcp_stream_shutdown_write",
+        "nomo_async_io_handle_shutdown_write_callback",
+        "#define NOMO_SOCKET_SHUTDOWN_WRITE SD_SEND",
         "NOMO_ASYNC_TCP_WRITE_POLL_BUDGET 65536u",
         "#define NOMO_ASYNC_IOCP_OPERATION_CAPACITY 64u",
     ] {

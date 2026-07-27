@@ -550,6 +550,13 @@ pub(super) fn expr_is_tcp_stream_close(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::TcpStreamClose { .. })
 }
 
+pub(super) fn expr_is_tcp_stream_shutdown_write(expr: &ValueExpr) -> bool {
+    matches!(
+        expr,
+        ValueExpr::Call { name, .. } if name == BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR
+    )
+}
+
 pub(super) fn expr_is_udp_socket_recv_from_string(expr: &ValueExpr) -> bool {
     matches!(expr, ValueExpr::UdpSocketRecvFromString { .. })
 }

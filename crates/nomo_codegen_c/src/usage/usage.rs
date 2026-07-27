@@ -250,6 +250,15 @@ pub(super) fn uses_tcp_stream_close(program: &Program) -> bool {
     })
 }
 
+pub(super) fn uses_tcp_stream_shutdown_write(program: &Program) -> bool {
+    program.functions.iter().any(|function| {
+        function
+            .body
+            .iter()
+            .any(|statement| statement_contains_expr(statement, expr_is_tcp_stream_shutdown_write))
+    })
+}
+
 pub(super) fn uses_udp_socket_recv_from_string(program: &Program) -> bool {
     program.functions.iter().any(|function| {
         function.body.iter().any(|statement| {

@@ -467,6 +467,7 @@ import std.net
 fn request(host: string, port: i64) -> Result<string, NetError> {
     let stream: TcpStream = net.connect_blocking(host, port)?
     stream.write_string_blocking("ping")?
+    stream.shutdown_write()?
     let text: string = stream.read_to_string_blocking()?
     stream.close()
     return Ok(text)
@@ -507,6 +508,14 @@ fn main() -> void {
             result_expr: ValueExpr::TcpStreamReadToString { .. },
             ..
         }
+    )));
+    assert!(request.body.iter().any(|stmt| matches!(
+        stmt,
+        Statement::QuestionLet {
+            value_type: ValueType::Void,
+            result_expr: ValueExpr::Call { name, args },
+            ..
+        } if name == BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR && args.len() == 1
     )));
     assert!(
         request

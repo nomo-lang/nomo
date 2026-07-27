@@ -62,6 +62,7 @@ pub(super) fn emit_async_net_connect_windows_helpers(
     let handle_member = c_member_ident("handle");
     let owner_member = c_member_ident("owner");
     let close_fn_member = c_member_ident("close_fn");
+    let shutdown_write_fn_member = c_member_ident("shutdown_write_fn");
     let slot_member = c_member_ident("slot");
     let generation_member = c_member_ident("generation");
     let ok_payload = c_payload_ident("Ok");
@@ -119,6 +120,8 @@ pub(super) fn emit_async_net_connect_windows_helpers(
     out.push_str(" = context, .");
     out.push_str(&close_fn_member);
     out.push_str(" = nomo_async_io_handle_close_callback, .");
+    out.push_str(&shutdown_write_fn_member);
+    out.push_str(" = nomo_async_io_handle_shutdown_write_callback, .");
     out.push_str(&slot_member);
     out.push_str(" = slot, .");
     out.push_str(&generation_member);
@@ -974,6 +977,95 @@ pub(super) fn emit_tcp_stream_write_string_helper(out: &mut String) {
     out.push_str(", .payload.");
     out.push_str(&c_payload_ident("Ok"));
     out.push_str(" = 0};\n");
+    out.push_str("}\n");
+}
+
+pub(super) fn emit_tcp_stream_shutdown_write_helper(out: &mut String) {
+    let tcp_stream = c_struct_ident("TcpStream", &[]);
+    let net_error = c_struct_ident("NetError", &[]);
+    let result_args = [
+        ValueType::Void,
+        ValueType::Struct("NetError".to_string(), Vec::new()),
+    ];
+    let result = c_enum_ident("Result", &result_args);
+    let ok = c_enum_variant_ident("Result", &result_args, "Ok");
+    let err = c_enum_variant_ident("Result", &result_args, "Err");
+    let ok_payload = c_payload_ident("Ok");
+    let err_payload = c_payload_ident("Err");
+    let handle = c_member_ident("handle");
+    let owner = c_member_ident("owner");
+    let shutdown_write_fn = c_member_ident("shutdown_write_fn");
+    let slot = c_member_ident("slot");
+    let generation = c_member_ident("generation");
+    let message = c_member_ident("message");
+
+    out.push_str("static ");
+    out.push_str(&result);
+    out.push_str(" nomo_tcp_stream_shutdown_write(");
+    out.push_str(&tcp_stream);
+    out.push_str(" stream) {\n");
+    out.push_str("    int status = 0;\n");
+    out.push_str("    if (stream.");
+    out.push_str(&shutdown_write_fn);
+    out.push_str(" != NULL && stream.");
+    out.push_str(&owner);
+    out.push_str(" != NULL) {\n");
+    out.push_str("        status = stream.");
+    out.push_str(&shutdown_write_fn);
+    out.push_str("(stream.");
+    out.push_str(&owner);
+    out.push_str(", stream.");
+    out.push_str(&slot);
+    out.push_str(", stream.");
+    out.push_str(&generation);
+    out.push_str(");\n");
+    out.push_str("    } else if (stream.");
+    out.push_str(&owner);
+    out.push_str(" != NULL || stream.");
+    out.push_str(&handle);
+    out.push_str(" == NOMO_INVALID_SOCKET) {\n");
+    out.push_str("        status = 1;\n");
+    out.push_str("    } else if (shutdown(stream.");
+    out.push_str(&handle);
+    out.push_str(", NOMO_SOCKET_SHUTDOWN_WRITE) != 0) {\n");
+    out.push_str("        status = 3;\n");
+    out.push_str("    }\n");
+    out.push_str("    if (status == 0) {\n");
+    out.push_str("        return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&ok);
+    out.push_str(", .payload.");
+    out.push_str(&ok_payload);
+    out.push_str(" = 0};\n");
+    out.push_str("    }\n");
+    out.push_str("    return (");
+    out.push_str(&result);
+    out.push_str("){.tag = ");
+    out.push_str(&err);
+    out.push_str(", .payload.");
+    out.push_str(&err_payload);
+    out.push_str(" = (");
+    out.push_str(&net_error);
+    out.push_str("){.");
+    out.push_str(&c_member_ident("kind"));
+    out.push_str(" = (");
+    out.push_str(&c_enum_ident("NetErrorKind", &[]));
+    out.push_str("){.tag = status == 2 ? ");
+    out.push_str(&c_enum_variant_ident("NetErrorKind", &[], "Busy"));
+    out.push_str(" : status == 3 ? ");
+    out.push_str(&c_enum_variant_ident("NetErrorKind", &[], "Write"));
+    out.push_str(" : ");
+    out.push_str(&c_enum_variant_ident("NetErrorKind", &[], "Closed"));
+    out.push_str("}, .");
+    out.push_str(&message);
+    out.push_str(" = status == 2\n");
+    out.push_str("        ? nomo_string_from_cstr(\"TCP stream write direction is busy\")\n");
+    out.push_str("        : status == 3\n");
+    out.push_str("            ? nomo_net_error_message()\n");
+    out.push_str(
+        "            : nomo_string_from_cstr(\"TCP stream is closed or belongs to another executor\")}};\n",
+    );
     out.push_str("}\n");
 }
 

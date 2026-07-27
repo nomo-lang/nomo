@@ -112,10 +112,18 @@ fn emits_net_tcp_stream_helpers() {
                 body: vec![
                     Statement::Let {
                         name: "write_result".to_string(),
-                        value_type: result_void_error,
+                        value_type: result_void_error.clone(),
                         initializer: ValueExpr::TcpStreamWriteString {
                             stream: Box::new(ValueExpr::Variable("stream".to_string())),
                             content: Box::new(ValueExpr::StringLiteral("ping".to_string())),
+                        },
+                    },
+                    Statement::Let {
+                        name: "shutdown_result".to_string(),
+                        value_type: result_void_error,
+                        initializer: ValueExpr::Call {
+                            name: BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR.to_string(),
+                            args: vec![ValueExpr::Variable("stream".to_string())],
                         },
                     },
                     Statement::Let {
@@ -203,12 +211,16 @@ fn emits_net_tcp_stream_helpers() {
     assert!(c.contains(
         "nomo_tcp_stream_write_string(nomo_struct_TcpStream stream, nomo_string content)"
     ));
+    assert!(c.contains("nomo_tcp_stream_shutdown_write(nomo_struct_TcpStream stream)"));
+    assert!(c.contains("int (*nomo_member_shutdown_write_fn)(void *, uint32_t, uint32_t)"));
+    assert!(c.contains("shutdown(stream.nomo_member_handle, NOMO_SOCKET_SHUTDOWN_WRITE)"));
     assert!(c.contains("static void nomo_tcp_stream_close(nomo_struct_TcpStream stream)"));
     assert!(c.contains("nomo_net_connect(nomo_string_literal(\"127.0.0.1\"), 7)"));
     assert!(c.contains("nomo_net_listen(nomo_string_literal(\"127.0.0.1\"), 7)"));
     assert!(c.contains("nomo_tcp_listener_accept(nomo_listener)"));
     assert!(c.contains("nomo_tcp_listener_close(nomo_listener)"));
     assert!(c.contains("nomo_tcp_stream_write_string(nomo_stream, nomo_string_literal(\"ping\"))"));
+    assert!(c.contains("nomo_tcp_stream_shutdown_write(nomo_stream)"));
     assert!(c.contains("nomo_tcp_stream_read_to_string(nomo_stream)"));
     assert!(c.contains("nomo_tcp_stream_close(nomo_stream)"));
 }

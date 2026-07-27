@@ -114,6 +114,11 @@ impl TcpStream {
         return self.write_string(content, timeout_millis)
     }
 
+    /// Half-closes the write direction while preserving reads.
+    pub fn shutdown_write(self) -> Result<void, NetError> {
+        return self.shutdown_write()
+    }
+
     /// Reads until the peer closes its write side.
     pub fn read_to_string_blocking(self) -> Result<string, NetError> {
         return self.read_to_string_blocking()

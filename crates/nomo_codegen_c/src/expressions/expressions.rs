@@ -205,6 +205,11 @@ pub(super) fn emit_expr(out: &mut String, expr: &ValueExpr) {
                 out.push('(');
                 emit_expr(out, &args[0]);
                 out.push(')');
+            } else if name == BUILTIN_TCP_STREAM_SHUTDOWN_WRITE_EXPR {
+                debug_assert_eq!(args.len(), 1);
+                out.push_str("nomo_tcp_stream_shutdown_write(");
+                emit_expr(out, &args[0]);
+                out.push(')');
             } else if matches!(
                 name.as_str(),
                 BUILTIN_TASK_YIELD_EXPR

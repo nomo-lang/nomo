@@ -403,7 +403,10 @@ fn is_publication_local_struct(item: &StructType) -> bool {
             (item.package.as_str(), item.name.as_str()),
             ("std.fs", "File")
                 | ("std.net", "TcpStream" | "TcpListener" | "UdpSocket")
-                | ("std.http", "HttpServer" | "HttpExchange" | "HttpStream")
+                | (
+                    "std.http",
+                    "HttpServer" | "HttpExchange" | "HttpStream" | "BlockingHttpStream"
+                )
                 | ("std.process", "ProcessChild" | "BlockingProcessChild")
                 | ("std.task", "Task" | "TaskContext")
                 | ("std.sqlite", "SqliteDatabase" | "SqliteQuery")

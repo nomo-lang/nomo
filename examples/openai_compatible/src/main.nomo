@@ -21,7 +21,7 @@ fn request_completion(endpoint: string, token: string) -> Result<void, HttpError
     headers.push(HttpHeader { name: "Authorization", value: concat("Bearer ", token) })
     headers.push(HttpHeader { name: "Content-Type", value: "application/json" })
     let request: HttpRequest = HttpRequest { method: "POST", url: concat(endpoint, "/v1/chat/completions"), headers: headers, body: "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Hello from Nomo\"}],\"stream\":false}", timeout_millis: 5000, max_response_bytes: 1048576 }
-    let response: HttpResponse = http.send(request)?
+    let response: HttpResponse = http.send_blocking(request)?
     io.println(response.status)
     print_fixture_header(response.headers)
     io.println(response.body)

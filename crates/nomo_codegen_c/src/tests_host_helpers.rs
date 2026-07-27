@@ -375,7 +375,7 @@ fn emits_bounded_structured_http_runtime_for_windows_target() {
                     name: "response".to_string(),
                     value_type: response_result,
                     initializer: ValueExpr::Call {
-                        name: BUILTIN_HTTP_SEND_EXPR.to_string(),
+                        name: BUILTIN_HTTP_SEND_BLOCKING_EXPR.to_string(),
                         args: vec![ValueExpr::Variable("request".to_string())],
                     },
                 },

@@ -47,6 +47,7 @@ The examples track the v0.1 acceptance matrix in the RFC specification.
 - `async_tcp_connect`: P2-TCP-A/C/D owner-affine connect with a bounded native hostname resolver, typed `Resolve` result, and posted IOCP completion on Windows
 - `async_tcp_io`: P2-TCP-B/D bounded incremental read and complete write against a local TCP echo fixture, including IOCP on Windows
 - `async_process_pipe_contract`: cross-target async process capability example; native targets report a secret-safe missing-executable error, while the release-WASM gate proves browser rejection before command operands run
+- `async_http_contract`: P2-HTTP-A owner-affine suspend ABI example; it deterministically reports the secret-safe `runtime_unavailable` placeholder until the native reactor transport slice lands
 - `async_process_pipe_unix`: P2-PROC-B native Unix owner-affine stdin, `StdinFlushed`, stdout, final `Exited`, and explicit close
 - `async_process_pipe_windows`: P2-PROC-C overlapped named-pipe stdin/output/exit through the owner IOCP without per-child reader/writer threads
 - `async_process_stress`: P2-PROC-E deterministic 16-child saturation, explicit `limit`, cleanup, and 32 sequential slot-reuse round trips

@@ -285,6 +285,7 @@ pub(super) fn validate_standard_type_conflicts(
         reject_user_std_enum(path, enums, "NetErrorKind")?;
     }
     if needs.http {
+        reject_user_std_struct(path, structs, "BlockingHttpStream")?;
         reject_user_std_struct(path, structs, "HttpExchange")?;
         reject_user_std_struct(path, structs, "HttpError")?;
         reject_user_std_struct(path, structs, "HttpHeader")?;

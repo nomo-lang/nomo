@@ -398,7 +398,11 @@ fn emit_struct_type(out: &mut String, struct_type: &StructType, struct_args: &[V
         out.push_str("};\n");
         return;
     }
-    if struct_type.name == "HttpStream" && struct_args.is_empty() {
+    if matches!(
+        struct_type.name.as_str(),
+        "HttpStream" | "BlockingHttpStream"
+    ) && struct_args.is_empty()
+    {
         out.push_str("struct ");
         out.push_str(&c_struct_ident(&struct_type.name, struct_args));
         out.push_str(" {\n");

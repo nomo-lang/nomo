@@ -184,8 +184,8 @@ fn accepts_http_client_builtins() {
 import std.http
 
 fn main() -> Result<void, HttpError> {
-    let first: HttpResponse = http.get("http://127.0.0.1/hello")?
-    let second: HttpResponse = http.post("http://127.0.0.1/echo", "body")?
+    let first: HttpResponse = http.get_blocking("http://127.0.0.1/hello")?
+    let second: HttpResponse = http.post_blocking("http://127.0.0.1/echo", "body")?
     return Ok(void)
 }
 "#;
@@ -205,7 +205,7 @@ fn main() -> Result<void, HttpError> {
             value_type: ValueType::Struct(ref value_name, ref args),
             result_expr: ValueExpr::Call { name: ref call_name, .. },
             ..
-        } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_GET_EXPR
+        } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_GET_BLOCKING_EXPR
     ));
     assert!(matches!(
         main.body[1],
@@ -213,7 +213,7 @@ fn main() -> Result<void, HttpError> {
             value_type: ValueType::Struct(ref value_name, ref args),
             result_expr: ValueExpr::Call { name: ref call_name, .. },
             ..
-        } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_POST_EXPR
+        } if value_name == "HttpResponse" && args.is_empty() && call_name == BUILTIN_HTTP_POST_BLOCKING_EXPR
     ));
 }
 
@@ -235,7 +235,7 @@ fn main() -> Result<void, HttpError> {
         timeout_millis: 1000,
         max_response_bytes: 4096
     }
-    let response: HttpResponse = http.send(request)?
+    let response: HttpResponse = http.send_blocking(request)?
     return Ok(void)
 }
 "#;
@@ -262,7 +262,7 @@ fn main() -> Result<void, HttpError> {
         Statement::QuestionLet {
             result_expr: ValueExpr::Call { name, .. },
             ..
-        } if name == BUILTIN_HTTP_SEND_EXPR
+        } if name == BUILTIN_HTTP_SEND_BLOCKING_EXPR
     )));
     let c = nomo_codegen_c::emit_c(&program);
     assert!(
@@ -279,11 +279,11 @@ import std.array.Array
 import std.http
 
 fn stream(request: HttpRequest) -> Result<void, HttpError> {
-    let response: HttpStream = http.open_stream(request, 1000)?
-    defer http.close_stream(response)
-    let chunk: HttpStreamChunk = http.read_text(response, 4096)?
-    let event: Option<SseEvent> = http.next_sse(response, 65536)?
-    http.cancel_stream(response)
+    let response: BlockingHttpStream = http.open_stream_blocking(request, 1000)?
+    defer http.close_stream_blocking(response)
+    let chunk: HttpStreamChunk = http.read_text_blocking(response, 4096)?
+    let event: Option<SseEvent> = http.next_sse_blocking(response, 65536)?
+    http.cancel_stream_blocking(response)
     return Ok(void)
 }
 
@@ -296,7 +296,7 @@ fn main() -> void {
         "HttpError",
         "HttpHeader",
         "HttpRequest",
-        "HttpStream",
+        "BlockingHttpStream",
         "HttpStreamChunk",
         "SseEvent",
     ] {
@@ -308,11 +308,11 @@ fn main() -> void {
         .find(|function| function.name == "stream")
         .unwrap();
     for intrinsic in [
-        BUILTIN_HTTP_OPEN_STREAM_EXPR,
-        BUILTIN_HTTP_READ_TEXT_EXPR,
-        BUILTIN_HTTP_NEXT_SSE_EXPR,
-        BUILTIN_HTTP_CANCEL_STREAM_EXPR,
-        BUILTIN_HTTP_CLOSE_STREAM_EXPR,
+        BUILTIN_HTTP_OPEN_STREAM_BLOCKING_EXPR,
+        BUILTIN_HTTP_READ_TEXT_BLOCKING_EXPR,
+        BUILTIN_HTTP_NEXT_SSE_BLOCKING_EXPR,
+        BUILTIN_HTTP_CANCEL_STREAM_BLOCKING_EXPR,
+        BUILTIN_HTTP_CLOSE_STREAM_BLOCKING_EXPR,
     ] {
         assert!(stream.body.iter().any(|statement| match statement {
             Statement::QuestionLet {
@@ -328,11 +328,11 @@ fn main() -> void {
     }
     let c = nomo_codegen_c::emit_c(&program);
     for symbol in [
-        "__nomo_http_open_stream",
-        "__nomo_http_read_text",
-        "__nomo_http_next_sse",
-        "__nomo_http_cancel_stream",
-        "__nomo_http_close_stream",
+        "__nomo_http_open_stream_blocking",
+        "__nomo_http_read_text_blocking",
+        "__nomo_http_next_sse_blocking",
+        "__nomo_http_cancel_stream_blocking",
+        "__nomo_http_close_stream_blocking",
         "nomo_enum_Option_u64",
         "curl_multi_perform",
     ] {
@@ -350,12 +350,12 @@ fn accepts_specific_http_builtin_imports() {
 
 import std.http.HttpError
 import std.http.HttpResponse
-import std.http.get
-import std.http.post
+import std.http.get_blocking
+import std.http.post_blocking
 
 fn main() -> Result<void, HttpError> {
-    let first: HttpResponse = get("http://127.0.0.1/hello")?
-    let second: HttpResponse = post("http://127.0.0.1/echo", "body")?
+    let first: HttpResponse = get_blocking("http://127.0.0.1/hello")?
+    let second: HttpResponse = post_blocking("http://127.0.0.1/echo", "body")?
     return Ok(void)
 }
 "#;
@@ -367,14 +367,14 @@ fn main() -> Result<void, HttpError> {
         Statement::QuestionLet {
             result_expr: ValueExpr::Call { ref name, .. },
             ..
-        } if name == BUILTIN_HTTP_GET_EXPR
+        } if name == BUILTIN_HTTP_GET_BLOCKING_EXPR
     ));
     assert!(matches!(
         main.body[1],
         Statement::QuestionLet {
             result_expr: ValueExpr::Call { ref name, .. },
             ..
-        } if name == BUILTIN_HTTP_POST_EXPR
+        } if name == BUILTIN_HTTP_POST_BLOCKING_EXPR
     ));
 }
 

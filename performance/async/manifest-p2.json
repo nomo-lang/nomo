@@ -123,6 +123,17 @@
       "claim_eligible": true
     },
     {
+      "id": "http_sse_contract",
+      "kind": "required_async_workload",
+      "available_phase": "P2",
+      "enabled": false,
+      "claim_eligible": false,
+      "nomo_project": "reference/nomo/http_sse_contract",
+      "expected_stdout": "async-http runtime_unavailable\n",
+      "snapshot": "snapshots/http-sse-contract.json",
+      "note": "P2-HTTP-A statically gates the typed owner-affine suspend ABI, secret-safe runtime_unavailable placeholder, cancellation/drop wiring, and the absence of blocking transport; it is not performance-claim eligible."
+    },
+    {
       "id": "http_keep_alive",
       "kind": "required_async_workload",
       "available_phase": "P2",

@@ -1569,6 +1569,7 @@ fn expected_stdout(example: &str) -> Option<&'static str> {
         "primitives" => "primitives ok\n",
         "process_controlled_blocking" => "set NOMO_PROCESS_FIXTURE to a line-oriented executable\n",
         "async_process_pipe_contract" => "spawn\n",
+        "async_http_contract" => "async-http runtime_unavailable\n",
         "async_process_pipe_unix" => "stdin flushed\nasync:hello from Nomo\nexit 0 0\n",
         "async_process_pipe_windows" => "stdin flushed\nasync:hello from Nomo\nexit 0 0\n",
         "async_process_stress" => "saturation limit\nslot reuse 32\n",

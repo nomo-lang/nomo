@@ -96,6 +96,13 @@ per-child thread 或 `poll` loop。native CLI fixture 会验证 stdin/output/exi
 顺序、timeout 后复用、cancellation、termination、secret safety 与 shutdown
 后的 live counter 全归零。
 
+`http_sse_contract` 是禁用且不具备性能声明资格的 P2-HTTP-A ABI 门禁。
+snapshot 要求 buffered request 与 stream/SSE pull 都具有带类型的
+start/resume entry point，同时要求 cancellation、shutdown hook 与稳定的
+`runtime_unavailable` placeholder；这个切片还明确禁止 libcurl/WinHTTP
+transport、额外线程或普通集合 atomic 成本。真正的 native HTTP 性能 workload
+要等 P2-HTTP-B/C 提供 owner-reactor I/O 后才会启用。
+
 `manifest-p2.json` 启用不具备性能声明资格的 P2-PROC-E 对照。Nomo 与固定的
 Go 1.25.12 control 都启动同一个 C99 child fixture，复用一个 child，并通过
 stdin、stdout 与 stderr 完成 256 次相同的 63-byte line exchange。两侧都使用

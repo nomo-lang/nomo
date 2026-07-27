@@ -3,7 +3,7 @@ use super::*;
 pub(super) fn emit_http_stream_helpers(out: &mut String) {
     let header_type = ValueType::Struct("HttpHeader".to_string(), Vec::new());
     let http_error_type = ValueType::Struct("HttpError".to_string(), Vec::new());
-    let http_stream_type = ValueType::Struct("HttpStream".to_string(), Vec::new());
+    let http_stream_type = ValueType::Struct("BlockingHttpStream".to_string(), Vec::new());
     let chunk_type = ValueType::Struct("HttpStreamChunk".to_string(), Vec::new());
     let event_type = ValueType::Struct("SseEvent".to_string(), Vec::new());
     let event_option_type = ValueType::Enum("Option".to_string(), vec![event_type.clone()]);
@@ -25,7 +25,7 @@ pub(super) fn emit_http_stream_helpers(out: &mut String) {
         .replace("@HTTP_HEADER@", &c_struct_ident("HttpHeader", &[]))
         .replace("@HTTP_REQUEST@", &c_struct_ident("HttpRequest", &[]))
         .replace("@HTTP_ERROR@", &c_struct_ident("HttpError", &[]))
-        .replace("@HTTP_STREAM@", &c_struct_ident("HttpStream", &[]))
+        .replace("@HTTP_STREAM@", &c_struct_ident("BlockingHttpStream", &[]))
         .replace(
             "@HTTP_STREAM_CHUNK@",
             &c_struct_ident("HttpStreamChunk", &[]),
@@ -122,13 +122,25 @@ pub(super) fn emit_http_stream_helpers(out: &mut String) {
             "@MAX_RESPONSE_MEMBER@",
             &c_member_ident("max_response_bytes"),
         )
-        .replace("@OPEN_NAME@", &c_fn_ident(BUILTIN_HTTP_OPEN_STREAM_EXPR))
-        .replace("@READ_NAME@", &c_fn_ident(BUILTIN_HTTP_READ_TEXT_EXPR))
-        .replace("@SSE_NAME@", &c_fn_ident(BUILTIN_HTTP_NEXT_SSE_EXPR))
+        .replace(
+            "@OPEN_NAME@",
+            &c_fn_ident(BUILTIN_HTTP_OPEN_STREAM_BLOCKING_EXPR),
+        )
+        .replace(
+            "@READ_NAME@",
+            &c_fn_ident(BUILTIN_HTTP_READ_TEXT_BLOCKING_EXPR),
+        )
+        .replace(
+            "@SSE_NAME@",
+            &c_fn_ident(BUILTIN_HTTP_NEXT_SSE_BLOCKING_EXPR),
+        )
         .replace(
             "@CANCEL_NAME@",
-            &c_fn_ident(BUILTIN_HTTP_CANCEL_STREAM_EXPR),
+            &c_fn_ident(BUILTIN_HTTP_CANCEL_STREAM_BLOCKING_EXPR),
         )
-        .replace("@CLOSE_NAME@", &c_fn_ident(BUILTIN_HTTP_CLOSE_STREAM_EXPR));
+        .replace(
+            "@CLOSE_NAME@",
+            &c_fn_ident(BUILTIN_HTTP_CLOSE_STREAM_BLOCKING_EXPR),
+        );
     out.push_str(&rendered);
 }

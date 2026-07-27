@@ -177,12 +177,12 @@ fn imports_std_operation(imports: &[String], module: &str, operation: &str) -> b
 
 fn blocking_http_operation(operation: &str) -> Option<&'static str> {
     match operation {
-        "get" => Some("http.get"),
-        "post" => Some("http.post"),
-        "send" => Some("http.send"),
-        "open_stream" => Some("http.open_stream"),
-        "read_text" => Some("http.read_text"),
-        "next_sse" => Some("http.next_sse"),
+        "get_blocking" => Some("http.get_blocking"),
+        "post_blocking" => Some("http.post_blocking"),
+        "send_blocking" => Some("http.send_blocking"),
+        "open_stream_blocking" => Some("http.open_stream_blocking"),
+        "read_text_blocking" => Some("http.read_text_blocking"),
+        "next_sse_blocking" => Some("http.next_sse_blocking"),
         "listen" => Some("http.listen"),
         "accept" => Some("http.accept"),
         "respond_string" => Some("http.respond_string"),
@@ -1118,7 +1118,10 @@ fn p1_frame_resource_struct(struct_type: &StructType) -> bool {
             (struct_type.package.as_str(), struct_type.name.as_str()),
             ("std.fs", "File")
                 | ("std.net", "TcpListener" | "UdpSocket")
-                | ("std.http", "HttpServer" | "HttpExchange" | "HttpStream")
+                | (
+                    "std.http",
+                    "HttpServer" | "HttpExchange" | "BlockingHttpStream"
+                )
                 | ("std.process", "BlockingProcessChild")
                 | ("std.task", "Task" | "TaskContext")
                 | ("std.sqlite", "SqliteDatabase" | "SqliteQuery")
@@ -1137,6 +1140,7 @@ fn ast_statement_contains_runtime_suspend(statement: &Stmt, imports: &[String]) 
             || ast_expr_is_direct_sleep(candidate, imports, &HashSet::new())
             || ast_expr_is_direct_net_connect(candidate, imports)
             || ast_expr_is_direct_tcp_stream_io(candidate, imports)
+            || ast_expr_is_direct_http_suspend(candidate, imports)
             || ast_expr_is_direct_process_suspend(candidate, imports)
             || ast_expr_is_direct_channel_suspend(candidate, imports)
             || ast_expr_is_check_cancelled(candidate, imports)
@@ -1320,6 +1324,9 @@ fn ast_expr_is_direct_suspension(
     if ast_expr_is_direct_tcp_stream_io(expr, imports) {
         return true;
     }
+    if ast_expr_is_direct_http_suspend(expr, imports) {
+        return true;
+    }
     if ast_expr_is_direct_process_suspend(expr, imports) {
         return true;
     }
@@ -1389,6 +1396,63 @@ fn ast_expr_is_direct_tcp_stream_io(expr: &AstExpr, imports: &[String]) -> bool 
             !ast_expr_contains_suspension(argument, imports, &HashSet::new())
                 && !ast_expr_contains_frame_exit(argument)
         })
+}
+
+fn ast_expr_is_direct_http_suspend(expr: &AstExpr, imports: &[String]) -> bool {
+    let AstExpr::Call {
+        callee,
+        type_args,
+        args,
+    } = expr
+    else {
+        return false;
+    };
+    let operation = match callee.as_slice() {
+        [module, operation]
+            if module == "http"
+                && imports_std_operation(imports, "http", operation)
+                && matches!(
+                    operation.as_str(),
+                    "get" | "post" | "send" | "open_stream" | "read_text" | "next_sse"
+                ) =>
+        {
+            Some(operation.as_str())
+        }
+        [root, module, operation]
+            if root == "std"
+                && module == "http"
+                && matches!(
+                    operation.as_str(),
+                    "get" | "post" | "send" | "open_stream" | "read_text" | "next_sse"
+                ) =>
+        {
+            Some(operation.as_str())
+        }
+        [operation]
+            if matches!(
+                operation.as_str(),
+                "get" | "post" | "send" | "open_stream" | "read_text" | "next_sse"
+            ) && imports
+                .iter()
+                .any(|item| item == &format!("std.http.{operation}")) =>
+        {
+            Some(operation.as_str())
+        }
+        _ => None,
+    };
+    operation.is_some_and(|operation| {
+        let expected_args = match operation {
+            "get" | "send" => 1,
+            "post" | "open_stream" | "read_text" | "next_sse" => 2,
+            _ => unreachable!(),
+        };
+        type_args.is_empty()
+            && args.len() == expected_args
+            && args.iter().all(|argument| {
+                !ast_expr_contains_suspension(argument, imports, &HashSet::new())
+                    && !ast_expr_contains_frame_exit(argument)
+            })
+    })
 }
 
 fn ast_expr_is_direct_process_suspend(expr: &AstExpr, imports: &[String]) -> bool {
@@ -1651,6 +1715,12 @@ fn ir_statement_contains_runtime_suspend(statement: &Statement) -> bool {
             if (name == BUILTIN_TASK_YIELD_EXPR && args.is_empty())
                 || (name == BUILTIN_TASK_SLEEP_EXPR && args.len() == 1)
                 || (name == BUILTIN_NET_CONNECT_EXPR && args.len() == 3)
+                || (name == BUILTIN_HTTP_GET_EXPR && args.len() == 1)
+                || (name == BUILTIN_HTTP_POST_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_SEND_EXPR && args.len() == 1)
+                || (name == BUILTIN_HTTP_OPEN_STREAM_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_READ_TEXT_EXPR && args.len() == 2)
+                || (name == BUILTIN_HTTP_NEXT_SSE_EXPR && args.len() == 2)
                 || (name == BUILTIN_PROCESS_START_EXPR && args.len() == 2)
                 || (name == BUILTIN_PROCESS_NEXT_EVENT_EXPR && args.len() == 3)
                 || (matches!(
@@ -1695,12 +1765,12 @@ mod blocking_compatibility_tests {
     #[test]
     fn classifies_the_rfc_0032_blocking_quarantine_exactly() {
         let http = [
-            ("get", "http.get"),
-            ("post", "http.post"),
-            ("send", "http.send"),
-            ("open_stream", "http.open_stream"),
-            ("read_text", "http.read_text"),
-            ("next_sse", "http.next_sse"),
+            ("get_blocking", "http.get_blocking"),
+            ("post_blocking", "http.post_blocking"),
+            ("send_blocking", "http.send_blocking"),
+            ("open_stream_blocking", "http.open_stream_blocking"),
+            ("read_text_blocking", "http.read_text_blocking"),
+            ("next_sse_blocking", "http.next_sse_blocking"),
             ("listen", "http.listen"),
             ("accept", "http.accept"),
             ("respond_string", "http.respond_string"),
@@ -1708,7 +1778,19 @@ mod blocking_compatibility_tests {
         for (operation, path) in http {
             assert_eq!(blocking_http_operation(operation), Some(path));
         }
-        for operation in ["cancel_stream", "close_stream", "close_server"] {
+        for operation in [
+            "get",
+            "post",
+            "send",
+            "open_stream",
+            "read_text",
+            "next_sse",
+            "cancel_stream",
+            "close_stream",
+            "cancel_stream_blocking",
+            "close_stream_blocking",
+            "close_server",
+        ] {
             assert_eq!(blocking_http_operation(operation), None);
         }
 

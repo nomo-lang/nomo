@@ -588,7 +588,10 @@ fn task_safe_standard_call(module: &str, operation: &str) -> bool {
     match module {
         "array" | "char" | "collections" | "cron" | "crypto" | "hash" | "json" | "jsonrpc"
         | "math" | "num" | "option" | "os" | "path" | "regex" | "result" | "string" => true,
-        "http" => matches!(operation, "get" | "post" | "send"),
+        "http" => matches!(
+            operation,
+            "get_blocking" | "post_blocking" | "send_blocking"
+        ),
         "time" => !matches!(operation, "now_millis"),
         "task" => operation == "is_cancelled",
         "Array" => operation == "new",

@@ -120,6 +120,13 @@ per-child threads or `poll` loop. Native CLI fixtures validate stdin/output/
 exit ordering, timeout reuse, cancellation, termination, secret safety, and
 zero live counters after shutdown.
 
+`http_sse_contract` is a disabled, claim-ineligible P2-HTTP-A ABI gate. Its
+snapshot requires typed start/resume entry points for buffered requests and
+stream/SSE pulls, cancellation and shutdown hooks, and the stable
+`runtime_unavailable` placeholder. It also forbids libcurl/WinHTTP transport,
+threads, or atomic collection costs in this slice. Native HTTP performance
+workloads remain disabled until P2-HTTP-B/C provide real owner-reactor I/O.
+
 `manifest-p2.json` enables the claim-ineligible P2-PROC-E comparison. Nomo and
 the pinned Go 1.25.12 control both launch the same C99 child fixture, keep one
 child alive, and complete 256 exchanges of the same 63-byte line through

@@ -25,6 +25,8 @@ acceptance gate has passed.
   defines owner-affine async process pipes and their blocking migration.
 - [RFC 0039](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0039-loop-carried-coroutine-state-and-suspension-safe-mutation.md)
   defines bounded loop-carried coroutine state and suspension-safe mutation.
+- [RFC 0040](https://github.com/nomo-lang/rfcs/blob/main/en/rfcs/0040-owner-affine-async-http-and-sse-migration.md)
+  defines owner-affine HTTP/SSE suspension and explicit blocking migration.
 
 [中文版本](async-runtime.zh-CN.md)
 
@@ -55,8 +57,8 @@ always-ready suspend function does not create an executor.
 
 The compiler also rejects a `suspend fn` whose transitive call graph reaches a
 quarantined blocking compatibility API. E0891 covers blocking sleep and TCP
-compatibility calls, HTTP/HTTPS request and stream progress, blocking HTTP
-server progress, legacy shell helpers, and process lifecycle operations that
+compatibility calls, explicit HTTP/HTTPS `_blocking` client and stream
+progress, blocking HTTP server progress, legacy shell helpers, and process lifecycle operations that
 can spawn, wait, terminate, or reap. It reports only the function/API call
 path, never argument values. Synchronous functions and legacy isolated workers
 retain the blocking APIs. The
@@ -65,6 +67,16 @@ on the native C99 current-thread backend. Its duration is evaluated once, a
 non-positive duration completes inline, and a positive duration registers an
 owner-local monotonic timer. The browser sandbox returns a stable
 `runtime_unavailable` result until its host-driven timer backend lands.
+
+P2-HTTP-A reserves unsuffixed `http.get`, `post`, `send`, `open_stream`,
+`read_text`, and `next_sse` for direct-style suspension. C99 lowering gives
+each operation a typed registration/result frame slot plus start, resume,
+cancel, and exactly-once result-drop paths. This contract slice completes
+ready with secret-safe `runtime_unavailable` and emits no libcurl/WinHTTP call;
+P2-HTTP-B/C add owner-reactor transport. The prior implementation remains
+available only through explicit `_blocking` names and `BlockingHttpStream`.
+See [`examples/async_http_contract`](../examples/async_http_contract) and the
+claim-ineligible `http_sse_contract` snapshot.
 
 The P2-TCP-A/B/C/D slices provide direct-style connect, bounded incremental
 reads, and complete writes:
@@ -227,7 +239,7 @@ override it in this slice:
 | --- | --- |
 | numeric, `bool`, `char` | Copy; the source binding remains available |
 | `string`, `CString`, `Array<T>`, `Map<K,V>`, ordinary structs/enums | Send when every nested type is Send; a named binding is consumed |
-| `File`, sockets, HTTP server/exchange/stream, `ProcessChild`, `BlockingProcessChild`, SQLite/task/FFI handles | Local/!Send and rejected |
+| `File`, sockets, HTTP server/exchange/`HttpStream`/`BlockingHttpStream`, `ProcessChild`, `BlockingProcessChild`, SQLite/task/FFI handles | Local/!Send and rejected |
 
 ```nomo
 let message: AgentMessage = build_message()

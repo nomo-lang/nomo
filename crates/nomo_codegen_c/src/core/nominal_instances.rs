@@ -291,13 +291,18 @@ fn collect_http_call_structs(
     out: &mut Vec<(String, Vec<ValueType>)>,
 ) {
     match name {
-        BUILTIN_HTTP_GET_EXPR | BUILTIN_HTTP_POST_EXPR | BUILTIN_HTTP_SEND_EXPR => {
+        BUILTIN_HTTP_GET_BLOCKING_EXPR
+        | BUILTIN_HTTP_POST_BLOCKING_EXPR
+        | BUILTIN_HTTP_SEND_BLOCKING_EXPR => {
             push_struct_instance(seen, out, "HttpError", &[]);
             push_struct_instance(seen, out, "HttpHeader", &[]);
             push_struct_instance(seen, out, "HttpRequest", &[]);
             push_struct_instance(seen, out, "HttpResponse", &[]);
         }
-        BUILTIN_HTTP_OPEN_STREAM_EXPR
+        BUILTIN_HTTP_GET_EXPR
+        | BUILTIN_HTTP_POST_EXPR
+        | BUILTIN_HTTP_SEND_EXPR
+        | BUILTIN_HTTP_OPEN_STREAM_EXPR
         | BUILTIN_HTTP_READ_TEXT_EXPR
         | BUILTIN_HTTP_NEXT_SSE_EXPR
         | BUILTIN_HTTP_CANCEL_STREAM_EXPR
@@ -307,6 +312,19 @@ fn collect_http_call_structs(
             push_struct_instance(seen, out, "HttpRequest", &[]);
             push_struct_instance(seen, out, "HttpResponse", &[]);
             push_struct_instance(seen, out, "HttpStream", &[]);
+            push_struct_instance(seen, out, "HttpStreamChunk", &[]);
+            push_struct_instance(seen, out, "SseEvent", &[]);
+        }
+        BUILTIN_HTTP_OPEN_STREAM_BLOCKING_EXPR
+        | BUILTIN_HTTP_READ_TEXT_BLOCKING_EXPR
+        | BUILTIN_HTTP_NEXT_SSE_BLOCKING_EXPR
+        | BUILTIN_HTTP_CANCEL_STREAM_BLOCKING_EXPR
+        | BUILTIN_HTTP_CLOSE_STREAM_BLOCKING_EXPR => {
+            push_struct_instance(seen, out, "HttpError", &[]);
+            push_struct_instance(seen, out, "HttpHeader", &[]);
+            push_struct_instance(seen, out, "HttpRequest", &[]);
+            push_struct_instance(seen, out, "HttpResponse", &[]);
+            push_struct_instance(seen, out, "BlockingHttpStream", &[]);
             push_struct_instance(seen, out, "HttpStreamChunk", &[]);
             push_struct_instance(seen, out, "SseEvent", &[]);
         }

@@ -6,10 +6,10 @@ import std.http
 import std.io
 import std.string.concat
 
-fn consume_events(stream: HttpStream) -> Result<void, HttpError> {
+fn consume_events(stream: BlockingHttpStream) -> Result<void, HttpError> {
     let mut done: bool = false
     for !done {
-        let next: Option<SseEvent> = http.next_sse(stream, 1048576)?
+        let next: Option<SseEvent> = http.next_sse_blocking(stream, 1048576)?
         match next {
             Some(event) => {
                 io.println(event.event)
@@ -30,8 +30,8 @@ fn request_completion(endpoint: string, token: string) -> Result<void, HttpError
     headers.push(HttpHeader { name: "Content-Type", value: "application/json" })
     headers.push(HttpHeader { name: "Accept", value: "text/event-stream" })
     let request: HttpRequest = HttpRequest { method: "POST", url: concat(endpoint, "/v1/chat/completions"), headers: headers, body: "{\"model\":\"nomo-fixture\",\"messages\":[{\"role\":\"user\",\"content\":\"Stream from Nomo\"}],\"stream\":true}", timeout_millis: 5000, max_response_bytes: 1048576 }
-    let stream: HttpStream = http.open_stream(request, 5000)?
-    defer http.close_stream(stream)
+    let stream: BlockingHttpStream = http.open_stream_blocking(request, 5000)?
+    defer http.close_stream_blocking(stream)
     io.println(stream.status)
     consume_events(stream)?
     return Ok(void)

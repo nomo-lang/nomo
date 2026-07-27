@@ -153,6 +153,7 @@ typedef struct {
 } nomo_async_process_wide_text;
 
 static void nomo_async_process_trace(const char *stage) {
+    DWORD previous_error = GetLastError();
     char path[4096];
     DWORD length = GetEnvironmentVariableA(
         "NOMO_ASYNC_PROCESS_TRACE_PATH",
@@ -160,14 +161,17 @@ static void nomo_async_process_trace(const char *stage) {
         (DWORD)sizeof(path)
     );
     if (length == 0u || length >= (DWORD)sizeof(path)) {
+        SetLastError(previous_error);
         return;
     }
     FILE *trace = fopen(path, "ab");
     if (trace == NULL) {
+        SetLastError(previous_error);
         return;
     }
     fprintf(trace, "%s\n", stage);
     fclose(trace);
+    SetLastError(previous_error);
 }
 
 static @PROCESS_ERROR@ nomo_async_process_error_value(

@@ -10,6 +10,8 @@ mod cli_deps;
 mod cli_doc;
 #[path = "nomo_cli/ffi.rs"]
 mod cli_ffi;
+#[path = "nomo_cli/fix.rs"]
+mod cli_fix;
 #[path = "nomo_cli/fmt.rs"]
 mod cli_fmt;
 #[path = "nomo_cli/manifest.rs"]
@@ -26,6 +28,7 @@ use cli_common::{run_build_command, run_check_command, run_clean_command, run_ru
 use cli_deps::run_deps_command;
 use cli_doc::run_doc_command;
 use cli_ffi::run_ffi_command;
+use cli_fix::run_fix_command;
 use cli_fmt::run_fmt_command;
 use cli_manifest::run_manifest_command;
 use cli_registry::{
@@ -67,6 +70,7 @@ fn run() -> Result<(), String> {
         "build" => run_build_command(args),
         "run" => run_run_command(args),
         "fmt" => run_fmt_command(args),
+        "fix" => run_fix_command(args),
         "manifest" => run_manifest_command(args),
         "test" => run_test_command(args),
         "doc" => run_doc_command(args),
@@ -92,7 +96,7 @@ fn run() -> Result<(), String> {
 
 fn print_help() {
     println!(
-        "nomo {}\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo manifest migrate [path] [--check]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n",
+        "nomo {}\n\nCommands:\n  nomo new <name>\n  nomo check [path] [--json-errors] [--workspace]\n  nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]\n  nomo run [path] [--json-errors] [-- args...]\n  nomo fmt [path] [--check] [--json-errors]\n  nomo fix module-roots [path] [--check]\n  nomo manifest migrate [path] [--check]\n  nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]\n  nomo doc [path] [--workspace] [--package <package>] [--std] [--open] [--json] [--output <dir>]\n  nomo clean [path]\n  nomo cache stats [path]\n  nomo cache clean [path]\n  nomo cache prune [path] --max-bytes <bytes>\n  nomo login --registry <url> --token <token>\n  nomo owner add <owner/package> <user> --registry <url>\n  nomo owner remove <owner/package> <user> --registry <url>\n  nomo add <alias>@<owner>/<package>:<version> [path] [--registry <url>]\n  nomo remove <alias> [path]\n  nomo search <query> --registry <url>\n  nomo yank <owner/package> <version> --registry <url>\n  nomo publish [path] (--dry-run | --registry <url>) [--output <dir>] [--json-errors]\n  nomo deps resolve [path] [--workspace] [--locked] [--offline] [--frozen]\n  nomo deps tree [path] [--workspace] [--target <triple>] [--locked] [--offline] [--frozen]\n  nomo deps update [path] [alias-or-package] [--workspace] [--offline] [--precise <version-or-rev>]\n  nomo deps vendor [path] [--workspace] [--dir vendor] [--sync]\n  nomo deps clean-cache [path]\n  nomo ffi bindgen <header> --package <package> --output <file> [--provenance <file>]\n",
         env!("CARGO_PKG_VERSION")
     );
     println!(

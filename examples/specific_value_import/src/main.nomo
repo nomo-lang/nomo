@@ -1,4 +1,4 @@
-package app.main
+package specific_value_import
 
 import std.env.args
 import std.env.get
@@ -6,7 +6,7 @@ import std.io.println
 import std.string.concat
 import std.string.len
 
-fn main() -> void {
+fn main() {
     let message: string = concat("specific ", "value import ok")
     let env_value: Option<string> = get("NOMO_EXAMPLE_ENV")
     let values = args()

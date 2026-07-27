@@ -204,5 +204,6 @@ the same code.
 - [E1524](E1524.md) - invalid extern C callback type
 - [E1525](E1525.md) - callback is not ABI-safe
 - [E1530](E1530.md) - invalid repr(C) layout
+- [W0904](W0904.md) - legacy module package declaration compatibility window
 
 More codes should be added as implementation slices stabilize their diagnostics.

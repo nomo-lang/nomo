@@ -1,4 +1,4 @@
-package app.main
+package defer_question
 
 import std.io
 
@@ -6,7 +6,7 @@ fn fail_label() -> Result<string, string> {
     return Err("fail")
 }
 
-fn cleanup(label: string) -> void {
+fn cleanup(label: string) {
     io.println(label)
 }
 
@@ -16,7 +16,7 @@ fn run() -> Result<string, string> {
     return Ok(label)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<string, string> = run()
     match result {
         Ok(label) => {

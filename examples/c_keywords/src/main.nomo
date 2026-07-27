@@ -1,4 +1,4 @@
-package app.main
+package c_keywords
 
 import std.io
 
@@ -22,7 +22,7 @@ fn label(value: KeywordResult) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let item: KeywordBox = KeywordBox { default: 7 }
     let result: KeywordResult = KeywordResult.long(item)
     io.println(label(result))

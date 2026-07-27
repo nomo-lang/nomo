@@ -135,7 +135,7 @@ pub fn remove<K, V>(mut self: Map<K, V>, key: K) -> Option<V> {
 }
 
 /// Removes all entries.
-pub fn clear<K, V>(mut self: Map<K, V>) -> void {
+pub fn clear<K, V>(mut self: Map<K, V>) {
     let mut keys = self.keys
     let mut values = self.values
     keys.clear()

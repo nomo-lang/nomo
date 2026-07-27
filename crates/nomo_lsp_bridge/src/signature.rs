@@ -41,14 +41,14 @@ pub(super) fn function_signature(function: &Function) -> String {
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&function.return_type);
     format!(
-        "{}{}fn {}{}({}) -> {}",
+        "{}{}fn {}{}({}){return_type}",
         visibility_prefix(function.public),
         suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
-        type_ref(&function.return_type)
     )
 }
 
@@ -59,14 +59,14 @@ pub(super) fn method_signature(receiver: &str, function: &Function) -> String {
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&function.return_type);
     format!(
-        "{}{}fn {receiver}.{}{}({}) -> {}",
+        "{}{}fn {receiver}.{}{}({}){return_type}",
         visibility_prefix(function.public),
         suspend_prefix(function.is_suspend),
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
-        type_ref(&function.return_type)
     )
 }
 
@@ -77,13 +77,13 @@ pub(super) fn extern_function_signature(abi: &str, function: &FunctionSignature)
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&function.return_type);
     format!(
-        "extern \"{}\" fn {}{}({}) -> {}",
+        "extern \"{}\" fn {}{}({}){return_type}",
         abi,
         function.name,
         type_params_with_bounds(&function.type_params, &function.type_param_bounds),
         params,
-        type_ref(&function.return_type)
     )
 }
 
@@ -94,14 +94,22 @@ pub(super) fn interface_method_signature(owner: &str, method: &FunctionSignature
         .map(param)
         .collect::<Vec<_>>()
         .join(", ");
+    let return_type = declaration_return_suffix(&method.return_type);
     format!(
-        "{}fn {owner}.{}{}({}) -> {}",
+        "{}fn {owner}.{}{}({}){return_type}",
         suspend_prefix(method.is_suspend),
         method.name,
         type_params_with_bounds(&method.type_params, &method.type_param_bounds),
         params,
-        type_ref(&method.return_type)
     )
+}
+
+fn declaration_return_suffix(return_type: &TypeRef) -> String {
+    if return_type.is_void() {
+        String::new()
+    } else {
+        format!(" -> {}", type_ref(return_type))
+    }
 }
 
 fn suspend_prefix(is_suspend: bool) -> &'static str {
@@ -226,5 +234,44 @@ mod tests {
 
         let function = symbols.iter().find(|symbol| symbol.name == "run").unwrap();
         assert_eq!(function.signature, "pub suspend fn run() -> string");
+    }
+
+    #[test]
+    fn semantic_signatures_omit_declaration_void_but_keep_callable_void() {
+        let source = "package app.main\n\npub interface Sink {\n    fn close(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64) -> void\n}\n\npub fn run(callback: task fn(string) -> void) -> void {\n}\n\npub suspend fn flush() -> void {\n}\n";
+        let symbols = crate::symbols_for_text(Path::new("main.nomo"), source).unwrap();
+
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "close")
+                .unwrap()
+                .signature,
+            "fn Sink.close(self: Self)"
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "release")
+                .unwrap()
+                .signature,
+            "extern \"C\" fn release(handle: i64)"
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "run")
+                .unwrap()
+                .signature,
+            "pub fn run(callback: task fn(string) -> void)"
+        );
+        assert_eq!(
+            symbols
+                .iter()
+                .find(|symbol| symbol.name == "flush")
+                .unwrap()
+                .signature,
+            "pub suspend fn flush()"
+        );
     }
 }

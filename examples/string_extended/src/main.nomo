@@ -1,11 +1,11 @@
-package app.main
+package string_extended
 
 import std.array
 import std.io
 import std.option
 import std.string
 
-fn main() -> void {
+fn main() {
     let text: string = "  NoMo  "
     if !text.is_empty() && text.contains("No") && text.starts_with("  N") && text.ends_with("  ") {
         io.println("predicates")

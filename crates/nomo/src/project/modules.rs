@@ -8,7 +8,8 @@ use super::{
     vendor::{locked_or_vendor_source_root, vendored_source_root},
 };
 use crate::compiler::{
-    ExternalModule, ModuleGraph, build_module_graph_with_overrides as compiler_module_graph,
+    ExternalModule, ModuleGraph, ModulePackageIdentity,
+    build_module_graph_with_module_identity_and_overrides as compiler_module_graph,
 };
 use crate::diagnostic::Diagnostic;
 use nomo_lockfile::{ResolvedDependency, filter_dependencies_for_target};
@@ -25,6 +26,7 @@ use std::path::{Path, PathBuf};
 #[derive(Debug, Clone)]
 pub struct ProjectModuleContext {
     pub local_source_root: PathBuf,
+    pub local_identity: ModulePackageIdentity,
     pub external_import_roots: Vec<String>,
     pub external_modules: Vec<ExternalModule>,
 }
@@ -72,7 +74,8 @@ pub fn project_module_graph_with_overrides(
     compiler_module_graph(
         &project.main,
         &source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_modules,
         source_overrides,
     )
@@ -98,6 +101,14 @@ fn resolve_module_source_root<'a>(
         return None;
     }
     if first == local_import_root {
+        return Some((context.local_source_root.as_path(), &import[1..]));
+    }
+    if first == "app"
+        && !context
+            .external_modules
+            .iter()
+            .any(|module| module.import_root == "app")
+    {
         return Some((context.local_source_root.as_path(), &import[1..]));
     }
     context
@@ -155,6 +166,10 @@ pub fn project_module_context_for_target_with_options(
     }
 
     let manifest = parse_manifest_at_root(&project.root)?;
+    let local_identity = ModulePackageIdentity {
+        module_root: package_name_to_module_root(&manifest.package.name)?,
+        canonical_package: format!("{}/{}", manifest.package.namespace, manifest.package.name),
+    };
     let mut aliases = Vec::new();
     let mut modules = Vec::new();
     for dependency in manifest
@@ -167,11 +182,16 @@ pub fn project_module_context_for_target_with_options(
         }
         if let Some(dep_root) = dependency_module_root(&project.root, &dependency, options.offline)?
         {
+            let dependency_manifest = parse_manifest_at_root(&dep_root)?;
             let source_import_root =
-                package_name_to_module_root(&parse_manifest_at_root(&dep_root)?.package.name)?;
+                package_name_to_module_root(&dependency_manifest.package.name)?;
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
                 source_import_root,
+                canonical_package: format!(
+                    "{}/{}",
+                    dependency_manifest.package.namespace, dependency_manifest.package.name
+                ),
                 source_root: dep_root.join("src"),
             });
         }
@@ -179,6 +199,7 @@ pub fn project_module_context_for_target_with_options(
     }
     Ok(ProjectModuleContext {
         local_source_root: project.root.join("src"),
+        local_identity,
         external_import_roots: aliases,
         external_modules: modules,
     })
@@ -189,6 +210,11 @@ fn project_module_context_from_resolved_dependencies(
     dependencies: &[ResolvedDependency],
     source_base: &Path,
 ) -> Result<ProjectModuleContext, String> {
+    let manifest = parse_manifest_at_root(&project.root)?;
+    let local_identity = ModulePackageIdentity {
+        module_root: package_name_to_module_root(&manifest.package.name)?,
+        canonical_package: format!("{}/{}", manifest.package.namespace, manifest.package.name),
+    };
     let mut aliases = Vec::new();
     let mut modules = Vec::new();
     for dependency in dependencies {
@@ -198,6 +224,7 @@ fn project_module_context_from_resolved_dependencies(
             modules.push(ExternalModule {
                 import_root: dependency.alias.clone(),
                 source_import_root,
+                canonical_package: dependency.package.clone(),
                 source_root: dep_root.join("src"),
             });
         }
@@ -205,6 +232,7 @@ fn project_module_context_from_resolved_dependencies(
     }
     Ok(ProjectModuleContext {
         local_source_root: project.root.join("src"),
+        local_identity,
         external_import_roots: aliases,
         external_modules: modules,
     })

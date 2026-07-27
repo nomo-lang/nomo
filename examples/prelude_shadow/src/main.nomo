@@ -1,4 +1,4 @@
-package app.main
+package prelude_shadow
 
 import std.io
 import std.string
@@ -11,7 +11,7 @@ fn parse() -> Result<string, string> {
     return Result.Ok("qualified ok")
 }
 
-fn main() -> void {
+fn main() {
     let local: string = Ok("shadow ok")
     let separator: string = " / "
     let result: Result<string, string> = parse()

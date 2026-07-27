@@ -1,4 +1,4 @@
-package util.main
+package util
 
-fn main() -> void {
+fn main() {
 }

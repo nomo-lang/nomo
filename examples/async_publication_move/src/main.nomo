@@ -1,4 +1,4 @@
-package app.main
+package async_publication_move
 
 import std.array
 import std.io
@@ -16,7 +16,7 @@ suspend fn consume(message: AgentMessage) -> string {
     return message.content
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let message: AgentMessage = AgentMessage { content: "publication", attempts: 1, tags: ["agent", "task"] }
     task.scope {
         let child = task.spawn consume(message)

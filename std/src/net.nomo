@@ -130,7 +130,7 @@ impl TcpStream {
     }
 
     /// Closes the stream.
-    pub fn close(self) -> void {
+    pub fn close(self) {
         self.close()
     }
 }
@@ -142,7 +142,7 @@ impl TcpListener {
     }
 
     /// Closes the listener.
-    pub fn close(self) -> void {
+    pub fn close(self) {
         self.close()
     }
 }
@@ -159,7 +159,7 @@ impl UdpSocket {
     }
 
     /// Closes the socket.
-    pub fn close(self) -> void {
+    pub fn close(self) {
         self.close()
     }
 }

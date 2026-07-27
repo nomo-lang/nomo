@@ -1,4 +1,4 @@
-package app.main
+package string_lifecycle
 
 import std.io
 import std.string
@@ -8,7 +8,7 @@ fn echo(value: string) -> string {
     return copy
 }
 
-fn main() -> void {
+fn main() {
     let base: string = "string "
     let echoed: string = echo(base)
     let message: string = echoed.concat("lifecycle ok")

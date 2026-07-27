@@ -1,10 +1,10 @@
-package sqlite_memory.main
+package sqlite_memory
 
 import std.array.Array
 import std.io
 import std.sqlite
 
-fn expect_text(row: SqliteRow) -> void {
+fn expect_text(row: SqliteRow) {
     let columns: Array<SqliteColumn> = row.columns
     let first: Option<SqliteColumn> = columns.get(0)
     match first {
@@ -74,7 +74,7 @@ fn run_example() -> Result<void, SqliteError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, SqliteError> = run_example()
     match result {
         Ok(value) => {

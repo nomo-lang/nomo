@@ -74,7 +74,7 @@
       "sources": {
         "nomo": {
           "path": "reference/nomo/spectral-norm/src/main.nomo",
-          "sha256": "a9e14a0fa33e722de47ed184f6f89af3c8eba466e6eab937b4c9de417b327d3b",
+          "sha256": "f0caae510fbdc02d998a8c49275c4aca0b771642348286ce871515840f47fe30",
           "project_manifest": "reference/nomo/spectral-norm/nomo.toml",
           "project_manifest_sha256": "005bfaeb3fd3d734e5c7020857fa18927064bf014679ec309bd3385b9a28f3ca",
           "derived_from": [
@@ -116,7 +116,7 @@
       "sources": {
         "nomo": {
           "path": "reference/nomo/n-body/src/main.nomo",
-          "sha256": "710b3cdf39cc062e3fb974ee91f7e0269d355892831f91e5c5ecdbdc1cf35343",
+          "sha256": "30fb086f8d5c55e0b389b7451f921a463c953db286ec9f97bb55d8b7bc595988",
           "project_manifest": "reference/nomo/n-body/nomo.toml",
           "project_manifest_sha256": "0cd1b9fd7f3ae069fce5a33ab6e92ea10e72844cb77f23d4947fd51e589e313c",
           "derived_from": [
@@ -158,7 +158,7 @@
       "sources": {
         "nomo": {
           "path": "reference/nomo/fannkuch-redux/src/main.nomo",
-          "sha256": "1d458e37ab74819007b1dbc72597f373b8909a46721b13ba388c7436fe63cc3a",
+          "sha256": "0f6d0156c03cc3218b06a1adf560c5a3e3a99188fe9b7185b619b8a4ad8881e9",
           "project_manifest": "reference/nomo/fannkuch-redux/nomo.toml",
           "project_manifest_sha256": "73cf8d9df45479fb59dce5ac34102dafba368aa4aa7cb4655512bbd1dc5ca00e",
           "derived_from": [

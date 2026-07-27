@@ -1,4 +1,4 @@
-package app.main
+package ffi_abs
 
 import std.io
 
@@ -6,7 +6,7 @@ extern "C" {
     fn abs(value: i32) -> i32
 }
 
-fn main() -> void {
+fn main() {
     unsafe {
         let magnitude: i32 = abs(-7)
     }

@@ -1,10 +1,10 @@
-package app.main
+package std_time
 
 import std.io
 import std.num
 import std.time
 
-fn main() -> void {
+fn main() {
     let short: Duration = time.duration_millis(1500)
     let long: Duration = time.duration_seconds(2)
     time.sleep(time.duration_millis(0))

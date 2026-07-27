@@ -1,4 +1,4 @@
-package app.main
+package structured_question_cancel_probe
 
 import std.io
 import std.num
@@ -6,13 +6,13 @@ import std.result
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "after")
 }
 
-suspend fn gate_child() -> void {
+suspend fn gate_child() {
     io.println("gate")
 }
 
@@ -26,7 +26,7 @@ suspend fn finish(value: string) -> Result<void, NumError> {
     }
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let outcome: Result<void, NumError> = finish("managed")
     io.println(result.is_err(outcome))
 }

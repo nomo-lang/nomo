@@ -1,4 +1,4 @@
-package app.main
+package isolated_tasks
 
 import std.array
 import std.io
@@ -210,7 +210,7 @@ fn run_tasks() -> Result<void, TaskError> {
     return Ok(void)
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<void, TaskError> = run_tasks()
     match result {
         Ok(done) => {

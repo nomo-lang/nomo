@@ -1,4 +1,4 @@
-package app.main
+package specific_type_import
 
 import std.io
 import std.result.Result
@@ -17,7 +17,7 @@ fn maybe_error(flag: bool) -> Result<Option<FsError>, string> {
     }
 }
 
-fn main() -> void {
+fn main() {
     let result: Result<Option<FsError>, string> = maybe_error(true)
     let message: string = match result {
         Ok(value) => match value {

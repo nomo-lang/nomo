@@ -1,4 +1,4 @@
-package app.main
+package generic_map
 
 import std.io
 import std.map
@@ -9,7 +9,7 @@ struct ToolDefinition {
     description: string
 }
 
-fn main() -> void {
+fn main() {
     let mut tools: Map<string, ToolDefinition> = Map.new<string, ToolDefinition>()
     let ignored: Option<ToolDefinition> = map.set<string, ToolDefinition>(mut tools, "search", ToolDefinition { name: "search", description: "Search indexed documents" })
     let keys: Array<string> = map.keys<string, ToolDefinition>(tools)

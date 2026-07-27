@@ -1,4 +1,4 @@
-package async_call_abi.main
+package async_call_abi
 
 import std.io
 import std.task
@@ -15,7 +15,7 @@ suspend fn echo_after_yield(value: string, count: u64) -> string {
     return owned
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let result: string = echo_after_yield(make_value(), 7)
     task.yield_now()
     io.println(result)

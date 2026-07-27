@@ -1,16 +1,16 @@
-package app.main
+package async_structured_void
 
 import std.io
 import std.result
 import std.task
 
-suspend fn child(label: string) -> void {
+suspend fn child(label: string) {
     io.println(label, "before")
     task.yield_now()
     io.println(label, "after")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let left = task.spawn child("left")
         let right = task.spawn child("right")

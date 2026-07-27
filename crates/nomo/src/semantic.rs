@@ -1231,8 +1231,8 @@ mod tests {
         let project = test_project("semantic_cross_module_receiver_type");
         let main = project.root.join("src/main.nomo");
         let models = project.root.join("src/models.nomo");
-        let main_source = "package app.main\n\nimport app.models\n\nstruct Team {\n    name: string\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user = User { name: \"Ada\" }\n    let team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
-        let models_source = "package app.models\n\npub struct User {\n    pub name: string\n}\n\nimpl User {\n    pub fn label(self) -> string {\n        return self.name\n    }\n}\n";
+        let main_source = "package main\n\nimport main.models\n\nstruct Team {\n    name: string\n}\n\nimpl Team {\n    fn label(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user = User { name: \"Ada\" }\n    let team = Team { name: \"Core\" }\n    let user_name: string = user.name\n    let team_name: string = team.name\n    let user_label: string = user.label()\n    let team_label: string = team.label()\n}\n";
+        let models_source = "package main.models\n\npub struct User {\n    pub name: string\n}\n\nimpl User {\n    pub fn label(self) -> string {\n        return self.name\n    }\n}\n";
         write_source(&main, main_source);
         write_source(&models, models_source);
 

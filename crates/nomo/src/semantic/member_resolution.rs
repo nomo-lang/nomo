@@ -1,5 +1,6 @@
 use crate::compiler::{
-    Program, Statement, ValueType, check_module_source_text_with_project_modules_and_overrides,
+    Program, Statement, ValueType, check_module_source_text_with_module_identity_and_overrides,
+    check_module_source_text_with_project_modules_and_overrides,
 };
 use crate::diagnostic::Diagnostic;
 use crate::project::{Project, project_module_context};
@@ -31,10 +32,11 @@ pub(super) fn member_owners_for_document(
             "",
         )
     })?;
-    let program = check_module_source_text_with_project_modules_and_overrides(
+    let program = check_module_source_text_with_module_identity_and_overrides(
         path,
         source,
-        Some(&context.local_source_root),
+        &context.local_source_root,
+        &context.local_identity,
         &context.external_import_roots,
         &context.external_modules,
         source_overrides,

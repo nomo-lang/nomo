@@ -585,7 +585,7 @@ mod tests {
             "[package]\nnamespace = \"acme\"\nname = \"app\"\nversion = \"0.1.0\"\nedition = \"2026\"\n",
         )
         .unwrap();
-        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(app.join("src/main.nomo"), "package app\n").unwrap();
 
         let legacy = discover_workspace(&root).unwrap_err();
         assert!(legacy.contains("manifest-version = 2"), "{legacy}");
@@ -630,15 +630,15 @@ mod tests {
             "[package]\nname = \"util\"\nversion = \"0.3.0\"\nnamespace.workspace = true\nedition.workspace = true\n",
         )
         .unwrap();
-        fs::write(app.join("src/main.nomo"), "package app.main\n").unwrap();
+        fs::write(app.join("src/main.nomo"), "package cli\n").unwrap();
         fs::write(
             core.join("src/main.nomo"),
-            "package core.main\n\n/// Adds values.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
+            "package core\n\n/// Adds values.\npub fn add(a: i64, b: i64) -> i64 {\n    return a + b\n}\n",
         )
         .unwrap();
         fs::write(
             util.join("src/main.nomo"),
-            "package util.main\n\npub fn identity(value: i64) -> i64 {\n    return value\n}\n",
+            "package util\n\npub fn identity(value: i64) -> i64 {\n    return value\n}\n",
         )
         .unwrap();
 
@@ -710,9 +710,13 @@ mod tests {
         reset_dir(&root);
         let first = root.join("packages/first");
         let second = root.join("packages/second");
-        for package in [&first, &second] {
+        for (package, module_root) in [(&first, "first"), (&second, "second")] {
             fs::create_dir_all(package.join("src")).unwrap();
-            fs::write(package.join("src/main.nomo"), "package app.main\n").unwrap();
+            fs::write(
+                package.join("src/main.nomo"),
+                format!("package {module_root}\n"),
+            )
+            .unwrap();
         }
         fs::write(
             root.join("nomo.toml"),
@@ -748,9 +752,13 @@ mod tests {
         reset_dir(&root);
         let first = root.join("packages/first");
         let second = root.join("packages/second");
-        for package in [&first, &second] {
+        for (package, module_root) in [(&first, "first"), (&second, "second")] {
             fs::create_dir_all(package.join("src")).unwrap();
-            fs::write(package.join("src/main.nomo"), "package app.main\n").unwrap();
+            fs::write(
+                package.join("src/main.nomo"),
+                format!("package {module_root}\n"),
+            )
+            .unwrap();
         }
         fs::write(
             root.join("nomo.toml"),
@@ -785,7 +793,7 @@ mod tests {
         let second = root.join("packages/second");
         for package in [&first, &second] {
             fs::create_dir_all(package.join("src")).unwrap();
-            fs::write(package.join("src/main.nomo"), "package app.main\n").unwrap();
+            fs::write(package.join("src/main.nomo"), "package shared\n").unwrap();
             fs::write(
                 package.join("nomo.toml"),
                 "[package]\nnamespace = \"fynn\"\nname = \"shared\"\nversion = \"0.1.0\"\n",

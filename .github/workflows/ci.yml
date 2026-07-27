@@ -144,6 +144,9 @@ jobs:
       - name: Check Standard Library Formatting
         run: cargo run --bin nomo -- fmt --check std
 
+      - name: Check canonical syntax governance
+        run: python3 scripts/check_syntax_governance.py --nomo target/release/nomo
+
       - name: Run durable SQLite Agent checkpoint across two processes
         shell: bash
         run: |

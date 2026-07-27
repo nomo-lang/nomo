@@ -1,9 +1,9 @@
-package app.main
+package array_get_none
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut items: Array<i32> = Array.new<i32>()
     items.push(1)
     let value: Option<i32> = items.get(3)

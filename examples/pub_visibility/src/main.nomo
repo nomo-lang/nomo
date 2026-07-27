@@ -1,4 +1,4 @@
-package app.main
+package pub_visibility
 
 import std.io
 
@@ -29,7 +29,7 @@ pub fn describe(value: Access) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { id: "u-1", email: "pub visibility ok" }
     io.println(describe(Access.Public(user)))
 }

@@ -4,7 +4,7 @@ use nomo_diagnostics::Diagnostic;
 use nomo_syntax::ast::{
     ConstDef, EnumDef, ExternBlock, ExternOpaqueType, Field, ForVariant, Function,
     FunctionSignature, ImplBlock, InterfaceDef, MatchStmtArm, Param, SourceFile, Stmt, StructDef,
-    TaskSelectArm, TypeParamBound,
+    TaskSelectArm, TypeParamBound, TypeRef,
 };
 use nomo_syntax::lexer::{Token, lex};
 use nomo_syntax::parser::parse;
@@ -230,14 +230,14 @@ impl<'a> Formatter<'a> {
 
     fn signature(&mut self, signature: &FunctionSignature, indent: usize, in_interface: bool) {
         let suspend = if signature.is_suspend { "suspend " } else { "" };
+        let return_type = declaration_return_suffix(&signature.return_type);
         self.line_at(
             indent,
             &format!(
-                "{suspend}fn {}{}({}) -> {}",
+                "{suspend}fn {}{}({}){return_type}",
                 signature.name,
                 type_params_with_bounds(&signature.type_params, &signature.type_param_bounds),
                 params(&signature.params, in_interface),
-                type_ref(&signature.return_type)
             ),
             signature.span.line,
         );
@@ -292,14 +292,14 @@ impl<'a> Formatter<'a> {
         }
         let prefix = if function.public { "pub " } else { "" };
         let suspend = if function.is_suspend { "suspend " } else { "" };
+        let return_type = declaration_return_suffix(&function.return_type);
         self.line_at(
             indent,
             &format!(
-                "{prefix}{suspend}fn {}{}({}) -> {} {{",
+                "{prefix}{suspend}fn {}{}({}){return_type} {{",
                 function.name,
                 type_params_with_bounds(&function.type_params, &function.type_param_bounds),
                 params(&function.params, in_impl),
-                type_ref(&function.return_type)
             ),
             function.span.line,
         );
@@ -637,6 +637,14 @@ impl<'a> Formatter<'a> {
     }
 }
 
+fn declaration_return_suffix(return_type: &TypeRef) -> String {
+    if return_type.is_void() {
+        String::new()
+    } else {
+        format!(" -> {}", type_ref(return_type))
+    }
+}
+
 fn params(params: &[Param], in_impl: bool) -> String {
     params
         .iter()
@@ -688,7 +696,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.io\n\npub struct User {\n    pub id: string\n    email: string\n}\n\nconst MAX: i32 = 100\n\npub enum State<T> {\n    Ready\n    Done(T)\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn label(value: State<i32>) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n\nfn main() -> void {\n    let mut count: i32 = 1\n    count = count + 1\n    if let State.Done(code) = State.Done(count) {\n        return\n    } else {\n        defer io.println(\"missing\")\n    }\n    for item in items {\n        break\n        continue\n    }\n}\n"
+            "package app.main\n\nimport std.io\n\npub struct User {\n    pub id: string\n    email: string\n}\n\nconst MAX: i32 = 100\n\npub enum State<T> {\n    Ready\n    Done(T)\n}\n\nimpl User {\n    pub fn get_email(self) -> string {\n        return self.email\n    }\n}\n\nfn label(value: State<i32>) -> string {\n    return match value {\n        State.Ready => \"ready\"\n        State.Done(code) => \"done\"\n    }\n}\n\nfn main() {\n    let mut count: i32 = 1\n    count = count + 1\n    if let State.Done(code) = State.Done(count) {\n        return\n    } else {\n        defer io.println(\"missing\")\n    }\n    for item in items {\n        break\n        continue\n    }\n}\n"
         );
     }
 
@@ -708,7 +716,7 @@ mod tests {
         let twice = format_source(Path::new("main.nomo"), &formatted).unwrap();
 
         assert_eq!(formatted, twice);
-        assert!(formatted.contains("#[test]\nfn adds_numbers() -> void"));
+        assert!(formatted.contains("#[test]\nfn adds_numbers() {"));
     }
 
     #[test]
@@ -789,7 +797,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\n// keep me\nfn main() -> void {\n    return\n}\n"
+            "package app.main\n\n// keep me\nfn main() {\n    return\n}\n"
         );
     }
 
@@ -810,7 +818,7 @@ mod tests {
         let source = "package app.main\n/* outer\n/* inner */\nend */\nfn main(){\nreturn\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
-        assert!(formatted.contains("/* outer\n/* inner */\nend */\nfn main() -> void"));
+        assert!(formatted.contains("/* outer\n/* inner */\nend */\nfn main()"));
     }
 
     #[test]
@@ -840,7 +848,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nfn main() -> void {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
+            "package app.main\n\nfn main() {\n    for let i: ui64 = 0; i < 10; i++ {\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -855,7 +863,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nfn main() -> void {\n    let mut matrix = [[1, 2], [3, 4]]\n    matrix[0][1] = 7\n    let value = matrix[0][1]\n}\n"
+            "package app.main\n\nfn main() {\n    let mut matrix = [[1, 2], [3, 4]]\n    matrix[0][1] = 7\n    let value = matrix[0][1]\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -872,7 +880,7 @@ mod tests {
         assert_eq!(formatted, twice);
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.ffi\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: CString) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() -> void {\n    let user: User = User { name: \"ok\" }\n    let message: CString = CString.from_string(user.to_string())\n    unsafe {\n        puts(message)\n    }\n}\n"
+            "package app.main\n\nimport std.ffi\n\npub interface Display {\n    fn to_string(self) -> string\n}\n\nextern \"C\" {\n    fn puts(message: CString) -> i32\n}\n\nstruct User {\n    name: string\n}\n\nimpl Display for User {\n    fn to_string(self) -> string {\n        return self.name\n    }\n}\n\nfn main() {\n    let user: User = User { name: \"ok\" }\n    let message: CString = CString.from_string(user.to_string())\n    unsafe {\n        puts(message)\n    }\n}\n"
         );
     }
 
@@ -898,7 +906,7 @@ mod tests {
         let formatted = format_source(Path::new("task.nomo"), source).unwrap();
 
         assert!(formatted.contains(
-            "pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) -> void"
+            "pub fn spawn(worker: task fn(TaskContext, string) -> string, input: string) {"
         ));
         assert!(!formatted.contains("__nomo_task_callback"));
         assert_eq!(
@@ -908,13 +916,31 @@ mod tests {
     }
 
     #[test]
+    fn omits_void_for_declarations_but_preserves_void_in_types_and_values() {
+        let source = "package app.main\n\ninterface Sink {\n    fn close(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64) -> void\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) -> Result<void, string> {\n    callback(\"ok\")\n    return Ok(void)\n}\n\nsuspend fn flush() -> void {\n}\n";
+        let formatted = format_source(Path::new("main.nomo"), source).unwrap();
+
+        assert!(formatted.contains("fn close(self)\n"));
+        assert!(formatted.contains("fn release(handle: i64)\n"));
+        assert!(formatted.contains("fn close(self) {"));
+        assert!(
+            formatted
+                .contains("fn run(callback: task fn(string) -> void) -> Result<void, string> {")
+        );
+        assert!(formatted.contains("return Ok(void)"));
+        assert!(formatted.contains("suspend fn flush() {"));
+        assert!(!formatted.contains("close(self) -> void"));
+        assert!(!formatted.contains("release(handle: i64) -> void"));
+    }
+
+    #[test]
     fn formats_suspend_functions_and_interface_methods_idempotently() {
         let source = "package app.main\n\ninterface Loader{\nsuspend fn load(self)->string\n}\n\nstruct Client{\n}\n\nimpl Loader for Client{\npub suspend fn load(self)->string{\nreturn \"ready\"\n}\n}\n\npub suspend fn main(){\n}\n";
         let formatted = format_source(Path::new("main.nomo"), source).unwrap();
 
         assert_eq!(
             formatted,
-            "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() -> void {\n}\n"
+            "package app.main\n\ninterface Loader {\n    suspend fn load(self) -> string\n}\n\nstruct Client {\n}\n\nimpl Loader for Client {\n    pub suspend fn load(self) -> string {\n        return \"ready\"\n    }\n}\n\npub suspend fn main() {\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -929,7 +955,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\n\nsuspend fn worker(value: string) -> void {\n    task.yield_now()\n}\n\nsuspend fn main() -> void {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
+            "package app.main\n\nimport std.task\n\nsuspend fn worker(value: string) {\n    task.yield_now()\n}\n\nsuspend fn main() {\n    task.scope {\n        let child = task.spawn worker(\"value\")\n        let joined: Result<void, TaskError> = task.join(child)\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -944,7 +970,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main() -> void {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
+            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main() {\n    task.deadline(time.duration_millis(5)) {\n        task.check_cancelled()\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),
@@ -959,7 +985,7 @@ mod tests {
 
         assert_eq!(
             formatted,
-            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value: Channel<string>) -> void {\n    task.select {\n        task.receive(channel_value) => received {\n            let value = received\n        }\n        task.sleep(time.duration_millis(5)) => timeout {\n            let value = timeout\n        }\n    }\n}\n"
+            "package app.main\n\nimport std.task\nimport std.time\n\nsuspend fn main(channel_value: Channel<string>) {\n    task.select {\n        task.receive(channel_value) => received {\n            let value = received\n        }\n        task.sleep(time.duration_millis(5)) => timeout {\n            let value = timeout\n        }\n    }\n}\n"
         );
         assert_eq!(
             format_source(Path::new("main.nomo"), &formatted).unwrap(),

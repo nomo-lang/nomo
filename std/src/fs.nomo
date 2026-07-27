@@ -76,7 +76,7 @@ pub fn open(path: string) -> Result<File, FsError> {
 
 impl File {
     /// Closes an opened file.
-    pub fn close(self) -> void {
+    pub fn close(self) {
         self.close()
     }
 

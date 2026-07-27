@@ -1,4 +1,4 @@
-package app.main
+package async_static_select
 
 import std.io
 import std.option
@@ -14,12 +14,12 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn publish(channel_value: Channel<string>) -> void {
+suspend fn publish(channel_value: Channel<string>) {
     task.yield_now()
     let sent: Result<void, ChannelSendError<string>> = task.send(channel_value, "winner")
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let idle_channel: Channel<string> = make_channel()
     let ready_channel: Channel<string> = make_channel()
     task.scope {

@@ -359,6 +359,36 @@ fn parses_omitted_function_return_type_as_void() {
 }
 
 #[test]
+fn parses_implicit_and_explicit_void_across_declaration_positions() {
+    let source = "package app.main\n\ninterface Sink {\n    fn close(self)\n    suspend fn flush(self) -> void\n}\n\nextern \"C\" {\n    fn release(handle: i64)\n}\n\nstruct Handle {\n    value: i64\n}\n\nimpl Sink for Handle {\n    fn close(self) {\n    }\n\n    suspend fn flush(self) -> void {\n    }\n}\n\nfn run(callback: task fn(string) -> void) {\n}\n";
+    let tokens = lex(Path::new("main.nomo"), source).unwrap();
+    let ast = parse(Path::new("main.nomo"), &tokens).unwrap();
+
+    for return_type in [
+        &ast.interfaces[0].methods[0].return_type,
+        &ast.interfaces[0].methods[1].return_type,
+        &ast.extern_blocks[0].functions[0].return_type,
+        &ast.impls[0].methods[0].return_type,
+        &ast.impls[0].methods[1].return_type,
+        &ast.functions[0].return_type,
+    ] {
+        assert!(return_type.is_void());
+    }
+    assert_eq!(
+        ast.functions[0].params[0].type_ref.path,
+        [crate::ast::TASK_CALLBACK_TYPE_PATH]
+    );
+    assert!(
+        ast.functions[0].params[0]
+            .type_ref
+            .args
+            .last()
+            .unwrap()
+            .is_void()
+    );
+}
+
+#[test]
 fn parses_mut_call_argument() {
     let source = "package app.main\n\nfn touch(mut count: i64) -> i64 {\n    return count\n}\n\nfn main() -> void {\n    let mut count: i64 = 1\n    let value: i64 = touch(mut count)\n}\n";
     let tokens = lex(Path::new("main.nomo"), source).unwrap();

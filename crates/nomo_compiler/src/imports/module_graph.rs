@@ -5,12 +5,30 @@ use std::path::{Path, PathBuf};
 
 #[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct ModuleId {
+    canonical_package: Option<String>,
     segments: Vec<String>,
 }
 
 impl ModuleId {
     pub fn new(segments: Vec<String>) -> Self {
-        Self { segments }
+        Self {
+            canonical_package: None,
+            segments,
+        }
+    }
+
+    pub fn with_canonical_package(
+        canonical_package: impl Into<String>,
+        segments: Vec<String>,
+    ) -> Self {
+        Self {
+            canonical_package: Some(canonical_package.into()),
+            segments,
+        }
+    }
+
+    pub fn canonical_package(&self) -> Option<&str> {
+        self.canonical_package.as_deref()
     }
 
     pub fn segments(&self) -> &[String] {
@@ -84,6 +102,17 @@ impl ModuleGraph {
         self.modules
             .values()
             .find(|module| module.id.segments() == segments)
+    }
+
+    pub fn module_by_identity(
+        &self,
+        canonical_package: &str,
+        segments: &[String],
+    ) -> Option<&ModuleNode> {
+        self.modules.values().find(|module| {
+            module.id.canonical_package() == Some(canonical_package)
+                && module.id.segments() == segments
+        })
     }
 
     pub fn modules(&self) -> impl ExactSizeIterator<Item = &ModuleNode> {

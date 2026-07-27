@@ -1,9 +1,9 @@
-package app.main
+package loops
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut i: i32 = 0
     for i < 3 {
         io.println("counted")

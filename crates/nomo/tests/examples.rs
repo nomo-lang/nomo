@@ -379,7 +379,7 @@ fn assert_cli_test_basic(example: &Path) {
     );
     assert_eq!(
         String::from_utf8_lossy(&output.stdout),
-        "running 1 tests\nok app.main.adds_numbers\n"
+        "running 1 tests\nok nomo_test_basic.adds_numbers\n"
     );
     assert!(
         output.stderr.is_empty(),
@@ -662,14 +662,8 @@ fn assert_cli_workspace_test_basic(example: &Path) {
     );
     let stdout = String::from_utf8_lossy(&output.stdout);
     assert!(stdout.contains("running 2 tests\n"), "{stdout}");
-    assert!(
-        stdout.contains("ok app.main.cli_uses_core_math\n"),
-        "{stdout}"
-    );
-    assert!(
-        stdout.contains("ok core.main.core_adds_numbers\n"),
-        "{stdout}"
-    );
+    assert!(stdout.contains("ok cli.cli_uses_core_math\n"), "{stdout}");
+    assert!(stdout.contains("ok core.core_adds_numbers\n"), "{stdout}");
     assert!(
         output.stderr.is_empty(),
         "{}",

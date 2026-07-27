@@ -65,7 +65,7 @@ pub enum TaskJoin {
 }
 
 /// Cooperatively yields the current suspend task to its owner executor.
-pub suspend fn yield_now() -> void {
+pub suspend fn yield_now() {
     task.yield_now()
 }
 
@@ -74,7 +74,7 @@ pub suspend fn yield_now() -> void {
 /// The call does not suspend. When cancellation is observed the compiler
 /// completes the current suspend task with a stable TaskError instead of
 /// returning to the source statement.
-pub suspend fn check_cancelled() -> void {
+pub suspend fn check_cancelled() {
     task.check_cancelled()
 }
 

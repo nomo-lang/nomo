@@ -1,4 +1,4 @@
-package app.main
+package async_bounded_channel
 
 import std.io
 import std.option
@@ -13,12 +13,12 @@ fn make_channel() -> Channel<string> {
     }
 }
 
-suspend fn producer(channel_value: Channel<string>) -> void {
+suspend fn producer(channel_value: Channel<string>) {
     let first: Result<void, ChannelSendError<string>> = task.send(channel_value, "first")
     let second: Result<void, ChannelSendError<string>> = task.send(channel_value, "second")
 }
 
-suspend fn consumer(channel_value: Channel<string>) -> void {
+suspend fn consumer(channel_value: Channel<string>) {
     task.yield_now()
     let first: Option<string> = task.receive(channel_value)
     let second: Option<string> = task.receive(channel_value)
@@ -27,7 +27,7 @@ suspend fn consumer(channel_value: Channel<string>) -> void {
     task.close(channel_value)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let channel_value: Channel<string> = make_channel()
     task.scope {
         let producer_task = task.spawn producer(channel_value)

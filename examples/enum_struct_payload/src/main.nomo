@@ -1,4 +1,4 @@
-package app.main
+package enum_struct_payload
 
 import std.io
 
@@ -18,7 +18,7 @@ fn label(value: MaybeUser) -> string {
     }
 }
 
-fn main() -> void {
+fn main() {
     let value: MaybeUser = MaybeUser.Some(User { email: "a@nomo.dev" })
     io.println(label(value))
 }

@@ -65,7 +65,7 @@ pub struct ProcessControlError {
 }
 
 /// Exits the current process with a status code.
-pub fn exit(code: i64) -> void {
+pub fn exit(code: i64) {
     process.exit(code)
 }
 
@@ -126,7 +126,7 @@ pub fn terminate(child: ProcessChild) -> Result<void, ProcessControlError> {
 }
 
 /// Idempotently closes the owner handle and transfers any reap to the runtime.
-pub fn close_child(child: ProcessChild) -> void {
+pub fn close_child(child: ProcessChild) {
     process.close_child(child)
 }
 
@@ -168,6 +168,6 @@ pub fn terminate_blocking(child: BlockingProcessChild) -> Result<void, ProcessCo
 
 /// Closes and reaps through the preview blocking compatibility registry.
 /// Suspend call graphs reject this compatibility API with E0891.
-pub fn close_child_blocking(child: BlockingProcessChild) -> void {
+pub fn close_child_blocking(child: BlockingProcessChild) {
     process.close_child_blocking(child)
 }

@@ -1,9 +1,9 @@
-package app.main
+package if_let
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut values: Array<string> = Array.new<string>()
     values.push("if let ok")
     let first: Option<string> = values.get(0)

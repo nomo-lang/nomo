@@ -1,4 +1,4 @@
-package app.main
+package nomo_test_basic
 
 import std.io
 import std.testing
@@ -8,10 +8,10 @@ fn add(a: i64, b: i64) -> i64 {
 }
 
 #[test]
-fn adds_numbers() -> void {
+fn adds_numbers() {
     testing.assert_equal(add(20, 22), 42)
 }
 
-fn main() -> void {
+fn main() {
     io.println("nomo test basic ok")
 }

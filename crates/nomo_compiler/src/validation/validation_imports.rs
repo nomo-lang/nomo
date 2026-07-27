@@ -6,8 +6,12 @@ pub(super) fn validate_imports(
     local_import_root: Option<&str>,
 ) -> Result<(), Diagnostic> {
     for import in imports {
-        let is_local_import = local_import_root
-            .is_some_and(|root| import.split('.').next().is_some_and(|item| item == root));
+        let import_root = import.split('.').next();
+        let is_local_import = local_import_root.is_some_and(|root| {
+            import_root.is_some_and(|item| item == root)
+                || (import_root == Some("app")
+                    && !external_import_roots.iter().any(|alias| alias == "app"))
+        });
         if !is_local_import && !is_supported_import(import, external_import_roots) {
             return Err(Diagnostic::new(
                 "E0301",

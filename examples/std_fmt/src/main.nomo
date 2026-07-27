@@ -1,4 +1,4 @@
-package app.main
+package std_fmt
 
 import std.fmt
 import std.io
@@ -19,7 +19,7 @@ impl fmt.Debug for User {
     }
 }
 
-fn main() -> void {
+fn main() {
     let user: User = User { name: "Nomo" }
     let message = fmt.format("display={} debug={:?} braces={{}}", user, user)
     io.println(message)

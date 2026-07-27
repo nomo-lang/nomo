@@ -1,4 +1,4 @@
-package async_process_stress.main
+package async_process_stress
 
 import std.array.Array
 import std.env
@@ -44,7 +44,7 @@ fn require_child(value: Result<ProcessChild, ProcessControlError>) -> ProcessChi
     }
 }
 
-fn require_void(value: Result<void, ProcessControlError>) -> void {
+fn require_void(value: Result<void, ProcessControlError>) {
     match value {
         Ok(done) => {
         }
@@ -65,7 +65,7 @@ fn require_event(value: Result<ProcessEvent, ProcessControlError>) -> ProcessEve
     }
 }
 
-fn require_sleep(value: Result<void, TaskError>) -> void {
+fn require_sleep(value: Result<void, TaskError>) {
     match value {
         Ok(done) => {
         }
@@ -75,7 +75,7 @@ fn require_sleep(value: Result<void, TaskError>) -> void {
     }
 }
 
-fn require_limit(value: Result<ProcessChild, ProcessControlError>) -> void {
+fn require_limit(value: Result<ProcessChild, ProcessControlError>) {
     match value {
         Ok(child) => {
             process.close_child(child)
@@ -131,7 +131,7 @@ fn advance_and_close(state: RoundState, event: ProcessEvent, child: ProcessChild
     return close_if_ready(advance(state, event), child)
 }
 
-fn finish_round(child: ProcessChild, state: RoundState) -> void {
+fn finish_round(child: ProcessChild, state: RoundState) {
     process.close_child(child)
     if !state.flushed || !state.received || !state.valid {
         panic("the process fixture did not complete the round trip")
@@ -145,7 +145,7 @@ suspend fn start_hold(program: string) -> ProcessChild {
     return require_child(started)
 }
 
-suspend fn run_round() -> void {
+suspend fn run_round() {
     let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
     let started: Result<ProcessChild, ProcessControlError> = process.start(command(program, "async"), 5000)
     let child: ProcessChild = require_child(started)
@@ -159,7 +159,7 @@ suspend fn run_round() -> void {
     finish_round(child, state)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     let program: string = require_fixture(env.get("NOMO_PROCESS_FIXTURE"))
     let child_00: ProcessChild = start_hold(program)
     let child_01: ProcessChild = start_hold(program)

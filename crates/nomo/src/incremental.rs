@@ -730,10 +730,11 @@ impl IncrementalSemanticSession {
             inputs.fingerprint,
         );
         self.checks.get_or_compute(key, inputs.dependencies, || {
-            crate::compiler::check_source_text_with_project_modules_and_overrides(
+            crate::compiler::check_source_text_with_module_identity_and_overrides(
                 path,
                 source,
-                Some(&context.local_source_root),
+                &context.local_source_root,
+                &context.local_identity,
                 &context.external_import_roots,
                 &context.external_modules,
                 &overrides,
@@ -990,10 +991,11 @@ mod tests {
             .check_project_text(&project, &project.main, &invalid, &[], &target)
             .unwrap_err();
         let context = crate::project::project_module_context(&project).unwrap();
-        let clean = crate::check_source_text_with_project_modules_and_overrides(
+        let clean = crate::check_source_text_with_module_identity_and_overrides(
             &project.main,
             &invalid,
-            Some(&context.local_source_root),
+            &context.local_source_root,
+            &context.local_identity,
             &context.external_import_roots,
             &context.external_modules,
             &[(project.main.clone(), invalid.clone())],

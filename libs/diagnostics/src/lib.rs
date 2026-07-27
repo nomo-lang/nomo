@@ -26,7 +26,7 @@ pub const DOCUMENTED_DIAGNOSTIC_CODES: &[&str] = &[
     "E0872", "E0875", "E0876", "E0880", "E0881", "E0883", "E0886", "E0891", "E0901", "E0902",
     "E0903", "E0904", "E1100", "E1101", "E1500", "E1501", "E1502", "E1503", "E1504", "E1505",
     "E1506", "E1510", "E1511", "E1512", "E1513", "E1514", "E1515", "E1516", "E1517", "E1518",
-    "E1519", "E1520", "E1521", "E1522", "E1523", "E1524", "E1525", "E1530",
+    "E1519", "E1520", "E1521", "E1522", "E1523", "E1524", "E1525", "E1530", "W0904",
 ];
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -88,6 +88,20 @@ impl Diagnostic {
         self
     }
 
+    pub fn warning(
+        code: &'static str,
+        message: impl Into<String>,
+        file: &Path,
+        line: usize,
+        column: usize,
+        length: usize,
+        text: impl Into<String>,
+    ) -> Self {
+        let mut diagnostic = Self::new(code, message, file, line, column, length, text);
+        diagnostic.severity = "warning";
+        diagnostic
+    }
+
     pub fn at_span(
         code: &'static str,
         message: impl Into<String>,
@@ -107,7 +121,7 @@ impl Diagnostic {
 
     pub fn human(&self) -> String {
         let mut out = String::new();
-        let _ = writeln!(out, "error[{}]: {}", self.code, self.message);
+        let _ = writeln!(out, "{}[{}]: {}", self.severity, self.code, self.message);
         let _ = writeln!(out, "  --> {}:{}:{}", self.file, self.line, self.column);
         let _ = writeln!(out, "   |");
         let _ = writeln!(out, "{:>2} | {}", self.line, self.text);
@@ -145,7 +159,8 @@ impl Diagnostic {
         }
 
         format!(
-            "{{\"status\":\"error\",\"error_code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"source\":{{\"file\":\"{}\",\"line\":{},\"column\":{},\"length\":{},\"text\":\"{}\"}}{},\"suggestions\":[{}]}}",
+            "{{\"status\":\"{}\",\"error_code\":\"{}\",\"severity\":\"{}\",\"message\":\"{}\",\"source\":{{\"file\":\"{}\",\"line\":{},\"column\":{},\"length\":{},\"text\":\"{}\"}}{},\"suggestions\":[{}]}}",
+            self.severity,
             self.code,
             self.severity,
             escape_json(&self.message),

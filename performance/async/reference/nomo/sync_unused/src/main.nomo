@@ -1,10 +1,10 @@
-package app.main
+package sync_unused
 
 import std.array
 import std.io
 import std.map
 
-fn main() -> void {
+fn main() {
     let values: Array<string> = ["zero", "one", "two"]
     let mut labels: Map<string, string> = Map.new<string, string>()
     let previous: Option<string> = map.set<string, string>(mut labels, "result", "answer")

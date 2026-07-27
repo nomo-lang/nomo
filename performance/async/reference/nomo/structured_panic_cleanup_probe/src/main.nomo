@@ -1,23 +1,23 @@
-package app.main
+package structured_panic_cleanup_probe
 
 import std.io
 import std.string
 import std.task
 import std.time
 
-suspend fn slow_child(value: string) -> void {
+suspend fn slow_child(value: string) {
     io.println(value, "slow before")
     let waited: Result<void, TaskError> = task.sleep(time.duration_millis(10000))
     io.println(value, "slow after")
 }
 
-suspend fn panicking_child(prefix: string) -> void {
+suspend fn panicking_child(prefix: string) {
     task.yield_now()
     let message: string = prefix.concat(" child")
     panic(message)
 }
 
-suspend fn main() -> void {
+suspend fn main() {
     task.scope {
         let slow = task.spawn slow_child("managed")
         let failure = task.spawn panicking_child("panic from")

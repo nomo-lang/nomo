@@ -1,4 +1,4 @@
-package app.main
+package array_param_return
 
 import std.array
 import std.io
@@ -7,7 +7,7 @@ fn id(values: Array<i32>) -> Array<i32> {
     values
 }
 
-fn main() -> void {
+fn main() {
     let mut original: Array<i32> = Array.new<i32>()
     original.push(5)
     let copy: Array<i32> = id(original)

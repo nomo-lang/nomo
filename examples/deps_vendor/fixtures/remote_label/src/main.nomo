@@ -1,4 +1,4 @@
-package remote_label.main
+package remote_label
 
-fn main() -> void {
+fn main() {
 }

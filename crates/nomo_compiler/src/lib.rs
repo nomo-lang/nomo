@@ -211,16 +211,18 @@ use builtins_task::*;
 use builtins_time::*;
 use declarations::*;
 pub use driver::{
-    build_module_graph, build_module_graph_with_overrides,
+    build_module_graph, build_module_graph_with_module_identity_and_overrides,
+    build_module_graph_with_overrides, check_module_source_text_with_module_identity_and_overrides,
     check_module_source_text_with_project_modules_and_overrides, check_script_source_text,
     check_source, check_source_text, check_source_text_with_external_imports,
-    check_source_text_with_project_modules, check_source_text_with_project_modules_and_overrides,
-    check_source_with_external_imports, check_source_with_external_modules,
-    compile_script_source_to_c, compile_script_source_to_c_for_target,
+    check_source_text_with_module_identity_and_overrides, check_source_text_with_project_modules,
+    check_source_text_with_project_modules_and_overrides, check_source_with_external_imports,
+    check_source_with_external_modules, compile_script_source_to_c,
+    compile_script_source_to_c_for_target, compile_source_text_to_c_with_module_identity,
     compile_source_text_to_c_with_project_modules, compile_source_to_c,
     compile_source_to_c_for_target, compile_source_to_c_with_external_imports,
-    compile_source_to_c_with_external_modules, compile_source_to_c_with_project_modules,
-    compile_source_to_c_with_project_modules_for_target,
+    compile_source_to_c_with_external_modules, compile_source_to_c_with_module_identity_for_target,
+    compile_source_to_c_with_project_modules, compile_source_to_c_with_project_modules_for_target,
 };
 use expression_calls::*;
 use expression_enums::*;
@@ -237,6 +239,7 @@ use import_resolution::*;
 use imports::*;
 use interfaces::*;
 pub use module_graph::{ModuleGraph, ModuleId, ModuleNode};
+pub use modules::expected_module_package;
 use modules::merge_imported_public_api;
 use program_lowering::{EntryMode, lower_program, reject_script_body};
 use question_assignments::*;
@@ -349,11 +352,21 @@ pub use nomo_ir::{
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ModulePackageIdentity {
+    /// The package's manifest-derived source module root.
+    pub module_root: String,
+    /// The package's canonical `owner/package` identity.
+    pub canonical_package: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ExternalModule {
     /// The name used by the consuming project's imports.
     pub import_root: String,
     /// The dependency's own, manifest-derived module root.
     pub source_import_root: String,
+    /// The dependency's canonical `owner/package` identity.
+    pub canonical_package: String,
     pub source_root: PathBuf,
 }
 

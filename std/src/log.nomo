@@ -9,21 +9,21 @@ pub fn enabled(level: string) -> bool {
 }
 
 /// Writes a debug-level message.
-pub fn debug(message: string) -> void {
+pub fn debug(message: string) {
     log.debug(message)
 }
 
 /// Writes an info-level message.
-pub fn info(message: string) -> void {
+pub fn info(message: string) {
     log.info(message)
 }
 
 /// Writes a warning-level message.
-pub fn warn(message: string) -> void {
+pub fn warn(message: string) {
     log.warn(message)
 }
 
 /// Writes an error-level message.
-pub fn error(message: string) -> void {
+pub fn error(message: string) {
     log.error(message)
 }

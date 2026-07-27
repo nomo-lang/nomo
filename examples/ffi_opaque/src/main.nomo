@@ -1,11 +1,11 @@
-package app.main
+package ffi_opaque
 
 import std.ffi
 import std.io
 
 extern "C" {
     fn nomo_example_allocate() -> Opaque
-    fn nomo_example_release(handle: Opaque) -> void
+    fn nomo_example_release(handle: Opaque)
 }
 
 fn allocate() -> Opaque {
@@ -14,13 +14,13 @@ fn allocate() -> Opaque {
     }
 }
 
-fn release(handle: Opaque) -> void {
+fn release(handle: Opaque) {
     unsafe {
         nomo_example_release(handle)
     }
 }
 
-fn main() -> void {
+fn main() {
     let handle: Opaque = allocate()
     release(handle)
     io.println("ffi opaque ok")

@@ -1,9 +1,9 @@
-package app.main
+package let_else
 
 import std.array
 import std.io
 
-fn main() -> void {
+fn main() {
     let mut values: Array<string> = Array.new<string>()
     values.push("let else ok")
     let Some(message) = values.get(0) else {

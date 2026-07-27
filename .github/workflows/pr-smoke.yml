@@ -60,6 +60,8 @@ jobs:
         run: cargo run --locked --bin nomo -- check --workspace examples/workspace_basic
       - name: Build release benchmark driver
         run: cargo build --locked --release --bin nomo
+      - name: Check canonical syntax governance
+        run: python3 scripts/check_syntax_governance.py --nomo target/release/nomo
       - name: Test async benchmark harness
         run: python3 -m unittest discover -s scripts/tests
       - name: Run Benchmarks Game small-input correctness gate

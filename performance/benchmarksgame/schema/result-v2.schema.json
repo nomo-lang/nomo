@@ -282,6 +282,7 @@
         "normalized_origin",
         "command",
         "environment",
+        "cargo_configs",
         "cargo",
         "binary",
         "stdout",
@@ -305,11 +306,25 @@
         "command": { "$ref": "#/$defs/command" },
         "environment": {
           "type": "object",
-          "required": ["CARGO_TARGET_DIR"],
+          "required": ["CARGO_TARGET_DIR", "CARGO_HOME"],
           "properties": {
-            "CARGO_TARGET_DIR": { "type": "string", "minLength": 1 }
+            "CARGO_TARGET_DIR": { "type": "string", "minLength": 1 },
+            "CARGO_HOME": { "type": "string", "minLength": 1 }
           },
           "additionalProperties": false
+        },
+        "cargo_configs": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "required": ["path", "relative_path", "sha256"],
+            "properties": {
+              "path": { "type": "string", "minLength": 1 },
+              "relative_path": { "type": "string", "minLength": 1 },
+              "sha256": { "$ref": "#/$defs/sha256" }
+            },
+            "additionalProperties": false
+          }
         },
         "cargo": { "$ref": "#/$defs/toolFile" },
         "binary": { "$ref": "#/$defs/file" },

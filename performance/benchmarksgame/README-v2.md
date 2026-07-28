@@ -34,7 +34,8 @@ match the harness-selected toolchain and produced files. Missing or
 unverifiable metadata makes the release lane unavailable. The `emit-c` mode
 separately runs `nomo build <project> --emit-c`, hashes the
 unmodified generated C, and compiles it with
-`clang -std=c99 -O3 -DNDEBUG -fomit-frame-pointer` plus `-lm` where required.
+`clang --no-default-config -std=c99 -O3 -DNDEBUG -fomit-frame-pointer` plus
+`-lm` where required.
 It never reuses a release artifact. Each mode has its own correctness gate,
 warmups, 30-block schedules, batches, statistics, and verdict. Samples are
 never pooled across modes, and both modes must pass before the suite can pass.
@@ -49,7 +50,15 @@ must exactly equal the harness canonical sanitized projection produced by
 `COMPILER_AFFECTING_ENVIRONMENT` must be cleared without recording their
 values, and no override is permitted for backend compile/link commands.
 Only the separately validated compiler self-build may use the explicit
-`CARGO_TARGET_DIR` override. A backend record with a missing, self-reported,
+`CARGO_TARGET_DIR` and isolated `CARGO_HOME` overrides. The isolated Cargo
+home is empty at build start and removed after the build; every Cargo config
+on the checkout-to-filesystem-root search path is rejected unless it is a
+tracked file inside the exact checkout and its path and SHA-256 are recorded.
+Go builds set `GOENV=off` and clear `GOFLAGS`, so `$HOME/go/env` and a parent
+`GOENV` cannot alter the build. Every Clang and Clang++ probe, reference
+compile, generated-C compile, and release-backend compile/link command includes
+exactly one `--no-default-config`; explicit or default driver configs are
+therefore outside the contract. A backend record with a missing, self-reported,
 or differently sanitized environment is unavailable even when compiler,
 argv, and hashes otherwise look correct.
 
@@ -60,7 +69,7 @@ control and never enters a schedule or verdict.
 ## ISO C++20 allocation mapping
 
 Every C++ source is compiled with
-`clang++ -std=c++20 -pedantic-errors -O3 -DNDEBUG -fomit-frame-pointer`,
+`clang++ --no-default-config -std=c++20 -pedantic-errors -O3 -DNDEBUG -fomit-frame-pointer`,
 so a C++ language extension is a hard error.
 
 Spectral-norm and fannkuch-redux map each runtime C VLA to one contiguous

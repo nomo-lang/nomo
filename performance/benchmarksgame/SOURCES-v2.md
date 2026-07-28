@@ -26,7 +26,7 @@ custom allocator, stronger algorithm, precomputation, thread, or SIMD path.
 The frozen C #8 remains an independent decisive comparator.
 
 Every C++ build uses
-`clang++ -std=c++20 -pedantic-errors -O3 -DNDEBUG -fomit-frame-pointer`
+`clang++ --no-default-config -std=c++20 -pedantic-errors -O3 -DNDEBUG -fomit-frame-pointer`
 plus `-lm` where needed. Unit and CI tests repeat strict conformance,
 allocation-site, forbidden-construct, hash, and small-output checks.
 
@@ -50,6 +50,7 @@ a workload or suite verdict.
 | n-body | `reference/semantic-c/n-body.c` | `284d2282e34a4a43c64dddc034cc7d087d7f1c62ed5c3097a7321d94f3123cd5` |
 | fannkuch-redux | `reference/semantic-c/fannkuch-redux.c` | `35141667a9a8ac43cfcf1d47f98e401646901a108c41dceec4da35f5891b4669` |
 
-Semantic-C uses the fixed Clang C99 optimization baseline. Its output is
+Semantic-C uses the fixed `clang --no-default-config` C99 optimization
+baseline. Its output is
 checked on small inputs, but its timing is excluded from both five-lane
 Williams protocols and every acceptance calculation.

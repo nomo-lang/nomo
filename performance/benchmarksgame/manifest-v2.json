@@ -122,7 +122,7 @@
   "toolchains": {
     "nomo": {
       "release_command": "nomo build <project> --release",
-      "emit_c_command": "nomo build <project> --emit-c, then clang -std=c99 -O3 -DNDEBUG -fomit-frame-pointer on the unmodified generated C",
+      "emit_c_command": "nomo build <project> --emit-c, then clang --no-default-config -std=c99 -O3 -DNDEBUG -fomit-frame-pointer on the unmodified generated C",
       "formal_build_modes": [
         "release",
         "emit-c"
@@ -137,6 +137,9 @@
     },
     "clang": {
       "required_family": "clang",
+      "driver_config_flags": [
+        "--no-default-config"
+      ],
       "c_flags": [
         "-std=c99",
         "-O3",
@@ -160,6 +163,9 @@
     },
     "go": {
       "required_version": "go1.25.12",
+      "build_environment": {
+        "GOENV": "off"
+      },
       "runtime_environment": {
         "GOMAXPROCS": "1"
       }

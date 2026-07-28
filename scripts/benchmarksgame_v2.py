@@ -66,13 +66,14 @@ BASE_CPP_FLAGS = (
     "-DNDEBUG",
     "-fomit-frame-pointer",
 )
+CLANG_DRIVER_CONFIG_FLAGS = ("--no-default-config",)
 T_CRITICAL_99_DF29 = 2.462021360150384
 STDOUT_NORMALIZATION = "crlf-to-lf-only-v1"
 EXPECTED_V1_MANIFEST_SHA = (
     "bd8e5016fb376741478806d13585ebc37ade2104995bd411a2a161592f65c15f"
 )
 EXPECTED_V2_MANIFEST_SHA = (
-    "020a6406012242381ce514e006ab49a752ff5314d5625bcd453a0ef9538c1826"
+    "c7bf2ce0bc28113d3a63f4c715c0084f40f985406f41d265310b955f16200ead"
 )
 EXPECTED_REQUIRED_CHECKS = (
     "canonical_host_identity",
@@ -138,6 +139,7 @@ COMPILER_AFFECTING_ENVIRONMENT = (
     "CGO_LDFLAGS",
     "RUSTFLAGS",
     "CARGO_ENCODED_RUSTFLAGS",
+    "CARGO_HOME",
 )
 BUILD_ENVIRONMENT_WHITELIST = (
     "PATH",
@@ -148,7 +150,6 @@ BUILD_ENVIRONMENT_WHITELIST = (
     "TMP",
     "SystemRoot",
     "WINDIR",
-    "CARGO_HOME",
     "RUSTUP_HOME",
 )
 EXPECTED_ALLOCATION_MAPPING_SHA256 = {
@@ -228,9 +229,10 @@ def sanitized_build_environment(
         if key != "PATH"
         if (value := os.environ.get(key))
     }
+    environment["GOENV"] = "off"
     environment["PATH"] = stable_build_path()
     overrides = approved_overrides or {}
-    unexpected = set(overrides) - {"CARGO_TARGET_DIR"}
+    unexpected = set(overrides) - {"CARGO_TARGET_DIR", "CARGO_HOME"}
     if unexpected:
         raise HarnessError(
             "unapproved build environment overrides: "
@@ -257,7 +259,11 @@ def sanitized_build_environment(
             else value
             for key, value in sorted(environment.items())
         },
-        "cleared": list(COMPILER_AFFECTING_ENVIRONMENT),
+        "cleared": [
+            name
+            for name in COMPILER_AFFECTING_ENVIRONMENT
+            if name not in environment
+        ],
         "cleared_values_recorded": False,
     }
     return environment, projection
@@ -314,6 +320,51 @@ def resolve_suite_path(suite_root: Path, relative: str, label: str) -> Path:
     return v1.resolve_suite_path(suite_root, relative, label)
 
 
+def cargo_config_provenance(checkout: Path) -> list[Dict[str, str]]:
+    checkout = checkout.resolve()
+    records: list[Dict[str, str]] = []
+    current = checkout
+    while True:
+        for name in ("config.toml", "config"):
+            config_path = current / ".cargo" / name
+            if not config_path.exists():
+                continue
+            if not config_path.is_file():
+                raise HarnessError(
+                    f"Cargo config is not a regular file: {config_path}"
+                )
+            resolved = config_path.resolve()
+            try:
+                relative = resolved.relative_to(checkout)
+            except ValueError as error:
+                raise HarnessError(
+                    "external ancestor Cargo config is forbidden: "
+                    f"{resolved}"
+                ) from error
+            relative_text = relative.as_posix()
+            tracked = v1.git_capture(
+                checkout,
+                ["ls-files", "--error-unmatch", relative_text],
+            )
+            if tracked.strip() != relative_text:
+                raise HarnessError(
+                    f"Cargo config is not tracked by the exact checkout: "
+                    f"{relative_text}"
+                )
+            records.append(
+                {
+                    "path": str(resolved),
+                    "relative_path": relative_text,
+                    "sha256": v1.sha256_file(resolved),
+                }
+            )
+        parent = current.parent
+        if parent == current:
+            break
+        current = parent
+    return records
+
+
 def validate_command_record(record: Dict[str, Any], label: str) -> None:
     argv = record.get("argv")
     rendered = record.get("command")
@@ -331,6 +382,32 @@ def reject_forbidden_compiler_flags(argv: Sequence[str], label: str) -> None:
             for prefix in FORBIDDEN_COMPILER_FLAG_PREFIXES
         ):
             raise HarnessError(f"{label} uses forbidden compiler flag: {argument}")
+
+
+def validate_clang_driver_config_argv(
+    argv: Sequence[str], label: str
+) -> None:
+    if tuple(
+        argument
+        for argument in argv
+        if argument in CLANG_DRIVER_CONFIG_FLAGS
+    ) != CLANG_DRIVER_CONFIG_FLAGS:
+        raise HarnessError(
+            f"{label} must contain exactly one canonical Clang "
+            "--no-default-config flag"
+        )
+    for argument in argv:
+        lowered = str(argument).lower()
+        if (
+            lowered.startswith("--config")
+            or lowered.startswith("-config")
+        ) and lowered not in {
+            flag.lower() for flag in CLANG_DRIVER_CONFIG_FLAGS
+        }:
+            raise HarnessError(
+                f"{label} may not load an external Clang driver config: "
+                f"{argument}"
+            )
 
 
 def validate_json_schema(
@@ -469,8 +546,15 @@ def validate_manifest(manifest: Dict[str, Any], suite_root: Path) -> None:
         raise HarnessError("v2 C flags changed")
     if tuple(clang.get("cpp_flags", [])) != BASE_CPP_FLAGS:
         raise HarnessError("v2 C++ flags changed")
-    if toolchains.get("go", {}).get("required_version") != "go1.25.12":
+    if tuple(clang.get("driver_config_flags", [])) != (
+        CLANG_DRIVER_CONFIG_FLAGS
+    ):
+        raise HarnessError("v2 Clang driver config isolation changed")
+    go = toolchains.get("go", {})
+    if go.get("required_version") != "go1.25.12":
         raise HarnessError("v2 must pin the Go patch version")
+    if go.get("build_environment") != {"GOENV": "off"}:
+        raise HarnessError("v2 must disable external Go environment config")
 
     required_checks = manifest.get("environment_qualification", {}).get(
         "required_checks"
@@ -1776,7 +1860,12 @@ def parse_clang_installation(output: str, executable: Path) -> str:
 
 def clang_target(executable: Path) -> Tuple[str, Dict[str, Any]]:
     record, stdout, stderr = v1.run_capture(
-        [str(executable), "-print-target-triple"], 30.0
+        [
+            str(executable),
+            *CLANG_DRIVER_CONFIG_FLAGS,
+            "-print-target-triple",
+        ],
+        30.0,
     )
     target = (stdout + stderr).decode("utf-8", errors="replace").strip()
     if not target or any(character.isspace() for character in target):
@@ -1799,8 +1888,12 @@ def inspect_toolchains(
     go = resolve_executable(go_argument, "Go")
     nomo_help = v1.tool_version(nomo, ["--help"])
     nomo_version = v1.parse_nomo_version(nomo_help)
-    clang_output = v1.tool_version(clang, ["--version"])
-    clangxx_output = v1.tool_version(clangxx, ["--version"])
+    clang_output = v1.tool_version(
+        clang, [*CLANG_DRIVER_CONFIG_FLAGS, "--version"]
+    )
+    clangxx_output = v1.tool_version(
+        clangxx, [*CLANG_DRIVER_CONFIG_FLAGS, "--version"]
+    )
     c_version = parse_clang_version(clang_output)
     cpp_version = parse_clang_version(clangxx_output)
     c_installation = parse_clang_installation(clang_output, clang)
@@ -1851,6 +1944,7 @@ def inspect_toolchains(
             "installation": c_installation,
             "target_triple": c_target,
             "target_command": c_target_command,
+            "driver_config_flags": list(CLANG_DRIVER_CONFIG_FLAGS),
         },
         "clangxx": {
             "path": str(clangxx),
@@ -1861,6 +1955,7 @@ def inspect_toolchains(
             "installation": cpp_installation,
             "target_triple": cpp_target,
             "target_command": cpp_target_command,
+            "driver_config_flags": list(CLANG_DRIVER_CONFIG_FLAGS),
         },
         "go": {
             "path": str(go),
@@ -2591,6 +2686,7 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
             "version_output",
             "installation",
             "target_triple",
+            "driver_config_flags",
         ),
         "clangxx": (
             "path",
@@ -2600,6 +2696,7 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
             "version_output",
             "installation",
             "target_triple",
+            "driver_config_flags",
         ),
         "go": (
             "path",
@@ -2613,6 +2710,7 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
         record = toolchains.get(tool, {})
         identity[tool] = {field: record.get(field) for field in fields}
     identity["compiler_contract"] = {
+        "driver_config_flags": list(CLANG_DRIVER_CONFIG_FLAGS),
         "c_flags": list(BASE_C_FLAGS),
         "cpp_flags": list(BASE_CPP_FLAGS),
         "forbidden_flags": list(FORBIDDEN_COMPILER_FLAG_PREFIXES),
@@ -2803,6 +2901,7 @@ def build_reference_workload(
     build_specs = {
         "c": [
             toolchains["clang"]["path"],
+            *CLANG_DRIVER_CONFIG_FLAGS,
             *BASE_C_FLAGS,
             str(copied_sources["c"]),
             "-o",
@@ -2811,6 +2910,7 @@ def build_reference_workload(
         ],
         "cpp": [
             toolchains["clangxx"]["path"],
+            *CLANG_DRIVER_CONFIG_FLAGS,
             *BASE_CPP_FLAGS,
             str(copied_sources["cpp"]),
             "-o",
@@ -2819,6 +2919,7 @@ def build_reference_workload(
         ],
         "semantic-c": [
             toolchains["clang"]["path"],
+            *CLANG_DRIVER_CONFIG_FLAGS,
             *BASE_C_FLAGS,
             str(copied_sources["semantic-c"]),
             "-o",
@@ -2874,6 +2975,7 @@ def build_reference_workload(
         nomo_binary = binary_path(binary_root, f"{workload_id}-nomo-baseline")
         clang_command = [
             toolchains["clang"]["path"],
+            *CLANG_DRIVER_CONFIG_FLAGS,
             *BASE_C_FLAGS,
             str(generated_c),
             "-o",
@@ -3003,20 +3105,38 @@ def release_lane_state(
                 )
         cargo = resolve_executable(cargo_argument, "Cargo")
         cargo_version = v1.tool_version(cargo, ["--version"])
+        cargo_configs = cargo_config_provenance(checkout)
         target_dir = bundle_root / "compiler-build" / label
+        cargo_home = (
+            bundle_root / "compiler-build" / f"{label}-cargo-home"
+        )
         if target_dir.exists():
             raise HarnessError(
                 f"{label} isolated compiler target already exists; use a fresh output path"
             )
+        if cargo_home.exists():
+            raise HarnessError(
+                f"{label} isolated CARGO_HOME already exists; use a fresh output path"
+            )
+        cargo_home.mkdir(parents=True)
         command = [str(cargo), "build", "--locked", "--release", "--bin", "nomo"]
-        build_record, build_stdout, build_stderr = run_build_capture(
-            command,
-            timeout_seconds=build_timeout_seconds,
-            cwd=checkout,
-            approved_environment_overrides={
-                "CARGO_TARGET_DIR": str(target_dir.resolve())
-            },
-        )
+        try:
+            build_record, build_stdout, build_stderr = run_build_capture(
+                command,
+                timeout_seconds=build_timeout_seconds,
+                cwd=checkout,
+                approved_environment_overrides={
+                    "CARGO_TARGET_DIR": str(target_dir.resolve()),
+                    "CARGO_HOME": str(cargo_home.resolve()),
+                },
+            )
+        finally:
+            try:
+                shutil.rmtree(cargo_home)
+            except OSError as error:
+                raise HarnessError(
+                    f"{label} isolated CARGO_HOME cleanup failed: {error}"
+                ) from error
         nomo = binary_path(target_dir / "release", "nomo")
         if not nomo.is_file():
             raise HarnessError(f"{label} compiler build did not produce {nomo}")
@@ -3056,8 +3176,10 @@ def release_lane_state(
             "remote_main_commit": remote_main,
             "command": build_record,
             "environment": {
-                "CARGO_TARGET_DIR": str(target_dir.resolve())
+                "CARGO_TARGET_DIR": str(target_dir.resolve()),
+                "CARGO_HOME": str(cargo_home.resolve()),
             },
+            "cargo_configs": cargo_configs,
             "cargo": {
                 "path": str(cargo),
                 "version_output": cargo_version,
@@ -3248,6 +3370,7 @@ def validate_release_backend_provenance(
         raise HarnessError(f"{label} object identity is incomplete")
     expected_compile = [
         compiler["path"],
+        *CLANG_DRIVER_CONFIG_FLAGS,
         *BASE_C_FLAGS,
         "-c",
         str(generated_c),
@@ -3256,6 +3379,7 @@ def validate_release_backend_provenance(
     ]
     expected_link = [
         compiler["path"],
+        *CLANG_DRIVER_CONFIG_FLAGS,
         object_path,
         "-o",
         str(binary),
@@ -3271,6 +3395,7 @@ def validate_release_backend_provenance(
             command, f"{label} command {index}"
         )
         argv = command["argv"]
+        validate_clang_driver_config_argv(argv, f"{label} command {index}")
         reject_forbidden_compiler_flags(argv, f"{label} command {index}")
         if argv[0] != compiler["path"]:
             raise HarnessError(f"{label} command switched backend compiler")
@@ -3321,6 +3446,7 @@ def build_emit_c_lane(
     binary.parent.mkdir(parents=True, exist_ok=True)
     clang_command = [
         toolchains["clang"]["path"],
+        *CLANG_DRIVER_CONFIG_FLAGS,
         *BASE_C_FLAGS,
         str(generated_c),
         "-o",
@@ -3973,6 +4099,7 @@ def validate_build_provenance(
         exact_reference_commands = {
             "c_build": [
                 toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
                 *BASE_C_FLAGS,
                 compiled_sources.get("c", {}).get("path"),
                 "-o",
@@ -3981,6 +4108,7 @@ def validate_build_provenance(
             ],
             "cpp_build": [
                 toolchains.get("clangxx", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
                 *BASE_CPP_FLAGS,
                 compiled_sources.get("cpp", {}).get("path"),
                 "-o",
@@ -3989,6 +4117,7 @@ def validate_build_provenance(
             ],
             "semantic-c_build": [
                 toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
                 *BASE_C_FLAGS,
                 compiled_sources.get("semantic-c", {}).get("path"),
                 "-o",
@@ -4009,6 +4138,9 @@ def validate_build_provenance(
                     f"{workload_id} {name} does not match the complete frozen argv"
                 )
             if name != "go_build":
+                validate_clang_driver_config_argv(
+                    commands[name]["argv"], f"{workload_id} {name}"
+                )
                 reject_forbidden_compiler_flags(
                     commands[name]["argv"], f"{workload_id} {name}"
                 )
@@ -4017,6 +4149,7 @@ def validate_build_provenance(
             generated_path = references.get("generated_c", {}).get("path")
             expected_clang = [
                 toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
                 *BASE_C_FLAGS,
                 generated_path,
                 "-o",
@@ -4028,6 +4161,10 @@ def validate_build_provenance(
                     f"{workload_id} baseline generated-C argv changed"
                 )
             reject_forbidden_compiler_flags(
+                commands["nomo_baseline_clang"]["argv"],
+                f"{workload_id} baseline generated-C",
+            )
+            validate_clang_driver_config_argv(
                 commands["nomo_baseline_clang"]["argv"],
                 f"{workload_id} baseline generated-C",
             )
@@ -4088,6 +4225,7 @@ def validate_build_provenance(
                     )
                 expected_compile = [
                     expected_compiler["path"],
+                    *CLANG_DRIVER_CONFIG_FLAGS,
                     *BASE_C_FLAGS,
                     "-c",
                     release["generated_c"]["path"],
@@ -4096,6 +4234,7 @@ def validate_build_provenance(
                 ]
                 expected_link = [
                     expected_compiler["path"],
+                    *CLANG_DRIVER_CONFIG_FLAGS,
                     objects[0].get("path"),
                     "-o",
                     release["binary"]["path"],
@@ -4124,6 +4263,10 @@ def validate_build_provenance(
                         f"{workload_id} {lane} release backend {index}",
                     )
                     reject_forbidden_compiler_flags(
+                        backend_command["argv"],
+                        f"{workload_id} {lane} release backend {index}",
+                    )
+                    validate_clang_driver_config_argv(
                         backend_command["argv"],
                         f"{workload_id} {lane} release backend {index}",
                     )
@@ -4163,6 +4306,7 @@ def validate_build_provenance(
                     )
                 expected_clang = [
                     toolchains.get("clang", {}).get("path"),
+                    *CLANG_DRIVER_CONFIG_FLAGS,
                     *BASE_C_FLAGS,
                     generated_path,
                     "-o",
@@ -4174,6 +4318,10 @@ def validate_build_provenance(
                         f"{workload_id} {lane} generated-C Clang argv changed"
                     )
                 reject_forbidden_compiler_flags(
+                    clang_command["argv"],
+                    f"{workload_id} {lane} generated-C Clang",
+                )
+                validate_clang_driver_config_argv(
                     clang_command["argv"],
                     f"{workload_id} {lane} generated-C Clang",
                 )
@@ -5641,6 +5789,16 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
             "nomo",
         ]
         cargo_target_dir = str(Path(lane["nomo_path"]).parents[1].resolve())
+        cargo_home = str(
+            (
+                Path(cargo_target_dir).parent
+                / f"{label}-cargo-home"
+            ).resolve()
+        )
+        cargo_environment = {
+            "CARGO_TARGET_DIR": cargo_target_dir,
+            "CARGO_HOME": cargo_home,
+        }
         validate_command_record(
             compiler_build.get("command", {}),
             f"{label} compiler self-build",
@@ -5648,7 +5806,10 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
         validate_build_command_environment(
             compiler_build.get("command", {}),
             f"{label} compiler self-build",
-            {"CARGO_TARGET_DIR": cargo_target_dir},
+            cargo_environment,
+        )
+        expected_cargo_configs = cargo_config_provenance(
+            Path(lane["checkout"])
         )
         if (
             compiler_build.get("repository_before") != lane["repository"]
@@ -5665,7 +5826,9 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
             or compiler_build.get("command", {}).get("command")
             != v1.command_text(expected_compiler_build_argv)
             or compiler_build.get("environment")
-            != {"CARGO_TARGET_DIR": cargo_target_dir}
+            != cargo_environment
+            or compiler_build.get("cargo_configs")
+            != expected_cargo_configs
         ):
             raise HarnessError(f"{label} compiler build is not commit-bound")
         if set(lane["capabilities"]) != set(FORMAL_BUILD_MODES) or any(

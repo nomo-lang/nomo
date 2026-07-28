@@ -63,6 +63,15 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         )
         self.assertIn("origin_main_commit", schema["$defs"]["compilerBuild"]["properties"])
         self.assertNotIn("origin_main_commit", schema["$defs"]["releaseLane"]["properties"])
+        self.assertIn("cargo_configs", schema["$defs"]["compilerBuild"]["required"])
+        self.assertEqual(
+            set(
+                schema["$defs"]["compilerBuild"]["properties"][
+                    "environment"
+                ]["required"]
+            ),
+            {"CARGO_TARGET_DIR", "CARGO_HOME"},
+        )
         self.assertIn("stability", schema["$defs"]["batch"]["required"])
         self.assertIn("evaluation", schema["$defs"]["batch"]["required"])
         predecessor = self.manifest["predecessor"]
@@ -92,6 +101,14 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         invalidation = self.manifest["methodology"]["batch_invalidation"]
         self.assertEqual(invalidation["decisive_reference_lanes"], ["c", "cpp"])
         self.assertEqual(invalidation["diagnostic_reference_lanes"], ["go"])
+        self.assertEqual(
+            self.manifest["toolchains"]["clang"]["driver_config_flags"],
+            list(benchmark.CLANG_DRIVER_CONFIG_FLAGS),
+        )
+        self.assertEqual(
+            self.manifest["toolchains"]["go"]["build_environment"],
+            {"GOENV": "off"},
+        )
 
     def test_manifest_rejects_frozen_input_threshold_or_rfc_changes(self) -> None:
         changed_input = copy.deepcopy(self.manifest)
@@ -126,6 +143,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             subprocess.run(
                 [
                     clangxx,
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     "-std=c++20",
                     "-pedantic-errors",
                     "-fsyntax-only",
@@ -1440,6 +1458,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ("clang", "sha256", "0" * 64),
             ("clang", "version", "0.0.0"),
             ("clang", "target_triple", "different-target"),
+            ("clang", "driver_config_flags", []),
         ):
             changed = copy.deepcopy(first)
             changed[tool][field] = changed_value
@@ -1554,10 +1573,34 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 environment: dict[str, str],
             ) -> tuple[dict, bytes, bytes]:
                 target = Path(environment["CARGO_TARGET_DIR"])
+                cargo_home = Path(environment["CARGO_HOME"])
+                self.assertEqual(
+                    cargo_home,
+                    (
+                        bundle
+                        / "compiler-build"
+                        / "main-cargo-home"
+                    ).resolve(),
+                )
+                self.assertNotEqual(
+                    cargo_home,
+                    Path(os.environ.get("CARGO_HOME", "")).resolve(),
+                )
                 binary = benchmark.binary_path(target / "release", "nomo")
                 binary.parent.mkdir(parents=True)
                 binary.write_bytes(b"self-built-nomo")
-                return self.full_command(command, cwd=str(cwd)), b"", b""
+                return (
+                    self.full_command(
+                        command,
+                        cwd=str(cwd),
+                        approved_environment_overrides={
+                            "CARGO_TARGET_DIR": str(target.resolve()),
+                            "CARGO_HOME": str(cargo_home.resolve()),
+                        },
+                    ),
+                    b"",
+                    b"",
+                )
 
             def git_capture(_checkout: Path, command: list[str]) -> str:
                 if command == ["remote", "get-url", "origin"]:
@@ -1593,6 +1636,11 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 benchmark, "release_capability", return_value=available_probe
             ), mock.patch.object(
                 benchmark, "emit_c_capability", return_value=available_probe
+            ), mock.patch.dict(
+                os.environ,
+                {
+                    "CARGO_HOME": str(root / "poison-cargo-home"),
+                },
             ):
                 result = benchmark.release_lane_state(
                     str(checkout),
@@ -1610,10 +1658,105 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(compiler["origin_main_commit"], commit)
         self.assertEqual(compiler["remote_main_commit"], commit)
         self.assertIn("CARGO_TARGET_DIR", compiler["environment"])
+        self.assertIn("CARGO_HOME", compiler["environment"])
+        self.assertEqual(compiler["cargo_configs"], [])
         self.assertEqual(
             compiler["command"]["argv"][1:],
             ["build", "--locked", "--release", "--bin", "nomo"],
         )
+
+    def test_cargo_config_authority_rejects_external_ancestor_and_hashes_tracked(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        checkout = root / "nested" / "checkout"
+        (checkout / ".git").mkdir(parents=True)
+        checked_in = checkout / ".cargo" / "config.toml"
+        checked_in.parent.mkdir()
+        checked_in.write_text(
+            '[target.wasm32-unknown-unknown]\nrustflags = []\n',
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            v1,
+            "git_capture",
+            return_value=".cargo/config.toml",
+        ):
+            records = benchmark.cargo_config_provenance(checkout)
+        self.assertEqual(
+            records,
+            [
+                {
+                    "path": str(checked_in.resolve()),
+                    "relative_path": ".cargo/config.toml",
+                    "sha256": v1.sha256_file(checked_in),
+                }
+            ],
+        )
+
+        checked_in.unlink()
+        poison = root / ".cargo" / "config.toml"
+        poison.parent.mkdir()
+        poison.write_text(
+            "[build]\nrustflags = ['-Ctarget-cpu=native']\n",
+            encoding="utf-8",
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "external ancestor Cargo config"
+        ):
+            benchmark.cargo_config_provenance(checkout)
+
+    def test_isolated_cargo_home_ignores_real_parent_poison_config(
+        self,
+    ) -> None:
+        cargo = shutil.which("cargo")
+        if cargo is None:
+            self.skipTest("Cargo is unavailable")
+        root = Path(self.temporary.name)
+        project = root / "project"
+        source = project / "src"
+        source.mkdir(parents=True)
+        (project / "Cargo.toml").write_text(
+            '[package]\nname = "cargo-home-probe"\n'
+            'version = "0.0.0"\nedition = "2021"\n',
+            encoding="utf-8",
+        )
+        (source / "main.rs").write_text(
+            "fn main() {}\n", encoding="utf-8"
+        )
+        poison_home = root / "poison-cargo-home"
+        poison_home.mkdir()
+        (poison_home / "config.toml").write_text(
+            '[build]\nrustflags = ["--definitely-invalid-rustflag"]\n',
+            encoding="utf-8",
+        )
+        isolated_home = root / "isolated-cargo-home"
+        target = root / "target"
+        with mock.patch.dict(
+            os.environ, {"CARGO_HOME": str(poison_home)}
+        ):
+            actual, projection = benchmark.sanitized_build_environment(
+                {
+                    "CARGO_HOME": str(isolated_home),
+                    "CARGO_TARGET_DIR": str(target),
+                }
+            )
+            subprocess.run(
+                [cargo, "check", "--offline"],
+                cwd=project,
+                env=actual,
+                check=True,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+            )
+        self.assertEqual(
+            actual["CARGO_HOME"], str(isolated_home)
+        )
+        self.assertEqual(
+            projection["retained"]["CARGO_HOME"],
+            str(isolated_home.resolve()),
+        )
+        self.assertNotIn("CARGO_HOME", projection["cleared"])
 
     def test_release_lane_rejects_wrong_commit_before_build(self) -> None:
         with tempfile.TemporaryDirectory() as temporary:
@@ -2073,6 +2216,115 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ):
                 benchmark.validate_release_lane_authority(changed)
 
+    def test_go_build_environment_disables_parent_and_user_go_env(
+        self,
+    ) -> None:
+        go = shutil.which("go")
+        if go is None:
+            self.skipTest("Go is unavailable")
+        poison = Path(self.temporary.name) / "go-env"
+        poison.write_text("GOFLAGS=-x\n", encoding="utf-8")
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GOENV": str(poison),
+                "GOFLAGS": "-mod=vendor",
+                "CARGO_HOME": str(
+                    Path(self.temporary.name) / "poison-cargo-home"
+                ),
+            },
+        ):
+            actual, projection = benchmark.sanitized_build_environment()
+            goenv = subprocess.run(
+                [go, "env", "GOENV"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=actual,
+            )
+            goflags = subprocess.run(
+                [go, "env", "GOFLAGS"],
+                check=True,
+                capture_output=True,
+                text=True,
+                env=actual,
+            )
+        self.assertEqual(actual["GOENV"], "off")
+        self.assertNotIn("GOFLAGS", actual)
+        self.assertNotIn("CARGO_HOME", actual)
+        self.assertEqual(projection["retained"]["GOENV"], "off")
+        self.assertNotIn("GOENV", projection["cleared"])
+        self.assertIn("GOFLAGS", projection["cleared"])
+        self.assertIn("CARGO_HOME", projection["cleared"])
+        self.assertIn(goenv.stdout.strip(), {"", "off"})
+        self.assertEqual(goflags.stdout.strip(), "")
+
+    def test_clang_driver_config_is_required_once_on_every_decisive_path(
+        self,
+    ) -> None:
+        clang = shutil.which("clang")
+        if clang is None:
+            self.skipTest("Clang is unavailable")
+        subprocess.run(
+            [clang, *benchmark.CLANG_DRIVER_CONFIG_FLAGS, "--version"],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+        result = self.completed_result()
+        commands = [
+            result["builds"]["spectral-norm"]["references"]["commands"][
+                "c_build"
+            ],
+            result["builds"]["spectral-norm"]["modes"]["emit-c"][
+                "candidate"
+            ]["clang_command"],
+            result["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["backend_provenance"]["compile_commands"][0],
+            result["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["backend_provenance"]["link_command"],
+        ]
+        for command in commands:
+            self.assertEqual(
+                command["argv"].count("--no-default-config"), 1
+            )
+
+        missing = copy.deepcopy(result)
+        command = missing["builds"]["spectral-norm"]["modes"]["emit-c"][
+            "candidate"
+        ]["clang_command"]
+        command["argv"].remove("--no-default-config")
+        command["command"] = v1.command_text(command["argv"])
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "Clang argv changed"
+        ):
+            benchmark.validate_build_provenance(missing, self.manifest)
+
+        duplicated = copy.deepcopy(result)
+        command = duplicated["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]["backend_provenance"]["compile_commands"][0]
+        command["argv"].insert(1, "--no-default-config")
+        command["command"] = v1.command_text(command["argv"])
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "backend C argv changed"
+        ):
+            benchmark.validate_build_provenance(duplicated, self.manifest)
+
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "external Clang driver config"
+        ):
+            benchmark.validate_clang_driver_config_argv(
+                [
+                    clang,
+                    "--no-default-config",
+                    f"--config={Path(self.temporary.name) / 'poison.cfg'}",
+                ],
+                "poisoned Clang",
+            )
+
     def test_controlled_build_path_ignores_temporary_arg0_entries(self) -> None:
         temporary_a = (
             Path(self.temporary.name) / ".codex" / "tmp" / "arg0" / "codex-arg0-a"
@@ -2241,7 +2493,12 @@ print(json.dumps(
         self.assertTrue(build["generated_c"]["unmodified_after_emit"])
         self.assertFalse(build["release_artifact_reused"])
         self.assertEqual(
-            tuple(build["clang_command"]["argv"][1:5]), benchmark.BASE_C_FLAGS
+            tuple(build["clang_command"]["argv"][1:2]),
+            benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+        )
+        self.assertEqual(
+            tuple(build["clang_command"]["argv"][2:6]),
+            benchmark.BASE_C_FLAGS,
         )
 
     def test_draft_2020_12_schema_accepts_compiler_fields_only_nested(self) -> None:
@@ -2701,7 +2958,9 @@ print(json.dumps(
         }
         command = reference["commands"]["cpp_build"]
         command["argv"][
-            len(benchmark.BASE_CPP_FLAGS) + 1
+            len(benchmark.CLANG_DRIVER_CONFIG_FLAGS)
+            + len(benchmark.BASE_CPP_FLAGS)
+            + 1
         ] = "/tmp/replacement-copy.cpp"
         command["command"] = v1.command_text(command["argv"])
         with self.assertRaisesRegex(benchmark.HarnessError, "manifest-bound"):
@@ -2965,6 +3224,7 @@ print(json.dumps(
             backend["link_command"] = self.full_command(
                 [
                     backend["compiler"]["path"],
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     backend["objects"][0]["path"],
                     "-o",
                     binary["path"],
@@ -2975,6 +3235,7 @@ print(json.dumps(
             formal["clang_command"] = self.full_command(
                 [
                     "/usr/bin/clang",
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     *benchmark.BASE_C_FLAGS,
                     formal["generated_c"]["path"],
                     "-o",
@@ -3377,6 +3638,7 @@ print(json.dumps(
         }
         c = [
             "/usr/bin/clang",
+            *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_C_FLAGS,
             compiled["c"]["path"],
             "-o",
@@ -3385,6 +3647,7 @@ print(json.dumps(
         ]
         cpp = [
             "/usr/bin/clang++",
+            *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_CPP_FLAGS,
             compiled["cpp"]["path"],
             "-o",
@@ -3393,6 +3656,7 @@ print(json.dumps(
         ]
         semantic_c = [
             "/usr/bin/clang",
+            *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_C_FLAGS,
             compiled["semantic-c"]["path"],
             "-o",
@@ -3476,6 +3740,7 @@ print(json.dumps(
             "clang_command": self.full_command(
                 [
                     "/usr/bin/clang",
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     *benchmark.BASE_C_FLAGS,
                     generated_c,
                     "-o",
@@ -3524,6 +3789,7 @@ print(json.dumps(
                 self.full_command(
                     [
                         compiler["path"],
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         *benchmark.BASE_C_FLAGS,
                         "-c",
                         generated_c,
@@ -3535,6 +3801,7 @@ print(json.dumps(
             "link_command": self.full_command(
                 [
                     compiler["path"],
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     object_path,
                     "-o",
                     binary["path"],
@@ -3570,6 +3837,9 @@ print(json.dumps(
         commit = ("a" if lane == "candidate" else "b") * 40
         binary_sha = ("c" if lane == "candidate" else "d") * 64
         nomo_path = f"/tmp/{lane}/target/release/nomo"
+        cargo_home = str(
+            (Path(f"/tmp/{lane}") / f"{lane}-cargo-home").resolve()
+        )
         capability = {
             "label": lane,
             "status": "available",
@@ -3605,14 +3875,17 @@ print(json.dumps(
                     approved_environment_overrides={
                         "CARGO_TARGET_DIR": str(
                             Path(f"/tmp/{lane}/target").resolve()
-                        )
+                        ),
+                        "CARGO_HOME": cargo_home,
                     },
                 ),
                 "environment": {
                     "CARGO_TARGET_DIR": str(
                         Path(f"/tmp/{lane}/target").resolve()
-                    )
+                    ),
+                    "CARGO_HOME": cargo_home,
                 },
+                "cargo_configs": [],
                 "cargo": {
                     "path": "/usr/bin/cargo",
                     "sha256": "e" * 64,
@@ -3640,8 +3913,15 @@ print(json.dumps(
                 "version_output": "Apple clang version 21.0.0",
                 "installation": "/usr/bin",
                 "target_triple": "arm64-apple-darwin",
+                "driver_config_flags": list(
+                    benchmark.CLANG_DRIVER_CONFIG_FLAGS
+                ),
                 "target_command": self.full_command(
-                    ["/usr/bin/clang", "-print-target-triple"]
+                    [
+                        "/usr/bin/clang",
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                        "-print-target-triple",
+                    ]
                 ),
             },
             "clangxx": {
@@ -3652,8 +3932,15 @@ print(json.dumps(
                 "version_output": "Apple clang version 21.0.0",
                 "installation": "/usr/bin",
                 "target_triple": "arm64-apple-darwin",
+                "driver_config_flags": list(
+                    benchmark.CLANG_DRIVER_CONFIG_FLAGS
+                ),
                 "target_command": self.full_command(
-                    ["/usr/bin/clang++", "-print-target-triple"]
+                    [
+                        "/usr/bin/clang++",
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                        "-print-target-triple",
+                    ]
                 ),
             },
             "go": {"path": "/usr/bin/go"},
@@ -3854,6 +4141,9 @@ print(json.dumps(
         for lane in ("candidate", "main"):
             state = result["release_lanes"][lane]
             target_dir = root / "compiler-build" / lane
+            cargo_home = (
+                root / "compiler-build" / f"{lane}-cargo-home"
+            )
             compiler = write_file(
                 target_dir / "release" / "nomo",
                 f"{lane}-compiler".encode(),
@@ -3863,8 +4153,10 @@ print(json.dumps(
             compiler_build = state["compiler_build"]
             compiler_build["binary"] = compiler
             compiler_build["environment"] = {
-                "CARGO_TARGET_DIR": str(target_dir.resolve())
+                "CARGO_TARGET_DIR": str(target_dir.resolve()),
+                "CARGO_HOME": str(cargo_home.resolve()),
             }
+            compiler_build["cargo_configs"] = []
             compiler_build["command"] = self.full_command(
                 [
                     compiler_build["cargo"]["path"],
@@ -3876,7 +4168,8 @@ print(json.dumps(
                 ],
                 cwd=state["checkout"],
                 approved_environment_overrides={
-                    "CARGO_TARGET_DIR": str(target_dir.resolve())
+                    "CARGO_TARGET_DIR": str(target_dir.resolve()),
+                    "CARGO_HOME": str(cargo_home.resolve()),
                 },
             )
             for build_mode in benchmark.FORMAL_BUILD_MODES:
@@ -3923,6 +4216,7 @@ print(json.dumps(
                 "c_build": self.full_command(
                     [
                         toolchains["clang"]["path"],
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         *benchmark.BASE_C_FLAGS,
                         copied_sources["c"]["path"],
                         "-o",
@@ -3933,6 +4227,7 @@ print(json.dumps(
                 "cpp_build": self.full_command(
                     [
                         toolchains["clangxx"]["path"],
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         *benchmark.BASE_CPP_FLAGS,
                         copied_sources["cpp"]["path"],
                         "-o",
@@ -3943,6 +4238,7 @@ print(json.dumps(
                 "semantic-c_build": self.full_command(
                     [
                         toolchains["clang"]["path"],
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         *benchmark.BASE_C_FLAGS,
                         copied_sources["semantic-c"]["path"],
                         "-o",
@@ -4034,6 +4330,7 @@ print(json.dumps(
                                 self.full_command(
                                     [
                                         compiler["path"],
+                                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                                         *benchmark.BASE_C_FLAGS,
                                         "-c",
                                         generated["path"],
@@ -4045,6 +4342,7 @@ print(json.dumps(
                             "link_command": self.full_command(
                                 [
                                     compiler["path"],
+                                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                                     object_file["path"],
                                     "-o",
                                     binary["path"],
@@ -4078,6 +4376,7 @@ print(json.dumps(
                         formal["clang_command"] = self.full_command(
                             [
                                 toolchains["clang"]["path"],
+                                *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                                 *benchmark.BASE_C_FLAGS,
                                 generated["path"],
                                 "-o",

@@ -3,9 +3,11 @@ from __future__ import annotations
 import copy
 import ctypes
 import datetime as dt
+import base64
 import json
 import math
 import os
+import platform
 import shutil
 import subprocess
 import sys
@@ -36,6 +38,8 @@ class FakeLibrary:
 
 
 class BenchmarksGameV2Tests(unittest.TestCase):
+    _rust_toolchain_fixture: dict | None = None
+
     def setUp(self) -> None:
         self.temporary = tempfile.TemporaryDirectory()
         self.addCleanup(self.temporary.cleanup)
@@ -70,8 +74,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     "environment"
                 ]["required"]
             ),
-            {"CARGO_TARGET_DIR", "CARGO_HOME"},
+            {"CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"},
         )
+        self.assertIn("rustc", schema["$defs"]["compilerBuild"]["required"])
         self.assertIn("stability", schema["$defs"]["batch"]["required"])
         self.assertIn("evaluation", schema["$defs"]["batch"]["required"])
         predecessor = self.manifest["predecessor"]
@@ -88,6 +93,33 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             )
         )
         v1.validate_manifest(v1_manifest, self.suite_root)
+
+    def test_frozen_benchmark_files_are_git_lf_and_byte_stable(self) -> None:
+        paths = [
+            "performance/benchmarksgame/manifest-v2.json",
+            "performance/benchmarksgame/reference/c/spectral-norm.c",
+            "performance/benchmarksgame/reference/cpp/spectral-norm.cpp",
+            "performance/benchmarksgame/reference/go/spectral-norm.go",
+            "performance/benchmarksgame/reference/nomo/spectral-norm/src/main.nomo",
+            "performance/benchmarksgame/reference/nomo/spectral-norm/nomo.toml",
+            "performance/benchmarksgame/fixtures/spectral-norm-100.txt",
+            "performance/benchmarksgame/README-v2.md",
+            "scripts/benchmarksgame.py",
+            "scripts/benchmarksgame_v2.py",
+        ]
+        for relative in paths:
+            with self.subTest(path=relative):
+                attribute = subprocess.run(
+                    ["git", "check-attr", "eol", "--", relative],
+                    cwd=REPOSITORY_ROOT,
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip()
+                self.assertTrue(attribute.endswith("eol: lf"), attribute)
+                content = (REPOSITORY_ROOT / relative).read_bytes()
+                self.assertNotIn(b"\r\n", content)
+        benchmark.validate_manifest(self.manifest, self.suite_root)
 
     def test_manifest_pins_rfc_amendment_two_modes_and_decisive_drift(self) -> None:
         self.assertEqual(
@@ -595,7 +627,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "release",
             self.manifest,
             result["builds"],
-            "fixture",
+            result["provenance"]["collector"]["id"],
             authorization,
             "Linux",
             "x86_64",
@@ -610,7 +642,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "release",
                 self.manifest,
                 result["builds"],
-                "fixture",
+                result["provenance"]["collector"]["id"],
                 authorization,
                 "Linux",
                 "x86_64",
@@ -623,7 +655,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "release",
                 self.manifest,
                 result["builds"],
-                "fixture",
+                result["provenance"]["collector"]["id"],
                 authorization,
                 "Linux",
                 "x86_64",
@@ -651,7 +683,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "release",
                 self.manifest,
                 result["builds"],
-                "fixture",
+                result["provenance"]["collector"]["id"],
                 authorization,
                 "Linux",
                 "x86_64",
@@ -680,7 +712,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "release",
                 self.manifest,
                 result["builds"],
-                "fixture",
+                result["provenance"]["collector"]["id"],
                 authorization,
                 "Linux",
                 "x86_64",
@@ -994,6 +1026,49 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(expected, str(trusted / "powercfg.exe"))
         self.assertNotIn("shadow", expected)
 
+    @unittest.skipUnless(os.name == "nt", "requires native Visual Studio SDK")
+    def test_windows_build_environment_discovers_sdk_without_parent_poison(
+        self,
+    ) -> None:
+        poison = str(Path(self.temporary.name) / "poison")
+        with mock.patch.dict(
+            os.environ,
+            {
+                "INCLUDE": poison,
+                "LIB": poison,
+                "LIBPATH": poison,
+                "CFLAGS": "-DPOISONED_PARENT",
+            },
+        ):
+            benchmark.canonical_windows_build_support(refresh=True)
+            actual, projection = benchmark.sanitized_build_environment()
+            self.assertNotEqual(actual["INCLUDE"], poison)
+            self.assertNotEqual(actual["LIB"], poison)
+            self.assertNotEqual(actual["LIBPATH"], poison)
+            self.assertNotIn("CFLAGS", actual)
+            self.assertIn("windows_toolchain", projection)
+            source = Path(self.temporary.name) / "sdk-probe.c"
+            binary = Path(self.temporary.name) / "sdk-probe.exe"
+            source.write_text(
+                "#include <ctype.h>\nint main(void) { return isdigit('1') ? 0 : 1; }\n",
+                encoding="utf-8",
+            )
+            clang = benchmark.resolve_executable("clang", "Clang C")
+            subprocess.run(
+                [
+                    str(clang),
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                    *benchmark.BASE_C_FLAGS,
+                    str(source),
+                    "-o",
+                    str(binary),
+                ],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
+        self.assertTrue(binary.is_file())
+
     def test_current_platform_dynamic_capture_replays(self) -> None:
         host = benchmark.host_provenance()
         authority_sha = benchmark.canonical_json_sha256(host)
@@ -1110,13 +1185,36 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "resolve_executable",
             return_value=Path(sys.executable),
         ), mock.patch.object(
-            v1,
-            "tool_version",
+            benchmark,
+            "build_probe_output",
             side_effect=[
-                "nomo 0.0.0-20260721120555\n\nCommands:",
-                "Apple clang version 21.0.0",
-                "Apple clang version 21.0.0",
-                "go version go1.25.11 darwin/arm64",
+                ("nomo 0.0.0-20260721120555\n\nCommands:", {}),
+                ("Apple clang version 21.0.0", {}),
+                ("Apple clang version 21.0.0", {}),
+                ("go version go1.25.11 darwin/arm64", {}),
+            ],
+        ), mock.patch.object(
+            benchmark,
+            "clang_selected_driver",
+            side_effect=[
+                {
+                    "path": sys.executable,
+                    "invocation_realpath": sys.executable,
+                    "invocation_sha256": "1" * 64,
+                    "selected_path": sys.executable,
+                    "realpath": sys.executable,
+                    "sha256": "1" * 64,
+                    "selection_command": None,
+                },
+                {
+                    "path": sys.executable,
+                    "invocation_realpath": sys.executable,
+                    "invocation_sha256": "1" * 64,
+                    "selected_path": sys.executable,
+                    "realpath": sys.executable,
+                    "sha256": "1" * 64,
+                    "selection_command": None,
+                },
             ],
         ), mock.patch.object(
             benchmark,
@@ -1137,6 +1235,156 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     sys.executable,
                     sys.executable,
                 )
+
+        with mock.patch.object(
+            benchmark,
+            "resolve_executable",
+            return_value=Path(sys.executable),
+        ), mock.patch.object(
+            benchmark,
+            "build_probe_output",
+            side_effect=[
+                ("nomo 0.0.0-20260721120555\n\nCommands:", {}),
+                ("Apple clang version 21.0.0", {}),
+                ("Apple clang version 21.0.0", {}),
+                ("go version go1.25.12 darwin/arm64", {}),
+            ],
+        ), mock.patch.object(
+            benchmark,
+            "clang_selected_driver",
+            return_value={
+                "path": sys.executable,
+                "invocation_realpath": sys.executable,
+                "invocation_sha256": "1" * 64,
+                "selected_path": sys.executable,
+                "realpath": sys.executable,
+                "sha256": "1" * 64,
+                "selection_command": None,
+            },
+        ), mock.patch.object(
+            benchmark,
+            "clang_target",
+            side_effect=[
+                ("arm64-apple-darwin", self.full_command([sys.executable])),
+                ("arm64-apple-darwin", self.full_command([sys.executable])),
+            ],
+        ):
+            with self.assertRaisesRegex(
+                benchmark.ToolchainMismatch,
+                "driver invocation paths must be distinct",
+            ):
+                benchmark.inspect_toolchains(
+                    self.manifest,
+                    sys.executable,
+                    sys.executable,
+                    sys.executable,
+                    sys.executable,
+                )
+
+    @unittest.skipIf(os.name == "nt", "requires POSIX symlink argv0 semantics")
+    def test_executable_resolution_preserves_clang_driver_argv0(self) -> None:
+        system_clang = shutil.which("clang")
+        if system_clang is None:
+            self.skipTest("Clang is unavailable")
+        root = Path(self.temporary.name)
+        clang = root / "clang"
+        clangxx = root / "clang++"
+        clang.symlink_to(Path(system_clang))
+        clangxx.symlink_to(Path(system_clang))
+        selected_c = benchmark.resolve_executable(str(clang), "Clang C")
+        selected_cpp = benchmark.resolve_executable(
+            str(clangxx), "Clang C++"
+        )
+        self.assertEqual(selected_c, clang.absolute())
+        self.assertEqual(selected_cpp, clangxx.absolute())
+        self.assertNotEqual(selected_c, selected_cpp)
+        self.assertEqual(selected_c.resolve(), selected_cpp.resolve())
+        source = root / "probe.cpp"
+        binary = root / "probe"
+        source.write_text(
+            "#include <memory>\n"
+            "int main() { auto p = std::make_unique<int[]>(1); return p[0]; }\n",
+            encoding="utf-8",
+        )
+        subprocess.run(
+            [
+                str(selected_cpp),
+                *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                "-std=c++20",
+                str(source),
+                "-o",
+                str(binary),
+            ],
+            check=True,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+        )
+
+    def test_rustup_multicall_paths_and_rustc_authority_are_bound(self) -> None:
+        cargo = benchmark.resolve_executable("cargo", "Cargo")
+        rustc = benchmark.rustc_for_cargo(cargo)
+        self.assertEqual(cargo.name.lower().removesuffix(".exe"), "cargo")
+        self.assertEqual(rustc.name.lower().removesuffix(".exe"), "rustc")
+        if cargo.resolve() == rustc.resolve():
+            self.assertNotEqual(cargo, rustc)
+        root = Path(self.temporary.name)
+        cargo_environment = {
+            "CARGO_TARGET_DIR": str((root / "target").resolve()),
+            "CARGO_HOME": str((root / "cargo-home").resolve()),
+            "RUSTC": str(rustc),
+        }
+        record = benchmark.rustc_authority(
+            rustc,
+            root,
+            cargo_environment,
+        )
+        self.assertEqual(record["path"], str(rustc))
+        self.assertEqual(record["realpath"], str(rustc.resolve()))
+        self.assertEqual(record["version_fields"]["binary"], "rustc")
+        self.assertTrue(Path(record["sysroot"]).is_absolute())
+        self.assertEqual(
+            record["version_command"]["environment"],
+            benchmark.sanitized_build_environment(cargo_environment)[1],
+        )
+
+    @unittest.skipUnless(
+        platform.system() == "Darwin", "requires the Apple xcrun shim"
+    )
+    def test_darwin_clang_selection_ignores_parent_developer_dir(self) -> None:
+        poison = Path(self.temporary.name) / "invalid-developer"
+        poison.mkdir()
+        with mock.patch.dict(
+            os.environ,
+            {
+                "DEVELOPER_DIR": str(poison),
+                "TOOLCHAINS": "poison-toolchain",
+            },
+        ):
+            clang = benchmark.resolve_executable("clang", "Clang C")
+            identity = benchmark.clang_selected_driver(clang, "clang")
+            output, version_command = benchmark.build_probe_output(
+                clang,
+                [*benchmark.CLANG_DRIVER_CONFIG_FLAGS, "--version"],
+            )
+        self.assertIn("clang version", output.lower())
+        self.assertEqual(identity["path"], str(clang))
+        self.assertTrue(Path(identity["selected_path"]).is_file())
+        self.assertEqual(
+            identity["sha256"],
+            v1.sha256_file(Path(identity["realpath"])),
+        )
+        for command in (
+            identity["selection_command"],
+            version_command,
+        ):
+            self.assertIn(
+                "DEVELOPER_DIR", command["environment"]["cleared"]
+            )
+            self.assertIn("TOOLCHAINS", command["environment"]["cleared"])
+            self.assertNotIn(
+                "DEVELOPER_DIR", command["environment"]["retained"]
+            )
+            self.assertNotIn("TOOLCHAINS", command["environment"]["retained"])
 
     @unittest.skipUnless(hasattr(os, "wait4"), "requires POSIX wait4")
     def test_output_mismatch_and_timeout_are_rejected(self) -> None:
@@ -1237,6 +1485,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "NOMO_POISON": "1",
         }
         workload_id = benchmark.WORKLOAD_IDS[0]
+        fixture_sha256 = self.manifest["workloads"][0]["fixtures"][
+            "performance"
+        ]["sha256"]
         binary = self.binary_record(workload_id, "release", "candidate")
         sample = self.measured_sample(
             wall_ns=100,
@@ -1245,7 +1496,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             workload_id=workload_id,
             lane="candidate",
             input_value="5500",
-            fixture_sha256="a" * 64,
+            fixture_sha256=fixture_sha256,
             batch_index=1,
             attempt_index=1,
             order_position=1,
@@ -1277,8 +1528,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 sample,
                 binary,
                 "5500",
-                "a" * 64,
-                "fixture",
+                fixture_sha256,
+                sample["collector"],
                 "candidate",
             )
             for field in ("TEMP", "SystemRoot"):
@@ -1293,8 +1544,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                         changed,
                         binary,
                         "5500",
-                        "a" * 64,
-                        "fixture",
+                        fixture_sha256,
+                        sample["collector"],
                         "candidate",
                     )
 
@@ -1427,7 +1678,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ),
         ):
             result = benchmark.release_capability(executable, "candidate")
-        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["status"], "available", result)
 
     def test_stable_toolchain_identity_excludes_probe_telemetry(self) -> None:
         result = self.correctness_only_result()
@@ -1538,7 +1789,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 }
             )
         collector = mock.Mock()
-        collector.descriptor.return_value = {}
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host("Linux")
+        )
         with tempfile.TemporaryDirectory() as temporary, mock.patch.object(
             benchmark, "release_lane_state", side_effect=states
         ):
@@ -1587,8 +1840,25 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     Path(os.environ.get("CARGO_HOME", "")).resolve(),
                 )
                 binary = benchmark.binary_path(target / "release", "nomo")
-                binary.parent.mkdir(parents=True)
+                binary.parent.mkdir(parents=True, exist_ok=True)
                 binary.write_bytes(b"self-built-nomo")
+                if command[-1:] == ["--version"]:
+                    stdout = b"cargo 1.99.0\n"
+                elif command[-1:] == ["-vV"]:
+                    stdout = (
+                        b"rustc 1.99.0 (012345678 2026-01-01)\n"
+                        b"binary: rustc\n"
+                        b"commit-hash: "
+                        + b"0" * 40
+                        + b"\ncommit-date: 2026-01-01\n"
+                        b"host: fixture-target\n"
+                        b"release: 1.99.0\n"
+                        b"LLVM version: 22.0.0\n"
+                    )
+                elif command[-2:] == ["--print", "sysroot"]:
+                    stdout = b"/tmp/fixture-rust-toolchain\n"
+                else:
+                    stdout = b""
                 return (
                     self.full_command(
                         command,
@@ -1596,9 +1866,10 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                         approved_environment_overrides={
                             "CARGO_TARGET_DIR": str(target.resolve()),
                             "CARGO_HOME": str(cargo_home.resolve()),
+                            "RUSTC": str(Path(sys.executable)),
                         },
                     ),
-                    b"",
+                    stdout,
                     b"",
                 )
 
@@ -1651,7 +1922,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     sys.executable,
                     True,
                 )
-        self.assertEqual(result["status"], "available")
+        self.assertEqual(result["status"], "available", result)
         self.assertEqual(result["expected_commit"], commit)
         self.assertTrue(result["detached_head"])
         compiler = result["compiler_build"]
@@ -1659,7 +1930,10 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(compiler["remote_main_commit"], commit)
         self.assertIn("CARGO_TARGET_DIR", compiler["environment"])
         self.assertIn("CARGO_HOME", compiler["environment"])
+        self.assertEqual(compiler["environment"]["RUSTC"], sys.executable)
         self.assertEqual(compiler["cargo_configs"], [])
+        self.assertEqual(compiler["rustc"]["realpath"], str(Path(sys.executable).resolve()))
+        self.assertEqual(compiler["rustc"]["toolchain"], "fixture-rust-toolchain")
         self.assertEqual(
             compiler["command"]["argv"][1:],
             ["build", "--locked", "--release", "--bin", "nomo"],
@@ -1703,6 +1977,20 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         )
         with self.assertRaisesRegex(
             benchmark.HarnessError, "external ancestor Cargo config"
+        ):
+            benchmark.cargo_config_provenance(checkout)
+
+        poison.unlink()
+        checked_in.write_text(
+            '[build]\nrustc = "/tmp/unbound-rustc"\n',
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            v1,
+            "git_capture",
+            return_value=".cargo/config.toml",
+        ), self.assertRaisesRegex(
+            benchmark.HarnessError, "authority-bound Rust compiler"
         ):
             benchmark.cargo_config_provenance(checkout)
 
@@ -2088,7 +2376,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         approval_path = Path(self.temporary.name) / "approval.json"
         v1.write_result(approval_path, approval)
         collector = mock.Mock()
-        collector.descriptor.return_value = {"id": "fixture"}
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host("Linux")
+        )
         seen_modes = []
 
         def protocol_stub(
@@ -2525,6 +2815,39 @@ print(json.dumps(
         with mock.patch.object(benchmark, "validate_result_prepared_authority"):
             benchmark.validate_result(result, self.manifest)
 
+    def test_collector_descriptor_and_sample_derived_fields_are_authoritative(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        for field, value in (
+            ("wall_clock", "fabricated-clock"),
+            ("id", "fabricated-collector"),
+        ):
+            changed = copy.deepcopy(result)
+            changed["provenance"]["collector"][field] = value
+            with self.subTest(field=field), self.assertRaisesRegex(
+                benchmark.HarnessError, "collector descriptor"
+            ):
+                benchmark.validate_result(changed, self.manifest)
+
+        for field, value in (
+            ("cpu_total_ns", 999),
+            ("stdout_raw_sha256", "0" * 64),
+            (
+                "stdout_normalized_sha256",
+                "0" * 64,
+            ),
+        ):
+            changed = copy.deepcopy(result)
+            sample = changed["protocols"]["release"]["batches"][0][
+                "workloads"
+            ][0]["samples"]["candidate"][0]
+            sample[field] = value
+            with self.subTest(field=field), mock.patch.object(
+                benchmark, "validate_result_prepared_authority"
+            ), self.assertRaises(benchmark.HarnessError):
+                benchmark.validate_result(changed, self.manifest)
+
     def test_completed_rejects_empty_environment_and_fake_sample(self) -> None:
         result = self.completed_result()
         result["provenance"]["environment_qualification"] = {}
@@ -2608,9 +2931,9 @@ print(json.dumps(
         for failure_kind, executable in programs.items():
             with self.subTest(failure_kind=failure_kind):
                 result = self.completed_result()
-                result["provenance"]["collector"] = {
-                    "id": collector.collector_id
-                }
+                result["provenance"]["collector"] = (
+                    benchmark.collector_descriptor_for_host("Linux")
+                )
                 self.bind_formal_candidate_binary(
                     result, "spectral-norm", "release", executable
                 )
@@ -2680,6 +3003,8 @@ print(json.dumps(
                 implementation = item["implementations"][lane]
                 sample = implementation["sample"]
                 failure_message = f"{workload_id} fixture mismatch"
+                mismatched_stdout = b"x"
+                mismatched_sha256 = v1.sha256_bytes(mismatched_stdout)
                 failed_sample = {
                     **sample,
                     "status": "failed",
@@ -2688,8 +3013,11 @@ print(json.dumps(
                     "failure_source": "process-collector",
                     "stdout": "captured-failed",
                     "timed_out": False,
-                    "stdout_raw_sha256": "0" * 64,
-                    "stdout_normalized_sha256": "0" * 64,
+                    "stdout_raw_sha256": mismatched_sha256,
+                    "stdout_normalized_sha256": mismatched_sha256,
+                    "stdout_raw_base64": base64.b64encode(
+                        mismatched_stdout
+                    ).decode("ascii"),
                     "stdout_bytes": {"raw": 1, "normalized": 1},
                     "stderr": {
                         "sha256": v1.sha256_bytes(b""),
@@ -2703,7 +3031,7 @@ print(json.dumps(
                 item["implementations"] = {
                     lane: {
                         "passed": False,
-                        "stdout_normalized_sha256": "0" * 64,
+                        "stdout_normalized_sha256": mismatched_sha256,
                         "sample": failed_sample,
                     }
                 }
@@ -2762,7 +3090,9 @@ print(json.dumps(
         mismatch_program.chmod(0o755)
         result = self.completed_result()
         collector = benchmark.PosixWait4Collector()
-        result["provenance"]["collector"] = {"id": collector.collector_id}
+        result["provenance"]["collector"] = (
+            benchmark.collector_descriptor_for_host("Linux")
+        )
         result["status"] = "ineligible"
         result["overall_verdict"] = "not_evaluated"
         result["claims"]["claim_eligible"] = False
@@ -3101,6 +3431,21 @@ print(json.dumps(
     ) -> dict:
         binary = self.binary_record(workload_id, build_mode, lane)
         argv = [binary["path"], input_value]
+        manifest_workload = next(
+            item
+            for item in self.manifest["workloads"]
+            if item["id"] == workload_id
+        )
+        fixture_kind = (
+            "correctness"
+            if input_value == manifest_workload["correctness_input"]
+            else "performance"
+        )
+        fixture_bytes = (
+            self.suite_root
+            / manifest_workload["fixtures"][fixture_kind]["path"]
+        ).read_bytes()
+        self.assertEqual(v1.sha256_bytes(fixture_bytes), fixture_sha256)
         sample = {
             "started_at_utc": "2026-07-28T00:00:20+00:00",
             "finished_at_utc": "2026-07-28T00:00:21+00:00",
@@ -3109,7 +3454,9 @@ print(json.dumps(
             "environment": benchmark._environment(
                 {"GOMAXPROCS": "1"} if lane == "go" else {}
             )[1],
-            "collector": "fixture",
+            "collector": benchmark.collector_descriptor_for_host("Linux")[
+                "id"
+            ],
             "stdout": "captured-and-verified",
             "wall_ns": wall_ns,
             "user_cpu_ns": wall_ns,
@@ -3119,6 +3466,9 @@ print(json.dumps(
             "exit_code": 0,
             "stdout_raw_sha256": fixture_sha256,
             "stdout_normalized_sha256": fixture_sha256,
+            "stdout_raw_base64": base64.b64encode(fixture_bytes).decode(
+                "ascii"
+            ),
             "stdout_normalization": benchmark.STDOUT_NORMALIZATION,
             "executable_sha256": binary["sha256"],
             "phase": phase,
@@ -3837,9 +4187,49 @@ print(json.dumps(
         commit = ("a" if lane == "candidate" else "b") * 40
         binary_sha = ("c" if lane == "candidate" else "d") * 64
         nomo_path = f"/tmp/{lane}/target/release/nomo"
+        if self.__class__._rust_toolchain_fixture is None:
+            cargo = benchmark.resolve_executable("cargo", "Cargo fixture")
+            rustc = benchmark.rustc_for_cargo(cargo)
+            self.__class__._rust_toolchain_fixture = {
+                "cargo": cargo,
+                "rustc": rustc,
+                "rustc_version": subprocess.run(
+                    [str(rustc), "-vV"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+                "rustc_sysroot": subprocess.run(
+                    [str(rustc), "--print", "sysroot"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+                "cargo_version": subprocess.run(
+                    [str(cargo), "--version"],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                ).stdout.strip(),
+            }
+        rust_toolchain = self.__class__._rust_toolchain_fixture
+        assert rust_toolchain is not None
+        cargo = rust_toolchain["cargo"]
+        rustc = rust_toolchain["rustc"]
+        rustc_version = rust_toolchain["rustc_version"]
+        rustc_sysroot = rust_toolchain["rustc_sysroot"]
+        cargo_version = rust_toolchain["cargo_version"]
         cargo_home = str(
             (Path(f"/tmp/{lane}") / f"{lane}-cargo-home").resolve()
         )
+        cargo_environment = {
+            "CARGO_TARGET_DIR": str(
+                Path(f"/tmp/{lane}/target").resolve()
+            ),
+            "CARGO_HOME": cargo_home,
+            "RUSTC": str(rustc),
+        }
+        checkout = str(Path(f"/tmp/{lane}").resolve())
         capability = {
             "label": lane,
             "status": "available",
@@ -3853,7 +4243,7 @@ print(json.dumps(
             "status": "available",
             "reason": "fixture",
             "emit_c_fallback_used": False,
-            "checkout": f"/tmp/{lane}",
+            "checkout": checkout,
             "expected_commit": commit,
             "detached_head": True,
             "repository": {"commit": commit},
@@ -3871,25 +4261,43 @@ print(json.dumps(
                 "origin_url": "git@github.com:nomo-lang/nomo.git",
                 "normalized_origin": "github.com/nomo-lang/nomo",
                 "command": self.full_command(
-                    ["/usr/bin/cargo", "build", "--locked", "--release", "--bin", "nomo"],
-                    approved_environment_overrides={
-                        "CARGO_TARGET_DIR": str(
-                            Path(f"/tmp/{lane}/target").resolve()
-                        ),
-                        "CARGO_HOME": cargo_home,
-                    },
+                    [str(cargo), "build", "--locked", "--release", "--bin", "nomo"],
+                    cwd=checkout,
+                    approved_environment_overrides=cargo_environment,
                 ),
-                "environment": {
-                    "CARGO_TARGET_DIR": str(
-                        Path(f"/tmp/{lane}/target").resolve()
-                    ),
-                    "CARGO_HOME": cargo_home,
-                },
+                "environment": cargo_environment,
                 "cargo_configs": [],
                 "cargo": {
-                    "path": "/usr/bin/cargo",
-                    "sha256": "e" * 64,
-                    "version_output": "cargo 1.99.0",
+                    "path": str(cargo),
+                    "realpath": str(cargo.resolve()),
+                    "sha256": v1.sha256_file(cargo.resolve()),
+                    "version_output": cargo_version,
+                    "version_command": self.full_command(
+                        [str(cargo), "--version"],
+                        cwd=checkout,
+                        approved_environment_overrides=cargo_environment,
+                    ),
+                },
+                "rustc": {
+                    "path": str(rustc),
+                    "realpath": str(rustc.resolve()),
+                    "sha256": v1.sha256_file(rustc.resolve()),
+                    "version_output": rustc_version,
+                    "version_fields": benchmark.parse_rustc_verbose_version(
+                        rustc_version
+                    ),
+                    "version_command": self.full_command(
+                        [str(rustc), "-vV"],
+                        cwd=checkout,
+                        approved_environment_overrides=cargo_environment,
+                    ),
+                    "sysroot": rustc_sysroot,
+                    "sysroot_command": self.full_command(
+                        [str(rustc), "--print", "sysroot"],
+                        cwd=checkout,
+                        approved_environment_overrides=cargo_environment,
+                    ),
+                    "toolchain": Path(rustc_sysroot).name,
                 },
                 "binary": {"path": nomo_path, "sha256": binary_sha},
                 "stdout": "",
@@ -3982,7 +4390,7 @@ print(json.dumps(
                 "rfc": {},
                 "host": host,
                 "toolchains": toolchains,
-                "collector": {"id": "fixture"},
+                "collector": benchmark.collector_descriptor_for_host("Linux"),
                 "methodology": self.manifest["methodology"],
                 "thresholds": self.manifest["thresholds"],
                 "environment_qualification": authorization,
@@ -4152,9 +4560,11 @@ print(json.dumps(
             state["nomo_sha256"] = compiler["sha256"]
             compiler_build = state["compiler_build"]
             compiler_build["binary"] = compiler
+            rustc_path = compiler_build["rustc"]["path"]
             compiler_build["environment"] = {
                 "CARGO_TARGET_DIR": str(target_dir.resolve()),
                 "CARGO_HOME": str(cargo_home.resolve()),
+                "RUSTC": rustc_path,
             }
             compiler_build["cargo_configs"] = []
             compiler_build["command"] = self.full_command(
@@ -4170,6 +4580,7 @@ print(json.dumps(
                 approved_environment_overrides={
                     "CARGO_TARGET_DIR": str(target_dir.resolve()),
                     "CARGO_HOME": str(cargo_home.resolve()),
+                    "RUSTC": rustc_path,
                 },
             )
             for build_mode in benchmark.FORMAL_BUILD_MODES:

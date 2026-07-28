@@ -4,6 +4,8 @@
 from __future__ import annotations
 
 import argparse
+import base64
+import binascii
 import ctypes
 import datetime as dt
 import json
@@ -119,6 +121,8 @@ COMPILER_AFFECTING_ENVIRONMENT = (
     "LIBRARY_PATH",
     "SDKROOT",
     "MACOSX_DEPLOYMENT_TARGET",
+    "DEVELOPER_DIR",
+    "TOOLCHAINS",
     "INCLUDE",
     "LIB",
     "LIBPATH",
@@ -139,6 +143,13 @@ COMPILER_AFFECTING_ENVIRONMENT = (
     "CGO_LDFLAGS",
     "RUSTFLAGS",
     "CARGO_ENCODED_RUSTFLAGS",
+    "RUSTC",
+    "RUSTDOC",
+    "RUSTC_WRAPPER",
+    "RUSTC_WORKSPACE_WRAPPER",
+    "CARGO_BUILD_RUSTC",
+    "CARGO_BUILD_RUSTC_WRAPPER",
+    "CARGO_BUILD_RUSTC_WORKSPACE_WRAPPER",
     "CARGO_HOME",
 )
 BUILD_ENVIRONMENT_WHITELIST = (
@@ -157,6 +168,7 @@ EXPECTED_ALLOCATION_MAPPING_SHA256 = {
     "n-body": "2cb305ee6cdbc10735c94b16b4ad88c3215adec8cc77f76aff0253f0033514c8",
     "fannkuch-redux": "a6cc2c5404dd323ab500c82fb8d1850933412d6204aadcdf3344d1cde073b9e7",
 }
+_WINDOWS_BUILD_SUPPORT_CACHE: Optional[Dict[str, Any]] = None
 
 HarnessError = v1.HarnessError
 ToolchainMismatch = v1.ToolchainMismatch
@@ -189,17 +201,12 @@ def stable_build_path() -> str:
         Path("/snap/bin"),
     ]
     if os.name == "nt":
-        system_root = Path(
-            os.environ.get("SystemRoot", os.environ.get("WINDIR", "C:/Windows"))
-        ).resolve()
+        system_root = windows_system_directory().parent
+        system_drive = Path(system_root.anchor)
         candidates = [
             home / ".cargo" / "bin",
-            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-            / "LLVM"
-            / "bin",
-            Path(os.environ.get("ProgramFiles", "C:/Program Files"))
-            / "Go"
-            / "bin",
+            system_drive / "Program Files" / "LLVM" / "bin",
+            system_drive / "Program Files" / "Go" / "bin",
             system_root / "System32",
             system_root,
             system_root / "System32" / "Wbem",
@@ -223,16 +230,26 @@ def stable_build_path() -> str:
 def sanitized_build_environment(
     approved_overrides: Optional[Dict[str, str]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Any]]:
-    environment = {
-        key: value
-        for key in BUILD_ENVIRONMENT_WHITELIST
-        if key != "PATH"
-        if (value := os.environ.get(key))
-    }
+    windows_toolchain = None
+    if os.name == "nt":
+        support = canonical_windows_build_support()
+        environment = dict(support["environment"])
+        windows_toolchain = support["authority"]
+        for key in ("HOME", "USERPROFILE", "RUSTUP_HOME"):
+            if value := os.environ.get(key):
+                environment[key] = value
+    else:
+        environment = {
+            key: value
+            for key in BUILD_ENVIRONMENT_WHITELIST
+            if key != "PATH"
+            if (value := os.environ.get(key))
+        }
     environment["GOENV"] = "off"
-    environment["PATH"] = stable_build_path()
+    if os.name != "nt":
+        environment["PATH"] = stable_build_path()
     overrides = approved_overrides or {}
-    unexpected = set(overrides) - {"CARGO_TARGET_DIR", "CARGO_HOME"}
+    unexpected = set(overrides) - {"CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"}
     if unexpected:
         raise HarnessError(
             "unapproved build environment overrides: "
@@ -255,6 +272,7 @@ def sanitized_build_environment(
                 "CARGO_HOME",
                 "RUSTUP_HOME",
                 "CARGO_TARGET_DIR",
+                "RUSTC",
             }
             else value
             for key, value in sorted(environment.items())
@@ -266,6 +284,8 @@ def sanitized_build_environment(
         ],
         "cleared_values_recorded": False,
     }
+    if windows_toolchain is not None:
+        projection["windows_toolchain"] = windows_toolchain
     return environment, projection
 
 
@@ -301,7 +321,15 @@ def run_build_capture(
 
 
 def resolve_executable(value: str, label: str) -> Path:
-    resolved = shutil.which(value)
+    resolved = None
+    if (
+        platform.system() == "Darwin"
+        and value in {"clang", "clang++"}
+        and (Path("/usr/bin") / value).is_file()
+    ):
+        resolved = str(Path("/usr/bin") / value)
+    if resolved is None:
+        resolved = shutil.which(value, path=stable_build_path())
     if resolved is None:
         candidate = Path(value).expanduser()
         candidates = [candidate]
@@ -309,11 +337,88 @@ def resolve_executable(value: str, label: str) -> Path:
             candidates.append(candidate.with_suffix(".exe"))
         for path in candidates:
             if path.is_file():
-                resolved = str(path.resolve())
+                resolved = os.path.abspath(path)
                 break
     if resolved is None:
         raise HarnessError(f"required {label} executable was not found: {value}")
-    return Path(resolved).resolve()
+    return Path(os.path.abspath(resolved))
+
+
+def rustc_for_cargo(cargo: Path) -> Path:
+    suffix = ".exe" if os.name == "nt" else ""
+    sibling = cargo.with_name(f"rustc{suffix}")
+    if sibling.is_file():
+        return resolve_executable(str(sibling), "Rust compiler")
+    return resolve_executable("rustc", "Rust compiler")
+
+
+def parse_rustc_verbose_version(value: str) -> Dict[str, str]:
+    lines = [line.strip() for line in value.splitlines() if line.strip()]
+    if not lines or not lines[0].startswith("rustc "):
+        raise HarnessError("rustc -vV did not report a rustc release")
+    fields: Dict[str, str] = {"version": lines[0]}
+    for line in lines[1:]:
+        key, separator, field_value = line.partition(":")
+        if separator:
+            normalized_key = re.sub(
+                r"[-\s]+", "_", key.strip().lower()
+            )
+            fields[normalized_key] = field_value.strip()
+    required = {
+        "binary",
+        "commit_hash",
+        "commit_date",
+        "host",
+        "release",
+        "llvm_version",
+    }
+    missing = sorted(required - set(fields))
+    if missing:
+        raise HarnessError(
+            "rustc -vV is missing required fields: " + ", ".join(missing)
+        )
+    if fields["binary"] != "rustc":
+        raise HarnessError("Rust compiler binary identity is not rustc")
+    if re.fullmatch(r"[0-9a-f]{40}", fields["commit_hash"]) is None:
+        raise HarnessError("Rust compiler commit hash is not full lowercase hex")
+    return fields
+
+
+def rustc_authority(
+    rustc: Path,
+    checkout: Path,
+    approved_environment_overrides: Dict[str, str],
+) -> Dict[str, Any]:
+    invocation_path = Path(os.path.abspath(rustc))
+    realpath = invocation_path.resolve()
+    version_command, version_stdout, _ = run_build_capture(
+        [str(invocation_path), "-vV"],
+        30.0,
+        cwd=checkout,
+        approved_environment_overrides=approved_environment_overrides,
+    )
+    version_output = version_stdout.decode("utf-8", errors="strict").strip()
+    version_fields = parse_rustc_verbose_version(version_output)
+    sysroot_command, sysroot_stdout, _ = run_build_capture(
+        [str(invocation_path), "--print", "sysroot"],
+        30.0,
+        cwd=checkout,
+        approved_environment_overrides=approved_environment_overrides,
+    )
+    sysroot = sysroot_stdout.decode("utf-8", errors="strict").strip()
+    if not sysroot or not Path(sysroot).is_absolute():
+        raise HarnessError("rustc sysroot is not an absolute path")
+    return {
+        "path": str(invocation_path),
+        "realpath": str(realpath),
+        "sha256": v1.sha256_file(realpath),
+        "version_output": version_output,
+        "version_fields": version_fields,
+        "version_command": version_command,
+        "sysroot": sysroot,
+        "sysroot_command": sysroot_command,
+        "toolchain": Path(sysroot).name,
+    }
 
 
 def resolve_suite_path(suite_root: Path, relative: str, label: str) -> Path:
@@ -350,6 +455,20 @@ def cargo_config_provenance(checkout: Path) -> list[Dict[str, str]]:
                 raise HarnessError(
                     f"Cargo config is not tracked by the exact checkout: "
                     f"{relative_text}"
+                )
+            config_text = resolved.read_text(encoding="utf-8")
+            active_lines = [
+                line.split("#", 1)[0]
+                for line in config_text.splitlines()
+            ]
+            forbidden_rustc_setting = re.compile(
+                r"^\s*(?:rustc|rustc-wrapper|rustc-workspace-wrapper)\s*=",
+                re.IGNORECASE,
+            )
+            if any(forbidden_rustc_setting.match(line) for line in active_lines):
+                raise HarnessError(
+                    "tracked Cargo config may not replace the authority-bound "
+                    f"Rust compiler or wrapper: {relative_text}"
                 )
             records.append(
                 {
@@ -1013,17 +1132,40 @@ def batch_stability(
     }
 
 
+def collector_descriptor_for_host(host_os: str) -> Dict[str, Any]:
+    common = {
+        "host_os": host_os,
+        "implementation_version": 1,
+        "wall_clock": "time.perf_counter_ns",
+        "wall_time_unit": "nanoseconds",
+        "cpu_time_unit": "nanoseconds",
+        "peak_rss_unit": "bytes",
+        "stdout_normalization": STDOUT_NORMALIZATION,
+    }
+    if host_os == "Windows":
+        return {
+            **common,
+            "id": "windows-job-object-v1",
+            "cpu_times": "GetProcessTimes kernel+user",
+            "peak_rss": "GetProcessMemoryInfo PeakWorkingSetSize",
+            "timeout_scope": "Windows Job Object",
+        }
+    if host_os in {"Darwin", "Linux"}:
+        return {
+            **common,
+            "id": "posix-wait4-v1",
+            "cpu_times": "wait4 rusage user+system",
+            "peak_rss": "wait4 rusage ru_maxrss normalized to bytes",
+            "timeout_scope": "POSIX process group",
+        }
+    raise HarnessError(f"unsupported collector host OS: {host_os}")
+
+
 class ProcessCollector:
     collector_id = "abstract"
 
     def descriptor(self) -> Dict[str, Any]:
-        return {
-            "id": self.collector_id,
-            "wall_clock": "time.perf_counter_ns",
-            "cpu_times": "unavailable",
-            "peak_rss": "unavailable",
-            "timeout_scope": "process",
-        }
+        raise NotImplementedError
 
     def run(
         self,
@@ -1148,6 +1290,7 @@ def _failure_sample(
         "timed_out": timed_out,
         "stdout_raw_sha256": v1.sha256_bytes(stdout),
         "stdout_normalized_sha256": v1.sha256_bytes(normalized),
+        "stdout_raw_base64": base64.b64encode(stdout).decode("ascii"),
         "stdout_normalization": STDOUT_NORMALIZATION,
         "stdout_bytes": {"raw": len(stdout), "normalized": len(normalized)},
         "stderr": {
@@ -1377,15 +1520,7 @@ class PosixWait4Collector(ProcessCollector):
     collector_id = "posix-wait4-v1"
 
     def descriptor(self) -> Dict[str, Any]:
-        value = super().descriptor()
-        value.update(
-            {
-                "cpu_times": "wait4 rusage user+system",
-                "peak_rss": "wait4 rusage ru_maxrss normalized to bytes",
-                "timeout_scope": "POSIX process group",
-            }
-        )
-        return value
+        return collector_descriptor_for_host(platform.system())
 
     def run(
         self,
@@ -1477,7 +1612,10 @@ class PosixWait4Collector(ProcessCollector):
             "user_cpu_ns": int(round(usage.ru_utime * 1_000_000_000)),
             "system_cpu_ns": int(round(usage.ru_stime * 1_000_000_000)),
             "cpu_total_ns": int(
-                round((usage.ru_utime + usage.ru_stime) * 1_000_000_000)
+                round(usage.ru_utime * 1_000_000_000)
+            )
+            + int(
+                round(usage.ru_stime * 1_000_000_000)
             ),
             "peak_rss_bytes": v1.peak_rss_bytes(usage.ru_maxrss),
             "exit_code": exit_code,
@@ -1485,6 +1623,7 @@ class PosixWait4Collector(ProcessCollector):
             "stdout_normalized_sha256": v1.sha256_bytes(
                 stdout.replace(b"\r\n", b"\n")
             ),
+            "stdout_raw_base64": base64.b64encode(stdout).decode("ascii"),
             "stdout_normalization": STDOUT_NORMALIZATION,
         }
         try:
@@ -1520,15 +1659,7 @@ class WindowsJobObjectCollector(ProcessCollector):
     collector_id = "windows-job-object-v1"
 
     def descriptor(self) -> Dict[str, Any]:
-        value = super().descriptor()
-        value.update(
-            {
-                "cpu_times": "GetProcessTimes kernel+user",
-                "peak_rss": "GetProcessMemoryInfo PeakWorkingSetSize",
-                "timeout_scope": "Windows Job Object",
-            }
-        )
-        return value
+        return collector_descriptor_for_host("Windows")
 
     def run(
         self,
@@ -1805,6 +1936,7 @@ class WindowsJobObjectCollector(ProcessCollector):
             "stdout_normalized_sha256": v1.sha256_bytes(
                 stdout.replace(b"\r\n", b"\n")
             ),
+            "stdout_raw_base64": base64.b64encode(stdout).decode("ascii"),
             "stdout_normalization": STDOUT_NORMALIZATION,
         }
         try:
@@ -1858,8 +1990,65 @@ def parse_clang_installation(output: str, executable: Path) -> str:
     return str(Path(match.group(1)).resolve()) if match else str(executable.parent)
 
 
+def build_probe_output(
+    executable: Path, arguments: Sequence[str]
+) -> Tuple[str, Dict[str, Any]]:
+    record, stdout, stderr = run_build_capture(
+        [str(executable), *arguments],
+        30.0,
+    )
+    output = (stdout + stderr).decode("utf-8", errors="replace").strip()
+    if not output:
+        raise HarnessError(f"empty probe output from {executable}")
+    return output, record
+
+
+def clang_selected_driver(
+    executable: Path, driver_name: str
+) -> Dict[str, Any]:
+    invocation_path = Path(os.path.abspath(executable))
+    invocation_realpath = invocation_path.resolve()
+    selection_command = None
+    selected_path = invocation_realpath
+    if platform.system() == "Darwin":
+        xcrun = Path("/usr/bin/xcrun")
+        if not xcrun.is_file():
+            raise ToolchainMismatch("Darwin Clang authority requires /usr/bin/xcrun")
+        selection_command, stdout, _ = run_build_capture(
+            [str(xcrun), "--find", driver_name],
+            30.0,
+        )
+        selected_text = stdout.decode("utf-8", errors="strict").strip()
+        if not selected_text or not Path(selected_text).is_absolute():
+            raise ToolchainMismatch(
+                f"xcrun did not select an absolute {driver_name} path"
+            )
+        selected_path = Path(selected_text)
+        if not selected_path.is_file():
+            raise ToolchainMismatch(
+                f"xcrun selected unavailable {driver_name}: {selected_path}"
+            )
+        if (
+            invocation_path.parent != Path("/usr/bin")
+            and invocation_realpath != selected_path.resolve()
+        ):
+            raise ToolchainMismatch(
+                f"configured {driver_name} does not match xcrun selection"
+            )
+    selected_realpath = selected_path.resolve()
+    return {
+        "path": str(invocation_path),
+        "invocation_realpath": str(invocation_realpath),
+        "invocation_sha256": v1.sha256_file(invocation_realpath),
+        "selected_path": str(selected_path),
+        "realpath": str(selected_realpath),
+        "sha256": v1.sha256_file(selected_realpath),
+        "selection_command": selection_command,
+    }
+
+
 def clang_target(executable: Path) -> Tuple[str, Dict[str, Any]]:
-    record, stdout, stderr = v1.run_capture(
+    record, stdout, stderr = run_build_capture(
         [
             str(executable),
             *CLANG_DRIVER_CONFIG_FLAGS,
@@ -1886,12 +2075,14 @@ def inspect_toolchains(
     clang = resolve_executable(clang_argument, "Clang C")
     clangxx = resolve_executable(clangxx_argument, "Clang C++")
     go = resolve_executable(go_argument, "Go")
-    nomo_help = v1.tool_version(nomo, ["--help"])
+    nomo_help, nomo_version_command = build_probe_output(nomo, ["--help"])
     nomo_version = v1.parse_nomo_version(nomo_help)
-    clang_output = v1.tool_version(
+    clang_identity = clang_selected_driver(clang, "clang")
+    clangxx_identity = clang_selected_driver(clangxx, "clang++")
+    clang_output, clang_version_command = build_probe_output(
         clang, [*CLANG_DRIVER_CONFIG_FLAGS, "--version"]
     )
-    clangxx_output = v1.tool_version(
+    clangxx_output, clangxx_version_command = build_probe_output(
         clangxx, [*CLANG_DRIVER_CONFIG_FLAGS, "--version"]
     )
     c_version = parse_clang_version(clang_output)
@@ -1900,7 +2091,7 @@ def inspect_toolchains(
     cpp_installation = parse_clang_installation(clangxx_output, clangxx)
     c_target, c_target_command = clang_target(clang)
     cpp_target, cpp_target_command = clang_target(clangxx)
-    go_output = v1.tool_version(go, ["version"])
+    go_output, go_version_command = build_probe_output(go, ["version"])
     go_fields = go_output.split()
     go_version = go_fields[2] if len(go_fields) >= 3 else ""
     mismatches = []
@@ -1925,6 +2116,11 @@ def inspect_toolchains(
         mismatches.append(
             f"Clang C/C++ target mismatch: C {c_target}, C++ {cpp_target}"
         )
+    if clang == clangxx:
+        mismatches.append(
+            "Clang C/C++ driver invocation paths must be distinct; "
+            "clang++ mode may not be replaced with clang"
+        )
     if mismatches:
         raise ToolchainMismatch("toolchain mismatch: " + "; ".join(mismatches))
     return {
@@ -1934,24 +2130,23 @@ def inspect_toolchains(
             "version": nomo_version,
             "version_output": nomo_help.splitlines()[0],
             "sha256": v1.sha256_file(nomo),
+            "version_command": nomo_version_command,
         },
         "clang": {
-            "path": str(clang),
-            "realpath": str(clang.resolve()),
-            "sha256": v1.sha256_file(clang),
+            **clang_identity,
             "version": c_version,
             "version_output": clang_output,
+            "version_command": clang_version_command,
             "installation": c_installation,
             "target_triple": c_target,
             "target_command": c_target_command,
             "driver_config_flags": list(CLANG_DRIVER_CONFIG_FLAGS),
         },
         "clangxx": {
-            "path": str(clangxx),
-            "realpath": str(clangxx.resolve()),
-            "sha256": v1.sha256_file(clangxx),
+            **clangxx_identity,
             "version": cpp_version,
             "version_output": clangxx_output,
+            "version_command": clangxx_version_command,
             "installation": cpp_installation,
             "target_triple": cpp_target,
             "target_command": cpp_target_command,
@@ -1963,6 +2158,7 @@ def inspect_toolchains(
             "sha256": v1.sha256_file(go),
             "version": go_version,
             "version_output": go_output,
+            "version_command": go_version_command,
         },
     }
 
@@ -2138,6 +2334,208 @@ def windows_system_directory(kernel32: Optional[Any] = None) -> Path:
     if not directory.is_absolute():
         raise HarnessError("GetSystemDirectoryW returned a non-absolute path")
     return directory.resolve()
+
+
+def windows_temp_directory(kernel32: Optional[Any] = None) -> Path:
+    if kernel32 is None:
+        if os.name != "nt":
+            raise HarnessError("GetTempPathW is available only on Windows")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetTempPathW.argtypes = [wintypes.DWORD, wintypes.LPWSTR]
+    kernel32.GetTempPathW.restype = wintypes.DWORD
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = int(kernel32.GetTempPathW(len(buffer), buffer))
+    if length == 0 or length >= len(buffer):
+        raise HarnessError("GetTempPathW failed")
+    directory = Path(buffer.value)
+    if not directory.is_absolute() or not directory.is_dir():
+        raise HarnessError("GetTempPathW returned an unavailable path")
+    return directory.resolve()
+
+
+def _stable_command_record(
+    record: Dict[str, Any], environment: Dict[str, str]
+) -> Dict[str, Any]:
+    return {
+        "argv": record["argv"],
+        "command": record["command"],
+        "cwd": record["cwd"],
+        "exit_code": record["exit_code"],
+        "environment": dict(sorted(environment.items())),
+    }
+
+
+def _windows_tool_identity(path: Path) -> Dict[str, str]:
+    invocation = Path(os.path.abspath(path))
+    realpath = invocation.resolve()
+    if not realpath.is_file():
+        raise HarnessError(f"Windows tool is unavailable: {invocation}")
+    return {
+        "path": str(invocation),
+        "realpath": str(realpath),
+        "sha256": v1.sha256_file(realpath),
+    }
+
+
+def canonical_windows_build_support(
+    *, refresh: bool = False
+) -> Dict[str, Any]:
+    global _WINDOWS_BUILD_SUPPORT_CACHE
+    if os.name != "nt":
+        raise HarnessError(
+            "canonical Windows build support is available only on Windows"
+        )
+    if _WINDOWS_BUILD_SUPPORT_CACHE is not None and not refresh:
+        return _WINDOWS_BUILD_SUPPORT_CACHE
+
+    system_directory = windows_system_directory()
+    system_root = system_directory.parent
+    temp_directory = windows_temp_directory()
+    cmd = system_directory / "cmd.exe"
+    system_drive = Path(system_root.anchor)
+    vswhere_candidates = (
+        system_drive
+        / "Program Files (x86)"
+        / "Microsoft Visual Studio"
+        / "Installer"
+        / "vswhere.exe",
+        system_drive
+        / "Program Files"
+        / "Microsoft Visual Studio"
+        / "Installer"
+        / "vswhere.exe",
+    )
+    vswhere = next((path for path in vswhere_candidates if path.is_file()), None)
+    if vswhere is None or not cmd.is_file():
+        raise HarnessError(
+            "trusted Visual Studio Installer or cmd.exe is unavailable"
+        )
+    minimal_environment = {
+        "SystemRoot": str(system_root),
+        "WINDIR": str(system_root),
+        "TEMP": str(temp_directory),
+        "TMP": str(temp_directory),
+        "PATH": str(system_directory),
+    }
+    vswhere_argv = [
+        str(vswhere),
+        "-latest",
+        "-products",
+        "*",
+        "-requires",
+        "Microsoft.VisualStudio.Component.VC.Tools.x86.x64",
+        "-format",
+        "json",
+        "-utf8",
+    ]
+    vswhere_record, vswhere_stdout, _ = v1.run_capture(
+        vswhere_argv,
+        30.0,
+        environment=minimal_environment,
+    )
+    try:
+        installations = json.loads(
+            vswhere_stdout.decode("utf-8-sig", errors="strict")
+        )
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise HarnessError("vswhere did not return canonical JSON") from error
+    if not isinstance(installations, list) or len(installations) != 1:
+        raise HarnessError("vswhere did not select exactly one Visual Studio")
+    installation = installations[0]
+    installation_path = Path(str(installation.get("installationPath", "")))
+    installation_version = str(installation.get("installationVersion", ""))
+    if (
+        not installation_path.is_absolute()
+        or not installation_path.is_dir()
+        or not installation_version
+    ):
+        raise HarnessError("vswhere Visual Studio selection is incomplete")
+    vsdevcmd = installation_path / "Common7" / "Tools" / "VsDevCmd.bat"
+    if not vsdevcmd.is_file():
+        raise HarnessError(f"trusted VsDevCmd is unavailable: {vsdevcmd}")
+    machine = platform.machine().lower()
+    architecture = "arm64" if machine in {"arm64", "aarch64"} else "amd64"
+    vsdevcmd_argv = [
+        str(cmd),
+        "/d",
+        "/s",
+        "/c",
+        (
+            f'call "{vsdevcmd}" -no_logo -arch={architecture} '
+            f"-host_arch={architecture} && set"
+        ),
+    ]
+    vsdevcmd_record, environment_stdout, _ = v1.run_capture(
+        vsdevcmd_argv,
+        60.0,
+        environment=minimal_environment,
+    )
+    discovered = {}
+    for raw_line in environment_stdout.decode(
+        "utf-8", errors="replace"
+    ).splitlines():
+        key, separator, value = raw_line.partition("=")
+        if separator:
+            discovered[key.upper()] = value
+    required = {"PATH", "INCLUDE", "LIB", "LIBPATH"}
+    if not required.issubset(discovered) or any(
+        not discovered[name] for name in required
+    ):
+        raise HarnessError("VsDevCmd did not publish complete compiler paths")
+    selected_names = required | {
+        "UCRTVERSION",
+        "UNIVERSALCRTSDKDIR",
+        "VCINSTALLDIR",
+        "VCTOOLSINSTALLDIR",
+        "VCTOOLSVERSION",
+        "VSCMD_ARG_TGT_ARCH",
+        "VSINSTALLDIR",
+        "WINDOWSSDKDIR",
+        "WINDOWSSDKVERSION",
+    }
+    environment = {
+        name: discovered[name]
+        for name in sorted(selected_names)
+        if discovered.get(name)
+    }
+    environment.update(
+        {
+            "SystemRoot": str(system_root),
+            "WINDIR": str(system_root),
+            "TEMP": str(temp_directory),
+            "TMP": str(temp_directory),
+        }
+    )
+    tool_identities = {}
+    for name in ("cl.exe", "link.exe"):
+        selected = shutil.which(name, path=environment["PATH"])
+        if selected is None:
+            raise HarnessError(f"VsDevCmd PATH does not select {name}")
+        tool_identities[name] = _windows_tool_identity(Path(selected))
+    authority = {
+        "schema": 1,
+        "architecture": architecture,
+        "vswhere": _windows_tool_identity(vswhere),
+        "vswhere_command": _stable_command_record(
+            vswhere_record, minimal_environment
+        ),
+        "installation_path": str(installation_path.resolve()),
+        "installation_version": installation_version,
+        "vsdevcmd": _windows_tool_identity(vsdevcmd),
+        "vsdevcmd_command": _stable_command_record(
+            vsdevcmd_record, minimal_environment
+        ),
+        "windows_sdk_version": environment.get("WINDOWSSDKVERSION"),
+        "vc_tools_version": environment.get("VCTOOLSVERSION"),
+        "tools": tool_identities,
+        "include": environment["INCLUDE"].split(os.pathsep),
+        "lib": environment["LIB"].split(os.pathsep),
+        "libpath": environment["LIBPATH"].split(os.pathsep),
+        "path": environment["PATH"].split(os.pathsep),
+    }
+    support = {"environment": environment, "authority": authority}
+    _WINDOWS_BUILD_SUPPORT_CACHE = support
+    return support
 
 
 def _dynamic_command(command: Sequence[str]) -> Dict[str, Any]:
@@ -2680,6 +3078,9 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
         "nomo": ("path", "realpath", "sha256", "version", "version_output"),
         "clang": (
             "path",
+            "invocation_realpath",
+            "invocation_sha256",
+            "selected_path",
             "realpath",
             "sha256",
             "version",
@@ -2690,6 +3091,9 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
         ),
         "clangxx": (
             "path",
+            "invocation_realpath",
+            "invocation_sha256",
+            "selected_path",
             "realpath",
             "sha256",
             "version",
@@ -3104,7 +3508,7 @@ def release_lane_state(
                     f"local origin/main {origin_main}, remote main {remote_main}"
                 )
         cargo = resolve_executable(cargo_argument, "Cargo")
-        cargo_version = v1.tool_version(cargo, ["--version"])
+        rustc = rustc_for_cargo(cargo)
         cargo_configs = cargo_config_provenance(checkout)
         target_dir = bundle_root / "compiler-build" / label
         cargo_home = (
@@ -3119,16 +3523,34 @@ def release_lane_state(
                 f"{label} isolated CARGO_HOME already exists; use a fresh output path"
             )
         cargo_home.mkdir(parents=True)
+        cargo_environment = {
+            "CARGO_TARGET_DIR": str(target_dir.resolve()),
+            "CARGO_HOME": str(cargo_home.resolve()),
+            "RUSTC": str(rustc),
+        }
         command = [str(cargo), "build", "--locked", "--release", "--bin", "nomo"]
         try:
+            cargo_version_command, cargo_version_stdout, _ = run_build_capture(
+                [str(cargo), "--version"],
+                timeout_seconds=30.0,
+                cwd=checkout,
+                approved_environment_overrides=cargo_environment,
+            )
+            cargo_version = cargo_version_stdout.decode(
+                "utf-8", errors="strict"
+            ).strip()
+            if not cargo_version.startswith("cargo "):
+                raise HarnessError("Cargo version probe did not report Cargo")
+            rustc_record = rustc_authority(
+                rustc,
+                checkout,
+                cargo_environment,
+            )
             build_record, build_stdout, build_stderr = run_build_capture(
                 command,
                 timeout_seconds=build_timeout_seconds,
                 cwd=checkout,
-                approved_environment_overrides={
-                    "CARGO_TARGET_DIR": str(target_dir.resolve()),
-                    "CARGO_HOME": str(cargo_home.resolve()),
-                },
+                approved_environment_overrides=cargo_environment,
             )
         finally:
             try:
@@ -3175,16 +3597,16 @@ def release_lane_state(
             "origin_main_commit": origin_main,
             "remote_main_commit": remote_main,
             "command": build_record,
-            "environment": {
-                "CARGO_TARGET_DIR": str(target_dir.resolve()),
-                "CARGO_HOME": str(cargo_home.resolve()),
-            },
+            "environment": cargo_environment,
             "cargo_configs": cargo_configs,
             "cargo": {
                 "path": str(cargo),
+                "realpath": str(cargo.resolve()),
                 "version_output": cargo_version,
-                "sha256": v1.sha256_file(cargo),
+                "version_command": cargo_version_command,
+                "sha256": v1.sha256_file(cargo.resolve()),
             },
+            "rustc": rustc_record,
             "binary": {
                 "path": str(nomo.resolve()),
                 "sha256": v1.sha256_file(nomo),
@@ -3333,7 +3755,6 @@ def validate_release_backend_provenance(
     }
     if (
         not compiler_path.is_absolute()
-        or str(compiler_path.resolve()) != compiler["realpath"]
         or compiler != expected_compiler
     ):
         raise HarnessError(f"{label} compiler identity is not canonical")
@@ -4400,6 +4821,50 @@ def parse_utc_timestamp(value: Any) -> dt.datetime:
     return parsed
 
 
+def validate_collector_descriptor(
+    descriptor: Dict[str, Any], host_os: str
+) -> str:
+    expected = collector_descriptor_for_host(host_os)
+    if descriptor != expected:
+        raise HarnessError(
+            "collector descriptor does not match the host collector authority"
+        )
+    return expected["id"]
+
+
+def validate_stdout_hash_evidence(
+    sample: Dict[str, Any],
+    *,
+    expected_normalized_sha256: Optional[str] = None,
+) -> bytes:
+    encoded = sample.get("stdout_raw_base64")
+    if not isinstance(encoded, str):
+        raise HarnessError("sample lacks replayable raw stdout evidence")
+    try:
+        raw = base64.b64decode(encoded.encode("ascii"), validate=True)
+    except (UnicodeEncodeError, ValueError, binascii.Error) as error:
+        raise HarnessError("sample raw stdout evidence is not canonical base64") from error
+    normalized = raw.replace(b"\r\n", b"\n")
+    if (
+        sample.get("stdout_raw_sha256") != v1.sha256_bytes(raw)
+        or sample.get("stdout_normalized_sha256")
+        != v1.sha256_bytes(normalized)
+        or (
+            expected_normalized_sha256 is not None
+            and sample.get("stdout_normalized_sha256")
+            != expected_normalized_sha256
+        )
+    ):
+        raise HarnessError("sample stdout hashes do not replay from raw evidence")
+    byte_counts = sample.get("stdout_bytes")
+    if byte_counts is not None and byte_counts != {
+        "raw": len(raw),
+        "normalized": len(normalized),
+    }:
+        raise HarnessError("sample stdout byte counts do not match raw evidence")
+    return normalized
+
+
 def validate_sample_binding(
     sample: Dict[str, Any],
     binary: Dict[str, Any],
@@ -4425,6 +4890,9 @@ def validate_sample_binding(
         raise HarnessError(f"{lane} sample executable SHA is not build-bound")
     if sample.get("stdout_normalized_sha256") != fixture_sha256:
         raise HarnessError(f"{lane} sample output does not match the fixed fixture")
+    validate_stdout_hash_evidence(
+        sample, expected_normalized_sha256=fixture_sha256
+    )
     if sample.get("stdout_normalization") != STDOUT_NORMALIZATION:
         raise HarnessError(f"{lane} sample stdout normalization changed")
     if re.fullmatch(
@@ -4433,6 +4901,13 @@ def validate_sample_binding(
         raise HarnessError(f"{lane} sample raw stdout SHA is missing")
     if sample.get("collector") != collector_id:
         raise HarnessError(f"{lane} sample collector changed")
+    if (
+        not isinstance(sample.get("user_cpu_ns"), int)
+        or not isinstance(sample.get("system_cpu_ns"), int)
+        or sample.get("cpu_total_ns")
+        != sample["user_cpu_ns"] + sample["system_cpu_ns"]
+    ):
+        raise HarnessError(f"{lane} sample CPU total is not user plus system")
     expected_environment = _environment(
         {"GOMAXPROCS": "1"} if lane == "go" else {}
     )[1]
@@ -4858,6 +5333,7 @@ def validate_failed_sample_binding(
         or not isinstance(sample.get("stderr", {}).get("length_bytes"), int)
     ):
         raise HarnessError(f"{lane} failed sample raw evidence is incomplete")
+    validate_stdout_hash_evidence(sample)
     cpu_values = (sample.get("user_cpu_ns"), sample.get("system_cpu_ns"))
     expected_cpu_total = (
         cpu_values[0] + cpu_values[1]
@@ -5795,9 +6271,13 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
                 / f"{label}-cargo-home"
             ).resolve()
         )
+        rustc_path = compiler_build.get("rustc", {}).get("path")
+        if not isinstance(rustc_path, str) or not rustc_path:
+            raise HarnessError(f"{label} compiler build lacks rustc authority")
         cargo_environment = {
             "CARGO_TARGET_DIR": cargo_target_dir,
             "CARGO_HOME": cargo_home,
+            "RUSTC": rustc_path,
         }
         validate_command_record(
             compiler_build.get("command", {}),
@@ -5825,6 +6305,8 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
             != expected_compiler_build_argv
             or compiler_build.get("command", {}).get("command")
             != v1.command_text(expected_compiler_build_argv)
+            or compiler_build.get("command", {}).get("cwd")
+            != str(Path(lane["checkout"]).resolve())
             or compiler_build.get("environment")
             != cargo_environment
             or compiler_build.get("cargo_configs")
@@ -5849,6 +6331,12 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
             )
             if help_command.get("argv") != expected_help:
                 raise HarnessError(f"{label} capability probe command changed")
+        validate_compiler_tool_authority(
+            compiler_build,
+            Path(lane["checkout"]),
+            cargo_environment,
+            label,
+        )
         checkout = Path(lane["checkout"])
         repository_live = v1.repository_state(checkout, require_clean=True)
         if (
@@ -5874,6 +6362,197 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
                 or compiler_build.get("remote_main_commit") != remote_main
             ):
                 raise HarnessError("main release lane is not current official origin/main")
+    validate_live_clang_authority(
+        result.get("provenance", {}).get("toolchains", {})
+    )
+
+
+def validate_compiler_tool_authority(
+    compiler_build: Dict[str, Any],
+    checkout: Path,
+    cargo_environment: Dict[str, str],
+    label: str,
+) -> None:
+    checkout = checkout.resolve()
+    cargo = compiler_build.get("cargo", {})
+    rustc = compiler_build.get("rustc", {})
+    cargo_path = Path(str(cargo.get("path", "")))
+    rustc_path = Path(str(rustc.get("path", "")))
+    for path, record, tool_label in (
+        (cargo_path, cargo, "Cargo"),
+        (rustc_path, rustc, "rustc"),
+    ):
+        if not path.is_absolute() or not path.is_file():
+            raise HarnessError(
+                f"{label} compiler-build {tool_label} invocation path is unavailable"
+            )
+        realpath = path.resolve()
+        if (
+            record.get("realpath") != str(realpath)
+            or record.get("sha256") != v1.sha256_file(realpath)
+        ):
+            raise HarnessError(
+                f"{label} compiler-build {tool_label} file identity changed"
+            )
+
+    cargo_version_command = cargo.get("version_command", {})
+    validate_command_record(
+        cargo_version_command, f"{label} Cargo version probe"
+    )
+    validate_build_command_environment(
+        cargo_version_command,
+        f"{label} Cargo version probe",
+        cargo_environment,
+    )
+    expected_cargo_argv = [str(cargo_path), "--version"]
+    if (
+        cargo_version_command.get("argv") != expected_cargo_argv
+        or cargo_version_command.get("command")
+        != v1.command_text(expected_cargo_argv)
+        or cargo_version_command.get("cwd") != str(checkout)
+        or not str(cargo.get("version_output", "")).startswith("cargo ")
+    ):
+        raise HarnessError(f"{label} Cargo version authority is invalid")
+
+    if (
+        cargo_environment.get("RUSTC") != str(rustc_path)
+        or rustc.get("version_fields")
+        != parse_rustc_verbose_version(str(rustc.get("version_output", "")))
+        or rustc.get("toolchain")
+        != Path(str(rustc.get("sysroot", ""))).name
+        or not Path(str(rustc.get("sysroot", ""))).is_absolute()
+    ):
+        raise HarnessError(f"{label} rustc identity is not compiler-build bound")
+    for field, suffix in (
+        ("version_command", ["-vV"]),
+        ("sysroot_command", ["--print", "sysroot"]),
+    ):
+        command = rustc.get(field, {})
+        validate_command_record(command, f"{label} rustc {field}")
+        validate_build_command_environment(
+            command,
+            f"{label} rustc {field}",
+            cargo_environment,
+        )
+        expected_argv = [str(rustc_path), *suffix]
+        if (
+            command.get("argv") != expected_argv
+            or command.get("command") != v1.command_text(expected_argv)
+            or command.get("cwd") != str(checkout)
+        ):
+            raise HarnessError(f"{label} rustc {field} authority is invalid")
+
+    live_cargo_command, live_cargo_stdout, _ = run_build_capture(
+        expected_cargo_argv,
+        30.0,
+        cwd=checkout,
+        approved_environment_overrides=cargo_environment,
+    )
+    if (
+        live_cargo_command.get("exit_code") != 0
+        or live_cargo_stdout.decode("utf-8", errors="strict").strip()
+        != cargo["version_output"]
+    ):
+        raise HarnessError(f"{label} live Cargo version no longer matches authority")
+    live_rustc = rustc_authority(
+        rustc_path,
+        checkout,
+        cargo_environment,
+    )
+    stable_fields = {
+        "path",
+        "realpath",
+        "sha256",
+        "version_output",
+        "version_fields",
+        "sysroot",
+        "toolchain",
+    }
+    if any(live_rustc[field] != rustc.get(field) for field in stable_fields):
+        raise HarnessError(f"{label} live rustc no longer matches compiler-build authority")
+
+
+def validate_live_clang_authority(toolchains: Dict[str, Any]) -> None:
+    for key, driver_name in (("clang", "clang"), ("clangxx", "clang++")):
+        record = toolchains.get(key, {})
+        path = Path(str(record.get("path", "")))
+        if not path.is_absolute() or not path.is_file():
+            raise HarnessError(f"{key} invocation path is unavailable")
+        live_identity = clang_selected_driver(path, driver_name)
+        identity_fields = {
+            "path",
+            "invocation_realpath",
+            "invocation_sha256",
+            "selected_path",
+            "realpath",
+            "sha256",
+        }
+        if any(
+            live_identity[field] != record.get(field)
+            for field in identity_fields
+        ):
+            raise HarnessError(f"{key} selected driver identity changed")
+        selection = record.get("selection_command")
+        if platform.system() == "Darwin":
+            validate_command_record(selection, f"{key} xcrun selection probe")
+            if selection != live_identity["selection_command"]:
+                stable_command_fields = {"argv", "command", "cwd", "exit_code", "environment"}
+                if not isinstance(selection, dict) or any(
+                    selection.get(field)
+                    != live_identity["selection_command"].get(field)
+                    for field in stable_command_fields
+                ):
+                    raise HarnessError(f"{key} xcrun selection authority changed")
+            validate_build_command_environment(
+                selection, f"{key} xcrun selection probe"
+            )
+            if selection.get("argv") != [
+                "/usr/bin/xcrun",
+                "--find",
+                driver_name,
+            ]:
+                raise HarnessError(f"{key} xcrun selection argv changed")
+        elif selection is not None:
+            raise HarnessError(f"{key} has unexpected xcrun selection authority")
+
+        version_command = record.get("version_command", {})
+        validate_command_record(version_command, f"{key} version probe")
+        validate_build_command_environment(
+            version_command, f"{key} version probe"
+        )
+        expected_version_argv = [
+            str(path),
+            *CLANG_DRIVER_CONFIG_FLAGS,
+            "--version",
+        ]
+        if version_command.get("argv") != expected_version_argv:
+            raise HarnessError(f"{key} version probe argv changed")
+        live_version, _ = build_probe_output(
+            path, [*CLANG_DRIVER_CONFIG_FLAGS, "--version"]
+        )
+        if (
+            live_version != record.get("version_output")
+            or parse_clang_version(live_version) != record.get("version")
+            or parse_clang_installation(live_version, path)
+            != record.get("installation")
+        ):
+            raise HarnessError(f"{key} live version authority changed")
+
+        target_command = record.get("target_command", {})
+        validate_command_record(target_command, f"{key} target probe")
+        validate_build_command_environment(
+            target_command, f"{key} target probe"
+        )
+        expected_target_argv = [
+            str(path),
+            *CLANG_DRIVER_CONFIG_FLAGS,
+            "-print-target-triple",
+        ]
+        if target_command.get("argv") != expected_target_argv:
+            raise HarnessError(f"{key} target probe argv changed")
+        live_target, _ = clang_target(path)
+        if live_target != record.get("target_triple"):
+            raise HarnessError(f"{key} live target authority changed")
 
 
 def validate_result(
@@ -5922,6 +6601,11 @@ def validate_result(
         for lane in result.get("release_lanes", {}).values()
     ):
         raise HarnessError("release lane fallback is forbidden")
+    result_host_os = str(
+        result.get("provenance", {}).get("host", {}).get("os")
+    )
+    if result_host_os == "Windows" and os.name == "nt":
+        canonical_windows_build_support(refresh=True)
     validate_build_provenance(result, manifest)
     provenance = result.get("provenance", {})
     if provenance.get("source_lock") != frozen_source_lock(manifest):
@@ -5931,7 +6615,10 @@ def validate_result(
         or provenance.get("thresholds") != manifest["thresholds"]
     ):
         raise HarnessError("result methodology or thresholds changed")
-    collector_id = provenance.get("collector", {}).get("id")
+    collector_id = validate_collector_descriptor(
+        provenance.get("collector", {}),
+        str(provenance.get("host", {}).get("os")),
+    )
     mode = result.get("mode")
     if mode == "correctness":
         if not result.get("correctness"):

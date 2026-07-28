@@ -17,6 +17,9 @@ reinterpreted as v2.
 Formal inputs remain spectral-norm 5500, n-body 50000000, and
 fannkuch-redux 12. The manifest locks every Nomo, official C, Go, C++20,
 semantic-C, fixture, and predecessor SHA-256.
+Git attributes force the complete benchmark source, fixture, manifest, schema,
+documentation, and runner authority surface to LF bytes on every checkout;
+source hashes are never silently newline-normalized by the harness.
 
 Each of two independent formal build modes has the same five timed lanes:
 
@@ -50,17 +53,36 @@ must exactly equal the harness canonical sanitized projection produced by
 `COMPILER_AFFECTING_ENVIRONMENT` must be cleared without recording their
 values, and no override is permitted for backend compile/link commands.
 Only the separately validated compiler self-build may use the explicit
-`CARGO_TARGET_DIR` and isolated `CARGO_HOME` overrides. The isolated Cargo
-home is empty at build start and removed after the build; every Cargo config
-on the checkout-to-filesystem-root search path is rejected unless it is a
-tracked file inside the exact checkout and its path and SHA-256 are recorded.
+`CARGO_TARGET_DIR`, isolated `CARGO_HOME`, and authority-selected `RUSTC`
+overrides. The isolated Cargo home is empty at build start and removed after
+the build; every Cargo config on the checkout-to-filesystem-root search path
+is rejected unless it is a tracked file inside the exact checkout and its path
+and SHA-256 are recorded. Tracked config may not replace rustc or install a
+rustc wrapper. Cargo and rustc retain their absolute invocation paths when
+they are rustup multicall symlinks; the artifact separately records each
+selected realpath and SHA-256. Compiler-build authority also records and
+revalidates the Cargo version command, `rustc -vV` fields, rustc sysroot and
+toolchain, and the exact environment used by every probe and the self-build.
 Go builds set `GOENV=off` and clear `GOFLAGS`, so `$HOME/go/env` and a parent
-`GOENV` cannot alter the build. Every Clang and Clang++ probe, reference
+`GOENV` cannot alter the build. `DEVELOPER_DIR` and `TOOLCHAINS` are cleared
+and recorded as cleared for every probe and build. On Darwin,
+`/usr/bin/xcrun --find clang` and `clang++` run in that same sanitized environment; the
+invocation shim identity and selected compiler path, realpath, SHA-256,
+version, target, and probe commands are frozen and revalidated before formal
+measurement. Every Clang and Clang++ probe, reference
 compile, generated-C compile, and release-backend compile/link command includes
 exactly one `--no-default-config`; explicit or default driver configs are
 therefore outside the contract. A backend record with a missing, self-reported,
 or differently sanitized environment is unavailable even when compiler,
 argv, and hashes otherwise look correct.
+
+On Windows, build commands do not inherit `INCLUDE`, `LIB`, `LIBPATH`, or
+compiler flags from the parent process. The authority locates the fixed Visual
+Studio Installer `vswhere.exe`, selects one VC toolchain, hashes its
+`VsDevCmd.bat`, and runs it from a WinAPI-derived minimal system environment.
+Only the resulting SDK/VC paths and versions are admitted. The canonical
+projection records the selected VS/SDK versions, tool identities, and exact
+build environment; validation repeats discovery before accepting evidence.
 
 C and C++ are absolute parity comparators. Main is the regression comparator.
 Go remains diagnostic. Semantic-C is an untimed correctness-only diagnostic
@@ -218,11 +240,16 @@ adds exactly `GOMAXPROCS=1`; semantic validation recomputes the complete
 runtime environment for every successful or failed sample.
 
 The result records complete argument vectors and rendered commands,
-stdout/stderr and raw/normalized stdout hashes,
+stdout/stderr and replayable raw stdout bytes plus raw/normalized hashes,
 toolchain versions, source/generated-C/binary hashes, repository state,
 compiler-build provenance, host facts, collector identity, qualification,
 schedule, raw samples, stability calculations, gates, and verdicts. The
-runner validates every result against the checked-in Draft 2020-12 schema and
+collector descriptor is an exact host-derived contract: POSIX requires
+`wait4` process-group CPU/RSS accounting and Windows requires the Job Object
+collector. Wall/CPU/RSS units and implementation version are fixed; each
+sample collector id, CPU total, and stdout hashes are recomputed from that
+descriptor and raw evidence. The runner validates every result against the
+checked-in Draft 2020-12 schema and
 then recomputes drift, RSD, confidence bounds, gates, and verdicts from raw
 samples.
 

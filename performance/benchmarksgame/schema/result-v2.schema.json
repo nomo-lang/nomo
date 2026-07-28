@@ -203,11 +203,63 @@
     },
     "toolFile": {
       "type": "object",
-      "required": ["path", "sha256", "version_output"],
+      "required": ["path", "realpath", "sha256", "version_output", "version_command"],
       "properties": {
         "path": { "type": "string", "minLength": 1 },
+        "realpath": { "type": "string", "minLength": 1 },
         "sha256": { "$ref": "#/$defs/sha256" },
-        "version_output": { "type": "string", "minLength": 1 }
+        "version_output": { "type": "string", "minLength": 1 },
+        "version_command": { "$ref": "#/$defs/command" }
+      },
+      "additionalProperties": false
+    },
+    "rustCompiler": {
+      "type": "object",
+      "required": [
+        "path",
+        "realpath",
+        "sha256",
+        "version_output",
+        "version_fields",
+        "version_command",
+        "sysroot",
+        "sysroot_command",
+        "toolchain"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "realpath": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "version_output": { "type": "string", "minLength": 1 },
+        "version_fields": {
+          "type": "object",
+          "required": [
+            "version",
+            "binary",
+            "commit_hash",
+            "commit_date",
+            "host",
+            "release",
+            "llvm_version"
+          ],
+          "properties": {
+            "version": { "type": "string", "minLength": 1 },
+            "binary": { "const": "rustc" },
+            "commit_hash": {
+              "type": "string",
+              "pattern": "^[0-9a-f]{40}$"
+            },
+            "commit_date": { "type": "string", "minLength": 1 },
+            "host": { "type": "string", "minLength": 1 },
+            "release": { "type": "string", "minLength": 1 },
+            "llvm_version": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "version_command": { "$ref": "#/$defs/command" },
+        "sysroot": { "type": "string", "minLength": 1 },
+        "sysroot_command": { "$ref": "#/$defs/command" },
+        "toolchain": { "type": "string", "minLength": 1 }
       },
       "additionalProperties": false
     },
@@ -255,6 +307,52 @@
       },
       "additionalProperties": false
     },
+    "collectorDescriptor": {
+      "type": "object",
+      "required": [
+        "id",
+        "host_os",
+        "implementation_version",
+        "wall_clock",
+        "wall_time_unit",
+        "cpu_times",
+        "cpu_time_unit",
+        "peak_rss",
+        "peak_rss_unit",
+        "timeout_scope",
+        "stdout_normalization"
+      ],
+      "properties": {
+        "id": {
+          "enum": ["posix-wait4-v1", "windows-job-object-v1"]
+        },
+        "host_os": {
+          "enum": ["Darwin", "Linux", "Windows"]
+        },
+        "implementation_version": { "const": 1 },
+        "wall_clock": { "const": "time.perf_counter_ns" },
+        "wall_time_unit": { "const": "nanoseconds" },
+        "cpu_times": {
+          "enum": [
+            "wait4 rusage user+system",
+            "GetProcessTimes kernel+user"
+          ]
+        },
+        "cpu_time_unit": { "const": "nanoseconds" },
+        "peak_rss": {
+          "enum": [
+            "wait4 rusage ru_maxrss normalized to bytes",
+            "GetProcessMemoryInfo PeakWorkingSetSize"
+          ]
+        },
+        "peak_rss_unit": { "const": "bytes" },
+        "timeout_scope": {
+          "enum": ["POSIX process group", "Windows Job Object"]
+        },
+        "stdout_normalization": { "const": "crlf-to-lf-only-v1" }
+      },
+      "additionalProperties": false
+    },
     "capability": {
       "type": "object",
       "required": ["label", "status", "reason"],
@@ -284,6 +382,7 @@
         "environment",
         "cargo_configs",
         "cargo",
+        "rustc",
         "binary",
         "stdout",
         "stderr"
@@ -306,10 +405,11 @@
         "command": { "$ref": "#/$defs/command" },
         "environment": {
           "type": "object",
-          "required": ["CARGO_TARGET_DIR", "CARGO_HOME"],
+          "required": ["CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"],
           "properties": {
             "CARGO_TARGET_DIR": { "type": "string", "minLength": 1 },
-            "CARGO_HOME": { "type": "string", "minLength": 1 }
+            "CARGO_HOME": { "type": "string", "minLength": 1 },
+            "RUSTC": { "type": "string", "minLength": 1 }
           },
           "additionalProperties": false
         },
@@ -327,6 +427,7 @@
           }
         },
         "cargo": { "$ref": "#/$defs/toolFile" },
+        "rustc": { "$ref": "#/$defs/rustCompiler" },
         "binary": { "$ref": "#/$defs/file" },
         "stdout": { "type": "string" },
         "stderr": { "type": "string" }
@@ -409,7 +510,7 @@
         "rfc": { "type": "object" },
         "host": { "type": "object" },
         "toolchains": { "type": "object" },
-        "collector": { "type": "object" },
+        "collector": { "$ref": "#/$defs/collectorDescriptor" },
         "methodology": { "type": "object" },
         "thresholds": { "type": "object" },
         "environment_qualification": { "$ref": "#/$defs/staticAuthorization" },
@@ -651,6 +752,7 @@
         "exit_code",
         "stdout_raw_sha256",
         "stdout_normalized_sha256",
+        "stdout_raw_base64",
         "stdout_normalization",
         "executable_sha256"
       ],
@@ -674,6 +776,7 @@
         "exit_code": { "const": 0 },
         "stdout_raw_sha256": { "$ref": "#/$defs/sha256" },
         "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_raw_base64": { "type": "string" },
         "stdout_normalization": { "const": "crlf-to-lf-only-v1" },
         "executable_sha256": { "$ref": "#/$defs/sha256" },
         "phase": { "enum": ["warmup", "sample"] },
@@ -709,6 +812,7 @@
         "timed_out",
         "stdout_raw_sha256",
         "stdout_normalized_sha256",
+        "stdout_raw_base64",
         "stdout_normalization",
         "stdout_bytes",
         "stderr",
@@ -741,6 +845,7 @@
         "timed_out": { "type": "boolean" },
         "stdout_raw_sha256": { "$ref": "#/$defs/sha256" },
         "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_raw_base64": { "type": "string" },
         "stdout_normalization": { "const": "crlf-to-lf-only-v1" },
         "stdout_bytes": {
           "type": "object",

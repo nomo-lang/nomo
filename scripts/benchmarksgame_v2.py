@@ -499,9 +499,11 @@ def workload_build_failure_record(
     source: Path,
     output: Path,
     command: Dict[str, Any],
+    failure_kind: str = "command-failure",
 ) -> Dict[str, Any]:
     return {
         "kind": "preflight-build-failure-v1",
+        "failure_kind": failure_kind,
         "workload_id": workload_id,
         "lane": lane,
         "phase": phase,
@@ -511,6 +513,26 @@ def workload_build_failure_record(
         },
         "output_path": str(output.resolve()),
         "command": command,
+    }
+
+
+def missing_build_output_command_record(
+    command: Dict[str, Any],
+    stdout: bytes,
+    stderr: bytes,
+    expected_output: Path,
+) -> Dict[str, Any]:
+    finished = dt.datetime.now(dt.timezone.utc)
+    duration_ns = int(command["duration_ns"])
+    started = finished - dt.timedelta(microseconds=duration_ns / 1_000)
+    return {
+        **command,
+        "timed_out": False,
+        "started_at_utc": started.isoformat(),
+        "finished_at_utc": finished.isoformat(),
+        "stdout": stdout.decode("utf-8", errors="replace"),
+        "stderr": stderr.decode("utf-8", errors="replace"),
+        "error": f"expected build output is missing: {expected_output.resolve()}",
     }
 
 
@@ -4028,6 +4050,25 @@ def binary_path(root: Path, name: str) -> Path:
     return root / f"{name}{suffix}"
 
 
+def path_lexically_exists(path: Path) -> bool:
+    return path.exists() or path.is_symlink()
+
+
+def require_absent_build_path(path: Path, label: str) -> None:
+    if path_lexically_exists(path):
+        raise HarnessError(
+            f"{label} already exists; refusing to reuse stale build evidence: "
+            f"{path.resolve()}"
+        )
+
+
+def require_new_build_file(path: Path, label: str) -> None:
+    if path.is_symlink() or not path.is_file():
+        raise HarnessError(
+            f"{label} did not create a new regular file: {path.resolve()}"
+        )
+
+
 def math_flags(workload: Dict[str, Any]) -> list[str]:
     if workload.get("link_math") and os.name != "nt":
         return ["-lm"]
@@ -4056,7 +4097,8 @@ def build_reference_workload(
     workload_id = workload["id"]
     build_root = bundle_root / "build" / workload_id / "references"
     binary_root = bundle_root / "bin"
-    build_root.mkdir(parents=True, exist_ok=True)
+    require_absent_build_path(build_root, f"{workload_id} reference build root")
+    build_root.mkdir(parents=True, exist_ok=False)
     binary_root.mkdir(parents=True, exist_ok=True)
     sources = workload["sources"]
     binaries: Dict[str, Path] = {}
@@ -4115,6 +4157,8 @@ def build_reference_workload(
         ],
     }
     for lane, command in build_specs.items():
+        output = Path(command[command.index("-o") + 1]).resolve()
+        require_absent_build_path(output, f"{workload_id} {lane} output")
         try:
             if lane == "go":
                 with isolated_go_build_cache(build_root) as go_cache_environment:
@@ -4131,7 +4175,6 @@ def build_reference_workload(
                     cwd=REPOSITORY_ROOT,
                 )
         except BuildCollectionError as error:
-            output = Path(command[command.index("-o") + 1]).resolve()
             raise WorkloadBuildError(
                 str(error),
                 workload_build_failure_record(
@@ -4148,9 +4191,22 @@ def build_reference_workload(
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
         }
-        output = Path(command[command.index("-o") + 1]).resolve()
         if not output.is_file():
-            raise HarnessError(f"{lane} build did not produce {output}")
+            raise WorkloadBuildError(
+                f"{lane} build did not produce {output}",
+                workload_build_failure_record(
+                    workload_id,
+                    lane,
+                    "reference-build",
+                    copied_sources[lane],
+                    output,
+                    missing_build_output_command_record(
+                        record, stdout, stderr, output
+                    ),
+                    "missing-output",
+                ),
+            )
+        require_new_build_file(output, f"{workload_id} {lane} output")
         binaries[lane] = output
 
     generated_c = None
@@ -4164,6 +4220,9 @@ def build_reference_workload(
             f"{workload_id} Nomo manifest",
         )
         nomo_project = build_root / "nomo-baseline-project"
+        require_absent_build_path(
+            nomo_project, f"{workload_id} Nomo baseline project"
+        )
         v1.copy_nomo_project(nomo_source, nomo_manifest, nomo_project)
         emit_command = [
             toolchains["nomo"]["path"],
@@ -4172,6 +4231,9 @@ def build_reference_workload(
             "--emit-c",
         ]
         generated_c = nomo_project / "build" / "c" / "main.c"
+        require_absent_build_path(
+            generated_c, f"{workload_id} Nomo baseline generated C"
+        )
         try:
             emit_record, emit_stdout, emit_stderr = run_build_capture(
                 emit_command,
@@ -4191,8 +4253,27 @@ def build_reference_workload(
                 ),
             ) from error
         if not generated_c.is_file():
-            raise HarnessError(f"Nomo baseline did not emit C for {workload_id}")
+            raise WorkloadBuildError(
+                f"Nomo baseline did not emit C for {workload_id}",
+                workload_build_failure_record(
+                    workload_id,
+                    "nomo-baseline",
+                    "nomo-emit-c",
+                    nomo_source,
+                    generated_c,
+                    missing_build_output_command_record(
+                        emit_record, emit_stdout, emit_stderr, generated_c
+                    ),
+                    "missing-output",
+                ),
+            )
+        require_new_build_file(
+            generated_c, f"{workload_id} Nomo baseline generated C"
+        )
         nomo_binary = binary_path(binary_root, f"{workload_id}-nomo-baseline")
+        require_absent_build_path(
+            nomo_binary, f"{workload_id} Nomo baseline binary"
+        )
         clang_command = [
             toolchains["clang"]["path"],
             *CLANG_DRIVER_CONFIG_FLAGS,
@@ -4221,7 +4302,26 @@ def build_reference_workload(
                 ),
             ) from error
         if not nomo_binary.is_file():
-            raise HarnessError(f"Nomo baseline build did not produce {nomo_binary}")
+            raise WorkloadBuildError(
+                f"Nomo baseline build did not produce {nomo_binary}",
+                workload_build_failure_record(
+                    workload_id,
+                    "nomo-baseline",
+                    "nomo-generated-c-clang",
+                    generated_c,
+                    nomo_binary,
+                    missing_build_output_command_record(
+                        clang_record,
+                        clang_stdout,
+                        clang_stderr,
+                        nomo_binary,
+                    ),
+                    "missing-output",
+                ),
+            )
+        require_new_build_file(
+            nomo_binary, f"{workload_id} Nomo baseline binary"
+        )
         binaries["nomo-baseline"] = nomo_binary.resolve()
         commands["nomo_baseline_emit_c"] = emit_record
         commands["nomo_baseline_clang"] = clang_record
@@ -4344,11 +4444,11 @@ def release_lane_state(
         cargo_home = (
             bundle_root / "compiler-build" / f"{label}-cargo-home"
         )
-        if target_dir.exists():
+        if path_lexically_exists(target_dir):
             raise HarnessError(
                 f"{label} isolated compiler target already exists; use a fresh output path"
             )
-        if cargo_home.exists():
+        if path_lexically_exists(cargo_home):
             raise HarnessError(
                 f"{label} isolated CARGO_HOME already exists; use a fresh output path"
             )
@@ -4367,6 +4467,8 @@ def release_lane_state(
             "RUSTC": str(rustc),
         }
         command = [str(cargo), "build", "--locked", "--release", "--bin", "nomo"]
+        nomo = binary_path(target_dir / "release", "nomo")
+        require_absent_build_path(nomo, f"{label} self-built Nomo compiler")
         try:
             cargo_version_command, cargo_version_stdout, _ = run_build_capture(
                 [str(cargo), "--version"],
@@ -4397,9 +4499,9 @@ def release_lane_state(
                 raise HarnessError(
                     f"{label} isolated CARGO_HOME cleanup failed: {error}"
                 ) from error
-        nomo = binary_path(target_dir / "release", "nomo")
         if not nomo.is_file():
             raise HarnessError(f"{label} compiler build did not produce {nomo}")
+        require_new_build_file(nomo, f"{label} self-built Nomo compiler")
         repository_after = v1.repository_state(checkout, require_clean=True)
         if repository_after != repository_before:
             raise HarnessError(f"{label} checkout changed while building Nomo")
@@ -4501,7 +4603,22 @@ def build_release_lane(
         f"{workload_id} Nomo manifest",
     )
     project = bundle_root / "build" / workload_id / "release" / lane / "project"
+    require_absent_build_path(project, f"{workload_id} {lane} release project")
     v1.copy_nomo_project(nomo_source, nomo_manifest, project)
+    project_name = parse_project_name(nomo_manifest)
+    binary = binary_path(project / "build" / "bin", project_name)
+    generated_c = project / "build" / "c" / "main.c"
+    backend_provenance_path = project / "build" / "release-provenance.json"
+    require_absent_build_path(
+        binary, f"{workload_id} {lane} release binary"
+    )
+    require_absent_build_path(
+        generated_c, f"{workload_id} {lane} release generated C"
+    )
+    require_absent_build_path(
+        backend_provenance_path,
+        f"{workload_id} {lane} release backend provenance",
+    )
     command = [lane_state["nomo_path"], "build", str(project), "--release"]
     record, stdout, stderr = run_build_capture(
         command,
@@ -4510,10 +4627,6 @@ def build_release_lane(
     )
     if "--emit-c" in command or "--release" not in command:
         raise HarnessError(f"{lane} did not use the real release command")
-    project_name = parse_project_name(nomo_manifest)
-    binary = binary_path(project / "build" / "bin", project_name)
-    generated_c = project / "build" / "c" / "main.c"
-    backend_provenance_path = project / "build" / "release-provenance.json"
     if (
         not binary.is_file()
         or not generated_c.is_file()
@@ -4524,6 +4637,14 @@ def build_release_lane(
             "build/c/main.c, and build/release-provenance.json; machine-readable "
             "backend provenance is mandatory"
         )
+    require_new_build_file(binary, f"{workload_id} {lane} release binary")
+    require_new_build_file(
+        generated_c, f"{workload_id} {lane} release generated C"
+    )
+    require_new_build_file(
+        backend_provenance_path,
+        f"{workload_id} {lane} release backend provenance",
+    )
     backend = v1.read_json(backend_provenance_path)
     validate_release_backend_provenance(
         backend,
@@ -4690,19 +4811,27 @@ def build_emit_c_lane(
         f"{workload_id} Nomo manifest",
     )
     project = bundle_root / "build" / workload_id / "emit-c" / lane / "project"
+    require_absent_build_path(project, f"{workload_id} {lane} emit-C project")
     v1.copy_nomo_project(nomo_source, nomo_manifest, project)
+    generated_c = project / "build" / "c" / "main.c"
+    require_absent_build_path(
+        generated_c, f"{workload_id} {lane} emit-C generated C"
+    )
     emit_command = [lane_state["nomo_path"], "build", str(project), "--emit-c"]
     emit_record, emit_stdout, emit_stderr = run_build_capture(
         emit_command,
         timeout_seconds=build_timeout_seconds,
         cwd=Path(lane_state["checkout"]),
     )
-    generated_c = project / "build" / "c" / "main.c"
     if not generated_c.is_file():
         raise HarnessError(f"{lane} emit-c did not produce generated C")
+    require_new_build_file(
+        generated_c, f"{workload_id} {lane} emit-C generated C"
+    )
     generated_sha_before = v1.sha256_file(generated_c)
     project_name = parse_project_name(nomo_manifest)
     binary = binary_path(project / "build" / "bin", project_name)
+    require_absent_build_path(binary, f"{workload_id} {lane} emit-C binary")
     binary.parent.mkdir(parents=True, exist_ok=True)
     clang_command = [
         toolchains["clang"]["path"],
@@ -4720,6 +4849,7 @@ def build_emit_c_lane(
     )
     if not binary.is_file():
         raise HarnessError(f"{lane} emit-c Clang build did not produce {binary}")
+    require_new_build_file(binary, f"{workload_id} {lane} emit-C binary")
     generated_sha_after = v1.sha256_file(generated_c)
     if generated_sha_after != generated_sha_before:
         raise HarnessError(f"{lane} generated C changed after emission")
@@ -5776,7 +5906,10 @@ def validate_build_failure_evidence(
     if command.get("argv") != expected_argv or command.get(
         "command"
     ) != v1.command_text(expected_argv):
-        raise HarnessError("preflight build failure command changed")
+        raise HarnessError(
+            "preflight build failure command changed: "
+            f"expected {expected_argv!r}, found {command.get('argv')!r}"
+        )
     if command.get("cwd") != str(REPOSITORY_ROOT.resolve()):
         raise HarnessError("preflight build failure cwd changed")
     if (
@@ -5790,16 +5923,31 @@ def validate_build_failure_evidence(
         raise HarnessError("preflight build failure record is incomplete")
     timed_out = command.get("timed_out")
     exit_code = command.get("exit_code")
-    if timed_out is True:
-        if exit_code is not None:
-            raise HarnessError("timed-out preflight build has an exit code")
-    elif timed_out is False:
-        if exit_code == 0 or (
-            exit_code is not None and not isinstance(exit_code, int)
+    failure_kind = failure.get("failure_kind")
+    if failure_kind == "missing-output":
+        expected_error = (
+            f"expected build output is missing: {output_path.resolve()}"
+        )
+        if (
+            timed_out is not False
+            or exit_code != 0
+            or command.get("error") != expected_error
+            or path_lexically_exists(output_path)
         ):
-            raise HarnessError("preflight build failure exit evidence changed")
+            raise HarnessError("missing-output build evidence changed")
+    elif failure_kind == "command-failure":
+        if timed_out is True:
+            if exit_code is not None:
+                raise HarnessError("timed-out preflight build has an exit code")
+        elif timed_out is False:
+            if exit_code == 0 or (
+                exit_code is not None and not isinstance(exit_code, int)
+            ):
+                raise HarnessError("preflight build failure exit evidence changed")
+        else:
+            raise HarnessError("preflight build timeout evidence is missing")
     else:
-        raise HarnessError("preflight build timeout evidence is missing")
+        raise HarnessError("preflight build failure kind changed")
     if parse_utc_timestamp(command.get("started_at_utc")) > parse_utc_timestamp(
         command.get("finished_at_utc")
     ):
@@ -8491,6 +8639,46 @@ def validate_output_outside_bundle(
         )
 
 
+def require_new_evidence_destination(
+    output_path: Path,
+    mode: str,
+    prepared_bundle: Optional[str],
+) -> None:
+    targets = [
+        (output_path, "result output"),
+        (output_path.with_suffix(".log"), "result evidence log"),
+    ]
+    if mode == "correctness":
+        targets.append(
+            (output_path.with_suffix(""), "correctness build bundle")
+        )
+    elif mode == "prepare":
+        bundle_root = (
+            Path(prepared_bundle).resolve()
+            if prepared_bundle
+            else output_path.with_suffix("")
+        )
+        targets.append((bundle_root, "prepared build bundle"))
+    for target, label in targets:
+        if path_lexically_exists(target):
+            raise HarnessError(
+                f"{label} already exists; choose a new --output/"
+                f"--prepared-bundle and preserve the prior evidence: "
+                f"{target.resolve()}"
+            )
+
+
+def write_result_exclusive(path: Path, result: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    try:
+        with path.open("x", encoding="utf-8", newline="\n") as output:
+            output.write(json.dumps(result, indent=2, sort_keys=True) + "\n")
+    except FileExistsError as error:
+        raise HarnessError(
+            f"result output appeared during the run; refusing to overwrite {path}"
+        ) from error
+
+
 def run_prepare(
     arguments: argparse.Namespace,
     manifest: Dict[str, Any],
@@ -8772,6 +8960,11 @@ def run_suite(arguments: argparse.Namespace) -> Tuple[Path, Dict[str, Any]]:
         if arguments.output
         else default_output_path(arguments.mode).resolve()
     )
+    require_new_evidence_destination(
+        output_path,
+        arguments.mode,
+        arguments.prepared_bundle,
+    )
     repository = v1.repository_state(
         REPOSITORY_ROOT,
         require_clean=arguments.require_clean
@@ -8840,7 +9033,14 @@ def run_suite(arguments: argparse.Namespace) -> Tuple[Path, Dict[str, Any]]:
         result, suite_root / "schema" / "result-v2.schema.json"
     )
     validate_result(result, manifest)
-    v1.write_result(output_path, result)
+    if path_lexically_exists(output_path) or path_lexically_exists(
+        output_path.with_suffix(".log")
+    ):
+        raise HarnessError(
+            "result destination changed during the run; refusing to overwrite "
+            "existing evidence"
+        )
+    write_result_exclusive(output_path, result)
     write_evidence_log(output_path, result)
     return output_path, result
 
@@ -8868,7 +9068,13 @@ def write_evidence_log(output_path: Path, result: Dict[str, Any]) -> Path:
                 sort_keys=True,
             )
         )
-    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    try:
+        with log_path.open("x", encoding="utf-8", newline="\n") as output:
+            output.write("\n".join(lines) + "\n")
+    except FileExistsError as error:
+        raise HarnessError(
+            f"evidence log appeared during the run; refusing to overwrite {log_path}"
+        ) from error
     return log_path
 
 

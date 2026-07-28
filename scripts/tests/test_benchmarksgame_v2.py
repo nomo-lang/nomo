@@ -2793,6 +2793,91 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ):
                 benchmark.validate_output_outside_bundle(output, root)
 
+    def test_same_output_rerun_preserves_stale_bundle_and_executes_nothing(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        for stale_relative, is_file in (
+            (
+                Path("bin")
+                / benchmark.binary_path(Path(), "spectral-norm-c"),
+                True,
+            ),
+            (
+                Path("build")
+                / "spectral-norm"
+                / "references"
+                / "nomo-baseline-project",
+                False,
+            ),
+            (
+                Path("build")
+                / "spectral-norm"
+                / "references"
+                / "nomo-baseline-project"
+                / "build"
+                / "c"
+                / "main.c",
+                True,
+            ),
+        ):
+            with self.subTest(stale_relative=stale_relative):
+                case_root = root / str(len(list(root.iterdir())))
+                output = case_root / "correctness.json"
+                bundle = output.with_suffix("")
+                stale = bundle / stale_relative
+                if is_file:
+                    stale.parent.mkdir(parents=True)
+                    stale.write_bytes(b"stale-build-output")
+                else:
+                    stale.mkdir(parents=True)
+                arguments = benchmark.parse_arguments(
+                    [
+                        "--mode",
+                        "correctness",
+                        "--output",
+                        str(output),
+                    ]
+                )
+                with mock.patch.object(
+                    v1, "repository_state"
+                ) as repository_state, mock.patch.object(
+                    benchmark, "inspect_toolchains"
+                ) as inspect_toolchains, mock.patch.object(
+                    benchmark, "run_build_capture"
+                ) as build_capture:
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError,
+                        "correctness build bundle already exists",
+                    ):
+                        benchmark.run_suite(arguments)
+                repository_state.assert_not_called()
+                inspect_toolchains.assert_not_called()
+                build_capture.assert_not_called()
+                self.assertTrue(
+                    stale.exists(), "prior evidence must not be removed"
+                )
+                self.assertFalse(output.exists())
+                self.assertFalse(output.with_suffix(".log").exists())
+
+        output = root / "prior.json"
+        log = output.with_suffix(".log")
+        output.write_text('{"prior": true}\n', encoding="utf-8")
+        log.write_text("prior-log\n", encoding="utf-8")
+        arguments = benchmark.parse_arguments(
+            ["--mode", "correctness", "--output", str(output)]
+        )
+        with mock.patch.object(
+            benchmark, "run_build_capture"
+        ) as build_capture:
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "result output already exists"
+            ):
+                benchmark.run_suite(arguments)
+        build_capture.assert_not_called()
+        self.assertEqual(output.read_text(encoding="utf-8"), '{"prior": true}\n')
+        self.assertEqual(log.read_text(encoding="utf-8"), "prior-log\n")
+
     def test_prepared_structure_and_live_sha_are_fail_closed(self) -> None:
         result, bundle = self.prepared_bundle_fixture()
         for mutation in ("lane", "mode"):
@@ -3228,6 +3313,428 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         benchmark.validate_result_schema(reloaded, self.result_schema_path)
         benchmark.validate_result(reloaded, self.manifest)
         self.assertIn("build cache is required", log_path.read_text())
+
+    def assert_missing_output_evidence(self, missing_phase: str) -> None:
+        output = (
+            Path(self.temporary.name)
+            / f"correctness-{missing_phase}-missing.json"
+        ).resolve()
+        bundle = output.with_suffix("")
+        fixture = self.correctness_only_result()
+        toolchains = fixture["provenance"]["toolchains"]
+
+        def fake_capture(
+            command: list[str],
+            timeout_seconds: float,
+            cwd: Path | None = None,
+            approved_environment_overrides: dict[str, str] | None = None,
+        ) -> tuple[dict, bytes, bytes]:
+            del timeout_seconds
+            argv = [str(part) for part in command]
+            record = self.full_command(
+                argv,
+                cwd=str(cwd.resolve()) if cwd is not None else None,
+                approved_environment_overrides=approved_environment_overrides,
+            )
+            is_go = argv[:2] == [toolchains["go"]["path"], "build"]
+            is_emit = (
+                argv[0] == toolchains["nomo"]["path"]
+                and argv[-1] == "--emit-c"
+            )
+            is_baseline_clang = (
+                argv[0] == toolchains["clang"]["path"]
+                and "-o" in argv
+                and "nomo-baseline"
+                in Path(argv[argv.index("-o") + 1]).stem
+            )
+            should_omit = {
+                "go": is_go,
+                "emit-c": is_emit,
+                "generated-c-clang": is_baseline_clang,
+            }[missing_phase]
+            if not should_omit:
+                if is_emit:
+                    generated = Path(argv[2]) / "build" / "c" / "main.c"
+                    generated.parent.mkdir(parents=True, exist_ok=True)
+                    generated.write_text(
+                        "int main(void) { return 0; }\n", encoding="utf-8"
+                    )
+                elif "-o" in argv:
+                    binary = Path(argv[argv.index("-o") + 1])
+                    binary.parent.mkdir(parents=True, exist_ok=True)
+                    binary.write_bytes(b"fixture-build-output")
+            return record, b"", b""
+
+        with mock.patch.object(
+            benchmark, "run_build_capture", side_effect=fake_capture
+        ):
+            with self.assertRaises(benchmark.WorkloadBuildError) as captured:
+                benchmark.build_reference_workload(
+                    self.manifest["workloads"][0],
+                    self.suite_root,
+                    bundle,
+                    toolchains,
+                    120.0,
+                    include_nomo_baseline=True,
+                )
+        failure = captured.exception.record
+        self.assertEqual(failure["failure_kind"], "missing-output")
+        self.assertEqual(failure["command"]["exit_code"], 0)
+        self.assertFalse(Path(failure["output_path"]).exists())
+
+        collector = mock.Mock()
+        host_os = platform.system()
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host(host_os)
+        )
+        host = {"os": host_os, "architecture": platform.machine()}
+        unavailable = {
+            "status": "unavailable",
+            "reason": "fixture release capability unavailable",
+            "emit_c_fallback_used": False,
+        }
+        with mock.patch.object(
+            benchmark, "release_capability", return_value=unavailable
+        ), mock.patch.object(
+            benchmark,
+            "build_reference_workload",
+            side_effect=benchmark.WorkloadBuildError(
+                str(captured.exception), failure
+            ),
+        ):
+            result = benchmark.run_correctness(
+                Namespace(),
+                self.manifest,
+                self.manifest_path,
+                self.suite_root,
+                output,
+                {},
+                toolchains,
+                collector,
+                host,
+            )
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        benchmark.validate_result(result, self.manifest)
+        v1.write_result(output, result)
+        log_path = benchmark.write_evidence_log(output, result)
+        benchmark.validate_result(v1.read_json(output), self.manifest)
+        self.assertIn("expected build output is missing", log_path.read_text())
+        with mock.patch.object(
+            benchmark, "run_suite", return_value=(output, result)
+        ):
+            self.assertEqual(
+                benchmark.main(["--mode", "correctness"]), 2
+            )
+
+    def test_fake_go_exit_zero_without_output_is_retained(self) -> None:
+        self.assert_missing_output_evidence("go")
+
+    def test_emit_c_exit_zero_without_generated_c_is_retained(self) -> None:
+        self.assert_missing_output_evidence("emit-c")
+
+    def test_generated_c_clang_exit_zero_without_binary_is_retained(self) -> None:
+        self.assert_missing_output_evidence("generated-c-clang")
+
+    def test_reference_builds_reject_stale_c_cpp_go_and_semantic_outputs(
+        self,
+    ) -> None:
+        workload = self.manifest["workloads"][0]
+        workload_id = workload["id"]
+        toolchains = self.correctness_only_result()["provenance"]["toolchains"]
+        for stale_lane in benchmark.REFERENCE_LANES:
+            with self.subTest(stale_lane=stale_lane):
+                bundle = Path(self.temporary.name) / f"stale-{stale_lane}"
+                stale_output = benchmark.binary_path(
+                    bundle / "bin", f"{workload_id}-{stale_lane}"
+                )
+                stale_output.parent.mkdir(parents=True)
+                stale_output.write_bytes(b"stale-binary")
+                executed: list[list[str]] = []
+
+                def fake_capture(
+                    command: list[str],
+                    timeout_seconds: float,
+                    cwd: Path | None = None,
+                    approved_environment_overrides: dict[str, str]
+                    | None = None,
+                ) -> tuple[dict, bytes, bytes]:
+                    del timeout_seconds
+                    argv = [str(part) for part in command]
+                    executed.append(argv)
+                    output = Path(argv[argv.index("-o") + 1])
+                    output.parent.mkdir(parents=True, exist_ok=True)
+                    output.write_bytes(b"new-binary")
+                    return (
+                        self.full_command(
+                            argv,
+                            cwd=str(cwd.resolve()) if cwd else None,
+                            approved_environment_overrides=(
+                                approved_environment_overrides
+                            ),
+                        ),
+                        b"",
+                        b"",
+                    )
+
+                with mock.patch.object(
+                    benchmark, "run_build_capture", side_effect=fake_capture
+                ):
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, "refusing to reuse stale"
+                    ):
+                        benchmark.build_reference_workload(
+                            workload,
+                            self.suite_root,
+                            bundle,
+                            toolchains,
+                            120.0,
+                            include_nomo_baseline=False,
+                        )
+                self.assertTrue(stale_output.is_file())
+                self.assertEqual(stale_output.read_bytes(), b"stale-binary")
+                stale_argv = [
+                    command
+                    for command in executed
+                    if "-o" in command
+                    and Path(command[command.index("-o") + 1])
+                    == stale_output
+                ]
+                self.assertEqual(stale_argv, [])
+
+    def test_nomo_baseline_rejects_stale_project_generated_c_and_binary(
+        self,
+    ) -> None:
+        workload = self.manifest["workloads"][0]
+        workload_id = workload["id"]
+        toolchains = self.correctness_only_result()["provenance"]["toolchains"]
+
+        bundle = Path(self.temporary.name) / "stale-project"
+        project = (
+            bundle
+            / "build"
+            / workload_id
+            / "references"
+            / "nomo-baseline-project"
+        )
+        project.mkdir(parents=True)
+        with mock.patch.object(
+            benchmark, "run_build_capture"
+        ) as build_capture:
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "reference build root already exists"
+            ):
+                benchmark.build_reference_workload(
+                    workload,
+                    self.suite_root,
+                    bundle,
+                    toolchains,
+                    120.0,
+                    include_nomo_baseline=True,
+                )
+        build_capture.assert_not_called()
+
+        original_copy = v1.copy_nomo_project
+        for stale_kind in ("generated-c", "binary"):
+            with self.subTest(stale_kind=stale_kind):
+                bundle = (
+                    Path(self.temporary.name) / f"stale-baseline-{stale_kind}"
+                )
+
+                def copy_with_stale(
+                    source: Path,
+                    manifest: Path,
+                    destination: Path,
+                ) -> None:
+                    original_copy(source, manifest, destination)
+                    stale = (
+                        destination / "build" / "c" / "main.c"
+                        if stale_kind == "generated-c"
+                        else benchmark.binary_path(
+                            bundle / "bin",
+                            f"{workload_id}-nomo-baseline",
+                        )
+                    )
+                    stale.parent.mkdir(parents=True, exist_ok=True)
+                    stale.write_bytes(b"stale-nomo-output")
+
+                def fake_capture(
+                    command: list[str],
+                    timeout_seconds: float,
+                    cwd: Path | None = None,
+                    approved_environment_overrides: dict[str, str]
+                    | None = None,
+                ) -> tuple[dict, bytes, bytes]:
+                    del timeout_seconds
+                    argv = [str(part) for part in command]
+                    if "-o" in argv:
+                        output = Path(argv[argv.index("-o") + 1])
+                        output.parent.mkdir(parents=True, exist_ok=True)
+                        output.write_bytes(b"new-reference-output")
+                    elif argv[-1] == "--emit-c":
+                        generated = Path(argv[2]) / "build" / "c" / "main.c"
+                        generated.parent.mkdir(parents=True, exist_ok=True)
+                        generated.write_bytes(b"new-generated-c")
+                    return (
+                        self.full_command(
+                            argv,
+                            cwd=str(cwd.resolve()) if cwd else None,
+                            approved_environment_overrides=(
+                                approved_environment_overrides
+                            ),
+                        ),
+                        b"",
+                        b"",
+                    )
+
+                with mock.patch.object(
+                    v1, "copy_nomo_project", side_effect=copy_with_stale
+                ), mock.patch.object(
+                    benchmark, "run_build_capture", side_effect=fake_capture
+                ):
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, "refusing to reuse stale"
+                    ):
+                        benchmark.build_reference_workload(
+                            workload,
+                            self.suite_root,
+                            bundle,
+                            toolchains,
+                            120.0,
+                            include_nomo_baseline=True,
+                        )
+
+    def test_formal_release_and_emit_c_reject_stale_projects_and_outputs(
+        self,
+    ) -> None:
+        workload = self.manifest["workloads"][0]
+        workload_id = workload["id"]
+        toolchains = self.completed_result()["provenance"]["toolchains"]
+        lane_state = {
+            "status": "available",
+            "capabilities": {
+                "release": {"status": "available"},
+                "emit-c": {"status": "available"},
+            },
+            "nomo_path": toolchains["nomo"]["path"],
+            "nomo_sha256": toolchains["nomo"].get("sha256", "0" * 64),
+            "checkout": str(REPOSITORY_ROOT),
+            "repository": {"commit": "a" * 40},
+        }
+        for build_mode, builder in (
+            ("release", benchmark.build_release_lane),
+            ("emit-c", benchmark.build_emit_c_lane),
+        ):
+            with self.subTest(build_mode=build_mode, stale="project"):
+                bundle = (
+                    Path(self.temporary.name) / f"formal-{build_mode}-project"
+                )
+                project = (
+                    bundle
+                    / "build"
+                    / workload_id
+                    / build_mode
+                    / "candidate"
+                    / "project"
+                )
+                project.mkdir(parents=True)
+                with mock.patch.object(
+                    benchmark, "run_build_capture"
+                ) as build_capture:
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, "project already exists"
+                    ):
+                        builder(
+                            workload,
+                            self.suite_root,
+                            bundle,
+                            "candidate",
+                            lane_state,
+                            toolchains,
+                            120.0,
+                        )
+                build_capture.assert_not_called()
+
+        original_copy = v1.copy_nomo_project
+        cases = (
+            ("release", "binary", benchmark.build_release_lane),
+            ("release", "generated-c", benchmark.build_release_lane),
+            ("release", "provenance", benchmark.build_release_lane),
+            ("emit-c", "generated-c", benchmark.build_emit_c_lane),
+            ("emit-c", "binary", benchmark.build_emit_c_lane),
+        )
+        for build_mode, stale_kind, builder in cases:
+            with self.subTest(build_mode=build_mode, stale_kind=stale_kind):
+                bundle = (
+                    Path(self.temporary.name)
+                    / f"formal-{build_mode}-{stale_kind}"
+                )
+
+                def copy_with_stale(
+                    source: Path,
+                    manifest: Path,
+                    destination: Path,
+                ) -> None:
+                    original_copy(source, manifest, destination)
+                    project_name = benchmark.parse_project_name(manifest)
+                    stale_paths = {
+                        "binary": benchmark.binary_path(
+                            destination / "build" / "bin", project_name
+                        ),
+                        "generated-c": (
+                            destination / "build" / "c" / "main.c"
+                        ),
+                        "provenance": (
+                            destination
+                            / "build"
+                            / "release-provenance.json"
+                        ),
+                    }
+                    stale = stale_paths[stale_kind]
+                    stale.parent.mkdir(parents=True, exist_ok=True)
+                    stale.write_bytes(b"stale-formal-output")
+
+                def fake_emit(
+                    command: list[str],
+                    timeout_seconds: float,
+                    cwd: Path | None = None,
+                    approved_environment_overrides: dict[str, str]
+                    | None = None,
+                ) -> tuple[dict, bytes, bytes]:
+                    del timeout_seconds
+                    argv = [str(part) for part in command]
+                    if argv[-1] == "--emit-c":
+                        generated = Path(argv[2]) / "build" / "c" / "main.c"
+                        generated.parent.mkdir(parents=True, exist_ok=True)
+                        generated.write_bytes(b"new-generated-c")
+                    return (
+                        self.full_command(
+                            argv,
+                            cwd=str(cwd.resolve()) if cwd else None,
+                            approved_environment_overrides=(
+                                approved_environment_overrides
+                            ),
+                        ),
+                        b"",
+                        b"",
+                    )
+
+                with mock.patch.object(
+                    v1, "copy_nomo_project", side_effect=copy_with_stale
+                ), mock.patch.object(
+                    benchmark, "run_build_capture", side_effect=fake_emit
+                ):
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, "refusing to reuse stale"
+                    ):
+                        builder(
+                            workload,
+                            self.suite_root,
+                            bundle,
+                            "candidate",
+                            lane_state,
+                            toolchains,
+                            120.0,
+                        )
 
     def test_clang_driver_config_is_required_once_on_every_decisive_path(
         self,

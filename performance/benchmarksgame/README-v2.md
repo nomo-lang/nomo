@@ -172,6 +172,23 @@ LF. Collectors apply only `CRLF -> LF` to captured stdout, retain both raw and
 normalized SHA-256 values plus the rule identifier, and perform no other
 whitespace normalization.
 
+Reference, Nomo emit-C, and generated-C Clang preflight failures are retained
+as strict `build_failures` evidence. This includes both observable command
+failure and a command that exits zero without producing its exact expected
+output. The latter is recorded as `missing-output` with the successful command
+record, expected path, stdout/stderr, phase, and source identity; the validator
+requires that path to remain absent. CI uploads the result JSON and its
+sidecar evidence log with `if: always()`.
+
+Every invocation requires a new result path and, for correctness/prepare, a
+new build bundle. The harness never overwrites an earlier result, log, project,
+generated C file, or binary. Immediately before every C, C++, Go, semantic-C,
+Nomo release, Nomo emit-C, and generated-C Clang command, its exact output
+targets must be absent; afterward they must be newly present as regular files
+before their SHA-256 identities can enter provenance. A same-`--output` rerun
+fails before repository/toolchain inspection or process execution and preserves
+the prior evidence.
+
 ## Formal invocation and provenance
 
 Candidate and main must be separate clean detached Git checkouts at distinct

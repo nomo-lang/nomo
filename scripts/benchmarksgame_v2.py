@@ -641,6 +641,18 @@ def build_output_failure_error(
     )
 
 
+def recorded_build_output_failure_error(
+    output_path: str,
+    output_state: Dict[str, Any],
+) -> str:
+    if output_state["kind"] == "absent":
+        return f"expected build output is missing: {output_path}"
+    return (
+        "expected build output is not a regular file "
+        f"({output_state['lstat_type']}): {output_path}"
+    )
+
+
 def failed_build_output_command_record(
     command: Dict[str, Any],
     stdout: bytes,
@@ -4307,6 +4319,13 @@ def binary_path(root: Path, name: str) -> Path:
     return root / f"{name}{suffix}"
 
 
+def artifact_binary_path(
+    root: PurePath, name: str, host_os: str
+) -> PurePath:
+    suffix = ".exe" if host_os == "Windows" else ""
+    return root / f"{name}{suffix}"
+
+
 def path_lexically_exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
@@ -6854,7 +6873,10 @@ def validate_build_provenance(
 
 
 def validate_build_failure_evidence(
-    result: Dict[str, Any], manifest: Dict[str, Any]
+    result: Dict[str, Any],
+    manifest: Dict[str, Any],
+    *,
+    live_filesystem: bool = True,
 ) -> None:
     failures = result.get("build_failures", [])
     if not isinstance(failures, list) or len(failures) != 1:
@@ -6898,22 +6920,40 @@ def validate_build_failure_evidence(
     if (lane, phase) not in allowed_phases:
         raise HarnessError("preflight build failure phase changed")
     workload = manifest["workloads"][workload_index]
+    provenance = result.get("provenance", {})
+    recorded_host_os = str(provenance.get("host", {}).get("os", ""))
+    manifest_path_value = provenance.get("manifest_path")
+    if not artifact_path_is_absolute(
+        manifest_path_value, recorded_host_os
+    ):
+        raise HarnessError("preflight failure manifest path is not absolute")
+    recorded_suite_root = artifact_path(
+        manifest_path_value, recorded_host_os
+    ).parent
     source = failure.get("source", {})
-    source_path = Path(str(source.get("path", "")))
+    source_path_value = source.get("path")
+    source_path = artifact_path(source_path_value, recorded_host_os)
     if (
         not source_path.is_absolute()
-        or not source_path.is_file()
-        or v1.sha256_file(source_path) != source.get("sha256")
+        or re.fullmatch(r"[0-9a-f]{64}", str(source.get("sha256")))
+        is None
     ):
         raise HarnessError("preflight build failure source identity changed")
-    output_path = Path(str(failure.get("output_path", "")))
+    if live_filesystem:
+        live_source_path = Path(str(source_path_value))
+        if (
+            not live_source_path.is_file()
+            or v1.sha256_file(live_source_path) != source.get("sha256")
+        ):
+            raise HarnessError(
+                "preflight build failure live source identity changed"
+            )
+    output_path_value = failure.get("output_path")
+    output_path = artifact_path(output_path_value, recorded_host_os)
     command = failure.get("command", {})
-    toolchains = result.get("provenance", {}).get("toolchains", {})
-    recorded_host_os = str(
-        result.get("provenance", {}).get("host", {}).get("os", "")
-    )
+    toolchains = provenance.get("toolchains", {})
     link_flags = math_flags_for_host(workload, recorded_host_os)
-    expected_cwd = str(REPOSITORY_ROOT.resolve())
+    expected_cwd = str(recorded_suite_root.parent.parent)
     if phase == "reference-build":
         if (
             source.get("sha256") != workload["sources"][lane]["sha256"]
@@ -6928,7 +6968,11 @@ def validate_build_failure_evidence(
         ):
             raise HarnessError("preflight reference source is not frozen")
         bundle_root = source_path.parents[3]
-        expected_output = binary_path(bundle_root / "bin", f"{workload_id}-{lane}")
+        expected_output = artifact_binary_path(
+            bundle_root / "bin",
+            f"{workload_id}-{lane}",
+            recorded_host_os,
+        )
         expected_argv = {
             "c": [
                 toolchains.get("clang", {}).get("path"),
@@ -6966,10 +7010,8 @@ def validate_build_failure_evidence(
             ],
         }[lane]
     elif lane == "nomo-baseline" and phase == "nomo-emit-c":
-        expected_source = resolve_suite_path(
-            DEFAULT_MANIFEST.parent,
-            workload["sources"]["nomo"]["path"],
-            f"{workload_id} failed Nomo source",
+        expected_source = (
+            recorded_suite_root / workload["sources"]["nomo"]["path"]
         )
         if (
             source_path != expected_source
@@ -7006,8 +7048,10 @@ def validate_build_failure_evidence(
             / "c"
             / "main.c"
         )
-        expected_output = binary_path(
-            bundle_root / "bin", f"{workload_id}-nomo-baseline"
+        expected_output = artifact_binary_path(
+            bundle_root / "bin",
+            f"{workload_id}-nomo-baseline",
+            recorded_host_os,
         )
         if source_path != expected_source:
             raise HarnessError("failed generated-C source path changed")
@@ -7022,10 +7066,12 @@ def validate_build_failure_evidence(
         ]
     else:
         lane_state = result.get("release_lanes", {}).get(lane, {})
-        checkout = Path(str(lane_state.get("checkout", "")))
+        checkout = artifact_path(
+            lane_state.get("checkout"), recorded_host_os
+        )
         if not checkout.is_absolute():
             raise HarnessError("formal build failure checkout is not absolute")
-        expected_cwd = str(checkout.resolve())
+        expected_cwd = str(checkout)
         project = next(
             (
                 parent
@@ -7052,30 +7098,29 @@ def validate_build_failure_evidence(
         )
         if project != expected_project:
             raise HarnessError("formal build failure project path changed")
-        compiler_path = Path(str(lane_state.get("nomo_path", "")))
-        expected_compiler = binary_path(
+        compiler_path = artifact_path(
+            lane_state.get("nomo_path"), recorded_host_os
+        )
+        expected_compiler = artifact_binary_path(
             bundle_root / "compiler-build" / str(lane) / "release",
             "nomo",
+            recorded_host_os,
         )
         if compiler_path != expected_compiler:
             raise HarnessError(
                 "formal build failure used a compiler outside its build bundle"
             )
-        canonical_nomo_source = resolve_suite_path(
-            DEFAULT_MANIFEST.parent,
-            workload["sources"]["nomo"]["path"],
-            f"{workload_id} failed formal Nomo source",
+        canonical_nomo_source = (
+            recorded_suite_root / workload["sources"]["nomo"]["path"]
         )
         generated_c = project / "build" / "c" / "main.c"
-        project_name = parse_project_name(
-            resolve_suite_path(
-                DEFAULT_MANIFEST.parent,
-                workload["sources"]["nomo"]["project_manifest"],
-                f"{workload_id} failed formal Nomo manifest",
-            )
+        project_name = (
+            "benchmarksgame_" + str(workload_id).replace("-", "_")
         )
-        formal_binary = binary_path(
-            project / "build" / "bin", project_name
+        formal_binary = artifact_binary_path(
+            project / "build" / "bin",
+            project_name,
+            recorded_host_os,
         )
         if phase == "nomo-release-binary":
             expected_output = formal_binary
@@ -7111,10 +7156,9 @@ def validate_build_failure_evidence(
                 str(project),
                 "--release" if build_mode == "release" else "--emit-c",
             ]
-    expected_output_path = canonical_build_output_path(expected_output)
     if (
         not output_path.is_absolute()
-        or output_path != expected_output_path
+        or output_path != expected_output
     ):
         raise HarnessError("preflight build failure output path changed")
     if command.get("argv") != expected_argv or command.get(
@@ -7139,12 +7183,48 @@ def validate_build_failure_evidence(
     exit_code = command.get("exit_code")
     failure_kind = failure.get("failure_kind")
     output_state = failure.get("output_state")
-    live_output_state = build_output_state(output_path)
-    if output_state != live_output_state:
-        raise HarnessError("preflight build output lstat evidence changed")
+    valid_output_kinds = {
+        ("absent", "absent"),
+        ("directory", "directory"),
+        ("symlink", "symlink"),
+        ("other-nonregular", "fifo"),
+        ("other-nonregular", "socket"),
+        ("other-nonregular", "character-device"),
+        ("other-nonregular", "block-device"),
+        ("other-nonregular", "unknown"),
+    }
+    if (
+        not isinstance(output_state, dict)
+        or set(output_state) != {"kind", "lstat_type", "symlink_target"}
+        or (
+            output_state.get("kind"),
+            output_state.get("lstat_type"),
+        )
+        not in valid_output_kinds
+        or (
+            output_state.get("kind") == "symlink"
+            and (
+                not isinstance(output_state.get("symlink_target"), str)
+                or not output_state["symlink_target"]
+            )
+        )
+        or (
+            output_state.get("kind") != "symlink"
+            and output_state.get("symlink_target") is not None
+        )
+    ):
+        raise HarnessError("preflight build output lstat evidence is invalid")
+    if live_filesystem:
+        live_output_state = build_output_state(
+            Path(str(output_path_value))
+        )
+        if output_state != live_output_state:
+            raise HarnessError(
+                "preflight build output lstat evidence changed"
+            )
     if failure_kind in {"missing-output", "invalid-output"}:
-        expected_error = build_output_failure_error(
-            output_path, live_output_state
+        expected_error = recorded_build_output_failure_error(
+            str(output_path), output_state
         )
         if (
             timed_out is not False
@@ -7152,11 +7232,11 @@ def validate_build_failure_evidence(
             or command.get("error") != expected_error
             or (
                 failure_kind == "missing-output"
-                and live_output_state.get("kind") != "absent"
+                and output_state.get("kind") != "absent"
             )
             or (
                 failure_kind == "invalid-output"
-                and live_output_state.get("kind")
+                and output_state.get("kind")
                 not in {"directory", "symlink", "other-nonregular"}
             )
         ):
@@ -7181,15 +7261,16 @@ def validate_build_failure_evidence(
     ):
         raise HarnessError("preflight build failure UTC interval is invalid")
     go_cache_environment = {
-        key: str((source_path.parent / directory).resolve())
+        key: str(source_path.parent / directory)
         for key, directory in GO_BUILD_CACHE_DIRECTORIES.items()
     }
     validate_build_command_environment(
         command,
         f"{workload_id} failed {lane} build",
         go_cache_environment if lane == "go" else None,
+        toolchains.get("build_environment"),
     )
-    if lane == "go" and any(
+    if live_filesystem and lane == "go" and any(
         Path(path).exists() for path in go_cache_environment.values()
     ):
         raise HarnessError("failed Go build cache was not removed")
@@ -7833,7 +7914,13 @@ def dynamic_command_matches(
     command = observation.get("command_argv")
     if not isinstance(command, list) or len(command) != len(arguments) + 1:
         return False
-    actual_name = Path(str(command[0])).name.lower().removesuffix(".exe")
+    actual_name = (
+        str(command[0])
+        .replace("\\", "/")
+        .rsplit("/", 1)[-1]
+        .lower()
+        .removesuffix(".exe")
+    )
     return (
         actual_name == executable.lower().removesuffix(".exe")
         and command[1:] == list(arguments)
@@ -7844,7 +7931,13 @@ def normalized_executable_path(value: str) -> str:
     return str(value).replace("\\", "/").rstrip("/").casefold()
 
 
-def expected_dynamic_system_path(host_os: str, executable: str) -> Optional[str]:
+def expected_dynamic_system_path(
+    host_os: str,
+    executable: str,
+    *,
+    windows_system_root: Optional[str] = None,
+    live_authority: bool = True,
+) -> Optional[str]:
     if host_os == "Darwin":
         return {
             "pmset": DARWIN_PMSET,
@@ -7852,7 +7945,13 @@ def expected_dynamic_system_path(host_os: str, executable: str) -> Optional[str]
             "sysctl": DARWIN_SYSCTL,
         }.get(executable)
     if host_os == "Windows" and executable == "powercfg":
-        return str(windows_system_directory() / "powercfg.exe")
+        if windows_system_root is not None:
+            root = artifact_path(windows_system_root, "Windows")
+            if not root.is_absolute():
+                return None
+            return str(root / "System32" / "powercfg.exe")
+        if live_authority:
+            return str(windows_system_directory() / "powercfg.exe")
     return None
 
 
@@ -7861,8 +7960,16 @@ def dynamic_command_matches_system_path(
     host_os: str,
     executable: str,
     arguments: Sequence[str],
+    *,
+    windows_system_root: Optional[str] = None,
+    live_authority: bool = True,
 ) -> bool:
-    expected = expected_dynamic_system_path(host_os, executable)
+    expected = expected_dynamic_system_path(
+        host_os,
+        executable,
+        windows_system_root=windows_system_root,
+        live_authority=live_authority,
+    )
     command = observation.get("command_argv")
     identity = observation.get("command_identity")
     if (
@@ -7882,10 +7989,37 @@ def dynamic_command_matches_system_path(
     )
 
 
-def validate_dynamic_command_evidence(observation: Dict[str, Any]) -> None:
-    if observation.get("environment") != dynamic_command_environment():
+def validate_dynamic_command_evidence(
+    observation: Dict[str, Any],
+    *,
+    host_os: Optional[str] = None,
+    windows_system_root: Optional[str] = None,
+    live_filesystem: bool = True,
+) -> None:
+    producer_os = host_os or platform.system()
+    environment = observation.get("environment")
+    if (
+        not isinstance(environment, dict)
+        or set(environment) != {"LC_ALL", "LANG", "PATH"}
+        or environment.get("LC_ALL") != "C"
+        or environment.get("LANG") != "C"
+        or not isinstance(environment.get("PATH"), str)
+        or not environment["PATH"]
+    ):
         raise HarnessError(
             "dynamic environment command did not use the controlled locale and PATH"
+        )
+    path_separator = ";" if producer_os == "Windows" else ":"
+    environment_paths = environment["PATH"].split(path_separator)
+    if (
+        not environment_paths
+        or any(
+            not artifact_path(path, producer_os).is_absolute()
+            for path in environment_paths
+        )
+    ):
+        raise HarnessError(
+            "dynamic environment command PATH is not producer-absolute"
         )
     identity = observation.get("command_identity")
     if identity is None:
@@ -7903,26 +8037,56 @@ def validate_dynamic_command_evidence(observation: Dict[str, Any]) -> None:
         raise HarnessError(
             "dynamic environment command identity is incomplete"
         )
-    path = Path(str(identity.get("path")))
-    realpath = Path(str(identity.get("realpath")))
+    path_value = str(identity.get("path"))
+    realpath_value = str(identity.get("realpath"))
+    path = artifact_path(path_value, producer_os)
+    realpath = artifact_path(realpath_value, producer_os)
     command = observation.get("command_argv")
-    controlled_resolution = (
-        _windows_executable_from_path(path.name, stable_build_path())
-        if os.name == "nt"
-        else shutil.which(path.name, path=stable_build_path())
-    )
     if (
         not path.is_absolute()
-        or not path.is_file()
-        or path.resolve() != realpath
-        or not realpath.is_file()
-        or v1.sha256_file(realpath) != identity.get("sha256")
+        or not realpath.is_absolute()
+        or normalized_executable_path(path_value)
+        != normalized_executable_path(realpath_value)
+        or re.fullmatch(r"[0-9a-f]{64}", str(identity.get("sha256")))
+        is None
         or not isinstance(command, list)
         or not command
-        or command[0] != str(path)
-        or controlled_resolution is None
-        or Path(controlled_resolution).resolve() != realpath
+        or normalized_executable_path(str(command[0]))
+        != normalized_executable_path(path_value)
         or identity.get("version_output") is not None
+    ):
+        raise HarnessError(
+            "dynamic environment command identity is incomplete or inconsistent"
+        )
+    path_parent = normalized_executable_path(str(path.parent))
+    if path_parent not in {
+        normalized_executable_path(value) for value in environment_paths
+    }:
+        raise HarnessError(
+            "dynamic environment command directory is outside controlled PATH"
+        )
+    if not live_filesystem:
+        return
+    if producer_os != platform.system():
+        raise HarnessError(
+            "live dynamic command validation cannot cross producer hosts"
+        )
+    expected_environment = dynamic_command_environment()
+    live_path = Path(path_value)
+    live_realpath = Path(realpath_value)
+    controlled_resolution = (
+        _windows_executable_from_path(live_path.name, stable_build_path())
+        if os.name == "nt"
+        else shutil.which(live_path.name, path=stable_build_path())
+    )
+    if (
+        environment != expected_environment
+        or not live_path.is_file()
+        or live_path.resolve() != live_realpath
+        or not live_realpath.is_file()
+        or v1.sha256_file(live_realpath) != identity.get("sha256")
+        or controlled_resolution is None
+        or Path(controlled_resolution).resolve() != live_realpath
     ):
         raise HarnessError(
             "dynamic environment command identity is not live and controlled"
@@ -8134,6 +8298,9 @@ def dynamic_source_profile_is_allowed(
     host_os: str,
     observation_id: str,
     observation: Dict[str, Any],
+    *,
+    windows_system_root: Optional[str] = None,
+    live_authority: bool = True,
 ) -> bool:
     source = observation.get("source")
     command = observation.get("command_argv")
@@ -8155,7 +8322,10 @@ def dynamic_source_profile_is_allowed(
         }
         return (
             dynamic_command_matches_system_path(
-                observation, host_os, *expected_commands[observation_id]
+                observation,
+                host_os,
+                *expected_commands[observation_id],
+                live_authority=live_authority,
             )
             if observation_id in expected_commands
             else observation_id == "affinity" and source == "system-api"
@@ -8183,6 +8353,8 @@ def dynamic_source_profile_is_allowed(
                 host_os,
                 "powercfg",
                 ["/getactivescheme"],
+                windows_system_root=windows_system_root,
+                live_authority=live_authority,
             )
             or observation_id in {"frequency_governor", "thermal_state", "affinity"}
             and source == "system-api"
@@ -8197,6 +8369,9 @@ def validate_dynamic_snapshot(
     static_authorization: Dict[str, Any],
     host_os: str,
     host_architecture: str,
+    *,
+    windows_system_root: Optional[str] = None,
+    live_authority: bool = True,
 ) -> None:
     required = {
         "schema",
@@ -8236,9 +8411,14 @@ def validate_dynamic_snapshot(
     if snapshot["policy"] != DYNAMIC_ENVIRONMENT_POLICY:
         raise HarnessError("dynamic environment snapshot policy changed")
     recomputed_statuses = {}
+    command_environment: Optional[Dict[str, str]] = None
     for observation_id, observation in snapshot["observations"].items():
         if not dynamic_source_profile_is_allowed(
-            host_os, observation_id, observation
+            host_os,
+            observation_id,
+            observation,
+            windows_system_root=windows_system_root,
+            live_authority=live_authority,
         ):
             raise HarnessError(
                 f"dynamic environment {observation_id} source is not allowed "
@@ -8270,7 +8450,18 @@ def validate_dynamic_snapshot(
                     f"dynamic environment {observation_id} command did not succeed"
                 )
         if observation.get("source") == "command":
-            validate_dynamic_command_evidence(observation)
+            validate_dynamic_command_evidence(
+                observation,
+                host_os=host_os,
+                windows_system_root=windows_system_root,
+                live_filesystem=live_authority,
+            )
+            if command_environment is None:
+                command_environment = observation["environment"]
+            elif observation["environment"] != command_environment:
+                raise HarnessError(
+                    "dynamic environment commands used different environments"
+                )
         reparsed = parse_dynamic_observation_from_raw(
             observation_id, observation, snapshot["policy"]
         )
@@ -8312,6 +8503,8 @@ def validate_protocol(
     host_architecture: str,
     runtime_environments: Optional[Dict[str, Any]] = None,
     recorded_suite_root: Optional[PurePath] = None,
+    *,
+    live_authority: bool = True,
 ) -> set[str]:
     if protocol.get("build_mode") != build_mode:
         raise HarnessError(f"{build_mode} protocol identity changed")
@@ -8353,12 +8546,24 @@ def validate_protocol(
             static_authorization,
             host_os,
             host_architecture,
+            windows_system_root=(
+                runtime_environments.get("default", {}).get("SystemRoot")
+                if isinstance(runtime_environments, dict)
+                else None
+            ),
+            live_authority=live_authority,
         )
         validate_dynamic_snapshot(
             environment_after,
             static_authorization,
             host_os,
             host_architecture,
+            windows_system_root=(
+                runtime_environments.get("default", {}).get("SystemRoot")
+                if isinstance(runtime_environments, dict)
+                else None
+            ),
+            live_authority=live_authority,
         )
         for snapshot in (environment_before, environment_after):
             if snapshot["snapshot_sha256"] in snapshot_ids:
@@ -8727,7 +8932,337 @@ def validate_static_authorization(
                 raise HarnessError(f"static authorization {check_id} is cross-bound")
 
 
-def validate_release_lane_authority(result: Dict[str, Any]) -> None:
+def validate_embedded_compiler_tool_authority(
+    compiler_build: Dict[str, Any],
+    checkout: PurePath,
+    cargo_environment: Dict[str, str],
+    label: str,
+    host_os: str,
+    build_environment: Dict[str, Any],
+) -> None:
+    cargo = compiler_build.get("cargo", {})
+    rustc = compiler_build.get("rustc", {})
+    resolution = compiler_build.get("rustup_resolution", {})
+    cargo_path = artifact_path(cargo.get("path"), host_os)
+    rustc_path = artifact_path(rustc.get("path"), host_os)
+    sysroot = artifact_path(rustc.get("sysroot"), host_os)
+    for path, record, tool_label in (
+        (cargo_path, cargo, "Cargo"),
+        (rustc_path, rustc, "rustc"),
+    ):
+        if (
+            not path.is_absolute()
+            or not artifact_path_is_absolute(record.get("realpath"), host_os)
+            or re.fullmatch(r"[0-9a-f]{64}", str(record.get("sha256")))
+            is None
+        ):
+            raise HarnessError(
+                f"{label} compiler-build {tool_label} identity is incomplete"
+            )
+
+    rustup = resolution.get("rustup", {})
+    rustup_path = artifact_path(rustup.get("path"), host_os)
+    invocation_path = artifact_path(
+        resolution.get("invocation_path"), host_os
+    )
+    if (
+        resolution.get("kind") != "rustup-which-v1"
+        or not rustup_path.is_absolute()
+        or not invocation_path.is_absolute()
+        or not artifact_path_is_absolute(rustup.get("realpath"), host_os)
+        or re.fullmatch(r"[0-9a-f]{64}", str(rustup.get("sha256")))
+        is None
+    ):
+        raise HarnessError(f"{label} embedded rustup resolver authority is invalid")
+    resolution_environment = {
+        "CARGO_TARGET_DIR": cargo_environment["CARGO_TARGET_DIR"],
+        "CARGO_HOME": cargo_environment["CARGO_HOME"],
+    }
+    for tool in ("cargo", "rustc"):
+        command = resolution.get(f"{tool}_command", {})
+        validate_command_record(command, f"{label} rustup which {tool}")
+        validate_build_command_environment(
+            command,
+            f"{label} rustup which {tool}",
+            resolution_environment,
+            build_environment,
+        )
+        expected_argv = [str(rustup_path), "which", tool]
+        if (
+            command.get("argv") != expected_argv
+            or command.get("command") != v1.command_text(expected_argv)
+            or command.get("cwd") != str(checkout)
+        ):
+            raise HarnessError(
+                f"{label} embedded rustup which {tool} authority is invalid"
+            )
+
+    cargo_version_command = cargo.get("version_command", {})
+    validate_command_record(
+        cargo_version_command, f"{label} Cargo version probe"
+    )
+    validate_build_command_environment(
+        cargo_version_command,
+        f"{label} Cargo version probe",
+        cargo_environment,
+        build_environment,
+    )
+    expected_cargo_argv = [str(cargo_path), "--version"]
+    if (
+        cargo_version_command.get("argv") != expected_cargo_argv
+        or cargo_version_command.get("command")
+        != v1.command_text(expected_cargo_argv)
+        or cargo_version_command.get("cwd") != str(checkout)
+        or not str(cargo.get("version_output", "")).startswith("cargo ")
+    ):
+        raise HarnessError(f"{label} embedded Cargo authority is invalid")
+
+    driver_files = rustc.get("driver_files")
+    expected_bin = sysroot / "bin"
+    if (
+        cargo_environment.get("RUSTC") != str(rustc_path)
+        or rustc.get("version_fields")
+        != parse_rustc_verbose_version(str(rustc.get("version_output", "")))
+        or rustc.get("toolchain") != sysroot.name
+        or not sysroot.is_absolute()
+        or resolution.get("selected_sysroot") != str(sysroot)
+        or cargo_path.parent != expected_bin
+        or rustc_path.parent != expected_bin
+        or not isinstance(driver_files, list)
+        or not driver_files
+    ):
+        raise HarnessError(f"{label} embedded rustc identity is incomplete")
+    seen_driver_paths: set[str] = set()
+    for driver in driver_files:
+        if not isinstance(driver, dict):
+            raise HarnessError(
+                f"{label} embedded rustc driver authority is invalid"
+            )
+        driver_path = artifact_path(driver.get("path"), host_os)
+        if (
+            set(driver) != {"path", "sha256"}
+            or not driver_path.is_absolute()
+            or not artifact_paths_overlap(sysroot, driver_path, host_os)
+            or re.fullmatch(r"[0-9a-f]{64}", str(driver.get("sha256")))
+            is None
+            or str(driver_path) in seen_driver_paths
+        ):
+            raise HarnessError(
+                f"{label} embedded rustc driver authority is invalid"
+            )
+        seen_driver_paths.add(str(driver_path))
+    for field, suffix in (
+        ("version_command", ["-vV"]),
+        ("sysroot_command", ["--print", "sysroot"]),
+    ):
+        command = rustc.get(field, {})
+        validate_command_record(command, f"{label} rustc {field}")
+        validate_build_command_environment(
+            command,
+            f"{label} rustc {field}",
+            cargo_environment,
+            build_environment,
+        )
+        expected_argv = [str(rustc_path), *suffix]
+        if (
+            command.get("argv") != expected_argv
+            or command.get("command") != v1.command_text(expected_argv)
+            or command.get("cwd") != str(checkout)
+        ):
+            raise HarnessError(
+                f"{label} embedded rustc {field} authority is invalid"
+            )
+
+
+def validate_embedded_release_lane_authority(
+    result: Dict[str, Any],
+) -> None:
+    lanes = result.get("release_lanes", {})
+    provenance = result.get("provenance", {})
+    host_os = str(provenance.get("host", {}).get("os", ""))
+    build_environment = provenance.get("toolchains", {}).get(
+        "build_environment"
+    )
+    if not isinstance(build_environment, dict):
+        raise HarnessError("embedded build environment authority is missing")
+    if set(lanes) != {"candidate", "main"}:
+        raise HarnessError("candidate/main release lanes are both required")
+    if lanes["candidate"].get("expected_commit") == lanes["main"].get(
+        "expected_commit"
+    ):
+        raise HarnessError("candidate and main commits must differ")
+    if artifact_file_identity_equal(
+        lanes["candidate"].get("checkout"),
+        lanes["main"].get("checkout"),
+        host_os,
+        inspect_live_filesystem=False,
+    ):
+        raise HarnessError("candidate and main checkouts must differ")
+    for label, lane in lanes.items():
+        required = {
+            "label",
+            "status",
+            "reason",
+            "emit_c_fallback_used",
+            "checkout",
+            "expected_commit",
+            "repository",
+            "detached_head",
+            "origin_url",
+            "normalized_origin",
+            "nomo_path",
+            "nomo_sha256",
+            "compiler_build",
+            "capabilities",
+        }
+        if not required.issubset(lane) or lane.get("status") != "available":
+            raise HarnessError(f"{label} release lane provenance is incomplete")
+        checkout = artifact_path(lane.get("checkout"), host_os)
+        nomo_path = artifact_path(lane.get("nomo_path"), host_os)
+        if (
+            not checkout.is_absolute()
+            or not nomo_path.is_absolute()
+            or lane.get("label") != label
+            or lane.get("detached_head") is not True
+            or lane.get("normalized_origin") != "github.com/nomo-lang/nomo"
+            or normalize_nomo_origin(str(lane.get("origin_url")))
+            != "github.com/nomo-lang/nomo"
+            or lane.get("repository", {}).get("commit")
+            != lane.get("expected_commit")
+            or re.fullmatch(r"[0-9a-f]{64}", str(lane.get("nomo_sha256")))
+            is None
+        ):
+            raise HarnessError(f"{label} release lane identity is invalid")
+        compiler_build = lane["compiler_build"]
+        expected_compiler_build_argv = [
+            compiler_build.get("cargo", {}).get("path"),
+            "build",
+            "--locked",
+            "--release",
+            "--bin",
+            "nomo",
+        ]
+        cargo_target_dir = str(nomo_path.parents[1])
+        cargo_home = str(
+            nomo_path.parents[2] / f"{label}-cargo-home"
+        )
+        rustc_path = compiler_build.get("rustc", {}).get("path")
+        if not artifact_path_is_absolute(rustc_path, host_os):
+            raise HarnessError(f"{label} compiler build lacks rustc authority")
+        cargo_environment = {
+            "CARGO_TARGET_DIR": cargo_target_dir,
+            "CARGO_HOME": cargo_home,
+            "RUSTC": rustc_path,
+        }
+        command = compiler_build.get("command", {})
+        validate_command_record(command, f"{label} compiler self-build")
+        validate_build_command_environment(
+            command,
+            f"{label} compiler self-build",
+            cargo_environment,
+            build_environment,
+        )
+        cargo_configs = compiler_build.get("cargo_configs")
+        if not isinstance(cargo_configs, list):
+            raise HarnessError(f"{label} Cargo config authority is incomplete")
+        seen_configs: set[str] = set()
+        for config in cargo_configs:
+            if not isinstance(config, dict):
+                raise HarnessError(
+                    f"{label} embedded Cargo config authority is invalid"
+                )
+            relative = config.get("relative_path")
+            config_path = artifact_path(config.get("path"), host_os)
+            if (
+                set(config) != {"path", "relative_path", "sha256"}
+                or not isinstance(relative, str)
+                or not relative
+                or PurePosixPath(relative).is_absolute()
+                or ".." in PurePosixPath(relative).parts
+                or config_path != checkout / relative
+                or re.fullmatch(r"[0-9a-f]{64}", str(config.get("sha256")))
+                is None
+                or relative in seen_configs
+            ):
+                raise HarnessError(
+                    f"{label} embedded Cargo config authority is invalid"
+                )
+            seen_configs.add(relative)
+        if (
+            compiler_build.get("repository_before") != lane["repository"]
+            or compiler_build.get("repository_after") != lane["repository"]
+            or compiler_build.get("expected_commit")
+            != lane["expected_commit"]
+            or compiler_build.get("detached_head") is not True
+            or compiler_build.get("origin_url") != lane["origin_url"]
+            or compiler_build.get("normalized_origin")
+            != "github.com/nomo-lang/nomo"
+            or compiler_build.get("binary")
+            != {"path": lane["nomo_path"], "sha256": lane["nomo_sha256"]}
+            or command.get("argv") != expected_compiler_build_argv
+            or command.get("command")
+            != v1.command_text(expected_compiler_build_argv)
+            or command.get("cwd") != str(checkout)
+            or compiler_build.get("environment") != cargo_environment
+        ):
+            raise HarnessError(f"{label} compiler build is not commit-bound")
+        if set(lane["capabilities"]) != set(FORMAL_BUILD_MODES) or any(
+            capability.get("status") != "available"
+            or capability.get("nomo_path") != lane["nomo_path"]
+            or capability.get("nomo_sha256") != lane["nomo_sha256"]
+            for capability in lane["capabilities"].values()
+        ):
+            raise HarnessError(
+                f"{label} release capabilities are not compiler-bound"
+            )
+        for capability in lane["capabilities"].values():
+            expected_help = [lane["nomo_path"], "build", "--help"]
+            help_command = capability.get("help_command", {})
+            validate_command_record(
+                help_command, f"{label} capability probe"
+            )
+            validate_build_command_environment(
+                help_command,
+                f"{label} capability probe",
+                authority_projection=build_environment,
+            )
+            if (
+                help_command.get("argv") != expected_help
+                or help_command.get("command")
+                != v1.command_text(expected_help)
+                or help_command.get("cwd") != str(checkout)
+            ):
+                raise HarnessError(
+                    f"{label} capability probe command changed"
+                )
+        validate_embedded_compiler_tool_authority(
+            compiler_build,
+            checkout,
+            cargo_environment,
+            label,
+            host_os,
+            build_environment,
+        )
+        if label == "main" and (
+            compiler_build.get("origin_main_commit")
+            != lane["expected_commit"]
+            or compiler_build.get("remote_main_commit")
+            != lane["expected_commit"]
+        ):
+            raise HarnessError(
+                "main embedded release lane is not bound to origin/main"
+            )
+    rust_identities = {
+        label: compiler_toolchain_identity(lane["compiler_build"])
+        for label, lane in lanes.items()
+    }
+    if rust_identities["candidate"] != rust_identities["main"]:
+        raise HarnessError(
+            "candidate and main compiler builds use different actual Rust toolchains"
+        )
+
+
+def validate_live_release_lane_authority(result: Dict[str, Any]) -> None:
     lanes = result.get("release_lanes", {})
     if set(lanes) != {"candidate", "main"}:
         raise HarnessError("candidate/main release lanes are both required")
@@ -8889,6 +9424,16 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
     validate_live_go_authority(
         result.get("provenance", {}).get("toolchains", {})
     )
+
+
+def validate_release_lane_authority(
+    result: Dict[str, Any],
+    *,
+    live_authority: bool = True,
+) -> None:
+    validate_embedded_release_lane_authority(result)
+    if live_authority:
+        validate_live_release_lane_authority(result)
 
 
 def compiler_toolchain_identity(
@@ -9301,7 +9846,11 @@ def validate_result(
                 raise HarnessError(
                     "preflight build failure cannot contain correctness samples"
                 )
-            validate_build_failure_evidence(result, manifest)
+            validate_build_failure_evidence(
+                result,
+                manifest,
+                live_filesystem=not offline_replay,
+            )
         else:
             if not result.get("correctness"):
                 raise HarnessError(
@@ -9341,7 +9890,11 @@ def validate_result(
             raise HarnessError(
                 "formal build failure evidence requires unavailable prepare mode"
             )
-        validate_build_failure_evidence(result, manifest)
+        validate_build_failure_evidence(
+            result,
+            manifest,
+            live_filesystem=not offline_replay,
+        )
         if any(
             lane.get("status") != "available"
             for lane in result.get("release_lanes", {}).values()
@@ -9349,10 +9902,16 @@ def validate_result(
             raise HarnessError(
                 "formal build failure requires both exact compiler authorities"
             )
-        validate_release_lane_authority(result)
+        validate_release_lane_authority(
+            result, live_authority=not offline_replay
+        )
         if (
-            provenance.get("manifest_path") != str(DEFAULT_MANIFEST.resolve())
-            or provenance.get("manifest_sha256") != EXPECTED_V2_MANIFEST_SHA
+            provenance.get("manifest_sha256") != EXPECTED_V2_MANIFEST_SHA
+            or (
+                not offline_replay
+                and provenance.get("manifest_path")
+                != str(DEFAULT_MANIFEST.resolve())
+            )
         ):
             raise HarnessError(
                 "formal build failure lacks canonical manifest authority"
@@ -9388,6 +9947,9 @@ def validate_result(
     )
     if status == "prepared" or has_formal_evidence:
         if offline_replay:
+            validate_release_lane_authority(
+                result, live_authority=False
+            )
             validate_prepared_structure(result)
         else:
             validate_result_prepared_authority(
@@ -9407,6 +9969,7 @@ def validate_result(
             str(provenance.get("host", {}).get("architecture")),
             runtime_environments,
             recorded_suite_root,
+            live_authority=not offline_replay,
         )
         if all_snapshot_ids.intersection(mode_snapshot_ids):
             raise HarnessError("dynamic qualification snapshots were reused across modes")

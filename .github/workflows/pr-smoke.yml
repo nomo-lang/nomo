@@ -599,6 +599,7 @@ jobs:
       - name: Run v2 schema, statistics, provenance, and collector tests
         run: python -m unittest scripts.tests.test_benchmarksgame_v2 -v
       - name: Run v2 small-input correctness gate
+        if: ${{ always() }}
         run: >-
           python scripts/benchmarksgame_v2.py
           --mode correctness

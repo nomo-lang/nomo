@@ -2987,16 +2987,15 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ]["project"]["path"]
         )
         junction = Path(self.temporary.name) / "external-project-junction"
-        command = (
-            f'mklink /J "{junction}" "{project}"'
-        )
         completed = subprocess.run(
             [
                 str(benchmark.windows_system_directory() / "cmd.exe"),
                 "/d",
-                "/s",
                 "/c",
-                command,
+                "mklink",
+                "/J",
+                str(junction),
+                str(project),
             ],
             stdout=subprocess.PIPE,
             stderr=subprocess.PIPE,
@@ -3918,6 +3917,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         binary = benchmark.binary_path(bundle / "bin", "spectral-norm-go")
         fixture = self.correctness_only_result()
         toolchains = fixture["provenance"]["toolchains"]
+        self.bind_live_execution_authority(toolchains)
         cache_environment = {
             key: str((source.parent / directory).resolve())
             for key, directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.items()
@@ -3998,6 +3998,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         bundle = output.with_suffix("")
         fixture = self.correctness_only_result()
         toolchains = fixture["provenance"]["toolchains"]
+        self.bind_live_execution_authority(toolchains)
 
         def fake_capture(
             command: list[str],
@@ -4119,6 +4120,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         bundle = output.with_suffix("")
         fixture = self.correctness_only_result()
         toolchains = fixture["provenance"]["toolchains"]
+        self.bind_live_execution_authority(toolchains)
 
         def fake_capture(
             command: list[str],
@@ -4549,6 +4551,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         output = root / "prepare-result.json"
         fixture = self.completed_result()
         toolchains = fixture["provenance"]["toolchains"]
+        self.bind_live_execution_authority(toolchains)
         host = {
             **fixture["provenance"]["host"],
             "os": platform.system(),
@@ -4576,7 +4579,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 capability["nomo_path"] = str(compiler)
                 capability["nomo_sha256"] = compiler_sha
                 capability["help_command"] = self.full_command(
-                    [str(compiler), "build", "--help"]
+                    [str(compiler), "build", "--help"],
+                    cwd=state["checkout"],
                 )
 
         workload = self.manifest["workloads"][0]
@@ -6171,6 +6175,199 @@ print(json.dumps(
                 str(tampered_artifact), str(self.manifest_path)
             )
 
+    def test_offline_replay_cross_os_status_matrix_uses_no_live_authority(
+        self,
+    ) -> None:
+        success = self.correctness_only_result()
+        failure = self.correctness_build_failure_result()
+        prepared = self.prepared_only_result()
+        states = {
+            "success": success,
+            "failure": failure,
+            "prepared": prepared,
+        }
+        completed_by_os = {}
+        for producer_os in ("Linux", "Darwin", "Windows"):
+            completed = self.project_result_to_producer_os(
+                self.completed_result(), producer_os
+            )
+            self.rebind_static_authorization(completed, eligible=True)
+            authorization = completed["provenance"][
+                "environment_qualification"
+            ]
+            bindings = authorization["expected_bindings"]
+            snapshot_counter = iter(range(1, 100))
+            linux_factory = self.dynamic_snapshot_factory()
+            for protocol in completed["protocols"].values():
+                for batch in protocol["batches"]:
+                    batch["static_authorization_sha256"] = authorization[
+                        "qualification_sha256"
+                    ]
+                    if producer_os == "Darwin":
+                        before_index = next(snapshot_counter)
+                        after_index = next(snapshot_counter)
+                        batch["dynamic_environment_before"] = (
+                            self.darwin_dynamic_snapshot(
+                                bindings["authority_host_sha256"],
+                                before_index,
+                                "2026-07-28T00:00:05+00:00",
+                            )
+                        )
+                        batch["dynamic_environment_after"] = (
+                            self.darwin_dynamic_snapshot(
+                                bindings["authority_host_sha256"],
+                                after_index,
+                                "2026-07-28T00:00:50+00:00",
+                            )
+                        )
+                    elif producer_os in {"Linux", "Windows"}:
+                        batch["dynamic_environment_before"] = linux_factory(
+                            bindings["authority_host_sha256"]
+                        )
+                        batch["dynamic_environment_after"] = linux_factory(
+                            bindings["authority_host_sha256"]
+                        )
+            completed_by_os[producer_os] = completed
+
+        valid_cases = 0
+        intentionally_ineligible_cases = 0
+        for producer_os in ("Linux", "Darwin", "Windows"):
+            producer_states = {
+                name: self.project_result_to_producer_os(
+                    state, producer_os
+                )
+                for name, state in states.items()
+            }
+            for state in producer_states.values():
+                self.rebind_static_authorization(state, eligible=False)
+            producer_states["completed"] = completed_by_os[producer_os]
+            for state_name, result in producer_states.items():
+                benchmark.validate_result_schema(
+                    result, self.result_schema_path
+                )
+                for reviewer_os in ("Linux", "Darwin", "Windows"):
+                    with self.subTest(
+                        producer_os=producer_os,
+                        state=state_name,
+                        reviewer_os=reviewer_os,
+                    ), mock.patch.object(
+                        benchmark.platform,
+                        "system",
+                        return_value=reviewer_os,
+                    ), mock.patch.object(
+                        benchmark,
+                        "inspect_toolchains",
+                        side_effect=AssertionError(
+                            "offline replay probed toolchains"
+                        ),
+                    ), mock.patch.object(
+                        benchmark,
+                        "sanitized_build_environment",
+                        side_effect=AssertionError(
+                            "offline replay read the reviewer build environment"
+                        ),
+                    ), mock.patch.object(
+                        benchmark,
+                        "_environment",
+                        side_effect=AssertionError(
+                            "offline replay rebuilt the reviewer runtime environment"
+                        ),
+                    ), mock.patch.object(
+                        benchmark,
+                        "run_build_capture",
+                        side_effect=AssertionError(
+                            "offline replay executed a build tool"
+                        ),
+                    ), mock.patch.object(
+                        benchmark,
+                        "windows_system_directory",
+                        side_effect=AssertionError(
+                            "offline replay queried the reviewer system directory"
+                        ),
+                    ), mock.patch.object(
+                        benchmark,
+                        "validate_live_release_lane_authority",
+                        side_effect=AssertionError(
+                            "offline replay inspected a live release lane"
+                        ),
+                    ), mock.patch.object(
+                        benchmark.Path,
+                        "is_file",
+                        side_effect=AssertionError(
+                            "offline replay inspected a reviewer file"
+                        ),
+                    ), mock.patch.object(
+                        benchmark.Path,
+                        "resolve",
+                        side_effect=AssertionError(
+                            "offline replay resolved a reviewer path"
+                        ),
+                    ), mock.patch.object(
+                        v1,
+                        "sha256_file",
+                        side_effect=AssertionError(
+                            "offline replay hashed a reviewer file"
+                        ),
+                    ), mock.patch.object(
+                        benchmark.subprocess,
+                        "run",
+                        side_effect=AssertionError(
+                            "offline replay launched a reviewer process"
+                        ),
+                    ), mock.patch.object(
+                        v1,
+                        "git_capture",
+                        side_effect=AssertionError(
+                            "offline replay inspected a reviewer repository"
+                        ),
+                    ):
+                        if (
+                            producer_os == "Windows"
+                            and state_name == "completed"
+                        ):
+                            with self.assertRaisesRegex(
+                                benchmark.HarnessError,
+                                "source is not allowed",
+                            ):
+                                benchmark.validate_result(
+                                    result,
+                                    self.manifest,
+                                    offline_replay=True,
+                                )
+                            intentionally_ineligible_cases += 1
+                        else:
+                            benchmark.validate_result(
+                                result,
+                                self.manifest,
+                                offline_replay=True,
+                            )
+                            valid_cases += 1
+        self.assertEqual(valid_cases, 33)
+        self.assertEqual(intentionally_ineligible_cases, 3)
+
+    def test_workflow_runs_correctness_and_upload_after_python_test_failure(
+        self,
+    ) -> None:
+        for workflow in (
+            REPOSITORY_ROOT / ".github" / "workflows" / "pr-smoke.yml",
+            REPOSITORY_ROOT / ".github" / "workflows" / "ci.yml",
+        ):
+            text = workflow.read_text(encoding="utf-8")
+            with self.subTest(workflow=workflow.name):
+                correctness = text.index(
+                    "- name: Run v2 small-input correctness gate"
+                )
+                upload = text.index(
+                    "- name: Upload v2 correctness evidence",
+                    correctness,
+                )
+                section = text[correctness:upload]
+                self.assertIn("if: ${{ always() }}", section)
+                upload_section = text[upload : upload + 500]
+                self.assertIn("if: ${{ always() }}", upload_section)
+                self.assertIn(".json", upload_section)
+                self.assertIn(".log", upload_section)
+
     def synthetic_workload(
         self, workload_id: str, candidate_wall: int, comparator_wall: int
     ) -> dict:
@@ -6801,10 +6998,16 @@ print(json.dumps(
                 for key, item in value.items()
             }
             if (
-                isinstance(projected.get("argv"), list)
+                (
+                    isinstance(projected.get("argv"), list)
+                    or isinstance(projected.get("command_argv"), list)
+                )
                 and "command" in projected
             ):
-                projected["command"] = v1.command_text(projected["argv"])
+                command_argv = projected.get(
+                    "argv", projected.get("command_argv")
+                )
+                projected["command"] = v1.command_text(command_argv)
             return projected
         if isinstance(value, list):
             return [
@@ -6823,6 +7026,185 @@ print(json.dumps(
                 "/recorded-windows-producer", drive, *relative_parts
             )
         )
+
+    def project_result_to_producer_os(
+        self, value: dict, producer_os: str
+    ) -> dict:
+        projected = copy.deepcopy(value)
+        if producer_os == "Windows":
+            textual_keys = {
+                "command",
+                "error",
+                "reason",
+                "stdout",
+                "stderr",
+                "text",
+                "version_output",
+            }
+
+            def windows_path(text: str) -> str:
+                path = benchmark.PurePosixPath(text)
+                return str(
+                    benchmark.PureWindowsPath(
+                        "C:/recorded-benchmark-producer",
+                        *path.parts[1:],
+                    )
+                )
+
+            def convert(item, key: str | None = None):
+                if isinstance(item, dict):
+                    converted = {
+                        child_key: convert(child, child_key)
+                        for child_key, child in item.items()
+                    }
+                    argv = converted.get(
+                        "argv", converted.get("command_argv")
+                    )
+                    if (
+                        isinstance(argv, list)
+                        and "command" in converted
+                    ):
+                        converted["command"] = v1.command_text(argv)
+                    return converted
+                if isinstance(item, list):
+                    return [convert(child, key) for child in item]
+                if not isinstance(item, str) or key in textual_keys:
+                    return item
+                if key == "PATH":
+                    return ";".join(
+                        windows_path(path)
+                        for path in item.split(":")
+                        if path
+                    )
+                if benchmark.PurePosixPath(item).is_absolute():
+                    return windows_path(item)
+                return item
+
+            projected = convert(projected)
+        projected["provenance"]["host"]["os"] = producer_os
+        projected["provenance"]["host"]["architecture"] = (
+            "arm64" if producer_os == "Darwin" else "x86_64"
+        )
+        projected["provenance"]["collector"] = (
+            benchmark.collector_descriptor_for_host(producer_os)
+        )
+        collector_id = projected["provenance"]["collector"]["id"]
+
+        def bind_collector(item) -> None:
+            if isinstance(item, dict):
+                if isinstance(item.get("collector"), str):
+                    item["collector"] = collector_id
+                for child in item.values():
+                    bind_collector(child)
+            elif isinstance(item, list):
+                for child in item:
+                    bind_collector(child)
+
+        bind_collector(projected)
+        if producer_os == "Windows":
+            retained = {
+                "GOENV": "off",
+                "LANG": "C",
+                "LC_ALL": "C",
+                "PATH": (
+                    r"C:\recorded-benchmark-producer\tools"
+                    r";C:\Windows\System32"
+                ),
+                "SystemRoot": r"C:\Windows",
+                "TEMP": r"C:\Windows\Temp",
+                "TMP": r"C:\Windows\Temp",
+                "WINDIR": r"C:\Windows",
+            }
+            build_projection = {
+                "retained": retained,
+                "cleared": [
+                    name
+                    for name in benchmark.COMPILER_AFFECTING_ENVIRONMENT
+                    if name not in retained
+                ],
+                "cleared_values_recorded": False,
+            }
+            runtime = {
+                "default": {
+                    "LANG": "C",
+                    "LC_ALL": "C",
+                    "SystemRoot": r"C:\Windows",
+                    "TEMP": r"C:\Windows\Temp",
+                    "TMP": r"C:\Windows\Temp",
+                    "WINDIR": r"C:\Windows",
+                }
+            }
+            runtime["go"] = {
+                **runtime["default"],
+                "GOMAXPROCS": "1",
+            }
+
+            def remove_libm(item) -> None:
+                if isinstance(item, dict):
+                    argv = item.get("argv")
+                    if isinstance(argv, list):
+                        item["argv"] = [
+                            argument
+                            for argument in argv
+                            if argument != "-lm"
+                        ]
+                        if "command" in item:
+                            item["command"] = v1.command_text(item["argv"])
+                    for child in item.values():
+                        remove_libm(child)
+                elif isinstance(item, list):
+                    for child in item:
+                        remove_libm(child)
+
+            remove_libm(projected)
+            for failure in projected.get("build_failures", []):
+                previous = failure["output_path"]
+                if not previous.lower().endswith(".exe"):
+                    failure["output_path"] = previous + ".exe"
+                    command = failure["command"]
+                    command["argv"] = [
+                        (
+                            failure["output_path"]
+                            if argument == previous
+                            else argument
+                        )
+                        for argument in command["argv"]
+                    ]
+                    command["command"] = v1.command_text(command["argv"])
+        else:
+            build_projection = {
+                "retained": {
+                    "GOENV": "off",
+                    "HOME": "/home/benchmark-authority",
+                    "LANG": "C",
+                    "LC_ALL": "C",
+                    "PATH": "/usr/bin:/bin",
+                    "TMPDIR": "/tmp",
+                },
+                "cleared": [
+                    name
+                    for name in benchmark.COMPILER_AFFECTING_ENVIRONMENT
+                    if name
+                    not in {
+                        "GOENV",
+                        "HOME",
+                        "LANG",
+                        "LC_ALL",
+                        "PATH",
+                        "TMPDIR",
+                    }
+                ],
+                "cleared_values_recorded": False,
+            }
+            runtime = self.synthetic_linux_runtime_environments()
+        projected["provenance"]["toolchains"][
+            "build_environment"
+        ] = build_projection
+        self.bind_build_command_environments(
+            projected, build_projection
+        )
+        self.bind_runtime_environments(projected, runtime)
+        return projected
 
     def synthetic_linux_runtime_environments(self) -> dict:
         default = {
@@ -6854,6 +7236,12 @@ print(json.dumps(
             ],
             "cleared_values_recorded": False,
         }
+        self.bind_build_command_environments(result, projection)
+        result["provenance"]["toolchains"]["build_environment"] = projection
+
+    def bind_build_command_environments(
+        self, result: dict, projection: dict
+    ) -> None:
         override_names = {
             "CARGO_TARGET_DIR",
             "CARGO_HOME",
@@ -6893,10 +7281,14 @@ print(json.dumps(
                     bind(item)
 
         bind(result)
-        result["provenance"]["toolchains"]["build_environment"] = projection
 
     def bind_synthetic_runtime_environments(self, result: dict) -> None:
         environments = self.synthetic_linux_runtime_environments()
+        self.bind_runtime_environments(result, environments)
+
+    def bind_runtime_environments(
+        self, result: dict, environments: dict
+    ) -> None:
         result["provenance"]["toolchains"]["runtime_environments"] = (
             copy.deepcopy(environments)
         )
@@ -6925,6 +7317,292 @@ print(json.dumps(
                                         "go" if lane == "go" else "default"
                                     ]
                                 )
+
+    def rebind_static_authorization(
+        self,
+        result: dict,
+        *,
+        eligible: bool,
+    ) -> None:
+        provenance = result["provenance"]
+        bindings = benchmark.qualification_bindings(
+            provenance["host"],
+            provenance["toolchains"],
+            provenance["source_lock"],
+            result["release_lanes"],
+            provenance.get("prepared_bundle_sha256"),
+        )
+        if not eligible:
+            provenance["environment_qualification"] = (
+                benchmark.environment_qualification(
+                    self.manifest, None, bindings
+                )
+            )
+            return
+        checks = {
+            check: self.qualified_check(f"qualified:{check}")
+            for check in benchmark.EXPECTED_REQUIRED_CHECKS
+        }
+        checks["canonical_host_identity"] = self.qualified_check(
+            bindings["authority_host_sha256"]
+        )
+        checks["toolchain_identity"] = self.qualified_check(
+            bindings["reference_toolchains_sha256"]
+        )
+        checks["frozen_source_lock"] = self.qualified_check(
+            bindings["frozen_source_lock_sha256"]
+        )
+        document = {
+            "schema": 1,
+            "canonical_host_id": "offline-producer-host",
+            "captured_at_utc": "2026-07-28T00:00:00+00:00",
+            "dynamic_policy": benchmark.DYNAMIC_ENVIRONMENT_POLICY,
+            "bindings": bindings,
+            "checks": checks,
+        }
+        producer_os = provenance["host"]["os"]
+        qualification_path = (
+            r"C:\recorded-benchmark-producer\authority\environment.json"
+            if producer_os == "Windows"
+            else "/recorded-benchmark-producer/authority/environment.json"
+        )
+        canonical = (
+            json.dumps(document, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        provenance["environment_qualification"] = (
+            benchmark.derive_environment_qualification(
+                self.manifest,
+                document,
+                qualification_path,
+                v1.sha256_bytes(canonical),
+                bindings,
+            )
+        )
+
+    def darwin_dynamic_snapshot(
+        self,
+        authority_host_sha256: str,
+        monotonic_ns: int,
+        captured_at_utc: str,
+    ) -> dict:
+        environment = {
+            "LC_ALL": "C",
+            "LANG": "C",
+            "PATH": "/usr/bin:/usr/sbin:/bin",
+        }
+
+        def command_observation(
+            observation_id: str,
+            executable: str,
+            arguments: list[str],
+            text: str,
+        ) -> dict:
+            observation = {
+                "status": "qualified",
+                "source": "command",
+                "command_argv": [executable, *arguments],
+                "command_identity": {
+                    "path": executable,
+                    "realpath": executable,
+                    "sha256": "9" * 64,
+                    "version_output": None,
+                },
+                "environment": copy.deepcopy(environment),
+                "exit_code": 0,
+                "raw": benchmark._raw_text_evidence(text),
+                "parsed": None,
+                "reason": "offline Darwin producer fixture",
+            }
+            observation["parsed"] = (
+                benchmark.parse_dynamic_observation_from_raw(
+                    observation_id,
+                    observation,
+                    benchmark.DYNAMIC_ENVIRONMENT_POLICY,
+                )
+            )
+            self.assertTrue(
+                benchmark.dynamic_observation_is_qualified(
+                    observation_id,
+                    observation,
+                    benchmark.DYNAMIC_ENVIRONMENT_POLICY,
+                    "Darwin",
+                    "arm64",
+                )
+            )
+            return observation
+
+        load = {
+            "load_average": [0.02, 0.01, 0.01],
+            "logical_cores": 2,
+        }
+        observations = {
+            "power_mode": command_observation(
+                "power_mode",
+                benchmark.DARWIN_PMSET,
+                ["-g", "batt"],
+                "Now drawing from 'AC Power'\n",
+            ),
+            "low_power_mode": command_observation(
+                "low_power_mode",
+                benchmark.DARWIN_PMSET,
+                ["-g"],
+                " lowpowermode 0\n",
+            ),
+            "frequency_governor": command_observation(
+                "frequency_governor",
+                benchmark.DARWIN_PMSET,
+                ["-g", "therm"],
+                "\n".join(benchmark.DARWIN_PMSET_NO_RECORDED_LINES)
+                + "\n",
+            ),
+            "thermal_state": command_observation(
+                "thermal_state",
+                benchmark.DARWIN_OSASCRIPT,
+                [
+                    "-l",
+                    "JavaScript",
+                    "-e",
+                    benchmark.DARWIN_THERMAL_STATE_SCRIPT,
+                ],
+                "0\n",
+            ),
+            "concurrent_load": {
+                "status": "qualified",
+                "source": "os.getloadavg",
+                "raw": benchmark._raw_json_evidence(load),
+                "parsed": {
+                    **load,
+                    "one_minute_per_logical_core": 0.01,
+                    "failure_threshold": 1.0,
+                },
+                "reason": "offline Darwin producer fixture",
+            },
+            "swap": command_observation(
+                "swap",
+                benchmark.DARWIN_SYSCTL,
+                ["-n", "vm.swapusage"],
+                "total = 0.00M used = 0.00M free = 0.00M\n",
+            ),
+            "affinity": {
+                "status": "qualified",
+                "source": "system-api",
+                "raw": benchmark._raw_json_evidence(
+                    {"supported": False}
+                ),
+                "parsed": {
+                    "supported": False,
+                    "enforced": False,
+                },
+                "reason": "offline Darwin producer fixture",
+            },
+        }
+        body = {
+            "schema": 1,
+            "captured_at_utc": captured_at_utc,
+            "monotonic_ns": monotonic_ns,
+            "authority_host_sha256": authority_host_sha256,
+            "observed_host_sha256": authority_host_sha256,
+            "observations": observations,
+            "policy": benchmark.DYNAMIC_ENVIRONMENT_POLICY,
+            "eligible": True,
+            "reason": "offline Darwin producer fixture",
+        }
+        return {
+            **body,
+            "snapshot_sha256": benchmark.canonical_json_sha256(body),
+        }
+
+    def correctness_build_failure_result(self) -> dict:
+        result = self.correctness_only_result()
+        bundle = Path(self.temporary.name) / "offline-failure-bundle"
+        source = (
+            bundle
+            / "build"
+            / "spectral-norm"
+            / "references"
+            / "go.go"
+        )
+        source.parent.mkdir(parents=True, exist_ok=True)
+        frozen = (
+            self.suite_root
+            / self.manifest["workloads"][0]["sources"]["go"]["path"]
+        )
+        shutil.copy2(frozen, source)
+        output = bundle / "bin" / "spectral-norm-go"
+        caches = {
+            key: str((source.parent / directory).resolve())
+            for key, directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.items()
+        }
+        command = benchmark.failed_build_command_record(
+            [
+                result["provenance"]["toolchains"]["go"]["path"],
+                "build",
+                "-o",
+                str(output.resolve()),
+                str(source.resolve()),
+            ],
+            REPOSITORY_ROOT,
+            benchmark.sanitized_build_environment(caches)[1],
+            "2026-07-28T00:00:00+00:00",
+            1,
+            b"",
+            b"fixture compiler failure",
+            exit_code=1,
+            timed_out=False,
+            error="command exited with status 1",
+        )
+        failure = benchmark.workload_build_failure_record(
+            "spectral-norm",
+            "go",
+            "reference-build",
+            source,
+            output,
+            command,
+        )
+        result["status"] = "ineligible"
+        result["correctness"] = []
+        result["builds"] = {}
+        result["build_failures"] = [failure]
+        self.bind_synthetic_build_environment(result)
+        self.rebind_static_authorization(result, eligible=False)
+        return result
+
+    def prepared_only_result(self) -> dict:
+        result = self.completed_result()
+        result["mode"] = "prepare"
+        result["status"] = "prepared"
+        result["claims"]["claim_eligible"] = False
+        result["correctness"] = []
+        result["protocols"] = {
+            build_mode: {
+                "build_mode": build_mode,
+                "status": "unavailable",
+                "reason": "prepared but not measured",
+                "correctness": [],
+                "batches": [],
+                "verdict": "not_evaluated",
+            }
+            for build_mode in benchmark.FORMAL_BUILD_MODES
+        }
+        result["overall_verdict"] = "not_evaluated"
+        root = Path(self.temporary.name) / "offline-prepared-bundle"
+        result["provenance"]["prepared_bundle_path"] = str(
+            root / "prepared-bundle.json"
+        )
+        result["provenance"]["qualification_request_path"] = str(
+            root / "qualification-request.json"
+        )
+        self.rebind_static_authorization(result, eligible=False)
+        return result
+
+    def bind_live_execution_authority(self, toolchains: dict) -> None:
+        toolchains["build_environment"] = (
+            benchmark.sanitized_build_environment()[1]
+        )
+        toolchains["runtime_environments"] = {
+            "default": benchmark._environment({})[1],
+            "go": benchmark._environment({"GOMAXPROCS": "1"})[1],
+        }
 
     def command_record(
         self,
@@ -7421,7 +8099,9 @@ print(json.dumps(
             "label": lane,
             "status": "available",
             "reason": "fixture",
-            "help_command": self.full_command([nomo_path, "build", "--help"]),
+            "help_command": self.full_command(
+                [nomo_path, "build", "--help"], cwd=checkout
+            ),
             "nomo_path": nomo_path,
             "nomo_sha256": binary_sha,
         }
@@ -7791,6 +8471,10 @@ print(json.dumps(
         result["provenance"]["toolchains"]["build_environment"] = (
             benchmark.sanitized_build_environment()[1]
         )
+        self.bind_build_command_environments(
+            result,
+            result["provenance"]["toolchains"]["build_environment"],
+        )
         result["provenance"]["toolchains"]["runtime_environments"] = {
             "default": benchmark._environment({})[1],
             "go": benchmark._environment({"GOMAXPROCS": "1"})[1],
@@ -7888,12 +8572,28 @@ print(json.dumps(
                     "RUSTC": rustc_path,
                 },
             )
+            compiler_build["cargo"]["version_command"] = self.full_command(
+                [compiler_build["cargo"]["path"], "--version"],
+                cwd=state["checkout"],
+                approved_environment_overrides=compiler_build["environment"],
+            )
+            compiler_build["rustc"]["version_command"] = self.full_command(
+                [rustc_path, "-vV"],
+                cwd=state["checkout"],
+                approved_environment_overrides=compiler_build["environment"],
+            )
+            compiler_build["rustc"]["sysroot_command"] = self.full_command(
+                [rustc_path, "--print", "sysroot"],
+                cwd=state["checkout"],
+                approved_environment_overrides=compiler_build["environment"],
+            )
             for build_mode in benchmark.FORMAL_BUILD_MODES:
                 capability = state["capabilities"][build_mode]
                 capability["nomo_path"] = compiler["path"]
                 capability["nomo_sha256"] = compiler["sha256"]
                 capability["help_command"] = self.full_command(
-                    [compiler["path"], "build", "--help"]
+                    [compiler["path"], "build", "--help"],
+                    cwd=state["checkout"],
                 )
 
         toolchains = result["provenance"]["toolchains"]

@@ -1931,6 +1931,63 @@ class WindowsProcessInformation(ctypes.Structure):
     ]
 
 
+class WindowsSystemPowerStatus(ctypes.Structure):
+    _fields_ = [
+        ("ACLineStatus", ctypes.c_ubyte),
+        ("BatteryFlag", ctypes.c_ubyte),
+        ("BatteryLifePercent", ctypes.c_ubyte),
+        ("SystemStatusFlag", ctypes.c_ubyte),
+        ("BatteryLifeTime", wintypes.DWORD),
+        ("BatteryFullLifeTime", wintypes.DWORD),
+    ]
+
+
+class WindowsProcessorPowerInformation(ctypes.Structure):
+    _fields_ = [
+        ("Number", wintypes.ULONG),
+        ("MaxMhz", wintypes.ULONG),
+        ("CurrentMhz", wintypes.ULONG),
+        ("MhzLimit", wintypes.ULONG),
+        ("MaxIdleState", wintypes.ULONG),
+        ("CurrentIdleState", wintypes.ULONG),
+    ]
+
+
+class WindowsSystemPowerInformation(ctypes.Structure):
+    _fields_ = [
+        ("MaxIdlenessAllowed", wintypes.ULONG),
+        ("Idleness", wintypes.ULONG),
+        ("TimeRemaining", wintypes.ULONG),
+        ("CoolingMode", ctypes.c_ubyte),
+    ]
+
+
+class WindowsEnumPageFileInformation(ctypes.Structure):
+    _fields_ = [
+        ("cb", wintypes.DWORD),
+        ("Reserved", wintypes.DWORD),
+        ("TotalSize", ctypes.c_size_t),
+        ("TotalInUse", ctypes.c_size_t),
+        ("PeakUsage", ctypes.c_size_t),
+    ]
+
+
+class WindowsSystemInfo(ctypes.Structure):
+    _fields_ = [
+        ("ProcessorArchitecture", wintypes.WORD),
+        ("Reserved", wintypes.WORD),
+        ("PageSize", wintypes.DWORD),
+        ("MinimumApplicationAddress", ctypes.c_void_p),
+        ("MaximumApplicationAddress", ctypes.c_void_p),
+        ("ActiveProcessorMask", ctypes.c_size_t),
+        ("NumberOfProcessors", wintypes.DWORD),
+        ("ProcessorType", wintypes.DWORD),
+        ("AllocationGranularity", wintypes.DWORD),
+        ("ProcessorLevel", wintypes.WORD),
+        ("ProcessorRevision", wintypes.WORD),
+    ]
+
+
 class WindowsStartupInfoEx(ctypes.Structure):
     _fields_ = [
         ("StartupInfo", WindowsStartupInfo),
@@ -3747,6 +3804,250 @@ def parse_darwin_process_thermal_state(text: str) -> Dict[str, Any]:
     }
 
 
+def windows_system_power_status() -> Optional[Dict[str, Any]]:
+    if os.name != "nt":
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetSystemPowerStatus.argtypes = [
+        ctypes.POINTER(WindowsSystemPowerStatus)
+    ]
+    kernel32.GetSystemPowerStatus.restype = wintypes.BOOL
+    status = WindowsSystemPowerStatus()
+    if not kernel32.GetSystemPowerStatus(ctypes.byref(status)):
+        return None
+    return {
+        "schema": 1,
+        "api": "GetSystemPowerStatus",
+        "success": True,
+        "ac_line_status": int(status.ACLineStatus),
+        "battery_flag": int(status.BatteryFlag),
+        "battery_life_percent": int(status.BatteryLifePercent),
+        "system_status_flag": int(status.SystemStatusFlag),
+        "battery_life_time_seconds": int(status.BatteryLifeTime),
+        "battery_full_life_time_seconds": int(status.BatteryFullLifeTime),
+    }
+
+
+def windows_processor_power_information() -> Optional[Dict[str, Any]]:
+    if os.name != "nt":
+        return None
+    processor_count = max(1, int(os.cpu_count() or 1))
+    records = (
+        WindowsProcessorPowerInformation * processor_count
+    )()
+    powrprof = ctypes.WinDLL("PowrProf", use_last_error=True)
+    powrprof.CallNtPowerInformation.argtypes = [
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+    powrprof.CallNtPowerInformation.restype = ctypes.c_long
+    status = int(
+        powrprof.CallNtPowerInformation(
+            11,
+            None,
+            0,
+            ctypes.byref(records),
+            ctypes.sizeof(records),
+        )
+    )
+    if status != 0:
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetActiveProcessorGroupCount.argtypes = []
+    kernel32.GetActiveProcessorGroupCount.restype = wintypes.WORD
+    processor_group_count = int(
+        kernel32.GetActiveProcessorGroupCount()
+    )
+    return {
+        "schema": 1,
+        "api": "CallNtPowerInformation",
+        "information_level": {
+            "name": "ProcessorInformation",
+            "value": 11,
+        },
+        "ntstatus": status,
+        "processor_group_count": processor_group_count,
+        "logical_processor_count": processor_count,
+        "processors": [
+            {
+                "number": int(record.Number),
+                "max_mhz": int(record.MaxMhz),
+                "current_mhz": int(record.CurrentMhz),
+                "mhz_limit": int(record.MhzLimit),
+                "max_idle_state": int(record.MaxIdleState),
+                "current_idle_state": int(record.CurrentIdleState),
+            }
+            for record in records
+        ],
+    }
+
+
+def windows_system_power_information() -> Optional[Dict[str, Any]]:
+    if os.name != "nt":
+        return None
+    information = WindowsSystemPowerInformation()
+    powrprof = ctypes.WinDLL("PowrProf", use_last_error=True)
+    powrprof.CallNtPowerInformation.argtypes = [
+        ctypes.c_int,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+        ctypes.c_void_p,
+        wintypes.ULONG,
+    ]
+    powrprof.CallNtPowerInformation.restype = ctypes.c_long
+    status = int(
+        powrprof.CallNtPowerInformation(
+            12,
+            None,
+            0,
+            ctypes.byref(information),
+            ctypes.sizeof(information),
+        )
+    )
+    if status != 0:
+        return None
+    return {
+        "schema": 1,
+        "api": "CallNtPowerInformation",
+        "information_level": {
+            "name": "SystemPowerInformation",
+            "value": 12,
+        },
+        "ntstatus": status,
+        "max_idleness_allowed_percent": int(
+            information.MaxIdlenessAllowed
+        ),
+        "idleness_percent": int(information.Idleness),
+        "time_remaining_seconds": int(information.TimeRemaining),
+        "cooling_mode": int(information.CoolingMode),
+    }
+
+
+def windows_page_file_information() -> Optional[Dict[str, Any]]:
+    if os.name != "nt":
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    system_info = WindowsSystemInfo()
+    kernel32.GetNativeSystemInfo.argtypes = [
+        ctypes.POINTER(WindowsSystemInfo)
+    ]
+    kernel32.GetNativeSystemInfo.restype = None
+    kernel32.GetNativeSystemInfo(ctypes.byref(system_info))
+    if system_info.PageSize <= 0:
+        return None
+    callback_type = ctypes.WINFUNCTYPE(
+        wintypes.BOOL,
+        ctypes.c_void_p,
+        ctypes.POINTER(WindowsEnumPageFileInformation),
+        wintypes.LPCWSTR,
+    )
+    page_files: list[Dict[str, Any]] = []
+
+    def collect_page_file(
+        context: Any,
+        information: Any,
+        filename: Optional[str],
+    ) -> bool:
+        del context
+        record = information.contents
+        page_files.append(
+            {
+                "path": str(filename or ""),
+                "total_size_pages": int(record.TotalSize),
+                "total_in_use_pages": int(record.TotalInUse),
+                "peak_usage_pages": int(record.PeakUsage),
+            }
+        )
+        return True
+
+    callback = callback_type(collect_page_file)
+    psapi = ctypes.WinDLL("psapi", use_last_error=True)
+    psapi.EnumPageFilesW.argtypes = [callback_type, ctypes.c_void_p]
+    psapi.EnumPageFilesW.restype = wintypes.BOOL
+    if not psapi.EnumPageFilesW(callback, None):
+        return None
+    return {
+        "schema": 1,
+        "api": "EnumPageFilesW",
+        "success": True,
+        "page_size_bytes": int(system_info.PageSize),
+        "pagefiles": sorted(
+            page_files, key=lambda item: item["path"].casefold()
+        ),
+    }
+
+
+def windows_process_affinity() -> Optional[Dict[str, Any]]:
+    if os.name != "nt":
+        return None
+    kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetCurrentProcess.argtypes = []
+    kernel32.GetCurrentProcess.restype = wintypes.HANDLE
+    kernel32.GetProcessAffinityMask.argtypes = [
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_size_t),
+        ctypes.POINTER(ctypes.c_size_t),
+    ]
+    kernel32.GetProcessAffinityMask.restype = wintypes.BOOL
+    process_mask = ctypes.c_size_t()
+    system_mask = ctypes.c_size_t()
+    if not kernel32.GetProcessAffinityMask(
+        kernel32.GetCurrentProcess(),
+        ctypes.byref(process_mask),
+        ctypes.byref(system_mask),
+    ):
+        return None
+    kernel32.GetActiveProcessorGroupCount.argtypes = []
+    kernel32.GetActiveProcessorGroupCount.restype = wintypes.WORD
+    return {
+        "schema": 1,
+        "api": "GetProcessAffinityMask",
+        "success": True,
+        "pointer_width_bits": ctypes.sizeof(ctypes.c_void_p) * 8,
+        "processor_group_count": int(
+            kernel32.GetActiveProcessorGroupCount()
+        ),
+        "process_mask_hex": hex(process_mask.value),
+        "system_mask_hex": hex(system_mask.value),
+    }
+
+
+def windows_dynamic_observation(
+    observation_id: str,
+    source: str,
+    raw_value: Any,
+    policy: Dict[str, Any],
+    host_architecture: str,
+) -> Dict[str, Any]:
+    observation = {
+        "source": source,
+        "raw": _raw_json_evidence(raw_value),
+        "parsed": None,
+    }
+    observation["parsed"] = parse_dynamic_observation_from_raw(
+        observation_id, observation, policy
+    )
+    qualified = dynamic_observation_is_qualified(
+        observation_id,
+        observation,
+        policy,
+        "Windows",
+        host_architecture,
+    )
+    return {
+        **observation,
+        "status": "qualified" if qualified else "failed",
+        "reason": (
+            f"{source} evidence qualified"
+            if qualified
+            else f"{source} evidence was unavailable or ineligible"
+        ),
+    }
+
+
 def capture_dynamic_environment(
     authority_host_sha256: str,
     policy: Optional[Dict[str, Any]] = None,
@@ -3767,39 +4068,50 @@ def capture_dynamic_environment(
             or 1
         ),
     )
-    try:
-        load_values = list(os.getloadavg())
-        normalized_load = load_values[0] / logical_cores
-        load_status = (
-            "failed"
-            if normalized_load >= active_policy["max_load_per_logical_core"]
-            else "qualified"
-        )
-        load_observation: Dict[str, Any] = {
-            "status": load_status,
-            "source": "os.getloadavg",
-            "raw": _raw_json_evidence(
-                {
+    load_observation: Dict[str, Any]
+    if os.name == "nt":
+        load_observation = {}
+    else:
+        try:
+            load_values = list(os.getloadavg())
+            normalized_load = load_values[0] / logical_cores
+            load_status = (
+                "failed"
+                if normalized_load
+                >= active_policy["max_load_per_logical_core"]
+                else "qualified"
+            )
+            load_observation = {
+                "status": load_status,
+                "source": "os.getloadavg",
+                "raw": _raw_json_evidence(
+                    {
+                        "load_average": load_values,
+                        "logical_cores": logical_cores,
+                    }
+                ),
+                "parsed": {
                     "load_average": load_values,
                     "logical_cores": logical_cores,
-                }
-            ),
-            "parsed": {
-                "load_average": load_values,
-                "logical_cores": logical_cores,
-                "one_minute_per_logical_core": normalized_load,
-                "failure_threshold": active_policy["max_load_per_logical_core"],
-            },
-            "reason": "load is below threshold" if load_status == "qualified" else "load exceeds threshold",
-        }
-    except (AttributeError, OSError):
-        load_observation = {
-            "status": "failed",
-            "source": "os.getloadavg",
-            "reason": "load average is unavailable on this host",
-            "raw": _raw_json_evidence(None),
-            "parsed": None,
-        }
+                    "one_minute_per_logical_core": normalized_load,
+                    "failure_threshold": active_policy[
+                        "max_load_per_logical_core"
+                    ],
+                },
+                "reason": (
+                    "load is below threshold"
+                    if load_status == "qualified"
+                    else "load exceeds threshold"
+                ),
+            }
+        except (AttributeError, OSError):
+            load_observation = {
+                "status": "failed",
+                "source": "os.getloadavg",
+                "reason": "load average is unavailable on this host",
+                "raw": _raw_json_evidence(None),
+                "parsed": None,
+            }
     if sys.platform == "darwin":
         power_capture = _dynamic_command([DARWIN_PMSET, "-g", "batt"])
         power_text = power_capture.get("raw", {}).get("text", "")
@@ -3896,49 +4208,59 @@ def capture_dynamic_environment(
             "reason": "macOS affinity limitation was explicitly observed",
         }
     elif os.name == "nt":
-        power_capture = _dynamic_command(
-            [str(windows_system_directory() / "powercfg.exe"), "/getactivescheme"]
+        host_architecture = str(host.get("architecture"))
+        power_state = windows_system_power_status()
+        processor_state = windows_processor_power_information()
+        system_state = windows_system_power_information()
+        power = windows_dynamic_observation(
+            "power_mode",
+            "GetSystemPowerStatus",
+            power_state,
+            active_policy,
+            host_architecture,
         )
-        power = _parsed_observation(
-            power_capture,
-            None,
-            False,
-            "Windows AC state is not yet parsed by this authority",
+        low_power = windows_dynamic_observation(
+            "low_power_mode",
+            "GetSystemPowerStatus",
+            power_state,
+            active_policy,
+            host_architecture,
         )
-        low_power = _parsed_observation(
-            power_capture,
-            None,
-            False,
-            "Windows low-power state is not yet parsed by this authority",
+        frequency = windows_dynamic_observation(
+            "frequency_governor",
+            "CallNtPowerInformation:ProcessorInformation",
+            processor_state,
+            active_policy,
+            host_architecture,
         )
-        frequency = {
-            "status": "failed",
-            "source": "system-api",
-            "reason": "Windows frequency state is not exposed portably",
-            "raw": _raw_json_evidence(None),
-            "parsed": None,
-        }
-        thermal = {
-            "status": "failed",
-            "source": "system-api",
-            "reason": "Windows thermal state is not exposed portably",
-            "raw": _raw_json_evidence(None),
-            "parsed": None,
-        }
-        swap = {
-            "status": "failed",
-            "source": "GlobalMemoryStatusEx",
-            "raw": _raw_json_evidence(memory_bytes()),
-            "parsed": None,
-            "reason": "memory status captured but swap usage is unavailable",
-        }
-        affinity = {
-            "status": "failed",
-            "source": "system-api",
-            "reason": "affinity mask capture is unavailable in this collector version",
-            "raw": _raw_json_evidence(None),
-            "parsed": None,
-        }
+        thermal = windows_dynamic_observation(
+            "thermal_state",
+            "CallNtPowerInformation:ProcessorInformation",
+            processor_state,
+            active_policy,
+            host_architecture,
+        )
+        load_observation = windows_dynamic_observation(
+            "concurrent_load",
+            "CallNtPowerInformation:SystemPowerInformation",
+            system_state,
+            active_policy,
+            host_architecture,
+        )
+        swap = windows_dynamic_observation(
+            "swap",
+            "EnumPageFilesW",
+            windows_page_file_information(),
+            active_policy,
+            host_architecture,
+        )
+        affinity = windows_dynamic_observation(
+            "affinity",
+            "GetProcessAffinityMask",
+            windows_process_affinity(),
+            active_policy,
+            host_architecture,
+        )
     else:
         governor_paths = sorted(
             Path("/sys/devices/system/cpu").glob("cpu*/cpufreq/scaling_governor")
@@ -5902,12 +6224,18 @@ def dynamic_environment_pair_issues(
     ):
         concurrent_load = parsed(
             observations, "concurrent_load"
-        ).get("one_minute_per_logical_core")
+        )
+        normalized_load = (
+            concurrent_load.get("busy_fraction")
+            if concurrent_load.get("metric")
+            == "instantaneous-system-busy-fraction"
+            else concurrent_load.get("one_minute_per_logical_core")
+        )
         if (
-            not isinstance(concurrent_load, (int, float))
-            or not math.isfinite(float(concurrent_load))
-            or concurrent_load < 0
-            or concurrent_load >= policy["max_load_per_logical_core"]
+            not isinstance(normalized_load, (int, float))
+            or not math.isfinite(float(normalized_load))
+            or normalized_load < 0
+            or normalized_load >= policy["max_load_per_logical_core"]
         ):
             issues.append(
                 f"{snapshot_name} concurrent load was unparseable or exceeded threshold"
@@ -7453,9 +7781,11 @@ def validate_correctness_evidence(
         )
     workloads = {workload["id"]: workload for workload in manifest["workloads"]}
     host_os = recorded_host_os or platform.system()
-    suite_root = recorded_suite_root or artifact_path(
-        DEFAULT_MANIFEST.parent, host_os
-    )
+    if recorded_suite_root is None:
+        raise HarnessError(
+            "correctness validation lacks recorded suite-root authority"
+        )
+    suite_root = recorded_suite_root
     failure_reason = None
     for item_index, item in enumerate(items):
         workload = workloads[item["id"]]
@@ -7944,14 +8274,6 @@ def expected_dynamic_system_path(
             "osascript": DARWIN_OSASCRIPT,
             "sysctl": DARWIN_SYSCTL,
         }.get(executable)
-    if host_os == "Windows" and executable == "powercfg":
-        if windows_system_root is not None:
-            root = artifact_path(windows_system_root, "Windows")
-            if not root.is_absolute():
-                return None
-            return str(root / "System32" / "powercfg.exe")
-        if live_authority:
-            return str(windows_system_directory() / "powercfg.exe")
     return None
 
 
@@ -8161,6 +8483,293 @@ def parse_dynamic_observation_from_raw(
         raw_value = json.loads(raw_text)
     except json.JSONDecodeError:
         return None
+    if source == "GetSystemPowerStatus":
+        expected_keys = {
+            "schema",
+            "api",
+            "success",
+            "ac_line_status",
+            "battery_flag",
+            "battery_life_percent",
+            "system_status_flag",
+            "battery_life_time_seconds",
+            "battery_full_life_time_seconds",
+        }
+        integer_fields = expected_keys - {"api", "success"}
+        if (
+            not isinstance(raw_value, dict)
+            or set(raw_value) != expected_keys
+            or raw_value.get("schema") != 1
+            or raw_value.get("api") != "GetSystemPowerStatus"
+            or raw_value.get("success") is not True
+            or any(
+                type(raw_value.get(field)) is not int
+                for field in integer_fields
+            )
+            or raw_value["ac_line_status"] not in {0, 1, 255}
+            or not 0 <= raw_value["battery_flag"] <= 255
+            or raw_value["battery_life_percent"]
+            not in {*range(101), 255}
+            or raw_value["system_status_flag"] not in {0, 1}
+            or not 0
+            <= raw_value["battery_life_time_seconds"]
+            <= 0xFFFFFFFF
+            or not 0
+            <= raw_value["battery_full_life_time_seconds"]
+            <= 0xFFFFFFFF
+        ):
+            return None
+        if observation_id == "power_mode":
+            return {
+                "ac_power": (
+                    None
+                    if raw_value["ac_line_status"] == 255
+                    else raw_value["ac_line_status"] == 1
+                )
+            }
+        if observation_id == "low_power_mode":
+            return {
+                "enabled": raw_value["system_status_flag"] == 1
+            }
+        return None
+    if source == "CallNtPowerInformation:ProcessorInformation":
+        expected_keys = {
+            "schema",
+            "api",
+            "information_level",
+            "ntstatus",
+            "processor_group_count",
+            "logical_processor_count",
+            "processors",
+        }
+        processor_keys = {
+            "number",
+            "max_mhz",
+            "current_mhz",
+            "mhz_limit",
+            "max_idle_state",
+            "current_idle_state",
+        }
+        processors = (
+            raw_value.get("processors")
+            if isinstance(raw_value, dict)
+            else None
+        )
+        if (
+            not isinstance(raw_value, dict)
+            or set(raw_value) != expected_keys
+            or raw_value.get("schema") != 1
+            or raw_value.get("api") != "CallNtPowerInformation"
+            or raw_value.get("information_level")
+            != {"name": "ProcessorInformation", "value": 11}
+            or raw_value.get("ntstatus") != 0
+            or raw_value.get("processor_group_count") != 1
+            or type(raw_value.get("logical_processor_count")) is not int
+            or raw_value["logical_processor_count"] <= 0
+            or not isinstance(processors, list)
+            or len(processors) != raw_value["logical_processor_count"]
+            or any(
+                not isinstance(processor, dict)
+                or set(processor) != processor_keys
+                or any(
+                    type(processor.get(field)) is not int
+                    for field in processor_keys
+                )
+                or processor["max_mhz"] <= 0
+                or processor["current_mhz"] < 0
+                or processor["mhz_limit"] <= 0
+                or processor["max_idle_state"] < 0
+                or processor["current_idle_state"] < 0
+                for processor in processors
+            )
+            or [processor["number"] for processor in processors]
+            != list(range(len(processors)))
+        ):
+            return None
+        stable_limits = [
+            {
+                "number": processor["number"],
+                "max_mhz": processor["max_mhz"],
+                "mhz_limit": processor["mhz_limit"],
+            }
+            for processor in processors
+        ]
+        minimum_limit = min(
+            processor["mhz_limit"] * 100.0 / processor["max_mhz"]
+            for processor in processors
+        )
+        if observation_id == "frequency_governor":
+            return {
+                "basis": "processor-thermal-throttle-limit",
+                "processor_count": len(processors),
+                "processors": stable_limits,
+                "cpu_speed_limit_percent": minimum_limit,
+            }
+        if observation_id == "thermal_state":
+            return {
+                "basis": "processor-thermal-throttle-limit",
+                "normal": all(
+                    processor["mhz_limit"] >= processor["max_mhz"]
+                    for processor in processors
+                ),
+                "maximum_celsius": None,
+            }
+        return None
+    if source == "CallNtPowerInformation:SystemPowerInformation":
+        expected_keys = {
+            "schema",
+            "api",
+            "information_level",
+            "ntstatus",
+            "max_idleness_allowed_percent",
+            "idleness_percent",
+            "time_remaining_seconds",
+            "cooling_mode",
+        }
+        integer_fields = expected_keys - {"api", "information_level"}
+        if (
+            observation_id != "concurrent_load"
+            or not isinstance(raw_value, dict)
+            or set(raw_value) != expected_keys
+            or raw_value.get("schema") != 1
+            or raw_value.get("api") != "CallNtPowerInformation"
+            or raw_value.get("information_level")
+            != {"name": "SystemPowerInformation", "value": 12}
+            or any(
+                type(raw_value.get(field)) is not int
+                for field in integer_fields
+            )
+            or raw_value.get("ntstatus") != 0
+            or not 0 <= raw_value["max_idleness_allowed_percent"] <= 100
+            or not 0 <= raw_value["idleness_percent"] <= 100
+            or raw_value["time_remaining_seconds"] < 0
+            or raw_value["cooling_mode"] not in {0, 1, 2}
+        ):
+            return None
+        busy_fraction = (100 - raw_value["idleness_percent"]) / 100.0
+        return {
+            "metric": "instantaneous-system-busy-fraction",
+            "idleness_percent": raw_value["idleness_percent"],
+            "busy_fraction": busy_fraction,
+            "failure_threshold": policy["max_load_per_logical_core"],
+        }
+    if source == "EnumPageFilesW":
+        expected_keys = {
+            "schema",
+            "api",
+            "success",
+            "page_size_bytes",
+            "pagefiles",
+        }
+        pagefile_keys = {
+            "path",
+            "total_size_pages",
+            "total_in_use_pages",
+            "peak_usage_pages",
+        }
+        pagefiles = (
+            raw_value.get("pagefiles")
+            if isinstance(raw_value, dict)
+            else None
+        )
+        if (
+            observation_id != "swap"
+            or not isinstance(raw_value, dict)
+            or set(raw_value) != expected_keys
+            or raw_value.get("schema") != 1
+            or raw_value.get("api") != "EnumPageFilesW"
+            or raw_value.get("success") is not True
+            or type(raw_value.get("page_size_bytes")) is not int
+            or raw_value["page_size_bytes"] <= 0
+            or not isinstance(pagefiles, list)
+            or any(
+                not isinstance(pagefile, dict)
+                or set(pagefile) != pagefile_keys
+                or not isinstance(pagefile.get("path"), str)
+                or not pagefile["path"]
+                or any(
+                    type(pagefile.get(field)) is not int
+                    for field in (
+                        "total_size_pages",
+                        "total_in_use_pages",
+                        "peak_usage_pages",
+                    )
+                )
+                or not 0
+                <= pagefile["total_in_use_pages"]
+                <= pagefile["total_size_pages"]
+                or pagefile["peak_usage_pages"]
+                < pagefile["total_in_use_pages"]
+                for pagefile in pagefiles
+            )
+            or pagefiles
+            != sorted(pagefiles, key=lambda item: item["path"].casefold())
+            or len({item["path"].casefold() for item in pagefiles})
+            != len(pagefiles)
+        ):
+            return None
+        return {
+            "used_bytes": sum(
+                pagefile["total_in_use_pages"] for pagefile in pagefiles
+            )
+            * raw_value["page_size_bytes"]
+        }
+    if source == "GetProcessAffinityMask":
+        expected_keys = {
+            "schema",
+            "api",
+            "success",
+            "pointer_width_bits",
+            "processor_group_count",
+            "process_mask_hex",
+            "system_mask_hex",
+        }
+        if (
+            observation_id != "affinity"
+            or not isinstance(raw_value, dict)
+            or set(raw_value) != expected_keys
+            or raw_value.get("schema") != 1
+            or raw_value.get("api") != "GetProcessAffinityMask"
+            or raw_value.get("success") is not True
+            or raw_value.get("pointer_width_bits") not in {32, 64}
+            or raw_value.get("processor_group_count") != 1
+            or not isinstance(raw_value.get("process_mask_hex"), str)
+            or not isinstance(raw_value.get("system_mask_hex"), str)
+            or re.fullmatch(
+                r"0x[0-9a-f]+", raw_value["process_mask_hex"]
+            )
+            is None
+            or re.fullmatch(
+                r"0x[0-9a-f]+", raw_value["system_mask_hex"]
+            )
+            is None
+        ):
+            return None
+        process_mask = int(raw_value["process_mask_hex"], 16)
+        system_mask = int(raw_value["system_mask_hex"], 16)
+        pointer_width = raw_value["pointer_width_bits"]
+        if (
+            process_mask <= 0
+            or system_mask <= 0
+            or process_mask & ~system_mask
+            or process_mask >= 1 << pointer_width
+            or system_mask >= 1 << pointer_width
+        ):
+            return None
+        return {
+            "supported": True,
+            "enforced": process_mask != system_mask,
+            "cpus": [
+                bit
+                for bit in range(pointer_width)
+                if process_mask & (1 << bit)
+            ],
+            "system_cpus": [
+                bit
+                for bit in range(pointer_width)
+                if system_mask & (1 << bit)
+            ],
+        }
     if observation_id == "concurrent_load":
         if not isinstance(raw_value, dict):
             return None
@@ -8258,8 +8867,18 @@ def dynamic_observation_is_qualified(
                 in {None, 100}
             )
         return (
-            parsed.get("thermal_warning_normal") is True
-            and parsed.get("cpu_speed_limit_percent") == 100
+            host_os == "Windows"
+            and parsed.get("basis")
+            == "processor-thermal-throttle-limit"
+            and isinstance(parsed.get("processor_count"), int)
+            and parsed["processor_count"] > 0
+            and isinstance(
+                parsed.get("cpu_speed_limit_percent"), (int, float)
+            )
+            and math.isfinite(
+                float(parsed["cpu_speed_limit_percent"])
+            )
+            and parsed["cpu_speed_limit_percent"] >= 100
         )
     if observation_id == "thermal_state":
         normal = parsed.get("normal")
@@ -8275,7 +8894,13 @@ def dynamic_observation_is_qualified(
         )
         return normal_valid and maximum_valid
     if observation_id == "concurrent_load":
-        normalized = parsed.get("one_minute_per_logical_core")
+        normalized = (
+            parsed.get("busy_fraction")
+            if host_os == "Windows"
+            and parsed.get("metric")
+            == "instantaneous-system-busy-fraction"
+            else parsed.get("one_minute_per_logical_core")
+        )
         return (
             isinstance(normalized, (int, float))
             and math.isfinite(float(normalized))
@@ -8305,7 +8930,9 @@ def dynamic_source_profile_is_allowed(
     source = observation.get("source")
     command = observation.get("command_argv")
     common = (
-        observation_id == "concurrent_load" and source == "os.getloadavg"
+        host_os in {"Darwin", "Linux"}
+        and observation_id == "concurrent_load"
+        and source == "os.getloadavg"
     )
     if common:
         return True
@@ -8346,21 +8973,22 @@ def dynamic_source_profile_is_allowed(
             and source == "os.sched_getaffinity"
         )
     if host_os == "Windows":
-        return (
-            observation_id in {"power_mode", "low_power_mode"}
-            and dynamic_command_matches_system_path(
-                observation,
-                host_os,
-                "powercfg",
-                ["/getactivescheme"],
-                windows_system_root=windows_system_root,
-                live_authority=live_authority,
-            )
-            or observation_id in {"frequency_governor", "thermal_state", "affinity"}
-            and source == "system-api"
-            or observation_id == "swap"
-            and source == "GlobalMemoryStatusEx"
-        )
+        expected_sources = {
+            "power_mode": "GetSystemPowerStatus",
+            "low_power_mode": "GetSystemPowerStatus",
+            "frequency_governor": (
+                "CallNtPowerInformation:ProcessorInformation"
+            ),
+            "thermal_state": (
+                "CallNtPowerInformation:ProcessorInformation"
+            ),
+            "concurrent_load": (
+                "CallNtPowerInformation:SystemPowerInformation"
+            ),
+            "swap": "EnumPageFilesW",
+            "affinity": "GetProcessAffinityMask",
+        }
+        return source == expected_sources.get(observation_id)
     return False
 
 

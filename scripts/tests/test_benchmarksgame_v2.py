@@ -635,6 +635,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         result = self.completed_result()
         protocol = result["protocols"]["release"]
         authorization = result["provenance"]["environment_qualification"]
+        recorded_suite_root = benchmark.artifact_path(
+            result["provenance"]["manifest_path"], "Linux"
+        ).parent
         benchmark.validate_protocol(
             protocol,
             "release",
@@ -645,6 +648,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "Linux",
             "x86_64",
             result["provenance"]["toolchains"]["runtime_environments"],
+            recorded_suite_root,
+            live_authority=False,
         )
         changed = copy.deepcopy(protocol)
         changed["batches"][0]["evaluation"]["suite"]["comparisons"]["c"][
@@ -661,6 +666,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "Linux",
                 "x86_64",
                 result["provenance"]["toolchains"]["runtime_environments"],
+                recorded_suite_root,
+                live_authority=False,
             )
         changed = copy.deepcopy(protocol)
         changed["batches"][0]["stability"]["valid"] = False
@@ -675,12 +682,17 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "Linux",
                 "x86_64",
                 result["provenance"]["toolchains"]["runtime_environments"],
+                recorded_suite_root,
+                live_authority=False,
             )
 
     def test_dynamic_snapshot_and_pair_issues_are_recomputed(self) -> None:
         result = self.completed_result()
         protocol = copy.deepcopy(result["protocols"]["release"])
         authorization = result["provenance"]["environment_qualification"]
+        recorded_suite_root = benchmark.artifact_path(
+            result["provenance"]["manifest_path"], "Linux"
+        ).parent
         after = protocol["batches"][0]["dynamic_environment_after"]
         load = after["observations"]["concurrent_load"]
         load["status"] = "failed"
@@ -704,6 +716,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "Linux",
                 "x86_64",
                 result["provenance"]["toolchains"]["runtime_environments"],
+                recorded_suite_root,
+                live_authority=False,
             )
 
         protocol = copy.deepcopy(result["protocols"]["release"])
@@ -734,6 +748,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "Linux",
                 "x86_64",
                 result["provenance"]["toolchains"]["runtime_environments"],
+                recorded_suite_root,
+                live_authority=False,
             )
 
     def test_dynamic_command_identity_and_locale_are_fail_closed(self) -> None:
@@ -1022,27 +1038,83 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     )
                 )
 
-    def test_windows_powercfg_path_comes_from_system_api_not_environment(
+    def test_windows_dynamic_snapshot_replays_from_raw_winapi_evidence(
         self,
     ) -> None:
-        trusted = Path(self.temporary.name) / "real-system32"
-        trusted.mkdir()
-        with mock.patch.object(
-            benchmark,
-            "windows_system_directory",
-            return_value=trusted,
-        ), mock.patch.dict(
-            os.environ,
-            {
-                "SystemRoot": str(Path(self.temporary.name) / "shadow-root"),
-                "WINDIR": str(Path(self.temporary.name) / "shadow-windir"),
-            },
+        authority_sha = "a" * 64
+        snapshot = self.windows_dynamic_snapshot(
+            authority_sha,
+            1,
+            "2026-07-28T00:00:05+00:00",
+        )
+        authorization = self.static_authorization_stub()
+        authorization["expected_bindings"][
+            "authority_host_sha256"
+        ] = authority_sha
+        benchmark.validate_dynamic_snapshot(
+            snapshot,
+            authorization,
+            "Windows",
+            "x86_64",
+            live_authority=False,
+        )
+        changed = copy.deepcopy(snapshot)
+        power = changed["observations"]["power_mode"]
+        raw_value = json.loads(power["raw"]["text"])
+        raw_value["ac_line_status"] = 0
+        power["raw"] = benchmark._raw_json_evidence(raw_value)
+        body = {
+            key: value
+            for key, value in changed.items()
+            if key != "snapshot_sha256"
+        }
+        changed["snapshot_sha256"] = benchmark.canonical_json_sha256(body)
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "does not match raw content"
         ):
-            expected = benchmark.expected_dynamic_system_path(
-                "Windows", "powercfg"
+            benchmark.validate_dynamic_snapshot(
+                changed,
+                authorization,
+                "Windows",
+                "x86_64",
+                live_authority=False,
             )
-        self.assertEqual(expected, str(trusted / "powercfg.exe"))
-        self.assertNotIn("shadow", expected)
+        for observation_id, source in (
+            ("power_mode", "command"),
+            ("concurrent_load", "os.getloadavg"),
+            ("swap", "GlobalMemoryStatusEx"),
+            ("affinity", "system-api"),
+        ):
+            with self.subTest(
+                observation_id=observation_id, source=source
+            ):
+                self.assertFalse(
+                    benchmark.dynamic_source_profile_is_allowed(
+                        "Windows",
+                        observation_id,
+                        {"source": source},
+                        live_authority=False,
+                    )
+                )
+
+    @unittest.skipUnless(os.name == "nt", "requires native WinAPI")
+    def test_windows_dynamic_ctypes_layouts_and_capture_replay(self) -> None:
+        self.assertEqual(
+            benchmark.WindowsSystemPowerStatus.BatteryLifeTime.offset, 4
+        )
+        self.assertEqual(
+            benchmark.WindowsProcessorPowerInformation.MhzLimit.offset, 12
+        )
+        self.assertEqual(benchmark.WindowsSystemInfo.PageSize.offset, 4)
+        for capture in (
+            benchmark.windows_system_power_status,
+            benchmark.windows_processor_power_information,
+            benchmark.windows_system_power_information,
+            benchmark.windows_page_file_information,
+            benchmark.windows_process_affinity,
+        ):
+            with self.subTest(capture=capture.__name__):
+                self.assertIsNotNone(capture())
 
     @unittest.skipUnless(os.name == "nt", "requires native Visual Studio SDK")
     def test_windows_build_environment_discovers_sdk_without_parent_poison(
@@ -4549,7 +4621,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         root.mkdir()
         bundle = root / "bundle"
         output = root / "prepare-result.json"
-        fixture = self.completed_result()
+        fixture = self.project_result_to_producer_os(
+            self.completed_result(), platform.system()
+        )
         toolchains = fixture["provenance"]["toolchains"]
         self.bind_live_execution_authority(toolchains)
         host = {
@@ -5173,8 +5247,9 @@ print(json.dumps(
     ) -> None:
         result = self.completed_result()
         benchmark.validate_result_schema(result, self.result_schema_path)
-        with mock.patch.object(benchmark, "validate_result_prepared_authority"):
-            benchmark.validate_result(result, self.manifest)
+        benchmark.validate_result(
+            result, self.manifest, offline_replay=True
+        )
 
     def test_collector_descriptor_and_sample_derived_fields_are_authoritative(
         self,
@@ -6180,10 +6255,12 @@ print(json.dumps(
     ) -> None:
         success = self.correctness_only_result()
         failure = self.correctness_build_failure_result()
+        formal_unavailable = self.formal_unavailable_result()
         prepared = self.prepared_only_result()
         states = {
             "success": success,
             "failure": failure,
+            "formal-unavailable": formal_unavailable,
             "prepared": prepared,
         }
         completed_by_os = {}
@@ -6220,7 +6297,24 @@ print(json.dumps(
                                 "2026-07-28T00:00:50+00:00",
                             )
                         )
-                    elif producer_os in {"Linux", "Windows"}:
+                    elif producer_os == "Windows":
+                        before_index = next(snapshot_counter)
+                        after_index = next(snapshot_counter)
+                        batch["dynamic_environment_before"] = (
+                            self.windows_dynamic_snapshot(
+                                bindings["authority_host_sha256"],
+                                before_index,
+                                "2026-07-28T00:00:05+00:00",
+                            )
+                        )
+                        batch["dynamic_environment_after"] = (
+                            self.windows_dynamic_snapshot(
+                                bindings["authority_host_sha256"],
+                                after_index,
+                                "2026-07-28T00:00:50+00:00",
+                            )
+                        )
+                    elif producer_os == "Linux":
                         batch["dynamic_environment_before"] = linux_factory(
                             bindings["authority_host_sha256"]
                         )
@@ -6230,7 +6324,6 @@ print(json.dumps(
             completed_by_os[producer_os] = completed
 
         valid_cases = 0
-        intentionally_ineligible_cases = 0
         for producer_os in ("Linux", "Darwin", "Windows"):
             producer_states = {
                 name: self.project_result_to_producer_os(
@@ -6321,29 +6414,13 @@ print(json.dumps(
                             "offline replay inspected a reviewer repository"
                         ),
                     ):
-                        if (
-                            producer_os == "Windows"
-                            and state_name == "completed"
-                        ):
-                            with self.assertRaisesRegex(
-                                benchmark.HarnessError,
-                                "source is not allowed",
-                            ):
-                                benchmark.validate_result(
-                                    result,
-                                    self.manifest,
-                                    offline_replay=True,
-                                )
-                            intentionally_ineligible_cases += 1
-                        else:
-                            benchmark.validate_result(
-                                result,
-                                self.manifest,
-                                offline_replay=True,
-                            )
-                            valid_cases += 1
-        self.assertEqual(valid_cases, 33)
-        self.assertEqual(intentionally_ineligible_cases, 3)
+                        benchmark.validate_result(
+                            result,
+                            self.manifest,
+                            offline_replay=True,
+                        )
+                        valid_cases += 1
+        self.assertEqual(valid_cases, 45)
 
     def test_workflow_runs_correctness_and_upload_after_python_test_failure(
         self,
@@ -6990,8 +7067,6 @@ print(json.dumps(
         return str(Path(self.temporary.name).resolve().joinpath(*parts))
 
     def project_windows_paths_as_linux_artifact(self, value):
-        if os.name != "nt":
-            return value
         if isinstance(value, dict):
             projected = {
                 key: self.project_windows_paths_as_linux_artifact(item)
@@ -7044,6 +7119,17 @@ print(json.dumps(
 
             def windows_path(text: str) -> str:
                 path = benchmark.PurePosixPath(text)
+                if (
+                    len(path.parts) >= 3
+                    and path.parts[1] == "recorded-windows-producer"
+                    and len(path.parts[2]) == 1
+                ):
+                    return str(
+                        benchmark.PureWindowsPath(
+                            f"{path.parts[2].upper()}:/",
+                            *path.parts[3:],
+                        )
+                    )
                 return str(
                     benchmark.PureWindowsPath(
                         "C:/recorded-benchmark-producer",
@@ -7172,6 +7258,9 @@ print(json.dumps(
                     ]
                     command["command"] = v1.command_text(command["argv"])
         else:
+            projected = self.project_windows_paths_as_linux_artifact(
+                projected
+            )
             build_projection = {
                 "retained": {
                     "GOENV": "off",
@@ -7512,6 +7601,158 @@ print(json.dumps(
             "snapshot_sha256": benchmark.canonical_json_sha256(body),
         }
 
+    def windows_dynamic_snapshot(
+        self,
+        authority_host_sha256: str,
+        monotonic_ns: int,
+        captured_at_utc: str,
+    ) -> dict:
+        policy = benchmark.DYNAMIC_ENVIRONMENT_POLICY
+        architecture = "x86_64"
+        power_state = {
+            "schema": 1,
+            "api": "GetSystemPowerStatus",
+            "success": True,
+            "ac_line_status": 1,
+            "battery_flag": 128,
+            "battery_life_percent": 255,
+            "system_status_flag": 0,
+            "battery_life_time_seconds": 0xFFFFFFFF,
+            "battery_full_life_time_seconds": 0xFFFFFFFF,
+        }
+        processor_state = {
+            "schema": 1,
+            "api": "CallNtPowerInformation",
+            "information_level": {
+                "name": "ProcessorInformation",
+                "value": 11,
+            },
+            "ntstatus": 0,
+            "processor_group_count": 1,
+            "logical_processor_count": 2,
+            "processors": [
+                {
+                    "number": number,
+                    "max_mhz": 3200,
+                    "current_mhz": 1600,
+                    "mhz_limit": 3200,
+                    "max_idle_state": 3,
+                    "current_idle_state": 1,
+                }
+                for number in range(2)
+            ],
+        }
+        system_state = {
+            "schema": 1,
+            "api": "CallNtPowerInformation",
+            "information_level": {
+                "name": "SystemPowerInformation",
+                "value": 12,
+            },
+            "ntstatus": 0,
+            "max_idleness_allowed_percent": 90,
+            "idleness_percent": 99,
+            "time_remaining_seconds": 300,
+            "cooling_mode": 0,
+        }
+        pagefile_state = {
+            "schema": 1,
+            "api": "EnumPageFilesW",
+            "success": True,
+            "page_size_bytes": 4096,
+            "pagefiles": [
+                {
+                    "path": r"C:\pagefile.sys",
+                    "total_size_pages": 1024,
+                    "total_in_use_pages": 0,
+                    "peak_usage_pages": 0,
+                }
+            ],
+        }
+        affinity_state = {
+            "schema": 1,
+            "api": "GetProcessAffinityMask",
+            "success": True,
+            "pointer_width_bits": 64,
+            "processor_group_count": 1,
+            "process_mask_hex": "0x3",
+            "system_mask_hex": "0x3",
+        }
+        observations = {
+            "power_mode": benchmark.windows_dynamic_observation(
+                "power_mode",
+                "GetSystemPowerStatus",
+                power_state,
+                policy,
+                architecture,
+            ),
+            "low_power_mode": benchmark.windows_dynamic_observation(
+                "low_power_mode",
+                "GetSystemPowerStatus",
+                power_state,
+                policy,
+                architecture,
+            ),
+            "frequency_governor": (
+                benchmark.windows_dynamic_observation(
+                    "frequency_governor",
+                    "CallNtPowerInformation:ProcessorInformation",
+                    processor_state,
+                    policy,
+                    architecture,
+                )
+            ),
+            "thermal_state": benchmark.windows_dynamic_observation(
+                "thermal_state",
+                "CallNtPowerInformation:ProcessorInformation",
+                processor_state,
+                policy,
+                architecture,
+            ),
+            "concurrent_load": benchmark.windows_dynamic_observation(
+                "concurrent_load",
+                "CallNtPowerInformation:SystemPowerInformation",
+                system_state,
+                policy,
+                architecture,
+            ),
+            "swap": benchmark.windows_dynamic_observation(
+                "swap",
+                "EnumPageFilesW",
+                pagefile_state,
+                policy,
+                architecture,
+            ),
+            "affinity": benchmark.windows_dynamic_observation(
+                "affinity",
+                "GetProcessAffinityMask",
+                affinity_state,
+                policy,
+                architecture,
+            ),
+        }
+        self.assertTrue(
+            all(
+                observation["status"] == "qualified"
+                for observation in observations.values()
+            )
+        )
+        body = {
+            "schema": 1,
+            "captured_at_utc": captured_at_utc,
+            "monotonic_ns": monotonic_ns,
+            "authority_host_sha256": authority_host_sha256,
+            "observed_host_sha256": authority_host_sha256,
+            "observations": observations,
+            "policy": policy,
+            "eligible": True,
+            "reason": "offline Windows producer fixture",
+        }
+        return {
+            **body,
+            "snapshot_sha256": benchmark.canonical_json_sha256(body),
+        }
+
     def correctness_build_failure_result(self) -> dict:
         result = self.correctness_only_result()
         bundle = Path(self.temporary.name) / "offline-failure-bundle"
@@ -7563,6 +7804,7 @@ print(json.dumps(
         result["correctness"] = []
         result["builds"] = {}
         result["build_failures"] = [failure]
+        result = self.project_windows_paths_as_linux_artifact(result)
         self.bind_synthetic_build_environment(result)
         self.rebind_static_authorization(result, eligible=False)
         return result
@@ -7592,6 +7834,38 @@ print(json.dumps(
         result["provenance"]["qualification_request_path"] = str(
             root / "qualification-request.json"
         )
+        self.rebind_static_authorization(result, eligible=False)
+        return result
+
+    def formal_unavailable_result(self) -> dict:
+        result = self.completed_result()
+        result["mode"] = "prepare"
+        result["status"] = "unavailable"
+        result["claims"]["claim_eligible"] = False
+        result["correctness"] = []
+        result["builds"] = {}
+        result["build_failures"] = []
+        result["release_lanes"]["candidate"]["capabilities"]["release"][
+            "status"
+        ] = "unavailable"
+        result["release_lanes"]["candidate"]["capabilities"]["release"][
+            "reason"
+        ] = "formal release capability unavailable"
+        result["protocols"] = {
+            build_mode: {
+                "build_mode": build_mode,
+                "status": "unavailable",
+                "reason": "formal build mode unavailable",
+                "correctness": [],
+                "batches": [],
+                "verdict": "not_evaluated",
+            }
+            for build_mode in benchmark.FORMAL_BUILD_MODES
+        }
+        result["overall_verdict"] = "not_evaluated"
+        result["provenance"]["prepared_bundle_sha256"] = None
+        result["provenance"]["prepared_bundle_path"] = None
+        result["provenance"]["qualification_request_path"] = None
         self.rebind_static_authorization(result, eligible=False)
         return result
 
@@ -8451,7 +8725,9 @@ print(json.dumps(
     def prepared_bundle_fixture(self) -> tuple[dict, Path]:
         root = Path(self.temporary.name) / f"prepared-{time.time_ns()}"
         root.mkdir()
-        result = self.completed_result()
+        result = self.project_result_to_producer_os(
+            self.completed_result(), platform.system()
+        )
         result["mode"] = "prepare"
         result["status"] = "unavailable"
         result["claims"]["claim_eligible"] = False
@@ -8526,7 +8802,7 @@ print(json.dumps(
                 root / "compiler-build" / f"{lane}-cargo-home"
             )
             compiler = write_file(
-                target_dir / "release" / "nomo",
+                benchmark.binary_path(target_dir / "release", "nomo"),
                 f"{lane}-compiler".encode(),
             )
             state["nomo_path"] = compiler["path"]
@@ -8616,7 +8892,10 @@ print(json.dumps(
                     "sha256": v1.sha256_file(copied),
                 }
                 reference_binaries[lane] = write_file(
-                    root / "reference-bin" / workload_id / lane,
+                    benchmark.binary_path(
+                        root / "reference-bin",
+                        f"{workload_id}-{lane}",
+                    ),
                     f"{workload_id}-{lane}".encode(),
                 )
             references["compiled_sources"] = copied_sources
@@ -8716,8 +8995,13 @@ print(json.dumps(
                         project / "build" / "c" / "main.c",
                         f"{workload_id}-{build_mode}-{lane}-c".encode(),
                     )
+                    project_name = benchmark.parse_project_name(
+                        nomo_manifest
+                    )
                     binary = write_file(
-                        project / "build" / "bin" / "program",
+                        benchmark.binary_path(
+                            project / "build" / "bin", project_name
+                        ),
                         f"{workload_id}-{build_mode}-{lane}-binary".encode(),
                     )
                     formal["repository"] = state["repository"]

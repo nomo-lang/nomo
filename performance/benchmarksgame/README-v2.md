@@ -42,6 +42,11 @@ unmodified generated C, and compiles it with
 artifact's already-bound build host, never from the reviewer process, so an
 unchanged Linux/macOS command remains valid when audited on Windows and vice
 versa.
+The regression authority exercises five artifact states—correctness success,
+correctness failure, formal unavailable, prepared, and completed—from each of
+the Linux, macOS, and Windows producer contracts on each of the three reviewer
+platforms. All 45 offline replays must pass without reading reviewer paths,
+tools, environment variables, repositories, or processes.
 It never reuses a release artifact. Each mode has its own correctness gate,
 warmups, 30-block schedules, batches, statistics, and verdict. Samples are
 never pooled across modes, and both modes must pass before the suite can pass.
@@ -356,9 +361,16 @@ canonical digests; snapshots cannot be reused between attempts or build modes.
 An anomaly invalidates only that batch and its complete raw evidence remains.
 Dynamic command evidence uses a controlled locale and canonical PATH, and the
 authority additionally locks Darwin commands to `/usr/bin/pmset`,
-`/usr/bin/osascript`, and `/usr/sbin/sysctl`, and Windows power inspection to
-the real `System32/powercfg.exe`; a PATH-shadowed replacement is rejected even
-when it has a self-consistent hash. On the canonical Apple Silicon host,
+`/usr/bin/osascript`, and `/usr/sbin/sysctl`; a PATH-shadowed replacement is
+rejected even when it has a self-consistent hash. Windows observations use
+exact WinAPI authorities: `GetSystemPowerStatus` for AC and battery-saver
+state, `CallNtPowerInformation` for processor thermal-limit and instantaneous
+system-idleness evidence, `EnumPageFilesW` for current pagefile use, and
+`GetProcessAffinityMask` for the process affinity mask. Their complete raw
+fields are hashed and re-parsed during offline replay. The
+`powercfg /getactivescheme` command is not accepted as proof of AC power or
+battery-saver state.
+On the canonical Apple Silicon host,
 frequency/governor is recorded as `not-applicable` under RFC 0043's
 “where applicable” rule. The authority accepts only the exact, unique current
 three-`Note:` `pmset -g therm` shape saying that thermal warning, performance

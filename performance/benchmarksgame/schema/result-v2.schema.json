@@ -14,6 +14,7 @@
     "provenance",
     "release_lanes",
     "builds",
+    "build_failures",
     "correctness",
     "protocols",
     "overall_verdict"
@@ -45,6 +46,11 @@
       },
       "additionalProperties": { "$ref": "#/$defs/workloadBuild" }
     },
+    "build_failures": {
+      "type": "array",
+      "maxItems": 1,
+      "items": { "$ref": "#/$defs/buildFailure" }
+    },
     "correctness": {
       "type": "array",
       "maxItems": 3,
@@ -69,6 +75,7 @@
         "properties": {
           "mode": { "const": "correctness" },
           "correctness": { "minItems": 3, "maxItems": 3 },
+          "build_failures": { "maxItems": 0 },
           "overall_verdict": { "const": "not_evaluated" },
           "claims": {
             "properties": { "claim_eligible": { "const": false } }
@@ -82,6 +89,7 @@
         "properties": {
           "mode": { "const": "prepare" },
           "correctness": { "maxItems": 0 },
+          "build_failures": { "maxItems": 0 },
           "builds": { "minProperties": 3, "maxProperties": 3 },
           "overall_verdict": { "const": "not_evaluated" },
           "claims": {
@@ -121,6 +129,7 @@
         "properties": {
           "mode": { "const": "measure" },
           "correctness": { "maxItems": 0 },
+          "build_failures": { "maxItems": 0 },
           "builds": { "minProperties": 3, "maxProperties": 3 },
           "release_lanes": {
             "properties": {
@@ -192,6 +201,68 @@
       },
       "additionalProperties": false
     },
+    "failedBuildCommand": {
+      "type": "object",
+      "required": [
+        "argv",
+        "command",
+        "cwd",
+        "duration_ns",
+        "exit_code",
+        "timed_out",
+        "started_at_utc",
+        "finished_at_utc",
+        "environment",
+        "stdout",
+        "stderr",
+        "error"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "cwd": { "type": ["string", "null"] },
+        "duration_ns": { "type": "integer", "minimum": 0 },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "started_at_utc": { "type": "string", "format": "date-time" },
+        "finished_at_utc": { "type": "string", "format": "date-time" },
+        "environment": { "type": "object" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "error": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "buildFailure": {
+      "type": "object",
+      "required": [
+        "kind",
+        "workload_id",
+        "lane",
+        "phase",
+        "source",
+        "output_path",
+        "command"
+      ],
+      "properties": {
+        "kind": { "const": "preflight-build-failure-v1" },
+        "workload_id": {
+          "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
+        },
+        "lane": { "enum": ["c", "cpp", "semantic-c", "go", "nomo-baseline"] },
+        "phase": {
+          "enum": ["reference-build", "nomo-emit-c", "nomo-generated-c-clang"]
+        },
+        "source": { "$ref": "#/$defs/file" },
+        "output_path": { "type": "string", "minLength": 1 },
+        "command": { "$ref": "#/$defs/failedBuildCommand" }
+      },
+      "additionalProperties": false
+    },
     "file": {
       "type": "object",
       "required": ["path", "sha256"],
@@ -224,7 +295,8 @@
         "version_command",
         "sysroot",
         "sysroot_command",
-        "toolchain"
+        "toolchain",
+        "driver_files"
       ],
       "properties": {
         "path": { "type": "string", "minLength": 1 },
@@ -259,7 +331,12 @@
         "version_command": { "$ref": "#/$defs/command" },
         "sysroot": { "type": "string", "minLength": 1 },
         "sysroot_command": { "$ref": "#/$defs/command" },
-        "toolchain": { "type": "string", "minLength": 1 }
+        "toolchain": { "type": "string", "minLength": 1 },
+        "driver_files": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/file" }
+        }
       },
       "additionalProperties": false
     },
@@ -381,6 +458,7 @@
         "command",
         "environment",
         "cargo_configs",
+        "rustup_resolution",
         "cargo",
         "rustc",
         "binary",
@@ -425,6 +503,35 @@
             },
             "additionalProperties": false
           }
+        },
+        "rustup_resolution": {
+          "type": "object",
+          "required": [
+            "kind",
+            "invocation_path",
+            "rustup",
+            "cargo_command",
+            "rustc_command",
+            "selected_sysroot"
+          ],
+          "properties": {
+            "kind": { "const": "rustup-which-v1" },
+            "invocation_path": { "type": "string", "minLength": 1 },
+            "rustup": {
+              "type": "object",
+              "required": ["path", "realpath", "sha256"],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "realpath": { "type": "string", "minLength": 1 },
+                "sha256": { "$ref": "#/$defs/sha256" }
+              },
+              "additionalProperties": false
+            },
+            "cargo_command": { "$ref": "#/$defs/command" },
+            "rustc_command": { "$ref": "#/$defs/command" },
+            "selected_sysroot": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
         },
         "cargo": { "$ref": "#/$defs/toolFile" },
         "rustc": { "$ref": "#/$defs/rustCompiler" },

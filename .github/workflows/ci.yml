@@ -58,21 +58,6 @@ jobs:
           path: performance/results/benchmarksgame-ci.json
           if-no-files-found: error
 
-      - name: Run Benchmarks Game v2 small-input correctness gate
-        run: >-
-          python3 scripts/benchmarksgame_v2.py
-          --mode correctness
-          --nomo target/release/nomo
-          --require-clean
-          --output performance/results/benchmarksgame-v2/ci.json
-
-      - name: Upload Benchmarks Game v2 correctness evidence
-        uses: actions/upload-artifact@v7
-        with:
-          name: nomo-benchmarksgame-v2-correctness
-          path: performance/results/benchmarksgame-v2/ci.json
-          if-no-files-found: error
-
       - name: Run P0 async zero-cost and reference controls
         run: >-
           python3 scripts/async_benchmark.py
@@ -318,6 +303,81 @@ jobs:
             examples/async_structured_deadline/build/x86_64-apple-darwin-none
             examples/async_structured_panic_cleanup/build/x86_64-apple-darwin-none
             examples/sqlite_agent_memory/build/x86_64-apple-darwin-none
+          if-no-files-found: error
+
+  benchmark-v2-portability:
+    name: Benchmark v2 correctness (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-24.04, macos-15, windows-2022]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+      - uses: actions/setup-go@v6
+        with:
+          go-version: 1.25.12
+          cache: false
+      - name: Resolve the pinned Go driver
+        id: benchmark-go
+        shell: pwsh
+        run: |
+          $go = Get-Command go -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1 -ExpandProperty Source
+          if (-not [System.IO.Path]::IsPathRooted($go)) {
+            throw "setup-go did not expose an absolute Go invocation path: $go"
+          }
+          "path=$go" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+      - name: Verify frozen benchmark checkout uses LF bytes
+        shell: pwsh
+        run: |
+          $paths = @(
+            "performance/benchmarksgame/manifest-v2.json",
+            "performance/benchmarksgame/reference/c/spectral-norm.c",
+            "performance/benchmarksgame/reference/cpp/spectral-norm.cpp",
+            "performance/benchmarksgame/reference/go/spectral-norm.go",
+            "performance/benchmarksgame/reference/nomo/spectral-norm/src/main.nomo",
+            "performance/benchmarksgame/reference/nomo/spectral-norm/nomo.toml",
+            "performance/benchmarksgame/fixtures/spectral-norm-100.txt",
+            "performance/benchmarksgame/README-v2.md",
+            "scripts/benchmarksgame_v2.py"
+          )
+          foreach ($path in $paths) {
+            $attribute = git check-attr eol -- $path
+            if ($attribute -notmatch "eol: lf$") {
+              throw "frozen benchmark path is not eol=lf: $attribute"
+            }
+          }
+      - name: Install pinned Draft 2020-12 validator
+        run: python -m pip install -r scripts/requirements-benchmarksgame-v2.txt
+      - name: Verify Clang C and C++ drivers
+        run: |
+          clang --version
+          clang++ --version
+      - name: Build correctness driver
+        run: cargo build --locked --release --bin nomo
+      - name: Run v2 schema, statistics, provenance, and collector tests
+        run: python -m unittest scripts.tests.test_benchmarksgame_v2 -v
+      - name: Run v2 small-input correctness gate
+        run: >-
+          python scripts/benchmarksgame_v2.py
+          --mode correctness
+          --nomo target/release/nomo
+          --go "${{ steps.benchmark-go.outputs.path }}"
+          --require-clean
+          --output performance/results/benchmarksgame-v2/ci-${{ runner.os }}.json
+      - name: Upload v2 correctness evidence
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-benchmarksgame-v2-${{ runner.os }}
+          path: |
+            performance/results/benchmarksgame-v2/ci-${{ runner.os }}.json
+            performance/results/benchmarksgame-v2/ci-${{ runner.os }}.log
           if-no-files-found: error
 
   linux-cross-build:

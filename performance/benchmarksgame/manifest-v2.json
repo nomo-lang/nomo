@@ -164,7 +164,9 @@
     "go": {
       "required_version": "go1.25.12",
       "build_environment": {
-        "GOENV": "off"
+        "GOENV": "off",
+        "GOCACHE": "isolated-empty-per-build-removed-after-build",
+        "GOMODCACHE": "isolated-empty-per-build-removed-after-build"
       },
       "runtime_environment": {
         "GOMAXPROCS": "1"

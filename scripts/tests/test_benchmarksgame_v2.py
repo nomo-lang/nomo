@@ -139,7 +139,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         )
         self.assertEqual(
             self.manifest["toolchains"]["go"]["build_environment"],
-            {"GOENV": "off"},
+            benchmark.GO_BUILD_ENVIRONMENT_CONTRACT,
         )
 
     def test_manifest_rejects_frozen_input_threshold_or_rfc_changes(self) -> None:
@@ -987,7 +987,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ),
         )
         for observation_id, trusted, arguments in profiles:
-            shadow = f"/usr/local/bin/{Path(trusted).name}"
+            shadow = self.fixture_path("shadow", Path(trusted).name)
             with self.subTest(observation=observation_id):
                 self.assertTrue(
                     benchmark.dynamic_source_profile_is_allowed(
@@ -1038,15 +1038,104 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "LIB": poison,
                 "LIBPATH": poison,
                 "CFLAGS": "-DPOISONED_PARENT",
+                "ProgramData": poison,
+                "ProgramFiles": poison,
+                "ProgramFiles(x86)": poison,
+                "ProgramW6432": poison,
+                "COMSPEC": poison,
+                "PATHEXT": ".POISON",
             },
         ):
-            benchmark.canonical_windows_build_support(refresh=True)
+            support = benchmark.canonical_windows_build_support(refresh=True)
             actual, projection = benchmark.sanitized_build_environment()
             self.assertNotEqual(actual["INCLUDE"], poison)
             self.assertNotEqual(actual["LIB"], poison)
             self.assertNotEqual(actual["LIBPATH"], poison)
             self.assertNotIn("CFLAGS", actual)
             self.assertIn("windows_toolchain", projection)
+            authority = support["authority"]
+            self.assertGreaterEqual(
+                len(authority["installation_candidates"]), 1
+            )
+            self.assertEqual(
+                Path(
+                    authority["chosen_installation_json"][
+                        "installationPath"
+                    ]
+                ).resolve(),
+                Path(authority["installation_path"]),
+            )
+            raw_vswhere = base64.b64decode(
+                authority["vswhere_stdout"]["base64"]
+            )
+            self.assertIsInstance(
+                json.loads(raw_vswhere.decode("utf-8-sig")), list
+            )
+            self.assertEqual(
+                authority["vswhere_stdout"]["length_bytes"],
+                len(raw_vswhere),
+            )
+            self.assertEqual(
+                authority["vswhere_stdout"]["sha256"],
+                v1.sha256_bytes(raw_vswhere),
+            )
+            self.assertEqual(
+                set(authority["llvm_tools"]),
+                {"clang.exe", "clang++.exe"},
+            )
+            for identity in authority["llvm_tools"].values():
+                self.assertTrue(Path(identity["path"]).is_file())
+                self.assertEqual(
+                    identity["sha256"],
+                    v1.sha256_file(Path(identity["realpath"])),
+                )
+            self.assertEqual(
+                set(authority["sdk_crt_markers"]),
+                {
+                    "ucrt_header",
+                    "windows_header",
+                    "sdk_version_header",
+                    "vc_runtime_header",
+                    "ucrt_library",
+                    "kernel32_library",
+                    "vc_runtime_library",
+                },
+            )
+            for marker in authority["sdk_crt_markers"].values():
+                self.assertEqual(
+                    marker["sha256"],
+                    v1.sha256_file(Path(marker["path"])),
+                )
+            self.assertEqual(
+                set(authority["excluded_candidates"]),
+                {"path", "include", "lib", "libpath"},
+            )
+            for exclusions in authority["excluded_candidates"].values():
+                for exclusion in exclusions:
+                    self.assertTrue(Path(exclusion["path"]).is_absolute())
+                    self.assertTrue(exclusion["reason"])
+            retained_paths = [
+                *authority["path"],
+                *authority["include"],
+                *authority["lib"],
+                *authority["libpath"],
+            ]
+            self.assertFalse(
+                any(
+                    "netfx" in value.casefold()
+                    or "reference assemblies" in value.casefold()
+                    for value in retained_paths
+                )
+            )
+            for name in (
+                "ProgramData",
+                "ProgramFiles",
+                "ProgramFiles(x86)",
+                "ProgramW6432",
+                "COMSPEC",
+                "PATHEXT",
+            ):
+                self.assertNotEqual(actual[name], poison)
             source = Path(self.temporary.name) / "sdk-probe.c"
             binary = Path(self.temporary.name) / "sdk-probe.exe"
             source.write_text(
@@ -1054,6 +1143,31 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 encoding="utf-8",
             )
             clang = benchmark.resolve_executable("clang", "Clang C")
+            self.assertEqual(
+                benchmark._windows_executable_from_path(
+                    "clang.exe", actual["PATH"]
+                ),
+                Path(
+                    authority["llvm_tools"]["clang.exe"]["path"]
+                ).resolve(),
+            )
+            lookup = subprocess.run(
+                [
+                    sys.executable,
+                    "-c",
+                    "import shutil; print(shutil.which('clang') or '')",
+                ],
+                env=actual,
+                check=True,
+                capture_output=True,
+                text=True,
+            )
+            self.assertEqual(
+                Path(lookup.stdout.strip()).resolve(),
+                Path(
+                    authority["llvm_tools"]["clang.exe"]["path"]
+                ).resolve(),
+            )
             subprocess.run(
                 [
                     str(clang),
@@ -1067,7 +1181,254 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 check=True,
                 capture_output=True,
             )
+            subprocess.run(
+                [str(binary)],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
+            cpp_source = Path(self.temporary.name) / "sdk-probe.cpp"
+            cpp_binary = Path(self.temporary.name) / "sdk-probe-cpp.exe"
+            cpp_source.write_text(
+                "#include <array>\n"
+                "int main() { std::array<int, 1> v{1}; return v[0] - 1; }\n",
+                encoding="utf-8",
+            )
+            clangxx = benchmark.resolve_executable("clang++", "Clang C++")
+            subprocess.run(
+                [
+                    str(clangxx),
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                    *benchmark.BASE_CPP_FLAGS,
+                    str(cpp_source),
+                    "-o",
+                    str(cpp_binary),
+                ],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [str(cpp_binary)],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
+            nomo = benchmark.binary_path(
+                benchmark.REPOSITORY_ROOT / "target" / "release",
+                "nomo",
+            )
+            self.assertTrue(nomo.is_file())
+            workload = self.manifest["workloads"][0]
+            source_record = workload["sources"]["nomo"]
+            nomo_project = Path(self.temporary.name) / "nomo-build-smoke"
+            v1.copy_nomo_project(
+                self.suite_root / source_record["path"],
+                self.suite_root / source_record["project_manifest"],
+                nomo_project,
+            )
+            subprocess.run(
+                [str(nomo), "build", str(nomo_project)],
+                cwd=benchmark.REPOSITORY_ROOT,
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
         self.assertTrue(binary.is_file())
+        self.assertTrue(cpp_binary.is_file())
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows LLVM")
+    def test_windows_release_backend_environment_finds_bound_clang(
+        self,
+    ) -> None:
+        support = benchmark.canonical_windows_build_support()
+        actual, projection = benchmark.sanitized_build_environment()
+        authority = support["authority"]["llvm_tools"]["clang.exe"]
+        lookup = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                "import shutil; print(shutil.which('clang') or '')",
+            ],
+            env=actual,
+            check=True,
+            capture_output=True,
+            text=True,
+        )
+        self.assertEqual(
+            Path(lookup.stdout.strip()).resolve(),
+            Path(authority["path"]).resolve(),
+        )
+        self.assertEqual(
+            projection["windows_toolchain"]["llvm_tools"]["clang.exe"],
+            authority,
+        )
+
+    def test_windows_visual_studio_selection_is_deterministic(self) -> None:
+        older = Path(self.temporary.name) / "VS" / "17.10"
+        latest_b = Path(self.temporary.name) / "VS" / "17.14-b"
+        latest_a = Path(self.temporary.name) / "VS" / "17.14-a"
+        incomplete = Path(self.temporary.name) / "VS" / "18.0"
+        for path in (older, latest_b, latest_a, incomplete):
+            tools = path / "Common7" / "Tools"
+            tools.mkdir(parents=True)
+            (tools / "VsDevCmd.bat").write_text("@echo off\r\n", encoding="utf-8")
+        installations = [
+            {
+                "installationPath": str(latest_b),
+                "installationVersion": "17.14.1.0",
+                "productId": "b",
+                "catalog": {"productLine": "Dev17"},
+                "installDate": "2026-07-20T00:00:00Z",
+                "isComplete": True,
+                "isLaunchable": True,
+                "isPrerelease": False,
+            },
+            {
+                "installationPath": str(older),
+                "installationVersion": "17.10.9.0",
+                "productId": "older",
+                "catalog": {"productLine": "Dev17"},
+                "installDate": "2026-07-19T00:00:00Z",
+                "isComplete": True,
+                "isLaunchable": True,
+                "isPrerelease": False,
+            },
+            {
+                "installationPath": str(incomplete),
+                "installationVersion": "18.0.0.0",
+                "productId": "incomplete",
+                "catalog": {"productLine": "Dev17"},
+                "installDate": "2026-07-21T00:00:00Z",
+                "isComplete": False,
+                "isLaunchable": True,
+                "isPrerelease": True,
+            },
+            {
+                "installationPath": str(latest_a),
+                "installationVersion": "17.14.1.0",
+                "productId": "a",
+                "catalog": {"productLine": "Dev17"},
+                "installDate": "2026-07-20T00:00:00Z",
+                "isComplete": True,
+                "isLaunchable": True,
+                "isPrerelease": False,
+            },
+        ]
+        selected, candidates, reason = (
+            benchmark.select_visual_studio_installation(installations)
+        )
+        self.assertEqual(
+            Path(selected["installationPath"]).resolve(),
+            latest_a.resolve(),
+        )
+        self.assertEqual(len(candidates), 4)
+        self.assertIn("installationVersion descending", reason)
+        incomplete_record = next(
+            item for item in candidates if item["product_id"] == "incomplete"
+        )
+        self.assertFalse(incomplete_record["eligible"])
+
+    def test_windows_vsdevcmd_command_quotes_via_argument_boundaries(self) -> None:
+        cmd = Path(r"C:\Windows\System32\cmd.exe")
+        vsdevcmd = Path(
+            r"C:\Program Files\Microsoft Visual Studio\2022"
+            r"\Enterprise\Common7\Tools\VsDevCmd.bat"
+        )
+        argv = benchmark.windows_vsdevcmd_command(cmd, vsdevcmd, "amd64")
+        self.assertEqual(
+            argv,
+            [
+                str(cmd),
+                "/d",
+                "/c",
+                "call",
+                str(vsdevcmd),
+                "-no_logo",
+                "-arch=amd64",
+                "-host_arch=amd64",
+                "&&",
+                "set",
+            ],
+        )
+        command_line = subprocess.list2cmdline(argv)
+        self.assertIn(f'call "{vsdevcmd}"', command_line)
+        self.assertNotIn(r"\\\"", command_line)
+
+    def test_windows_path_resolution_does_not_read_parent_pathext(self) -> None:
+        root = Path(self.temporary.name)
+        first = root / "first"
+        second = root / "second"
+        first.mkdir()
+        second.mkdir()
+        compiler = first / "cl.exe"
+        compiler.write_bytes(b"bound-cl")
+        with mock.patch.dict(os.environ, {"PATHEXT": ".POISON"}):
+            self.assertEqual(
+                benchmark._windows_executable_from_path(
+                    "cl.exe",
+                    os.pathsep.join((str(first), str(second))),
+                ),
+                compiler.resolve(),
+            )
+            bare_compiler = first / "clang.EXE"
+            bare_compiler.write_bytes(b"bound-clang")
+            self.assertEqual(
+                benchmark._windows_executable_from_path(
+                    "clang",
+                    os.pathsep.join((str(first), str(second))),
+                ),
+                bare_compiler.resolve(),
+            )
+        (second / "cl.exe").write_bytes(b"ambiguous-cl")
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "exactly one cl.exe"
+        ):
+            benchmark._windows_executable_from_path(
+                "cl.exe",
+                os.pathsep.join((str(first), str(second))),
+                require_unique=True,
+            )
+
+    def test_windows_sdk_candidates_filter_netfx_and_record_exclusions(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        selected = root / "Visual Studio"
+        retained = selected / "VC" / "Tools" / "include"
+        netfx = root / "Windows Kits" / "NETFXSDK" / "4.8" / "Include"
+        retained.mkdir(parents=True)
+        netfx.mkdir(parents=True)
+        missing = root / "Reference Assemblies"
+        kept, excluded = benchmark._filter_paths_within_roots(
+            [str(retained), str(netfx), str(missing)],
+            [selected],
+            "INCLUDE",
+        )
+        self.assertEqual(kept, [str(retained.resolve())])
+        self.assertEqual(
+            excluded,
+            [
+                {
+                    "path": str(netfx.resolve()),
+                    "reason": (
+                        "outside selected VS VC and Windows SDK/UCRT roots"
+                    ),
+                },
+                {
+                    "path": str(missing.resolve()),
+                    "reason": "directory is unavailable",
+                },
+            ],
+        )
+        empty, libpath_excluded = benchmark._filter_paths_within_roots(
+            [str(netfx)],
+            [selected],
+            "LIBPATH",
+            require_nonempty=False,
+        )
+        self.assertEqual(empty, [])
+        self.assertEqual(libpath_excluded, excluded[:1])
 
     def test_current_platform_dynamic_capture_replays(self) -> None:
         host = benchmark.host_provenance()
@@ -1192,6 +1553,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 ("Apple clang version 21.0.0", {}),
                 ("Apple clang version 21.0.0", {}),
                 ("go version go1.25.11 darwin/arm64", {}),
+                (self.temporary.name, {}),
             ],
         ), mock.patch.object(
             benchmark,
@@ -1248,6 +1610,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 ("Apple clang version 21.0.0", {}),
                 ("Apple clang version 21.0.0", {}),
                 ("go version go1.25.12 darwin/arm64", {}),
+                (self.temporary.name, {}),
             ],
         ), mock.patch.object(
             benchmark,
@@ -1321,16 +1684,27 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         )
 
     def test_rustup_multicall_paths_and_rustc_authority_are_bound(self) -> None:
-        cargo = benchmark.resolve_executable("cargo", "Cargo")
-        rustc = benchmark.rustc_for_cargo(cargo)
-        self.assertEqual(cargo.name.lower().removesuffix(".exe"), "cargo")
-        self.assertEqual(rustc.name.lower().removesuffix(".exe"), "rustc")
-        if cargo.resolve() == rustc.resolve():
-            self.assertNotEqual(cargo, rustc)
+        cargo_invocation = benchmark.resolve_executable("cargo", "Cargo")
         root = Path(self.temporary.name)
-        cargo_environment = {
+        resolution_environment = {
             "CARGO_TARGET_DIR": str((root / "target").resolve()),
             "CARGO_HOME": str((root / "cargo-home").resolve()),
+        }
+        cargo, rustc, resolution = benchmark.resolve_rustup_toolchain(
+            cargo_invocation,
+            root,
+            resolution_environment,
+        )
+        self.assertEqual(cargo.name.lower().removesuffix(".exe"), "cargo")
+        self.assertEqual(rustc.name.lower().removesuffix(".exe"), "rustc")
+        self.assertNotEqual(cargo, rustc)
+        self.assertEqual(cargo.parent, rustc.parent)
+        self.assertEqual(resolution["selected_sysroot"], str(cargo.parent.parent))
+        self.assertEqual(
+            resolution["invocation_path"], str(cargo_invocation)
+        )
+        cargo_environment = {
+            **resolution_environment,
             "RUSTC": str(rustc),
         }
         record = benchmark.rustc_authority(
@@ -1342,6 +1716,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(record["realpath"], str(rustc.resolve()))
         self.assertEqual(record["version_fields"]["binary"], "rustc")
         self.assertTrue(Path(record["sysroot"]).is_absolute())
+        self.assertTrue(record["driver_files"])
         self.assertEqual(
             record["version_command"]["environment"],
             benchmark.sanitized_build_environment(cargo_environment)[1],
@@ -1385,6 +1760,52 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "DEVELOPER_DIR", command["environment"]["retained"]
             )
             self.assertNotIn("TOOLCHAINS", command["environment"]["retained"])
+
+    @unittest.skipUnless(
+        platform.system() == "Darwin", "requires the Apple SDK"
+    )
+    def test_darwin_build_environment_constructs_trusted_sdkroot(self) -> None:
+        poison = self.fixture_path("poison-sdk")
+        with mock.patch.dict(
+            os.environ,
+            {
+                "SDKROOT": poison,
+                "DEVELOPER_DIR": poison,
+                "TOOLCHAINS": "poison",
+            },
+        ):
+            support = benchmark.canonical_darwin_build_support(refresh=True)
+            actual, projection = benchmark.sanitized_build_environment()
+            self.assertEqual(actual["SDKROOT"], support["sdkroot"])
+            self.assertNotEqual(actual["SDKROOT"], poison)
+            self.assertEqual(projection["darwin_sdk"], support)
+            self.assertIn("DEVELOPER_DIR", projection["cleared"])
+            source = Path(self.temporary.name) / "sdk-probe.c"
+            binary = Path(self.temporary.name) / "sdk-probe"
+            source.write_text(
+                "#include <TargetConditionals.h>\n"
+                "int main(void) { return TARGET_OS_OSX ? 0 : 1; }\n",
+                encoding="utf-8",
+            )
+            subprocess.run(
+                [
+                    str(benchmark.resolve_executable("clang", "Clang C")),
+                    *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                    *benchmark.BASE_C_FLAGS,
+                    str(source),
+                    "-o",
+                    str(binary),
+                ],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
+            subprocess.run(
+                [str(binary)],
+                env=actual,
+                check=True,
+                capture_output=True,
+            )
 
     @unittest.skipUnless(hasattr(os, "wait4"), "requires POSIX wait4")
     def test_output_mismatch_and_timeout_are_rejected(self) -> None:
@@ -1433,14 +1854,17 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         collector = benchmark.PosixWait4Collector()
         with mock.patch.dict(os.environ, injected):
             actual, recorded = benchmark._environment({})
+            env_tool = shutil.which("env", path=benchmark.stable_build_path())
+            if env_tool is None:
+                self.skipTest("the system env executable is unavailable")
             probe = subprocess.run(
-                ["/usr/bin/env", "-0"],
+                [env_tool, "-0"],
                 check=True,
                 capture_output=True,
                 env=actual,
             )
             sample, stdout = collector.run(
-                ["/usr/bin/env", "-0"],
+                [env_tool, "-0"],
                 expected_stdout=probe.stdout,
                 timeout_seconds=5.0,
             )
@@ -1550,13 +1974,14 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     )
 
     def test_stdout_normalization_is_crlf_to_lf_only(self) -> None:
+        program = self.fixture_path("program")
         normalized = benchmark._validate_process_output(
-            ["/tmp/program"], 0, b"ok\r\n", b"", b"ok\n"
+            [program], 0, b"ok\r\n", b"", b"ok\n"
         )
         self.assertEqual(normalized, b"ok\n")
         with self.assertRaisesRegex(benchmark.HarnessError, "output mismatch"):
             benchmark._validate_process_output(
-                ["/tmp/program"], 0, b"ok \r\n", b"", b"ok\n"
+                [program], 0, b"ok \r\n", b"", b"ok\n"
             )
 
     def test_windows_api_signatures_are_pointer_width_safe(self) -> None:
@@ -1658,8 +2083,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         executable = Path(sys.executable)
         record = self.full_command([str(executable), "build", "--help"])
         with mock.patch.object(
-            v1,
-            "run_capture",
+            benchmark,
+            "run_build_capture",
             return_value=(record, b"Usage: nomo build [--emit-c]\n", b""),
         ):
             result = benchmark.release_capability(executable, "candidate")
@@ -1669,8 +2094,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             [str(executable), "build", "--help"],
         )
         with mock.patch.object(
-            v1,
-            "run_capture",
+            benchmark,
+            "run_build_capture",
             return_value=(
                 record,
                 b"Usage: nomo build [OPTIONS]\n  --release  optimized\n",
@@ -1751,8 +2176,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         executable = Path(sys.executable)
         record = self.full_command([str(executable), "build", "--help"])
         with mock.patch.object(
-            v1,
-            "run_capture",
+            benchmark,
+            "run_build_capture",
             return_value=(record, b"Usage: nomo build [--emit-c]\n", b""),
         ):
             result = benchmark.emit_c_capability(executable, "candidate")
@@ -1762,16 +2187,16 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         arguments = Namespace(
             candidate_commit="a" * 40,
             main_commit="b" * 40,
-            candidate_checkout="/tmp/candidate",
-            main_checkout="/tmp/main",
+            candidate_checkout=self.fixture_path("candidate"),
+            main_checkout=self.fixture_path("main"),
             cargo="cargo",
             environment_qualification=None,
             prepared_bundle=None,
         )
         states = []
         for lane, checkout, commit in (
-            ("candidate", "/tmp/candidate", "a" * 40),
-            ("main", "/tmp/main", "b" * 40),
+            ("candidate", self.fixture_path("candidate"), "a" * 40),
+            ("main", self.fixture_path("main"), "b" * 40),
         ):
             states.append(
                 {
@@ -1818,15 +2243,102 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             (checkout / ".git").mkdir(parents=True)
             bundle = root / "bundle"
             repository = {"commit": commit, "dirty": False}
+            sysroot = root / "fixture-rust-toolchain"
+            (sysroot / "lib").mkdir(parents=True)
+            driver = sysroot / "lib" / "librustc_driver-fixture"
+            driver.write_bytes(b"fixture driver")
+            resolution_environment = {
+                "CARGO_TARGET_DIR": str(
+                    (bundle / "compiler-build" / "main").resolve()
+                ),
+                "CARGO_HOME": str(
+                    (
+                        bundle
+                        / "compiler-build"
+                        / "main-cargo-home"
+                    ).resolve()
+                ),
+            }
+            rustup_resolution = {
+                "kind": "rustup-which-v1",
+                "invocation_path": sys.executable,
+                "rustup": {
+                    "path": sys.executable,
+                    "realpath": str(Path(sys.executable).resolve()),
+                    "sha256": v1.sha256_file(Path(sys.executable).resolve()),
+                },
+                "cargo_command": self.full_command(
+                    [sys.executable, "which", "cargo"],
+                    cwd=str(checkout.resolve()),
+                    approved_environment_overrides=resolution_environment,
+                ),
+                "rustc_command": self.full_command(
+                    [sys.executable, "which", "rustc"],
+                    cwd=str(checkout.resolve()),
+                    approved_environment_overrides=resolution_environment,
+                ),
+                "selected_sysroot": str(sysroot.resolve()),
+            }
+            rustc_record = {
+                "path": sys.executable,
+                "realpath": str(Path(sys.executable).resolve()),
+                "sha256": v1.sha256_file(Path(sys.executable).resolve()),
+                "version_output": (
+                    "rustc 1.99.0 (012345678 2026-01-01)\n"
+                    "binary: rustc\n"
+                    f"commit-hash: {'0' * 40}\n"
+                    "commit-date: 2026-01-01\n"
+                    "host: fixture-target\n"
+                    "release: 1.99.0\n"
+                    "LLVM version: 22.0.0"
+                ),
+                "version_fields": {
+                    "version": "rustc 1.99.0 (012345678 2026-01-01)",
+                    "binary": "rustc",
+                    "commit_hash": "0" * 40,
+                    "commit_date": "2026-01-01",
+                    "host": "fixture-target",
+                    "release": "1.99.0",
+                    "llvm_version": "22.0.0",
+                },
+                "version_command": self.full_command(
+                    [sys.executable, "-vV"],
+                    cwd=str(checkout.resolve()),
+                    approved_environment_overrides={
+                        **resolution_environment,
+                        "RUSTC": sys.executable,
+                    },
+                ),
+                "sysroot": str(sysroot.resolve()),
+                "sysroot_command": self.full_command(
+                    [sys.executable, "--print", "sysroot"],
+                    cwd=str(checkout.resolve()),
+                    approved_environment_overrides={
+                        **resolution_environment,
+                        "RUSTC": sys.executable,
+                    },
+                ),
+                "toolchain": "fixture-rust-toolchain",
+                "driver_files": [
+                    {
+                        "path": str(driver.resolve()),
+                        "sha256": v1.sha256_file(driver),
+                    }
+                ],
+            }
 
             def run_capture(
                 command: list[str],
                 timeout_seconds: float,
                 cwd: Path,
-                environment: dict[str, str],
+                approved_environment_overrides: dict[str, str],
             ) -> tuple[dict, bytes, bytes]:
-                target = Path(environment["CARGO_TARGET_DIR"])
-                cargo_home = Path(environment["CARGO_HOME"])
+                target = Path(
+                    approved_environment_overrides["CARGO_TARGET_DIR"]
+                )
+                cargo_home = Path(
+                    approved_environment_overrides["CARGO_HOME"]
+                )
                 self.assertEqual(
                     cargo_home,
                     (
@@ -1856,7 +2368,10 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                         b"LLVM version: 22.0.0\n"
                     )
                 elif command[-2:] == ["--print", "sysroot"]:
-                    stdout = b"/tmp/fixture-rust-toolchain\n"
+                    stdout = (
+                        self.fixture_path("fixture-rust-toolchain").encode()
+                        + b"\n"
+                    )
                 else:
                     stdout = b""
                 return (
@@ -1900,9 +2415,21 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ), mock.patch.object(
                 benchmark, "resolve_executable", return_value=Path(sys.executable)
             ), mock.patch.object(
+                benchmark,
+                "resolve_rustup_toolchain",
+                return_value=(
+                    Path(sys.executable),
+                    Path(sys.executable),
+                    rustup_resolution,
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "rustc_authority",
+                return_value=rustc_record,
+            ), mock.patch.object(
                 v1, "tool_version", return_value="cargo 1.99.0"
             ), mock.patch.object(
-                v1, "run_capture", side_effect=run_capture
+                benchmark, "run_build_capture", side_effect=run_capture
             ), mock.patch.object(
                 benchmark, "release_capability", return_value=available_probe
             ), mock.patch.object(
@@ -1934,6 +2461,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(compiler["cargo_configs"], [])
         self.assertEqual(compiler["rustc"]["realpath"], str(Path(sys.executable).resolve()))
         self.assertEqual(compiler["rustc"]["toolchain"], "fixture-rust-toolchain")
+        self.assertEqual(compiler["rustup_resolution"], rustup_resolution)
         self.assertEqual(
             compiler["command"]["argv"][1:],
             ["build", "--locked", "--release", "--bin", "nomo"],
@@ -1982,7 +2510,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
 
         poison.unlink()
         checked_in.write_text(
-            '[build]\nrustc = "/tmp/unbound-rustc"\n',
+            "[build]\nrustc = "
+            f"{json.dumps(str(self.fixture_path('unbound-rustc')))}\n",
             encoding="utf-8",
         )
         with mock.patch.object(
@@ -1993,6 +2522,29 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             benchmark.HarnessError, "authority-bound Rust compiler"
         ):
             benchmark.cargo_config_provenance(checkout)
+
+        marker = root / "wrapper-executed"
+        wrapper = root / "poison-wrapper"
+        wrapper.write_text(
+            f"#!{sys.executable}\n"
+            "from pathlib import Path\n"
+            f"Path({str(marker)!r}).write_text('executed')\n",
+            encoding="utf-8",
+        )
+        wrapper.chmod(0o755)
+        checked_in.write_text(
+            f'build."rustc-workspace-wrapper" = {json.dumps(str(wrapper))}\n',
+            encoding="utf-8",
+        )
+        with mock.patch.object(
+            v1,
+            "git_capture",
+            return_value=".cargo/config.toml",
+        ), self.assertRaisesRegex(
+            benchmark.HarnessError, "authority-bound Rust compiler"
+        ):
+            benchmark.cargo_config_provenance(checkout)
+        self.assertFalse(marker.exists())
 
     def test_isolated_cargo_home_ignores_real_parent_poison_config(
         self,
@@ -2087,7 +2639,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "repository_state",
                 return_value={"commit": "a" * 40, "dirty": False},
             ), mock.patch.object(
-                v1, "git_capture", return_value="/tmp/fake-origin"
+                v1,
+                "git_capture",
+                return_value=self.fixture_path("fake-origin"),
             ):
                 result = benchmark.release_lane_state(
                     str(checkout),
@@ -2107,8 +2661,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         arguments = Namespace(
             candidate_commit="a" * 40,
             main_commit="a" * 40,
-            candidate_checkout="/tmp/candidate",
-            main_checkout="/tmp/main",
+            candidate_checkout=self.fixture_path("candidate"),
+            main_checkout=self.fixture_path("main"),
         )
         self.assertIn("different", benchmark.lane_pair_conflict(arguments))
         parsed = benchmark.parse_arguments([])
@@ -2549,6 +3103,132 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertIn(goenv.stdout.strip(), {"", "off"})
         self.assertEqual(goflags.stdout.strip(), "")
 
+    def test_go_build_uses_isolated_cache_without_parent_localappdata(
+        self,
+    ) -> None:
+        go = shutil.which("go")
+        if go is None:
+            self.skipTest("Go is unavailable")
+        root = Path(self.temporary.name) / "go-cache-smoke"
+        root.mkdir()
+        source = root / "main.go"
+        source.write_text("package main\nfunc main() {}\n", encoding="utf-8")
+        output = benchmark.binary_path(root, "go-cache-smoke")
+        poison_cache = str((root / "parent-cache").resolve())
+        with mock.patch.dict(
+            os.environ,
+            {
+                "GOCACHE": poison_cache,
+                "GOMODCACHE": str((root / "parent-module-cache").resolve()),
+                "LocalAppData": str((root / "parent-local-app-data").resolve()),
+            },
+        ):
+            os.environ.pop("LOCALAPPDATA", None)
+            with benchmark.isolated_go_build_cache(root) as cache_environment:
+                record, _, _ = benchmark.run_build_capture(
+                    [go, "build", "-o", str(output), str(source)],
+                    120.0,
+                    approved_environment_overrides=cache_environment,
+                )
+                self.assertNotEqual(cache_environment["GOCACHE"], poison_cache)
+                self.assertNotIn("LocalAppData", record["environment"]["retained"])
+                self.assertNotIn("LOCALAPPDATA", record["environment"]["retained"])
+                benchmark.validate_build_command_environment(
+                    record,
+                    "Go isolated-cache smoke",
+                    cache_environment,
+                )
+        self.assertTrue(output.is_file())
+        for directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.values():
+            self.assertFalse((root / directory).exists())
+
+    def test_correctness_preflight_build_failure_is_written_and_validated(
+        self,
+    ) -> None:
+        output = Path(self.temporary.name) / "correctness-build-failed.json"
+        bundle = output.with_suffix("")
+        source = bundle / "build" / "spectral-norm" / "references" / "go.go"
+        source.parent.mkdir(parents=True)
+        frozen_source = (
+            self.suite_root
+            / self.manifest["workloads"][0]["sources"]["go"]["path"]
+        )
+        shutil.copy2(frozen_source, source)
+        binary = benchmark.binary_path(bundle / "bin", "spectral-norm-go")
+        fixture = self.correctness_only_result()
+        toolchains = fixture["provenance"]["toolchains"]
+        cache_environment = {
+            key: str((source.parent / directory).resolve())
+            for key, directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.items()
+        }
+        command_argv = [
+            toolchains["go"]["path"],
+            "build",
+            "-o",
+            str(binary.resolve()),
+            str(source.resolve()),
+        ]
+        command = benchmark.failed_build_command_record(
+            command_argv,
+            REPOSITORY_ROOT,
+            benchmark.sanitized_build_environment(cache_environment)[1],
+            "2026-07-28T00:00:00+00:00",
+            1,
+            b"",
+            b"build cache is required",
+            exit_code=1,
+            timed_out=False,
+            error="command exited with status 1",
+        )
+        failure = benchmark.workload_build_failure_record(
+            "spectral-norm",
+            "go",
+            "reference-build",
+            source,
+            binary,
+            command,
+        )
+        collector = mock.Mock()
+        host_os = platform.system()
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host(host_os)
+        )
+        host = {"os": host_os, "architecture": platform.machine()}
+        unavailable = {
+            "status": "unavailable",
+            "reason": "fixture release capability unavailable",
+            "emit_c_fallback_used": False,
+        }
+        with mock.patch.object(
+            benchmark, "release_capability", return_value=unavailable
+        ), mock.patch.object(
+            benchmark,
+            "build_reference_workload",
+            side_effect=benchmark.WorkloadBuildError("failed Go build", failure),
+        ):
+            result = benchmark.run_correctness(
+                Namespace(),
+                self.manifest,
+                self.manifest_path,
+                self.suite_root,
+                output,
+                {},
+                toolchains,
+                collector,
+                host,
+            )
+        self.assertEqual(result["status"], "ineligible")
+        self.assertEqual(result["correctness"], [])
+        self.assertEqual(result["build_failures"], [failure])
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        benchmark.validate_result(result, self.manifest)
+        v1.write_result(output, result)
+        log_path = benchmark.write_evidence_log(output, result)
+        reloaded = v1.read_json(output)
+        benchmark.validate_result_schema(reloaded, self.result_schema_path)
+        benchmark.validate_result(reloaded, self.manifest)
+        self.assertIn("build cache is required", log_path.read_text())
+
     def test_clang_driver_config_is_required_once_on_every_decisive_path(
         self,
     ) -> None:
@@ -2731,7 +3411,12 @@ print(json.dumps(
         changed["builds"]["spectral-norm"]["modes"]["release"]["candidate"][
             "command"
         ] = self.command_record(
-            ["/tmp/nomo", "build", "/tmp/project", "--emit-c"]
+            [
+                self.fixture_path("tools", "nomo"),
+                "build",
+                self.fixture_path("project"),
+                "--emit-c",
+            ]
         )
         with self.assertRaisesRegex(benchmark.HarnessError, "release argv changed"):
             benchmark.validate_build_provenance(changed, self.manifest)
@@ -2779,7 +3464,16 @@ print(json.dumps(
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
             )
-        self.assertEqual(completed.stdout, fixture)
+        self.assertEqual(
+            benchmark._validate_process_output(
+                [str(binary), workload["correctness_input"]],
+                completed.returncode,
+                completed.stdout,
+                completed.stderr,
+                fixture,
+            ),
+            fixture,
+        )
         self.assertTrue(build["generated_c"]["unmodified_after_emit"])
         self.assertFalse(build["release_artifact_reused"])
         self.assertEqual(
@@ -2857,7 +3551,7 @@ print(json.dumps(
         sample = result["protocols"]["release"]["batches"][0]["workloads"][0][
             "samples"
         ]["candidate"][0]
-        sample["command_argv"] = ["/usr/bin/true"]
+        sample["command_argv"] = [str(Path(sys.executable).resolve())]
         sample["command"] = v1.command_text(sample["command_argv"])
         sample["executable_sha256"] = "0" * 64
         sample["stdout_raw_sha256"] = "0" * 64
@@ -2915,14 +3609,14 @@ print(json.dumps(
         programs = {}
         mismatch = root / "correctness-mismatch"
         mismatch.write_text(
-            "#!/usr/bin/env python3\nprint('wrong')\n",
+            f"#!{sys.executable}\nprint('wrong')\n",
             encoding="utf-8",
         )
         mismatch.chmod(0o755)
         programs["output-mismatch"] = mismatch
         timeout = root / "correctness-timeout"
         timeout.write_text(
-            "#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n",
+            f"#!{sys.executable}\nimport time\ntime.sleep(10)\n",
             encoding="utf-8",
         )
         timeout.chmod(0o755)
@@ -3078,13 +3772,13 @@ print(json.dumps(
         root = Path(self.temporary.name)
         timeout_program = root / "timeout-program"
         timeout_program.write_text(
-            "#!/usr/bin/env python3\nimport time\ntime.sleep(10)\n",
+            f"#!{sys.executable}\nimport time\ntime.sleep(10)\n",
             encoding="utf-8",
         )
         timeout_program.chmod(0o755)
         mismatch_program = root / "mismatch-program"
         mismatch_program.write_text(
-            "#!/usr/bin/env python3\nprint('wrong')\n",
+            f"#!{sys.executable}\nprint('wrong')\n",
             encoding="utf-8",
         )
         mismatch_program.chmod(0o755)
@@ -3279,11 +3973,11 @@ print(json.dumps(
         result = self.completed_result()
         reference = result["builds"]["spectral-norm"]["references"]
         reference["source_files"]["cpp"] = {
-            "path": "/tmp/replacement.cpp",
+            "path": self.fixture_path("replacement.cpp"),
             "sha256": "0" * 64,
         }
         reference["compiled_sources"]["cpp"] = {
-            "path": "/tmp/replacement-copy.cpp",
+            "path": self.fixture_path("replacement-copy.cpp"),
             "sha256": "0" * 64,
         }
         command = reference["commands"]["cpp_build"]
@@ -3291,7 +3985,7 @@ print(json.dumps(
             len(benchmark.CLANG_DRIVER_CONFIG_FLAGS)
             + len(benchmark.BASE_CPP_FLAGS)
             + 1
-        ] = "/tmp/replacement-copy.cpp"
+        ] = self.fixture_path("replacement-copy.cpp")
         command["command"] = v1.command_text(command["argv"])
         with self.assertRaisesRegex(benchmark.HarnessError, "manifest-bound"):
             benchmark.validate_build_provenance(result, self.manifest)
@@ -3303,9 +3997,10 @@ print(json.dumps(
                 "candidate"
             ]["backend_provenance"]
             if mutation == "gcc":
-                backend["compiler"]["path"] = "/usr/bin/gcc"
-                backend["compile_commands"][0]["argv"][0] = "/usr/bin/gcc"
-                backend["link_command"]["argv"][0] = "/usr/bin/gcc"
+                gcc = self.fixture_path("tools", "gcc")
+                backend["compiler"]["path"] = gcc
+                backend["compile_commands"][0]["argv"][0] = gcc
+                backend["link_command"]["argv"][0] = gcc
             elif mutation == "target":
                 backend["compiler"]["target_triple"] = "x86_64-unknown-linux-gnu"
             else:
@@ -3584,7 +4279,7 @@ print(json.dumps(
         else:
             formal["clang_command"] = self.full_command(
                 [
-                    "/usr/bin/clang",
+                    self.fixture_path("tools", "clang"),
                     *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     *benchmark.BASE_C_FLAGS,
                     formal["generated_c"]["path"],
@@ -3932,6 +4627,9 @@ print(json.dumps(
 
         return capture
 
+    def fixture_path(self, *parts: str) -> str:
+        return str(Path(self.temporary.name).resolve().joinpath(*parts))
+
     def command_record(
         self,
         argv: list[str],
@@ -3962,11 +4660,21 @@ print(json.dumps(
     def binary_record(self, workload_id: str, build_mode: str, lane: str) -> dict:
         if lane in benchmark.REFERENCE_LANES or lane == "nomo-baseline":
             return {
-                "path": f"/tmp/{workload_id}-reference-{lane}",
+                "path": self.fixture_path(
+                    f"{workload_id}-reference-{lane}"
+                ),
                 "sha256": ("1" if lane != "go" else "2") * 64,
             }
         return {
-            "path": f"/tmp/{workload_id}/{build_mode}/{lane}/project/build/bin/program",
+            "path": self.fixture_path(
+                workload_id,
+                build_mode,
+                lane,
+                "project",
+                "build",
+                "bin",
+                "program",
+            ),
             "sha256": ("3" if lane == "candidate" else "4") * 64,
         }
 
@@ -3977,7 +4685,10 @@ print(json.dumps(
         link_flags = ["-lm"] if workload.get("link_math") else []
         compiled = {
             lane: {
-                "path": f"/tmp/{workload_id}-{lane}{'.cpp' if lane == 'cpp' else '.go' if lane == 'go' else '.c'}",
+                "path": self.fixture_path(
+                    f"{workload_id}-{lane}"
+                    f"{'.cpp' if lane == 'cpp' else '.go' if lane == 'go' else '.c'}"
+                ),
                 "sha256": workload["sources"][lane]["sha256"],
             }
             for lane in benchmark.REFERENCE_LANES
@@ -3987,7 +4698,7 @@ print(json.dumps(
             for lane in benchmark.REFERENCE_LANES
         }
         c = [
-            "/usr/bin/clang",
+            self.fixture_path("tools", "clang"),
             *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_C_FLAGS,
             compiled["c"]["path"],
@@ -3996,7 +4707,7 @@ print(json.dumps(
             *link_flags,
         ]
         cpp = [
-            "/usr/bin/clang++",
+            self.fixture_path("tools", "clang++"),
             *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_CPP_FLAGS,
             compiled["cpp"]["path"],
@@ -4005,7 +4716,7 @@ print(json.dumps(
             *link_flags,
         ]
         semantic_c = [
-            "/usr/bin/clang",
+            self.fixture_path("tools", "clang"),
             *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
             *benchmark.BASE_C_FLAGS,
             compiled["semantic-c"]["path"],
@@ -4031,12 +4742,21 @@ print(json.dumps(
                 "semantic-c_build": self.command_record(semantic_c),
                 "go_build": self.command_record(
                     [
-                        "/usr/bin/go",
+                        self.fixture_path("tools", "go"),
                         "build",
                         "-o",
                         binaries["go"]["path"],
                         compiled["go"]["path"],
-                    ]
+                    ],
+                    {
+                        key: str(
+                            (
+                                Path(compiled["go"]["path"]).parent
+                                / directory
+                            ).resolve()
+                        )
+                        for key, directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.items()
+                    },
                 ),
             }
         }
@@ -4046,14 +4766,17 @@ print(json.dumps(
     ) -> dict:
         commit = ("a" if lane == "candidate" else "b") * 40
         nomo_sha = ("c" if lane == "candidate" else "d") * 64
-        nomo_path = f"/tmp/{lane}/target/release/nomo"
-        project = f"/tmp/{workload_id}/{build_mode}/{lane}/project"
+        nomo_path = self.fixture_path(lane, "target", "release", "nomo")
+        project = self.fixture_path(workload_id, build_mode, lane, "project")
         generated_c = f"{project}/build/c/main.c"
         binary = self.binary_record(workload_id, build_mode, lane)
         base = {
             "repository": {"commit": commit},
             "nomo": {"path": nomo_path, "sha256": nomo_sha},
-            "source": {"path": "/tmp/main.nomo", "sha256": "f" * 64},
+            "source": {
+                "path": self.fixture_path("main.nomo"),
+                "sha256": "f" * 64,
+            },
             "lane": lane,
             "binary": binary,
             "compile_time_excluded_from_run_time": True,
@@ -4089,7 +4812,7 @@ print(json.dumps(
             "emit_stderr": "",
             "clang_command": self.full_command(
                 [
-                    "/usr/bin/clang",
+                    self.fixture_path("tools", "clang"),
                     *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                     *benchmark.BASE_C_FLAGS,
                     generated_c,
@@ -4124,8 +4847,8 @@ print(json.dumps(
         )
         object_path = f"{Path(generated_c).parent}/main.o"
         compiler = {
-            "path": "/usr/bin/clang",
-            "realpath": "/usr/bin/clang",
+            "path": self.fixture_path("tools", "clang"),
+            "realpath": self.fixture_path("tools", "clang"),
             "sha256": "9" * 64,
             "version_output": "Apple clang version 21.0.0",
             "target_triple": "arm64-apple-darwin",
@@ -4186,11 +4909,29 @@ print(json.dumps(
     def available_release_lane(self, lane: str) -> dict:
         commit = ("a" if lane == "candidate" else "b") * 40
         binary_sha = ("c" if lane == "candidate" else "d") * 64
-        nomo_path = f"/tmp/{lane}/target/release/nomo"
+        nomo_path = self.fixture_path(lane, "target", "release", "nomo")
         if self.__class__._rust_toolchain_fixture is None:
-            cargo = benchmark.resolve_executable("cargo", "Cargo fixture")
-            rustc = benchmark.rustc_for_cargo(cargo)
+            cargo_invocation = benchmark.resolve_executable(
+                "cargo", "Cargo fixture"
+            )
+            rustup = benchmark.resolve_executable(
+                "rustup", "rustup fixture"
+            ).resolve()
+            proxy_rustc = benchmark.resolve_executable(
+                "rustc", "rustc fixture"
+            )
+            rustc_sysroot = subprocess.run(
+                [str(proxy_rustc), "--print", "sysroot"],
+                check=True,
+                capture_output=True,
+                text=True,
+            ).stdout.strip()
+            suffix = ".exe" if os.name == "nt" else ""
+            cargo = Path(rustc_sysroot) / "bin" / f"cargo{suffix}"
+            rustc = Path(rustc_sysroot) / "bin" / f"rustc{suffix}"
             self.__class__._rust_toolchain_fixture = {
+                "cargo_invocation": cargo_invocation,
+                "rustup": rustup,
                 "cargo": cargo,
                 "rustc": rustc,
                 "rustc_version": subprocess.run(
@@ -4214,22 +4955,28 @@ print(json.dumps(
             }
         rust_toolchain = self.__class__._rust_toolchain_fixture
         assert rust_toolchain is not None
+        cargo_invocation = rust_toolchain["cargo_invocation"]
+        rustup = rust_toolchain["rustup"]
         cargo = rust_toolchain["cargo"]
         rustc = rust_toolchain["rustc"]
         rustc_version = rust_toolchain["rustc_version"]
         rustc_sysroot = rust_toolchain["rustc_sysroot"]
         cargo_version = rust_toolchain["cargo_version"]
         cargo_home = str(
-            (Path(f"/tmp/{lane}") / f"{lane}-cargo-home").resolve()
+            Path(self.fixture_path(lane, f"{lane}-cargo-home")).resolve()
         )
         cargo_environment = {
             "CARGO_TARGET_DIR": str(
-                Path(f"/tmp/{lane}/target").resolve()
+                Path(self.fixture_path(lane, "target")).resolve()
             ),
             "CARGO_HOME": cargo_home,
             "RUSTC": str(rustc),
         }
-        checkout = str(Path(f"/tmp/{lane}").resolve())
+        checkout = self.fixture_path(lane)
+        resolution_environment = {
+            "CARGO_TARGET_DIR": cargo_environment["CARGO_TARGET_DIR"],
+            "CARGO_HOME": cargo_environment["CARGO_HOME"],
+        }
         capability = {
             "label": lane,
             "status": "available",
@@ -4267,6 +5014,26 @@ print(json.dumps(
                 ),
                 "environment": cargo_environment,
                 "cargo_configs": [],
+                "rustup_resolution": {
+                    "kind": "rustup-which-v1",
+                    "invocation_path": str(cargo_invocation),
+                    "rustup": {
+                        "path": str(rustup),
+                        "realpath": str(rustup.resolve()),
+                        "sha256": v1.sha256_file(rustup.resolve()),
+                    },
+                    "cargo_command": self.full_command(
+                        [str(rustup), "which", "cargo"],
+                        cwd=checkout,
+                        approved_environment_overrides=resolution_environment,
+                    ),
+                    "rustc_command": self.full_command(
+                        [str(rustup), "which", "rustc"],
+                        cwd=checkout,
+                        approved_environment_overrides=resolution_environment,
+                    ),
+                    "selected_sysroot": rustc_sysroot,
+                },
                 "cargo": {
                     "path": str(cargo),
                     "realpath": str(cargo.resolve()),
@@ -4298,6 +5065,22 @@ print(json.dumps(
                         approved_environment_overrides=cargo_environment,
                     ),
                     "toolchain": Path(rustc_sysroot).name,
+                    "driver_files": [
+                        {
+                            "path": str(path.resolve()),
+                            "sha256": v1.sha256_file(path),
+                        }
+                        for path in sorted(
+                            (
+                                path
+                                for path in Path(rustc_sysroot).rglob(
+                                    "*rustc_driver*"
+                                )
+                                if path.is_file()
+                            ),
+                            key=lambda path: str(path.resolve()).casefold(),
+                        )
+                    ],
                 },
                 "binary": {"path": nomo_path, "sha256": binary_sha},
                 "stdout": "",
@@ -4312,46 +5095,46 @@ print(json.dumps(
     def correctness_only_result(self) -> dict:
         host = {"os": "Linux", "fixture": True}
         toolchains = {
-            "nomo": {"path": "/tmp/nomo"},
+            "nomo": {"path": self.fixture_path("tools", "nomo")},
             "clang": {
-                "path": "/usr/bin/clang",
-                "realpath": "/usr/bin/clang",
+                "path": self.fixture_path("tools", "clang"),
+                "realpath": self.fixture_path("tools", "clang"),
                 "sha256": "9" * 64,
                 "version": "21.0.0",
                 "version_output": "Apple clang version 21.0.0",
-                "installation": "/usr/bin",
+                "installation": self.fixture_path("tools"),
                 "target_triple": "arm64-apple-darwin",
                 "driver_config_flags": list(
                     benchmark.CLANG_DRIVER_CONFIG_FLAGS
                 ),
                 "target_command": self.full_command(
                     [
-                        "/usr/bin/clang",
+                        self.fixture_path("tools", "clang"),
                         *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         "-print-target-triple",
                     ]
                 ),
             },
             "clangxx": {
-                "path": "/usr/bin/clang++",
-                "realpath": "/usr/bin/clang++",
+                "path": self.fixture_path("tools", "clang++"),
+                "realpath": self.fixture_path("tools", "clang++"),
                 "sha256": "8" * 64,
                 "version": "21.0.0",
                 "version_output": "Apple clang version 21.0.0",
-                "installation": "/usr/bin",
+                "installation": self.fixture_path("tools"),
                 "target_triple": "arm64-apple-darwin",
                 "driver_config_flags": list(
                     benchmark.CLANG_DRIVER_CONFIG_FLAGS
                 ),
                 "target_command": self.full_command(
                     [
-                        "/usr/bin/clang++",
+                        self.fixture_path("tools", "clang++"),
                         *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
                         "-print-target-triple",
                     ]
                 ),
             },
-            "go": {"path": "/usr/bin/go"},
+            "go": {"path": self.fixture_path("tools", "go")},
         }
         release_lanes = {
             lane: {
@@ -4407,6 +5190,7 @@ print(json.dumps(
                 }
                 for workload in benchmark.WORKLOAD_IDS
             },
+            "build_failures": [],
             "correctness": [
                 self.correctness_item(workload, "baseline-emit-c")
                 for workload in benchmark.WORKLOAD_IDS
@@ -4567,6 +5351,22 @@ print(json.dumps(
                 "RUSTC": rustc_path,
             }
             compiler_build["cargo_configs"] = []
+            resolution_environment = {
+                "CARGO_TARGET_DIR": str(target_dir.resolve()),
+                "CARGO_HOME": str(cargo_home.resolve()),
+            }
+            rustup_resolution = compiler_build["rustup_resolution"]
+            rustup_path = rustup_resolution["rustup"]["path"]
+            rustup_resolution["cargo_command"] = self.full_command(
+                [rustup_path, "which", "cargo"],
+                cwd=state["checkout"],
+                approved_environment_overrides=resolution_environment,
+            )
+            rustup_resolution["rustc_command"] = self.full_command(
+                [rustup_path, "which", "rustc"],
+                cwd=state["checkout"],
+                approved_environment_overrides=resolution_environment,
+            )
             compiler_build["command"] = self.full_command(
                 [
                     compiler_build["cargo"]["path"],
@@ -4664,7 +5464,16 @@ print(json.dumps(
                         "-o",
                         reference_binaries["go"]["path"],
                         copied_sources["go"]["path"],
-                    ]
+                    ],
+                    approved_environment_overrides={
+                        key: str(
+                            (
+                                Path(copied_sources["go"]["path"]).parent
+                                / directory
+                            ).resolve()
+                        )
+                        for key, directory in benchmark.GO_BUILD_CACHE_DIRECTORIES.items()
+                    },
                 ),
             }
             for build_mode in benchmark.FORMAL_BUILD_MODES:

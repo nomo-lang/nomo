@@ -6,6 +6,7 @@ from __future__ import annotations
 import argparse
 import base64
 import binascii
+import contextlib
 import ctypes
 import datetime as dt
 import json
@@ -20,11 +21,17 @@ import subprocess
 import sys
 import tempfile
 import time
+import uuid
 from pathlib import Path
-from typing import Any, Callable, Dict, Optional, Sequence, Tuple
+from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Tuple
 from ctypes import wintypes
 
 import benchmarksgame as v1
+
+try:
+    import tomllib
+except ImportError:
+    import tomli as tomllib  # type: ignore[no-redef]
 
 try:
     from jsonschema import Draft202012Validator, FormatChecker
@@ -69,13 +76,22 @@ BASE_CPP_FLAGS = (
     "-fomit-frame-pointer",
 )
 CLANG_DRIVER_CONFIG_FLAGS = ("--no-default-config",)
+GO_BUILD_ENVIRONMENT_CONTRACT = {
+    "GOENV": "off",
+    "GOCACHE": "isolated-empty-per-build-removed-after-build",
+    "GOMODCACHE": "isolated-empty-per-build-removed-after-build",
+}
+GO_BUILD_CACHE_DIRECTORIES = {
+    "GOCACHE": "go-build-cache",
+    "GOMODCACHE": "go-module-cache",
+}
 T_CRITICAL_99_DF29 = 2.462021360150384
 STDOUT_NORMALIZATION = "crlf-to-lf-only-v1"
 EXPECTED_V1_MANIFEST_SHA = (
     "bd8e5016fb376741478806d13585ebc37ade2104995bd411a2a161592f65c15f"
 )
 EXPECTED_V2_MANIFEST_SHA = (
-    "c7bf2ce0bc28113d3a63f4c715c0084f40f985406f41d265310b955f16200ead"
+    "aeb4fb31a467378754bbae32b13e8aeb829184a3e40953704e11a18bdbac7115"
 )
 EXPECTED_REQUIRED_CHECKS = (
     "canonical_host_identity",
@@ -136,6 +152,8 @@ COMPILER_AFFECTING_ENVIRONMENT = (
     "LDFLAGS",
     "GOFLAGS",
     "GOENV",
+    "GOCACHE",
+    "GOMODCACHE",
     "CGO_CFLAGS",
     "CGO_CPPFLAGS",
     "CGO_CXXFLAGS",
@@ -163,12 +181,14 @@ BUILD_ENVIRONMENT_WHITELIST = (
     "WINDIR",
     "RUSTUP_HOME",
 )
+WINDOWS_CANONICAL_PATHEXT = (".COM", ".EXE", ".BAT", ".CMD")
 EXPECTED_ALLOCATION_MAPPING_SHA256 = {
     "spectral-norm": "21f5db296a9a67d542cca32aaf63abe8e2aba59efc064d7cc2c48b9f42a6bca0",
     "n-body": "2cb305ee6cdbc10735c94b16b4ad88c3215adec8cc77f76aff0253f0033514c8",
     "fannkuch-redux": "a6cc2c5404dd323ab500c82fb8d1850933412d6204aadcdf3344d1cde073b9e7",
 }
 _WINDOWS_BUILD_SUPPORT_CACHE: Optional[Dict[str, Any]] = None
+_DARWIN_BUILD_SUPPORT_CACHE: Optional[Dict[str, Any]] = None
 
 HarnessError = v1.HarnessError
 ToolchainMismatch = v1.ToolchainMismatch
@@ -183,6 +203,18 @@ class SampleCollectionError(HarnessError):
 
 class SampleTimeoutError(SampleCollectionError, CommandTimedOut):
     pass
+
+
+class BuildCollectionError(HarnessError):
+    def __init__(self, message: str, record: Dict[str, Any]) -> None:
+        super().__init__(message)
+        self.record = record
+
+
+class WorkloadBuildError(HarnessError):
+    def __init__(self, message: str, record: Dict[str, Any]) -> None:
+        super().__init__(message)
+        self.record = record
 
 
 def stable_build_path() -> str:
@@ -231,6 +263,7 @@ def sanitized_build_environment(
     approved_overrides: Optional[Dict[str, str]] = None,
 ) -> Tuple[Dict[str, str], Dict[str, Any]]:
     windows_toolchain = None
+    darwin_sdk = None
     if os.name == "nt":
         support = canonical_windows_build_support()
         environment = dict(support["environment"])
@@ -245,11 +278,20 @@ def sanitized_build_environment(
             if key != "PATH"
             if (value := os.environ.get(key))
         }
+        if platform.system() == "Darwin":
+            darwin_sdk = canonical_darwin_build_support()
+            environment["SDKROOT"] = darwin_sdk["sdkroot"]
     environment["GOENV"] = "off"
     if os.name != "nt":
         environment["PATH"] = stable_build_path()
     overrides = approved_overrides or {}
-    unexpected = set(overrides) - {"CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"}
+    unexpected = set(overrides) - {
+        "CARGO_TARGET_DIR",
+        "CARGO_HOME",
+        "RUSTC",
+        "GOCACHE",
+        "GOMODCACHE",
+    }
     if unexpected:
         raise HarnessError(
             "unapproved build environment overrides: "
@@ -273,6 +315,8 @@ def sanitized_build_environment(
                 "RUSTUP_HOME",
                 "CARGO_TARGET_DIR",
                 "RUSTC",
+                "GOCACHE",
+                "GOMODCACHE",
             }
             else value
             for key, value in sorted(environment.items())
@@ -286,7 +330,33 @@ def sanitized_build_environment(
     }
     if windows_toolchain is not None:
         projection["windows_toolchain"] = windows_toolchain
+    if darwin_sdk is not None:
+        projection["darwin_sdk"] = darwin_sdk
     return environment, projection
+
+
+@contextlib.contextmanager
+def isolated_go_build_cache(
+    build_root: Path,
+) -> Iterator[Dict[str, str]]:
+    cache_paths = {
+        key: (build_root / directory).resolve()
+        for key, directory in GO_BUILD_CACHE_DIRECTORIES.items()
+    }
+    existing = [str(path) for path in cache_paths.values() if path.exists()]
+    if existing:
+        raise HarnessError(
+            "isolated Go build cache was not empty at creation: "
+            + ", ".join(existing)
+        )
+    for path in cache_paths.values():
+        path.mkdir(parents=True)
+    try:
+        yield {key: str(path) for key, path in cache_paths.items()}
+    finally:
+        for path in cache_paths.values():
+            if path.exists():
+                shutil.rmtree(path)
 
 
 def validate_build_command_environment(
@@ -310,14 +380,138 @@ def run_build_capture(
     environment, projection = sanitized_build_environment(
         approved_environment_overrides
     )
-    record, stdout, stderr = v1.run_capture(
-        command,
-        timeout_seconds,
-        cwd=cwd,
-        environment=environment,
-    )
+    argv = [str(part) for part in command]
+    started_at_utc = dt.datetime.now(dt.timezone.utc).isoformat()
+    started = time.perf_counter_ns()
+    try:
+        completed = subprocess.run(
+            argv,
+            cwd=str(cwd) if cwd is not None else None,
+            env=environment,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            timeout=timeout_seconds,
+            check=False,
+        )
+    except subprocess.TimeoutExpired as error:
+        stdout = error.stdout or b""
+        stderr = error.stderr or b""
+        record = failed_build_command_record(
+            argv,
+            cwd,
+            projection,
+            started_at_utc,
+            time.perf_counter_ns() - started,
+            stdout,
+            stderr,
+            exit_code=None,
+            timed_out=True,
+            error=f"command exceeded {timeout_seconds:.3f}s",
+        )
+        raise BuildCollectionError(
+            f"command exceeded {timeout_seconds:.3f}s: {v1.command_text(argv)}",
+            record,
+        ) from error
+    except OSError as error:
+        record = failed_build_command_record(
+            argv,
+            cwd,
+            projection,
+            started_at_utc,
+            time.perf_counter_ns() - started,
+            b"",
+            b"",
+            exit_code=None,
+            timed_out=False,
+            error=f"{type(error).__name__}: {error}",
+        )
+        raise BuildCollectionError(
+            f"could not launch build command: {v1.command_text(argv)}: {error}",
+            record,
+        ) from error
+    duration_ns = time.perf_counter_ns() - started
+    if completed.returncode != 0:
+        record = failed_build_command_record(
+            argv,
+            cwd,
+            projection,
+            started_at_utc,
+            duration_ns,
+            completed.stdout,
+            completed.stderr,
+            exit_code=completed.returncode,
+            timed_out=False,
+            error=f"command exited with status {completed.returncode}",
+        )
+        raise BuildCollectionError(
+            f"command failed with exit {completed.returncode}: "
+            f"{v1.command_text(argv)}\n"
+            "stdout:\n"
+            f"{completed.stdout.decode('utf-8', errors='replace')}\n"
+            "stderr:\n"
+            f"{completed.stderr.decode('utf-8', errors='replace')}",
+            record,
+        )
+    record = {
+        "argv": argv,
+        "command": v1.command_text(argv),
+        "cwd": str(cwd.resolve()) if cwd is not None else None,
+        "duration_ns": duration_ns,
+        "exit_code": 0,
+    }
     record["environment"] = projection
-    return record, stdout, stderr
+    return record, completed.stdout, completed.stderr
+
+
+def failed_build_command_record(
+    argv: Sequence[str],
+    cwd: Optional[Path],
+    environment: Dict[str, Any],
+    started_at_utc: str,
+    duration_ns: int,
+    stdout: bytes,
+    stderr: bytes,
+    *,
+    exit_code: Optional[int],
+    timed_out: bool,
+    error: str,
+) -> Dict[str, Any]:
+    return {
+        "argv": list(argv),
+        "command": v1.command_text(argv),
+        "cwd": str(cwd.resolve()) if cwd is not None else None,
+        "duration_ns": duration_ns,
+        "exit_code": exit_code,
+        "timed_out": timed_out,
+        "started_at_utc": started_at_utc,
+        "finished_at_utc": dt.datetime.now(dt.timezone.utc).isoformat(),
+        "environment": environment,
+        "stdout": stdout.decode("utf-8", errors="replace"),
+        "stderr": stderr.decode("utf-8", errors="replace"),
+        "error": error,
+    }
+
+
+def workload_build_failure_record(
+    workload_id: str,
+    lane: str,
+    phase: str,
+    source: Path,
+    output: Path,
+    command: Dict[str, Any],
+) -> Dict[str, Any]:
+    return {
+        "kind": "preflight-build-failure-v1",
+        "workload_id": workload_id,
+        "lane": lane,
+        "phase": phase,
+        "source": {
+            "path": str(source.resolve()),
+            "sha256": v1.sha256_file(source),
+        },
+        "output_path": str(output.resolve()),
+        "command": command,
+    }
 
 
 def resolve_executable(value: str, label: str) -> Path:
@@ -329,7 +523,15 @@ def resolve_executable(value: str, label: str) -> Path:
     ):
         resolved = str(Path("/usr/bin") / value)
     if resolved is None:
-        resolved = shutil.which(value, path=stable_build_path())
+        if os.name == "nt":
+            selected = (
+                _windows_executable_from_path(value, stable_build_path())
+                if Path(value).name == value
+                else None
+            )
+            resolved = str(selected) if selected is not None else None
+        else:
+            resolved = shutil.which(value, path=stable_build_path())
     if resolved is None:
         candidate = Path(value).expanduser()
         candidates = [candidate]
@@ -342,14 +544,6 @@ def resolve_executable(value: str, label: str) -> Path:
     if resolved is None:
         raise HarnessError(f"required {label} executable was not found: {value}")
     return Path(os.path.abspath(resolved))
-
-
-def rustc_for_cargo(cargo: Path) -> Path:
-    suffix = ".exe" if os.name == "nt" else ""
-    sibling = cargo.with_name(f"rustc{suffix}")
-    if sibling.is_file():
-        return resolve_executable(str(sibling), "Rust compiler")
-    return resolve_executable("rustc", "Rust compiler")
 
 
 def parse_rustc_verbose_version(value: str) -> Dict[str, str]:
@@ -406,8 +600,21 @@ def rustc_authority(
         approved_environment_overrides=approved_environment_overrides,
     )
     sysroot = sysroot_stdout.decode("utf-8", errors="strict").strip()
-    if not sysroot or not Path(sysroot).is_absolute():
+    sysroot_path = Path(sysroot)
+    if not sysroot or not sysroot_path.is_absolute() or not sysroot_path.is_dir():
         raise HarnessError("rustc sysroot is not an absolute path")
+    if invocation_path.parent.resolve() != (sysroot_path / "bin").resolve():
+        raise HarnessError("rustc is not the actual compiler inside its sysroot")
+    driver_files = sorted(
+        (
+            path.resolve()
+            for path in sysroot_path.rglob("*rustc_driver*")
+            if path.is_file()
+        ),
+        key=lambda path: str(path).casefold(),
+    )
+    if not driver_files:
+        raise HarnessError("rustc sysroot has no rustc_driver artifact")
     return {
         "path": str(invocation_path),
         "realpath": str(realpath),
@@ -418,6 +625,67 @@ def rustc_authority(
         "sysroot": sysroot,
         "sysroot_command": sysroot_command,
         "toolchain": Path(sysroot).name,
+        "driver_files": [
+            {"path": str(path), "sha256": v1.sha256_file(path)}
+            for path in driver_files
+        ],
+    }
+
+
+def resolve_rustup_toolchain(
+    cargo_invocation: Path,
+    checkout: Path,
+    approved_environment_overrides: Dict[str, str],
+) -> Tuple[Path, Path, Dict[str, Any]]:
+    invocation = Path(os.path.abspath(cargo_invocation))
+    realpath = invocation.resolve()
+    suffix = ".exe" if os.name == "nt" else ""
+    sibling = invocation.with_name(f"rustup{suffix}")
+    if (
+        sibling.is_file()
+        and v1.sha256_file(sibling.resolve()) == v1.sha256_file(realpath)
+    ):
+        rustup = Path(os.path.abspath(sibling))
+    elif realpath.name.lower() in {"rustup", "rustup.exe"}:
+        rustup = realpath
+    else:
+        raise HarnessError(
+            "formal compiler build requires a rustup-managed Cargo invocation"
+        )
+    if not rustup.is_file():
+        raise HarnessError(
+            "formal compiler build requires a rustup-managed Cargo invocation"
+        )
+    commands = {}
+    selected = {}
+    for tool in ("cargo", "rustc"):
+        record, stdout, _ = run_build_capture(
+            [str(rustup), "which", tool],
+            30.0,
+            cwd=checkout,
+            approved_environment_overrides=approved_environment_overrides,
+        )
+        path_text = stdout.decode("utf-8", errors="strict").strip()
+        path = Path(path_text)
+        if not path.is_absolute() or not path.is_file():
+            raise HarnessError(f"rustup selected an unavailable {tool}: {path}")
+        selected[tool] = path.resolve()
+        commands[tool] = record
+    cargo = selected["cargo"]
+    rustc = selected["rustc"]
+    if cargo.parent != rustc.parent or cargo.parent.name != "bin":
+        raise HarnessError("rustup selected Cargo and rustc from different sysroots")
+    return cargo, rustc, {
+        "kind": "rustup-which-v1",
+        "invocation_path": str(invocation),
+        "rustup": {
+            "path": str(rustup),
+            "realpath": str(rustup.resolve()),
+            "sha256": v1.sha256_file(rustup),
+        },
+        "cargo_command": commands["cargo"],
+        "rustc_command": commands["rustc"],
+        "selected_sysroot": str(cargo.parent.parent),
     }
 
 
@@ -456,16 +724,25 @@ def cargo_config_provenance(checkout: Path) -> list[Dict[str, str]]:
                     f"Cargo config is not tracked by the exact checkout: "
                     f"{relative_text}"
                 )
-            config_text = resolved.read_text(encoding="utf-8")
-            active_lines = [
-                line.split("#", 1)[0]
-                for line in config_text.splitlines()
-            ]
-            forbidden_rustc_setting = re.compile(
-                r"^\s*(?:rustc|rustc-wrapper|rustc-workspace-wrapper)\s*=",
-                re.IGNORECASE,
-            )
-            if any(forbidden_rustc_setting.match(line) for line in active_lines):
+            try:
+                config = tomllib.loads(
+                    resolved.read_text(encoding="utf-8")
+                )
+            except (UnicodeError, tomllib.TOMLDecodeError) as error:
+                raise HarnessError(
+                    f"Cargo config is not valid UTF-8 TOML: {relative_text}"
+                ) from error
+            build = config.get("build", {})
+            if not isinstance(build, dict):
+                raise HarnessError(
+                    f"Cargo config build table is invalid: {relative_text}"
+                )
+            forbidden = {
+                "rustc",
+                "rustc-wrapper",
+                "rustc-workspace-wrapper",
+            }
+            if forbidden.intersection(build):
                 raise HarnessError(
                     "tracked Cargo config may not replace the authority-bound "
                     f"Rust compiler or wrapper: {relative_text}"
@@ -672,8 +949,10 @@ def validate_manifest(manifest: Dict[str, Any], suite_root: Path) -> None:
     go = toolchains.get("go", {})
     if go.get("required_version") != "go1.25.12":
         raise HarnessError("v2 must pin the Go patch version")
-    if go.get("build_environment") != {"GOENV": "off"}:
-        raise HarnessError("v2 must disable external Go environment config")
+    if go.get("build_environment") != GO_BUILD_ENVIRONMENT_CONTRACT:
+        raise HarnessError(
+            "v2 must disable external Go config and use isolated ephemeral caches"
+        )
 
     required_checks = manifest.get("environment_qualification", {}).get(
         "required_checks"
@@ -2094,6 +2373,12 @@ def inspect_toolchains(
     go_output, go_version_command = build_probe_output(go, ["version"])
     go_fields = go_output.split()
     go_version = go_fields[2] if len(go_fields) >= 3 else ""
+    goroot_output, goroot_command = build_probe_output(go, ["env", "GOROOT"])
+    goroot = goroot_output.strip()
+    if not goroot or not Path(goroot).is_absolute() or not Path(goroot).is_dir():
+        raise ToolchainMismatch(
+            f"Go returned an invalid GOROOT for {go}: {goroot!r}"
+        )
     mismatches = []
     expected_nomo = manifest["toolchains"]["correctness_baseline_nomo"][
         "required_version"
@@ -2103,6 +2388,24 @@ def inspect_toolchains(
         mismatches.append(f"Nomo expected {expected_nomo}, found {nomo_version}")
     if go_version != expected_go:
         mismatches.append(f"Go expected {expected_go}, found {go_version}")
+    if os.name == "nt":
+        llvm_tools = canonical_windows_build_support()["authority"][
+            "llvm_tools"
+        ]
+        for driver_name, identity, authority_name in (
+            ("clang", clang_identity, "clang.exe"),
+            ("clang++", clangxx_identity, "clang++.exe"),
+        ):
+            authority = llvm_tools[authority_name]
+            if (
+                identity["path"] != authority["path"]
+                or identity["realpath"] != authority["realpath"]
+                or identity["sha256"] != authority["sha256"]
+            ):
+                mismatches.append(
+                    f"{driver_name} does not match the authority-bound "
+                    "Windows LLVM driver"
+                )
     if c_version != cpp_version:
         mismatches.append(
             f"Clang C/C++ version mismatch: C {c_version}, C++ {cpp_version}"
@@ -2159,6 +2462,8 @@ def inspect_toolchains(
             "version": go_version,
             "version_output": go_output,
             "version_command": go_version_command,
+            "goroot": goroot,
+            "goroot_command": goroot_command,
         },
     }
 
@@ -2306,7 +2611,11 @@ def resolve_dynamic_executable(value: str) -> Path:
                 f"dynamic environment executable is missing: {value}"
             )
         return candidate.resolve()
-    resolved = shutil.which(value, path=stable_build_path())
+    resolved = (
+        _windows_executable_from_path(value, stable_build_path())
+        if os.name == "nt"
+        else shutil.which(value, path=stable_build_path())
+    )
     if resolved is None:
         raise HarnessError(
             f"dynamic environment executable is not on the controlled PATH: {value}"
@@ -2377,6 +2686,370 @@ def _windows_tool_identity(path: Path) -> Dict[str, str]:
     }
 
 
+def canonical_darwin_build_support(
+    *, refresh: bool = False
+) -> Dict[str, Any]:
+    global _DARWIN_BUILD_SUPPORT_CACHE
+    if platform.system() != "Darwin":
+        raise HarnessError(
+            "canonical Darwin SDK support is available only on macOS"
+        )
+    if _DARWIN_BUILD_SUPPORT_CACHE is not None and not refresh:
+        return _DARWIN_BUILD_SUPPORT_CACHE
+    xcrun = Path("/usr/bin/xcrun")
+    if not xcrun.is_file():
+        raise HarnessError("trusted /usr/bin/xcrun is unavailable")
+    environment = {
+        "PATH": stable_build_path(),
+        "LC_ALL": "C",
+        "LANG": "C",
+    }
+    if value := os.environ.get("TMPDIR"):
+        environment["TMPDIR"] = str(Path(value).resolve())
+    command = [str(xcrun), "--sdk", "macosx", "--show-sdk-path"]
+    record, stdout, stderr = v1.run_capture(
+        command,
+        30.0,
+        environment=environment,
+    )
+    if stderr:
+        raise HarnessError("xcrun SDK selection wrote unexpected stderr")
+    sdkroot = Path(stdout.decode("utf-8", errors="strict").strip())
+    approved_roots = (Path("/Applications"), Path("/Library/Developer"))
+    if (
+        not sdkroot.is_absolute()
+        or not sdkroot.is_dir()
+        or not any(
+            sdkroot.resolve().is_relative_to(root.resolve())
+            for root in approved_roots
+            if root.is_dir()
+        )
+    ):
+        raise HarnessError(f"xcrun selected an untrusted macOS SDK: {sdkroot}")
+    settings_candidates = (
+        sdkroot / "SDKSettings.plist",
+        sdkroot / "SDKSettings.json",
+    )
+    settings = next(
+        (path for path in settings_candidates if path.is_file()), None
+    )
+    if settings is None:
+        raise HarnessError("selected macOS SDK lacks SDKSettings authority")
+    support = {
+        "schema": 1,
+        "xcrun": _windows_tool_identity(xcrun),
+        "selection_command": _stable_command_record(record, environment),
+        "sdkroot": str(sdkroot.resolve()),
+        "sdk_settings": {
+            "path": str(settings.resolve()),
+            "sha256": v1.sha256_file(settings),
+        },
+    }
+    _DARWIN_BUILD_SUPPORT_CACHE = support
+    return support
+
+
+def windows_known_folder(folder_id: str) -> Path:
+    if os.name != "nt":
+        raise HarnessError("Known Folder discovery is available only on Windows")
+
+    class GUID(ctypes.Structure):
+        _fields_ = [
+            ("data1", wintypes.DWORD),
+            ("data2", wintypes.WORD),
+            ("data3", wintypes.WORD),
+            ("data4", ctypes.c_ubyte * 8),
+        ]
+
+    shell32 = ctypes.WinDLL("shell32", use_last_error=True)
+    ole32 = ctypes.WinDLL("ole32", use_last_error=True)
+    shell32.SHGetKnownFolderPath.argtypes = [
+        ctypes.POINTER(GUID),
+        wintypes.DWORD,
+        wintypes.HANDLE,
+        ctypes.POINTER(ctypes.c_wchar_p),
+    ]
+    shell32.SHGetKnownFolderPath.restype = ctypes.c_long
+    ole32.CoTaskMemFree.argtypes = [ctypes.c_void_p]
+    ole32.CoTaskMemFree.restype = None
+    guid = GUID.from_buffer_copy(uuid.UUID(folder_id).bytes_le)
+    value = ctypes.c_wchar_p()
+    result = int(
+        shell32.SHGetKnownFolderPath(
+            ctypes.byref(guid), 0, None, ctypes.byref(value)
+        )
+    )
+    try:
+        if result != 0 or not value.value:
+            raise HarnessError(
+                f"SHGetKnownFolderPath failed for {folder_id}: HRESULT {result}"
+            )
+        path = Path(value.value)
+        if not path.is_absolute() or not path.is_dir():
+            raise HarnessError(
+                f"Known Folder path is unavailable for {folder_id}: {path}"
+            )
+        return path.resolve()
+    finally:
+        if value:
+            ole32.CoTaskMemFree(ctypes.cast(value, ctypes.c_void_p))
+
+
+def canonical_windows_seed_environment(
+    system_directory: Path, temp_directory: Path
+) -> Dict[str, str]:
+    program_data = windows_known_folder(
+        "62ab5d82-fdc1-4dc3-a9dd-070d1d495d97"
+    )
+    program_files = windows_known_folder(
+        "905e63b6-c1bf-494e-b29c-65b732d3d21a"
+    )
+    program_files_x86 = windows_known_folder(
+        "7c5a40ef-a0fb-4bfc-874a-c0f2e0b9fa8e"
+    )
+    program_files_x64 = windows_known_folder(
+        "6d809377-6af0-444b-8957-a3773f02200e"
+    )
+    system_root = system_directory.parent
+    cmd = system_directory / "cmd.exe"
+    if not cmd.is_file():
+        raise HarnessError(f"trusted COMSPEC is unavailable: {cmd}")
+    machine = platform.machine().lower()
+    architecture = "ARM64" if machine in {"arm64", "aarch64"} else "AMD64"
+    return {
+        "SystemRoot": str(system_root),
+        "WINDIR": str(system_root),
+        "TEMP": str(temp_directory),
+        "TMP": str(temp_directory),
+        "ProgramData": str(program_data),
+        "ProgramFiles": str(program_files),
+        "ProgramFiles(x86)": str(program_files_x86),
+        "ProgramW6432": str(program_files_x64),
+        "COMSPEC": str(cmd),
+        "PATHEXT": ";".join(WINDOWS_CANONICAL_PATHEXT),
+        "PROCESSOR_ARCHITECTURE": architecture,
+        "PATH": str(system_directory),
+    }
+
+
+def _visual_studio_install_date(value: Any) -> dt.datetime:
+    if not isinstance(value, str) or not value:
+        raise ValueError("missing installDate")
+    parsed = dt.datetime.fromisoformat(value.replace("Z", "+00:00"))
+    if parsed.tzinfo is None or parsed.utcoffset() != dt.timedelta(0):
+        raise ValueError("installDate is not UTC")
+    return parsed
+
+
+def select_visual_studio_installation(
+    installations: Any,
+) -> Tuple[Dict[str, Any], List[Dict[str, Any]], str]:
+    if not isinstance(installations, list):
+        raise HarnessError("vswhere did not return an installation array")
+    candidates = []
+    eligible = []
+    for raw in installations:
+        if not isinstance(raw, dict):
+            raise HarnessError("vswhere returned a non-object installation")
+        raw_path = str(raw.get("installationPath", ""))
+        version = str(raw.get("installationVersion", ""))
+        product_id = str(raw.get("productId", ""))
+        catalog = raw.get("catalog")
+        product_line = (
+            str(catalog.get("productLine", ""))
+            if isinstance(catalog, dict)
+            else ""
+        )
+        install_date = raw.get("installDate")
+        version_parts = version.split(".")
+        reasons = []
+        path = Path(raw_path)
+        if not path.is_absolute() or not path.is_dir():
+            reasons.append("installation path is unavailable")
+        if not version_parts or any(not part.isdigit() for part in version_parts):
+            reasons.append("installation version is not numeric")
+        if raw.get("isComplete") is not True:
+            reasons.append("installation is not complete")
+        if raw.get("isLaunchable") is not True:
+            reasons.append("installation is not launchable")
+        if raw.get("isPrerelease") is not False:
+            reasons.append("installation is prerelease or unspecified")
+        if product_line != "Dev17":
+            reasons.append("installation productLine is not Visual Studio 2022")
+        try:
+            parsed_install_date = _visual_studio_install_date(install_date)
+        except (TypeError, ValueError):
+            parsed_install_date = None
+            reasons.append("installation installDate is not canonical UTC")
+        vsdevcmd = path / "Common7" / "Tools" / "VsDevCmd.bat"
+        if not vsdevcmd.is_file():
+            reasons.append("VsDevCmd.bat is unavailable")
+        record = {
+            "installation_path": (
+                str(path.resolve()) if path.is_absolute() and path.exists() else raw_path
+            ),
+            "installation_version": version,
+            "product_id": product_id,
+            "product_line": product_line,
+            "install_date": install_date,
+            "is_complete": raw.get("isComplete"),
+            "is_launchable": raw.get("isLaunchable"),
+            "is_prerelease": raw.get("isPrerelease"),
+            "eligible": not reasons,
+            "reasons": reasons,
+        }
+        candidates.append(record)
+        if not reasons:
+            eligible.append(
+                (
+                    tuple(int(part) for part in version_parts),
+                    parsed_install_date,
+                    record["installation_path"].casefold(),
+                    raw,
+                )
+            )
+    if not eligible:
+        raise HarnessError("vswhere found no complete Visual Studio with VC tools")
+    newest_version = max(item[0] for item in eligible)
+    newest = [item for item in eligible if item[0] == newest_version]
+    newest_date = max(item[1] for item in newest)
+    newest = [item for item in newest if item[1] == newest_date]
+    normalized_paths = [item[2] for item in newest]
+    if len(normalized_paths) != len(set(normalized_paths)):
+        raise HarnessError(
+            "vswhere returned ambiguous top-ranked Visual Studio records"
+        )
+    _, _, _, selected = min(newest, key=lambda item: item[2])
+    selected_path = str(Path(str(selected["installationPath"])).resolve())
+    reason = (
+        "selected complete, launchable, non-prerelease Visual Studio 2022 by "
+        "numeric installationVersion descending, installDate descending, "
+        "then lexicographically smallest "
+        f"canonical installation path ({selected_path})"
+    )
+    candidates.sort(
+        key=lambda item: (
+            item["installation_version"],
+            item["installation_path"].casefold(),
+        )
+    )
+    return selected, candidates, reason
+
+
+def windows_vsdevcmd_command(
+    cmd: Path, vsdevcmd: Path, architecture: str
+) -> List[str]:
+    return [
+        str(cmd),
+        "/d",
+        "/c",
+        "call",
+        str(vsdevcmd),
+        "-no_logo",
+        f"-arch={architecture}",
+        f"-host_arch={architecture}",
+        "&&",
+        "set",
+    ]
+
+
+def _raw_command_stream(content: bytes) -> Dict[str, Any]:
+    return {
+        "base64": base64.b64encode(content).decode("ascii"),
+        "length_bytes": len(content),
+        "sha256": v1.sha256_bytes(content),
+    }
+
+
+def _filter_paths_within_roots(
+    values: Sequence[str],
+    roots: Sequence[Path],
+    label: str,
+    *,
+    require_nonempty: bool = True,
+) -> Tuple[List[str], List[Dict[str, str]]]:
+    canonical_roots = [root.resolve() for root in roots]
+    canonical = []
+    excluded = []
+    for value in values:
+        if not value:
+            continue
+        path = Path(value).resolve()
+        if not path.is_dir():
+            excluded.append(
+                {"path": str(path), "reason": "directory is unavailable"}
+            )
+            continue
+        if not any(
+            path == root or path.is_relative_to(root) for root in canonical_roots
+        ):
+            excluded.append(
+                {
+                    "path": str(path),
+                    "reason": "outside selected VS VC and Windows SDK/UCRT roots",
+                }
+            )
+            continue
+        if str(path) not in canonical:
+            canonical.append(str(path))
+    if require_nonempty and not canonical:
+        raise HarnessError(f"{label} did not contain any canonical paths")
+    return canonical, excluded
+
+
+def _windows_authority_marker(
+    directories: Sequence[str], filename: str, label: str
+) -> Dict[str, str]:
+    matches = sorted(
+        {
+            (Path(directory) / filename).resolve()
+            for directory in directories
+            if (Path(directory) / filename).is_file()
+        },
+        key=lambda path: str(path).casefold(),
+    )
+    if len(matches) != 1:
+        raise HarnessError(
+            f"Windows SDK/CRT authority requires exactly one {label} marker; "
+            f"found {len(matches)}"
+        )
+    return {
+        "path": str(matches[0]),
+        "sha256": v1.sha256_file(matches[0]),
+    }
+
+
+def _windows_executable_from_path(
+    name: str, path_value: str, *, require_unique: bool = False
+) -> Optional[Path]:
+    if Path(name).name != name:
+        raise HarnessError(
+            f"canonical Windows executable lookup requires a basename: {name}"
+        )
+    candidate_names = (
+        [name]
+        if Path(name).suffix
+        else [
+            f"{name}{extension}"
+            for extension in WINDOWS_CANONICAL_PATHEXT
+        ]
+    )
+    matches = []
+    for directory in path_value.split(os.pathsep):
+        if not directory:
+            continue
+        for candidate_name in candidate_names:
+            candidate = (Path(directory) / candidate_name).resolve()
+            if candidate.is_file() and candidate not in matches:
+                matches.append(candidate)
+    if require_unique and len(matches) != 1:
+        raise HarnessError(
+            f"canonical Windows PATH must select exactly one {name}; "
+            f"found {len(matches)}"
+        )
+    return matches[0] if matches else None
+
+
 def canonical_windows_build_support(
     *, refresh: bool = False
 ) -> Dict[str, Any]:
@@ -2391,35 +3064,31 @@ def canonical_windows_build_support(
     system_directory = windows_system_directory()
     system_root = system_directory.parent
     temp_directory = windows_temp_directory()
-    cmd = system_directory / "cmd.exe"
-    system_drive = Path(system_root.anchor)
-    vswhere_candidates = (
-        system_drive
-        / "Program Files (x86)"
+    minimal_environment = canonical_windows_seed_environment(
+        system_directory, temp_directory
+    )
+    cmd = Path(minimal_environment["COMSPEC"])
+    vswhere_candidates = tuple(
+        Path(root)
         / "Microsoft Visual Studio"
         / "Installer"
-        / "vswhere.exe",
-        system_drive
-        / "Program Files"
-        / "Microsoft Visual Studio"
-        / "Installer"
-        / "vswhere.exe",
+        / "vswhere.exe"
+        for root in dict.fromkeys(
+            (
+                minimal_environment["ProgramFiles(x86)"],
+                minimal_environment["ProgramFiles"],
+                minimal_environment["ProgramW6432"],
+            )
+        )
     )
     vswhere = next((path for path in vswhere_candidates if path.is_file()), None)
-    if vswhere is None or not cmd.is_file():
+    if vswhere is None:
         raise HarnessError(
             "trusted Visual Studio Installer or cmd.exe is unavailable"
         )
-    minimal_environment = {
-        "SystemRoot": str(system_root),
-        "WINDIR": str(system_root),
-        "TEMP": str(temp_directory),
-        "TMP": str(temp_directory),
-        "PATH": str(system_directory),
-    }
     vswhere_argv = [
         str(vswhere),
-        "-latest",
+        "-all",
         "-products",
         "*",
         "-requires",
@@ -2428,7 +3097,7 @@ def canonical_windows_build_support(
         "json",
         "-utf8",
     ]
-    vswhere_record, vswhere_stdout, _ = v1.run_capture(
+    vswhere_record, vswhere_stdout, vswhere_stderr = v1.run_capture(
         vswhere_argv,
         30.0,
         environment=minimal_environment,
@@ -2439,9 +3108,9 @@ def canonical_windows_build_support(
         )
     except (UnicodeError, json.JSONDecodeError) as error:
         raise HarnessError("vswhere did not return canonical JSON") from error
-    if not isinstance(installations, list) or len(installations) != 1:
-        raise HarnessError("vswhere did not select exactly one Visual Studio")
-    installation = installations[0]
+    installation, installation_candidates, selection_reason = (
+        select_visual_studio_installation(installations)
+    )
     installation_path = Path(str(installation.get("installationPath", "")))
     installation_version = str(installation.get("installationVersion", ""))
     if (
@@ -2455,16 +3124,9 @@ def canonical_windows_build_support(
         raise HarnessError(f"trusted VsDevCmd is unavailable: {vsdevcmd}")
     machine = platform.machine().lower()
     architecture = "arm64" if machine in {"arm64", "aarch64"} else "amd64"
-    vsdevcmd_argv = [
-        str(cmd),
-        "/d",
-        "/s",
-        "/c",
-        (
-            f'call "{vsdevcmd}" -no_logo -arch={architecture} '
-            f"-host_arch={architecture} && set"
-        ),
-    ]
+    vsdevcmd_argv = windows_vsdevcmd_command(
+        cmd, vsdevcmd, architecture
+    )
     vsdevcmd_record, environment_stdout, _ = v1.run_capture(
         vsdevcmd_argv,
         60.0,
@@ -2500,18 +3162,118 @@ def canonical_windows_build_support(
     }
     environment.update(
         {
-            "SystemRoot": str(system_root),
-            "WINDIR": str(system_root),
-            "TEMP": str(temp_directory),
-            "TMP": str(temp_directory),
+            name: value
+            for name, value in minimal_environment.items()
+            if name != "PATH"
         }
+    )
+    llvm_directories = sorted(
+        {
+            (Path(root) / "LLVM" / "bin").resolve()
+            for root in (
+                minimal_environment["ProgramFiles"],
+                minimal_environment["ProgramW6432"],
+                minimal_environment["ProgramFiles(x86)"],
+            )
+            if (Path(root) / "LLVM" / "bin" / "clang.exe").is_file()
+            and (Path(root) / "LLVM" / "bin" / "clang++.exe").is_file()
+        },
+        key=lambda path: str(path).casefold(),
+    )
+    if len(llvm_directories) != 1:
+        raise HarnessError(
+            "trusted Windows LLVM discovery requires exactly one "
+            "Program Files LLVM driver directory"
+        )
+    llvm_directory = llvm_directories[0]
+    llvm_tool_identities = {
+        name: _windows_tool_identity(llvm_directory / name)
+        for name in ("clang.exe", "clang++.exe")
+    }
+    selected_root = installation_path.resolve()
+    vs_path, excluded_path = _filter_paths_within_roots(
+        environment["PATH"].split(os.pathsep),
+        [selected_root],
+        "PATH",
     )
     tool_identities = {}
     for name in ("cl.exe", "link.exe"):
-        selected = shutil.which(name, path=environment["PATH"])
-        if selected is None:
-            raise HarnessError(f"VsDevCmd PATH does not select {name}")
-        tool_identities[name] = _windows_tool_identity(Path(selected))
+        selected = _windows_executable_from_path(
+            name, os.pathsep.join(vs_path), require_unique=True
+        )
+        assert selected is not None
+        tool_identities[name] = _windows_tool_identity(selected)
+    for name, identity in tool_identities.items():
+        tool_path = Path(identity["realpath"])
+        if not tool_path.is_relative_to(selected_root):
+            raise HarnessError(f"{name} is outside selected Visual Studio")
+    sdk_roots = []
+    trusted_program_roots = [
+        Path(minimal_environment[name]).resolve()
+        for name in ("ProgramFiles", "ProgramFiles(x86)", "ProgramW6432")
+    ]
+    for name in ("WINDOWSSDKDIR", "UNIVERSALCRTSDKDIR"):
+        value = environment.get(name)
+        if value:
+            path = Path(value).resolve()
+            if not path.is_dir() or not any(
+                path == root or path.is_relative_to(root)
+                for root in trusted_program_roots
+            ):
+                raise HarnessError(f"{name} is unavailable: {path}")
+            sdk_roots.append(path)
+    if not sdk_roots or not environment.get("WINDOWSSDKVERSION"):
+        raise HarnessError("VsDevCmd did not publish a complete Windows SDK")
+    allowed_roots = [selected_root, *sdk_roots]
+    include, excluded_include = _filter_paths_within_roots(
+        environment["INCLUDE"].split(os.pathsep), allowed_roots, "INCLUDE"
+    )
+    lib, excluded_lib = _filter_paths_within_roots(
+        environment["LIB"].split(os.pathsep), allowed_roots, "LIB"
+    )
+    libpath, excluded_libpath = _filter_paths_within_roots(
+        environment["LIBPATH"].split(os.pathsep),
+        allowed_roots,
+        "LIBPATH",
+        require_nonempty=False,
+    )
+    canonical_path = []
+    for path in (
+        llvm_directory,
+        Path(tool_identities["cl.exe"]["realpath"]).parent,
+        Path(tool_identities["link.exe"]["realpath"]).parent,
+        system_directory,
+    ):
+        value = str(path.resolve())
+        if value not in canonical_path:
+            canonical_path.append(value)
+    environment["PATH"] = os.pathsep.join(canonical_path)
+    environment["INCLUDE"] = os.pathsep.join(include)
+    environment["LIB"] = os.pathsep.join(lib)
+    environment["LIBPATH"] = os.pathsep.join(libpath)
+    sdk_crt_markers = {
+        "ucrt_header": _windows_authority_marker(
+            include, "ctype.h", "UCRT ctype.h"
+        ),
+        "windows_header": _windows_authority_marker(
+            include, "windows.h", "Windows SDK windows.h"
+        ),
+        "sdk_version_header": _windows_authority_marker(
+            include, "sdkddkver.h", "Windows SDK sdkddkver.h"
+        ),
+        "vc_runtime_header": _windows_authority_marker(
+            include, "vcruntime.h", "VC runtime vcruntime.h"
+        ),
+        "ucrt_library": _windows_authority_marker(
+            lib, "ucrt.lib", "UCRT ucrt.lib"
+        ),
+        "kernel32_library": _windows_authority_marker(
+            lib, "kernel32.lib", "Windows SDK kernel32.lib"
+        ),
+        "vc_runtime_library": _windows_authority_marker(
+            lib, "libcmt.lib", "VC runtime libcmt.lib"
+        ),
+    }
     authority = {
         "schema": 1,
         "architecture": architecture,
@@ -2519,8 +3281,13 @@ def canonical_windows_build_support(
         "vswhere_command": _stable_command_record(
             vswhere_record, minimal_environment
         ),
+        "vswhere_stdout": _raw_command_stream(vswhere_stdout),
+        "vswhere_stderr": _raw_command_stream(vswhere_stderr),
         "installation_path": str(installation_path.resolve()),
         "installation_version": installation_version,
+        "installation_candidates": installation_candidates,
+        "installation_selection_reason": selection_reason,
+        "chosen_installation_json": installation,
         "vsdevcmd": _windows_tool_identity(vsdevcmd),
         "vsdevcmd_command": _stable_command_record(
             vsdevcmd_record, minimal_environment
@@ -2528,9 +3295,17 @@ def canonical_windows_build_support(
         "windows_sdk_version": environment.get("WINDOWSSDKVERSION"),
         "vc_tools_version": environment.get("VCTOOLSVERSION"),
         "tools": tool_identities,
-        "include": environment["INCLUDE"].split(os.pathsep),
-        "lib": environment["LIB"].split(os.pathsep),
-        "libpath": environment["LIBPATH"].split(os.pathsep),
+        "llvm_tools": llvm_tool_identities,
+        "sdk_crt_markers": sdk_crt_markers,
+        "excluded_candidates": {
+            "path": excluded_path,
+            "include": excluded_include,
+            "lib": excluded_lib,
+            "libpath": excluded_libpath,
+        },
+        "include": include,
+        "lib": lib,
+        "libpath": libpath,
         "path": environment["PATH"].split(os.pathsep),
     }
     support = {"environment": environment, "authority": authority}
@@ -3108,6 +3883,7 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
             "sha256",
             "version",
             "version_output",
+            "goroot",
         ),
     }
     for tool, fields in fields_by_tool.items():
@@ -3339,9 +4115,34 @@ def build_reference_workload(
         ],
     }
     for lane, command in build_specs.items():
-        record, stdout, stderr = run_build_capture(
-            command, timeout_seconds=build_timeout_seconds, cwd=REPOSITORY_ROOT
-        )
+        try:
+            if lane == "go":
+                with isolated_go_build_cache(build_root) as go_cache_environment:
+                    record, stdout, stderr = run_build_capture(
+                        command,
+                        timeout_seconds=build_timeout_seconds,
+                        cwd=REPOSITORY_ROOT,
+                        approved_environment_overrides=go_cache_environment,
+                    )
+            else:
+                record, stdout, stderr = run_build_capture(
+                    command,
+                    timeout_seconds=build_timeout_seconds,
+                    cwd=REPOSITORY_ROOT,
+                )
+        except BuildCollectionError as error:
+            output = Path(command[command.index("-o") + 1]).resolve()
+            raise WorkloadBuildError(
+                str(error),
+                workload_build_failure_record(
+                    workload_id,
+                    lane,
+                    "reference-build",
+                    copied_sources[lane],
+                    output,
+                    error.record,
+                ),
+            ) from error
         commands[f"{lane}_build"] = record
         compiler_output[lane] = {
             "stdout": stdout.decode("utf-8", errors="replace"),
@@ -3370,10 +4171,25 @@ def build_reference_workload(
             str(nomo_project),
             "--emit-c",
         ]
-        emit_record, emit_stdout, emit_stderr = run_build_capture(
-            emit_command, timeout_seconds=build_timeout_seconds, cwd=REPOSITORY_ROOT
-        )
         generated_c = nomo_project / "build" / "c" / "main.c"
+        try:
+            emit_record, emit_stdout, emit_stderr = run_build_capture(
+                emit_command,
+                timeout_seconds=build_timeout_seconds,
+                cwd=REPOSITORY_ROOT,
+            )
+        except BuildCollectionError as error:
+            raise WorkloadBuildError(
+                str(error),
+                workload_build_failure_record(
+                    workload_id,
+                    "nomo-baseline",
+                    "nomo-emit-c",
+                    nomo_source,
+                    generated_c,
+                    error.record,
+                ),
+            ) from error
         if not generated_c.is_file():
             raise HarnessError(f"Nomo baseline did not emit C for {workload_id}")
         nomo_binary = binary_path(binary_root, f"{workload_id}-nomo-baseline")
@@ -3386,9 +4202,24 @@ def build_reference_workload(
             str(nomo_binary),
             *math_flags(workload),
         ]
-        clang_record, clang_stdout, clang_stderr = run_build_capture(
-            clang_command, timeout_seconds=build_timeout_seconds, cwd=REPOSITORY_ROOT
-        )
+        try:
+            clang_record, clang_stdout, clang_stderr = run_build_capture(
+                clang_command,
+                timeout_seconds=build_timeout_seconds,
+                cwd=REPOSITORY_ROOT,
+            )
+        except BuildCollectionError as error:
+            raise WorkloadBuildError(
+                str(error),
+                workload_build_failure_record(
+                    workload_id,
+                    "nomo-baseline",
+                    "nomo-generated-c-clang",
+                    generated_c,
+                    nomo_binary,
+                    error.record,
+                ),
+            ) from error
         if not nomo_binary.is_file():
             raise HarnessError(f"Nomo baseline build did not produce {nomo_binary}")
         binaries["nomo-baseline"] = nomo_binary.resolve()
@@ -3507,8 +4338,7 @@ def release_lane_state(
                     f"{label} must bind current origin/main: expected {commit_argument}, "
                     f"local origin/main {origin_main}, remote main {remote_main}"
                 )
-        cargo = resolve_executable(cargo_argument, "Cargo")
-        rustc = rustc_for_cargo(cargo)
+        cargo_invocation = resolve_executable(cargo_argument, "Cargo")
         cargo_configs = cargo_config_provenance(checkout)
         target_dir = bundle_root / "compiler-build" / label
         cargo_home = (
@@ -3523,9 +4353,17 @@ def release_lane_state(
                 f"{label} isolated CARGO_HOME already exists; use a fresh output path"
             )
         cargo_home.mkdir(parents=True)
-        cargo_environment = {
+        resolution_environment = {
             "CARGO_TARGET_DIR": str(target_dir.resolve()),
             "CARGO_HOME": str(cargo_home.resolve()),
+        }
+        cargo, rustc, rustup_resolution = resolve_rustup_toolchain(
+            cargo_invocation,
+            checkout,
+            resolution_environment,
+        )
+        cargo_environment = {
+            **resolution_environment,
             "RUSTC": str(rustc),
         }
         command = [str(cargo), "build", "--locked", "--release", "--bin", "nomo"]
@@ -3599,6 +4437,7 @@ def release_lane_state(
             "command": build_record,
             "environment": cargo_environment,
             "cargo_configs": cargo_configs,
+            "rustup_resolution": rustup_resolution,
             "cargo": {
                 "path": str(cargo),
                 "realpath": str(cargo.resolve()),
@@ -4477,12 +5316,23 @@ def validate_build_provenance(
         required = {"c_build", "cpp_build", "semantic-c_build", "go_build"}
         if not required.issubset(commands):
             raise HarnessError(f"{workload_id} reference build provenance is incomplete")
+        compiled_sources = references.get("compiled_sources", {})
+        go_source_path = Path(str(compiled_sources.get("go", {}).get("path", "")))
+        go_cache_environment = {
+            key: str((go_source_path.parent / directory).resolve())
+            for key, directory in GO_BUILD_CACHE_DIRECTORIES.items()
+        }
         for name, record in commands.items():
             validate_command_record(record, f"{workload_id} {name}")
             validate_build_command_environment(
-                record, f"{workload_id} {name}"
+                record,
+                f"{workload_id} {name}",
+                go_cache_environment if name == "go_build" else None,
             )
-        compiled_sources = references.get("compiled_sources", {})
+        if any(Path(path).exists() for path in go_cache_environment.values()):
+            raise HarnessError(
+                f"{workload_id} isolated Go build cache was not removed"
+            )
         binaries = references.get("binaries", {})
         source_files = references.get("source_files", {})
         suite_root = DEFAULT_MANIFEST.parent
@@ -4770,6 +5620,203 @@ def validate_build_provenance(
                     raise HarnessError(
                         f"{workload_id} {lane} build used a different compiler binary"
                     )
+
+
+def validate_build_failure_evidence(
+    result: Dict[str, Any], manifest: Dict[str, Any]
+) -> None:
+    failures = result.get("build_failures", [])
+    if not isinstance(failures, list) or len(failures) != 1:
+        raise HarnessError(
+            "ineligible preflight build evidence requires exactly one failure"
+        )
+    failure = failures[0]
+    workload_id = failure.get("workload_id")
+    if workload_id not in WORKLOAD_IDS:
+        raise HarnessError("preflight build failure workload changed")
+    workload_index = WORKLOAD_IDS.index(str(workload_id))
+    if set(result.get("builds", {})) != set(WORKLOAD_IDS[:workload_index]):
+        raise HarnessError(
+            "preflight build failure must retain the exact completed build prefix"
+        )
+    lane = failure.get("lane")
+    phase = failure.get("phase")
+    if (lane, phase) not in {
+        *((reference_lane, "reference-build") for reference_lane in REFERENCE_LANES),
+        ("nomo-baseline", "nomo-emit-c"),
+        ("nomo-baseline", "nomo-generated-c-clang"),
+    }:
+        raise HarnessError("preflight build failure phase changed")
+    workload = manifest["workloads"][workload_index]
+    source = failure.get("source", {})
+    source_path = Path(str(source.get("path", "")))
+    if (
+        not source_path.is_absolute()
+        or not source_path.is_file()
+        or v1.sha256_file(source_path) != source.get("sha256")
+    ):
+        raise HarnessError("preflight build failure source identity changed")
+    output_path = Path(str(failure.get("output_path", "")))
+    command = failure.get("command", {})
+    toolchains = result.get("provenance", {}).get("toolchains", {})
+    link_flags = (
+        ["-lm"]
+        if workload.get("link_math")
+        and result.get("provenance", {}).get("host", {}).get("os") != "Windows"
+        else []
+    )
+    if phase == "reference-build":
+        if (
+            source.get("sha256") != workload["sources"][lane]["sha256"]
+            or source_path.name
+            != {
+                "c": "c.c",
+                "cpp": "cpp.cpp",
+                "semantic-c": "semantic-c.c",
+                "go": "go.go",
+            }[lane]
+            or len(source_path.parents) < 4
+        ):
+            raise HarnessError("preflight reference source is not frozen")
+        bundle_root = source_path.parents[3]
+        expected_output = binary_path(bundle_root / "bin", f"{workload_id}-{lane}")
+        expected_argv = {
+            "c": [
+                toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
+                *BASE_C_FLAGS,
+                str(source_path),
+                "-o",
+                str(output_path),
+                *link_flags,
+            ],
+            "cpp": [
+                toolchains.get("clangxx", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
+                *BASE_CPP_FLAGS,
+                str(source_path),
+                "-o",
+                str(output_path),
+                *link_flags,
+            ],
+            "semantic-c": [
+                toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
+                *BASE_C_FLAGS,
+                str(source_path),
+                "-o",
+                str(output_path),
+                *link_flags,
+            ],
+            "go": [
+                toolchains.get("go", {}).get("path"),
+                "build",
+                "-o",
+                str(output_path),
+                str(source_path),
+            ],
+        }[lane]
+    elif phase == "nomo-emit-c":
+        expected_source = resolve_suite_path(
+            DEFAULT_MANIFEST.parent,
+            workload["sources"]["nomo"]["path"],
+            f"{workload_id} failed Nomo source",
+        )
+        if (
+            source_path != expected_source
+            or source.get("sha256") != workload["sources"]["nomo"]["sha256"]
+            or len(output_path.parents) < 7
+        ):
+            raise HarnessError("failed Nomo emit-C source changed")
+        bundle_root = output_path.parents[6]
+        project = (
+            bundle_root
+            / "build"
+            / workload_id
+            / "references"
+            / "nomo-baseline-project"
+        )
+        expected_output = project / "build" / "c" / "main.c"
+        expected_argv = [
+            toolchains.get("nomo", {}).get("path"),
+            "build",
+            str(project),
+            "--emit-c",
+        ]
+    else:
+        if len(source_path.parents) < 7:
+            raise HarnessError("failed generated-C source is outside a bundle")
+        bundle_root = source_path.parents[6]
+        expected_source = (
+            bundle_root
+            / "build"
+            / workload_id
+            / "references"
+            / "nomo-baseline-project"
+            / "build"
+            / "c"
+            / "main.c"
+        )
+        expected_output = binary_path(
+            bundle_root / "bin", f"{workload_id}-nomo-baseline"
+        )
+        if source_path != expected_source:
+            raise HarnessError("failed generated-C source path changed")
+        expected_argv = [
+            toolchains.get("clang", {}).get("path"),
+            *CLANG_DRIVER_CONFIG_FLAGS,
+            *BASE_C_FLAGS,
+            str(source_path),
+            "-o",
+            str(output_path),
+            *link_flags,
+        ]
+    if not output_path.is_absolute() or output_path != expected_output.resolve():
+        raise HarnessError("preflight build failure output path changed")
+    if command.get("argv") != expected_argv or command.get(
+        "command"
+    ) != v1.command_text(expected_argv):
+        raise HarnessError("preflight build failure command changed")
+    if command.get("cwd") != str(REPOSITORY_ROOT.resolve()):
+        raise HarnessError("preflight build failure cwd changed")
+    if (
+        not isinstance(command.get("duration_ns"), int)
+        or command["duration_ns"] < 0
+        or not isinstance(command.get("error"), str)
+        or not command["error"]
+        or not isinstance(command.get("stdout"), str)
+        or not isinstance(command.get("stderr"), str)
+    ):
+        raise HarnessError("preflight build failure record is incomplete")
+    timed_out = command.get("timed_out")
+    exit_code = command.get("exit_code")
+    if timed_out is True:
+        if exit_code is not None:
+            raise HarnessError("timed-out preflight build has an exit code")
+    elif timed_out is False:
+        if exit_code == 0 or (
+            exit_code is not None and not isinstance(exit_code, int)
+        ):
+            raise HarnessError("preflight build failure exit evidence changed")
+    else:
+        raise HarnessError("preflight build timeout evidence is missing")
+    if parse_utc_timestamp(command.get("started_at_utc")) > parse_utc_timestamp(
+        command.get("finished_at_utc")
+    ):
+        raise HarnessError("preflight build failure UTC interval is invalid")
+    go_cache_environment = {
+        key: str((source_path.parent / directory).resolve())
+        for key, directory in GO_BUILD_CACHE_DIRECTORIES.items()
+    }
+    validate_build_command_environment(
+        command,
+        f"{workload_id} failed {lane} build",
+        go_cache_environment if lane == "go" else None,
+    )
+    if lane == "go" and any(
+        Path(path).exists() for path in go_cache_environment.values()
+    ):
+        raise HarnessError("failed Go build cache was not removed")
 
 
 def assert_recomputed_equal(actual: Any, expected: Any, path: str) -> None:
@@ -5450,8 +6497,10 @@ def validate_dynamic_command_evidence(observation: Dict[str, Any]) -> None:
     path = Path(str(identity.get("path")))
     realpath = Path(str(identity.get("realpath")))
     command = observation.get("command_argv")
-    controlled_resolution = shutil.which(
-        path.name, path=stable_build_path()
+    controlled_resolution = (
+        _windows_executable_from_path(path.name, stable_build_path())
+        if os.name == "nt"
+        else shutil.which(path.name, path=stable_build_path())
     )
     if (
         not path.is_absolute()
@@ -6362,9 +7411,44 @@ def validate_release_lane_authority(result: Dict[str, Any]) -> None:
                 or compiler_build.get("remote_main_commit") != remote_main
             ):
                 raise HarnessError("main release lane is not current official origin/main")
+    rust_identities = {
+        label: compiler_toolchain_identity(lane["compiler_build"])
+        for label, lane in lanes.items()
+    }
+    if rust_identities["candidate"] != rust_identities["main"]:
+        raise HarnessError(
+            "candidate and main compiler builds use different actual Rust toolchains"
+        )
     validate_live_clang_authority(
         result.get("provenance", {}).get("toolchains", {})
     )
+    validate_live_go_authority(
+        result.get("provenance", {}).get("toolchains", {})
+    )
+
+
+def compiler_toolchain_identity(
+    compiler_build: Dict[str, Any],
+) -> Dict[str, Any]:
+    cargo = compiler_build.get("cargo", {})
+    rustc = compiler_build.get("rustc", {})
+    return {
+        "cargo": {
+            key: cargo.get(key)
+            for key in ("realpath", "sha256", "version_output")
+        },
+        "rustc": {
+            key: rustc.get(key)
+            for key in (
+                "realpath",
+                "sha256",
+                "version_fields",
+                "sysroot",
+                "toolchain",
+                "driver_files",
+            )
+        },
+    }
 
 
 def validate_compiler_tool_authority(
@@ -6376,6 +7460,7 @@ def validate_compiler_tool_authority(
     checkout = checkout.resolve()
     cargo = compiler_build.get("cargo", {})
     rustc = compiler_build.get("rustc", {})
+    resolution = compiler_build.get("rustup_resolution", {})
     cargo_path = Path(str(cargo.get("path", "")))
     rustc_path = Path(str(rustc.get("path", "")))
     for path, record, tool_label in (
@@ -6393,6 +7478,55 @@ def validate_compiler_tool_authority(
         ):
             raise HarnessError(
                 f"{label} compiler-build {tool_label} file identity changed"
+            )
+
+    rustup = resolution.get("rustup", {})
+    rustup_path = Path(str(rustup.get("path", "")))
+    invocation_path = Path(str(resolution.get("invocation_path", "")))
+    if (
+        resolution.get("kind") != "rustup-which-v1"
+        or not rustup_path.is_absolute()
+        or not rustup_path.is_file()
+        or rustup.get("realpath") != str(rustup_path.resolve())
+        or rustup.get("sha256") != v1.sha256_file(rustup_path.resolve())
+        or not invocation_path.is_absolute()
+        or not invocation_path.is_file()
+        or v1.sha256_file(invocation_path.resolve()) != rustup.get("sha256")
+    ):
+        raise HarnessError(f"{label} rustup resolver authority is invalid")
+    resolution_environment = {
+        "CARGO_TARGET_DIR": cargo_environment["CARGO_TARGET_DIR"],
+        "CARGO_HOME": cargo_environment["CARGO_HOME"],
+    }
+    selected_paths = {"cargo": cargo_path, "rustc": rustc_path}
+    for tool in ("cargo", "rustc"):
+        command = resolution.get(f"{tool}_command", {})
+        validate_command_record(command, f"{label} rustup which {tool}")
+        validate_build_command_environment(
+            command,
+            f"{label} rustup which {tool}",
+            resolution_environment,
+        )
+        expected_argv = [str(rustup_path), "which", tool]
+        if (
+            command.get("argv") != expected_argv
+            or command.get("command") != v1.command_text(expected_argv)
+            or command.get("cwd") != str(checkout)
+        ):
+            raise HarnessError(
+                f"{label} rustup which {tool} authority is invalid"
+            )
+        _, stdout, _ = run_build_capture(
+            expected_argv,
+            30.0,
+            cwd=checkout,
+            approved_environment_overrides=resolution_environment,
+        )
+        if Path(stdout.decode("utf-8", errors="strict").strip()).resolve() != (
+            selected_paths[tool].resolve()
+        ):
+            raise HarnessError(
+                f"{label} live rustup selection changed for {tool}"
             )
 
     cargo_version_command = cargo.get("version_command", {})
@@ -6421,8 +7555,30 @@ def validate_compiler_tool_authority(
         or rustc.get("toolchain")
         != Path(str(rustc.get("sysroot", ""))).name
         or not Path(str(rustc.get("sysroot", ""))).is_absolute()
+        or resolution.get("selected_sysroot") != rustc.get("sysroot")
+        or cargo_path.parent.resolve()
+        != (Path(str(rustc.get("sysroot"))) / "bin").resolve()
+        or rustc_path.parent.resolve()
+        != (Path(str(rustc.get("sysroot"))) / "bin").resolve()
     ):
         raise HarnessError(f"{label} rustc identity is not compiler-build bound")
+    live_driver_files = [
+        {"path": str(path.resolve()), "sha256": v1.sha256_file(path)}
+        for path in sorted(
+            (
+                path
+                for path in Path(str(rustc.get("sysroot"))).rglob(
+                    "*rustc_driver*"
+                )
+                if path.is_file()
+            ),
+            key=lambda path: str(path.resolve()).casefold(),
+        )
+    ]
+    if not live_driver_files or rustc.get("driver_files") != live_driver_files:
+        raise HarnessError(
+            f"{label} rustc driver artifacts changed or are incomplete"
+        )
     for field, suffix in (
         ("version_command", ["-vV"]),
         ("sysroot_command", ["--print", "sysroot"]),
@@ -6467,6 +7623,7 @@ def validate_compiler_tool_authority(
         "version_fields",
         "sysroot",
         "toolchain",
+        "driver_files",
     }
     if any(live_rustc[field] != rustc.get(field) for field in stable_fields):
         raise HarnessError(f"{label} live rustc no longer matches compiler-build authority")
@@ -6555,6 +7712,42 @@ def validate_live_clang_authority(toolchains: Dict[str, Any]) -> None:
             raise HarnessError(f"{key} live target authority changed")
 
 
+def validate_live_go_authority(toolchains: Dict[str, Any]) -> None:
+    record = toolchains.get("go", {})
+    path = Path(str(record.get("path", "")))
+    if (
+        not path.is_absolute()
+        or not path.is_file()
+        or record.get("realpath") != str(path.resolve())
+        or record.get("sha256") != v1.sha256_file(path.resolve())
+    ):
+        raise HarnessError("Go invocation identity changed")
+    for field, suffix in (
+        ("version_command", ["version"]),
+        ("goroot_command", ["env", "GOROOT"]),
+    ):
+        command = record.get(field, {})
+        validate_command_record(command, f"Go {field}")
+        validate_build_command_environment(command, f"Go {field}")
+        expected_argv = [str(path), *suffix]
+        if (
+            command.get("argv") != expected_argv
+            or command.get("command") != v1.command_text(expected_argv)
+        ):
+            raise HarnessError(f"Go {field} argv changed")
+    _, version_stdout, _ = run_build_capture([str(path), "version"], 30.0)
+    _, goroot_stdout, _ = run_build_capture(
+        [str(path), "env", "GOROOT"], 30.0
+    )
+    if (
+        version_stdout.decode("utf-8", errors="strict").strip()
+        != record.get("version_output")
+        or goroot_stdout.decode("utf-8", errors="strict").strip()
+        != record.get("goroot")
+    ):
+        raise HarnessError("live Go version or GOROOT changed")
+
+
 def validate_result(
     result: Dict[str, Any], manifest: Optional[Dict[str, Any]] = None
 ) -> None:
@@ -6571,6 +7764,7 @@ def validate_result(
         "provenance",
         "release_lanes",
         "builds",
+        "build_failures",
         "correctness",
         "protocols",
         "overall_verdict",
@@ -6621,32 +7815,43 @@ def validate_result(
     )
     mode = result.get("mode")
     if mode == "correctness":
-        if not result.get("correctness"):
-            raise HarnessError(
-                "correctness mode must retain a success or failed prefix"
-            )
-        correctness_failure = validate_correctness_evidence(
-            result["correctness"],
-            "baseline-emit-c",
-            CORRECTNESS_BASELINE_LANES,
-            manifest,
-            result["builds"],
-            collector_id,
-        )
-        if status == "correctness-only":
-            if correctness_failure is not None:
+        if result.get("build_failures"):
+            if result.get("correctness") or status != "ineligible":
                 raise HarnessError(
-                    "correctness-only status cannot contain a failed tail"
+                    "preflight build failure cannot contain correctness samples"
                 )
-        elif status == "ineligible":
-            if correctness_failure is None:
-                raise HarnessError(
-                    "ineligible correctness mode requires a failed tail"
-                )
+            validate_build_failure_evidence(result, manifest)
         else:
-            raise HarnessError(
-                "correctness mode status must be correctness-only or ineligible"
+            if not result.get("correctness"):
+                raise HarnessError(
+                    "correctness mode must retain a success or failed prefix"
+                )
+            correctness_failure = validate_correctness_evidence(
+                result["correctness"],
+                "baseline-emit-c",
+                CORRECTNESS_BASELINE_LANES,
+                manifest,
+                result["builds"],
+                collector_id,
             )
+            if status == "correctness-only":
+                if correctness_failure is not None:
+                    raise HarnessError(
+                        "correctness-only status cannot contain a failed tail"
+                    )
+            elif status == "ineligible":
+                if correctness_failure is None:
+                    raise HarnessError(
+                        "ineligible correctness mode requires a failed tail"
+                    )
+            else:
+                raise HarnessError(
+                    "correctness mode status must be correctness-only or ineligible"
+                )
+    elif result.get("build_failures"):
+        raise HarnessError(
+            "formal artifacts cannot embed correctness preflight build failures"
+        )
     if status in {"prepared", "unavailable", "ineligible"}:
         if result["overall_verdict"] != "not_evaluated":
             raise HarnessError("unavailable/ineligible evidence cannot have a verdict")
@@ -6771,6 +7976,7 @@ def base_result(
         },
         "release_lanes": release_lanes,
         "builds": {},
+        "build_failures": [],
         "correctness": [],
         "protocols": {
             build_mode: {
@@ -6832,14 +8038,19 @@ def run_correctness(
     bundle_root = output_path.with_suffix("")
     binaries_by_workload = {}
     for workload in manifest["workloads"]:
-        reference_build, binaries = build_reference_workload(
-            workload,
-            suite_root,
-            bundle_root,
-            toolchains,
-            float(manifest["methodology"]["build_timeout_seconds"]),
-            include_nomo_baseline=True,
-        )
+        try:
+            reference_build, binaries = build_reference_workload(
+                workload,
+                suite_root,
+                bundle_root,
+                toolchains,
+                float(manifest["methodology"]["build_timeout_seconds"]),
+                include_nomo_baseline=True,
+            )
+        except WorkloadBuildError as error:
+            result["build_failures"].append(error.record)
+            result["status"] = "ineligible"
+            return result
         result["builds"][workload["id"]] = {
             "references": reference_build,
             "modes": {},
@@ -7630,7 +8841,35 @@ def run_suite(arguments: argparse.Namespace) -> Tuple[Path, Dict[str, Any]]:
     )
     validate_result(result, manifest)
     v1.write_result(output_path, result)
+    write_evidence_log(output_path, result)
     return output_path, result
+
+
+def write_evidence_log(output_path: Path, result: Dict[str, Any]) -> Path:
+    log_path = output_path.with_suffix(".log")
+    lines = [
+        f"status={result.get('status')}",
+        f"overall_verdict={result.get('overall_verdict')}",
+        f"claim_eligible={result.get('claims', {}).get('claim_eligible')}",
+    ]
+    for failure in result.get("build_failures", []):
+        lines.append("build_failure=")
+        lines.append(json.dumps(failure, indent=2, sort_keys=True))
+    for item in result.get("correctness", []):
+        lines.append(
+            "correctness="
+            + json.dumps(
+                {
+                    "id": item.get("id"),
+                    "status": item.get("status"),
+                    "attempted_lanes": item.get("attempted_lanes"),
+                    "failure_reason": item.get("failure_reason"),
+                },
+                sort_keys=True,
+            )
+        )
+    log_path.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return log_path
 
 
 def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
@@ -7667,6 +8906,7 @@ def main(argv: Optional[Sequence[str]] = None) -> int:
         print(f"benchmarksgame-v2: {error}", file=sys.stderr)
         return 1
     print(f"wrote {output_path}")
+    print(f"evidence log: {output_path.with_suffix('.log')}")
     print(f"status: {result['status']}")
     for item in result["correctness"]:
         if item.get("status") == "completed":

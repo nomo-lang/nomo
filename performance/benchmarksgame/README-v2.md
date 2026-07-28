@@ -58,18 +58,37 @@ overrides. The isolated Cargo home is empty at build start and removed after
 the build; every Cargo config on the checkout-to-filesystem-root search path
 is rejected unless it is a tracked file inside the exact checkout and its path
 and SHA-256 are recorded. Tracked config may not replace rustc or install a
-rustc wrapper. Cargo and rustc retain their absolute invocation paths when
-they are rustup multicall symlinks; the artifact separately records each
-selected realpath and SHA-256. Compiler-build authority also records and
-revalidates the Cargo version command, `rustc -vV` fields, rustc sysroot and
-toolchain, and the exact environment used by every probe and the self-build.
+rustc wrapper; configs are parsed as TOML, so table, dotted, and quoted
+`build.rustc`, `rustc-wrapper`, and `rustc-workspace-wrapper` keys are all
+rejected. The harness records the absolute Cargo proxy used to select the
+toolchain, executes the absolute sibling `rustup` invocation path without
+resolving away its multicall basename, records its realpath and hash, and runs
+`rustup which cargo` plus `rustup which rustc` in each exact checkout. The
+self-build then directly executes the selected `<sysroot>/bin/cargo` with
+`RUSTC=<sysroot>/bin/rustc`; it never executes a rustup multicall proxy as the
+compiler. Compiler-build authority records and revalidates actual Cargo and
+rustc hashes, Cargo version, `rustc -vV` commit fields, sysroot, toolchain, and
+every `rustc_driver` artifact hash. Candidate and main must resolve to the
+same complete Rust toolchain identity.
 Go builds set `GOENV=off` and clear `GOFLAGS`, so `$HOME/go/env` and a parent
-`GOENV` cannot alter the build. `DEVELOPER_DIR` and `TOOLCHAINS` are cleared
+`GOENV` cannot alter the build. Every Go compilation receives fresh,
+bundle-local `GOCACHE` and `GOMODCACHE` directories that must not exist before
+the build and are removed afterward. Their absolute paths are part of the
+recorded sanitized command environment and are recomputed from the locked
+copied-source directory by the validator; parent cache and `LocalAppData`
+values are never restored. CI passes the setup-go-selected absolute Go
+invocation path; provenance additionally binds its realpath, SHA-256, exact
+patch version, and `GOROOT`, while the generic canonical PATH remains minimal.
+`DEVELOPER_DIR` and `TOOLCHAINS` are cleared
 and recorded as cleared for every probe and build. On Darwin,
 `/usr/bin/xcrun --find clang` and `clang++` run in that same sanitized environment; the
 invocation shim identity and selected compiler path, realpath, SHA-256,
 version, target, and probe commands are frozen and revalidated before formal
-measurement. Every Clang and Clang++ probe, reference
+measurement. `/usr/bin/xcrun --sdk macosx --show-sdk-path` independently
+selects the system SDK from a trusted root; its path, SDK settings hash, and
+command are bound, and that constructed `SDKROOT` is used instead of any
+parent value so Rust C dependencies and benchmark Clang builds see the same
+SDK authority. Every Clang and Clang++ probe, reference
 compile, generated-C compile, and release-backend compile/link command includes
 exactly one `--no-default-config`; explicit or default driver configs are
 therefore outside the contract. A backend record with a missing, self-reported,
@@ -78,11 +97,34 @@ argv, and hashes otherwise look correct.
 
 On Windows, build commands do not inherit `INCLUDE`, `LIB`, `LIBPATH`, or
 compiler flags from the parent process. The authority locates the fixed Visual
-Studio Installer `vswhere.exe`, selects one VC toolchain, hashes its
-`VsDevCmd.bat`, and runs it from a WinAPI-derived minimal system environment.
-Only the resulting SDK/VC paths and versions are admitted. The canonical
-projection records the selected VS/SDK versions, tool identities, and exact
-build environment; validation repeats discovery before accepting evidence.
+Studio Installer `vswhere.exe` from WinAPI Known Folder roots and runs
+`-all` from a constructed environment containing only API-derived system,
+Program Files, ProgramData, temp, COMSPEC, PATHEXT, and architecture values.
+It retains raw stdout/stderr bytes and hashes, filters for complete,
+launchable, non-prerelease Visual Studio 2022 VC candidates, and selects by
+numeric installation version descending, install date descending, then
+canonical path, failing on an ambiguous top record. The chosen JSON,
+`VsDevCmd.bat`, `cl.exe`, and `link.exe` hashes are recorded. The authority
+also binds the one trusted Program Files LLVM directory and the exact
+`clang.exe`/`clang++.exe` paths, realpaths, and hashes. That directory is in
+the reduced PATH used by self-build, emit-C, and future release backend
+commands, so Nomo's internal `Command::new("clang")` resolves to the same
+driver as the reference compiler. INCLUDE, LIB, LIBPATH, and the reduced
+build PATH treat `VsDevCmd` output only as candidates: entries are retained
+only when they are needed by this C99/C++20 suite and lie under the selected
+Visual Studio VC or Windows 10 SDK/UCRT roots. Excluded PATH, INCLUDE, LIB,
+and LIBPATH entries (including .NET/NETFX metadata and reference paths) are
+recorded with their reason; LIBPATH may be empty. The final PATH then adds
+only the bound LLVM directory and the WinAPI system directory. Poisoned
+parent variables never enter the command. The authority hashes representative
+VC/UCRT/SDK headers and libraries (`vcruntime.h`, `ctype.h`, `windows.h`,
+`sdkddkver.h`, `libcmt.lib`, `ucrt.lib`, and `kernel32.lib`) in addition to
+recording the declared versions. Validation repeats discovery before
+accepting evidence. Native Windows CI verifies that the release-backend
+environment resolves the bound bare Clang, compiles and runs C99 and ISO
+C++20 SDK-header probes, and runs a normal Nomo project build through that
+same PATH before the five-lane correctness gate; the full release command
+remains unavailable until the public `nomo build --release` contract exists.
 
 C and C++ are absolute parity comparators. Main is the regression comparator.
 Go remains diagnostic. Semantic-C is an untimed correctness-only diagnostic
@@ -159,7 +201,8 @@ python3 scripts/benchmarksgame_v2.py \
   --candidate-commit 0123456789abcdef0123456789abcdef01234567 \
   --main-checkout /absolute/main-checkout \
   --main-commit 89abcdef0123456789abcdef0123456789abcdef \
-  --cargo cargo \
+  --cargo /absolute/rustup-proxy/bin/cargo \
+  --go /absolute/setup-go/bin/go \
   --prepared-bundle /absolute/benchmarksgame-v2-prepared \
   --require-clean \
   --output /absolute/results/benchmarksgame-v2-prepared-result.json
@@ -189,6 +232,7 @@ overwrites prepared content, and its output must again be outside the bundle:
 python3 scripts/benchmarksgame_v2.py \
   --mode measure \
   --nomo target/release/nomo \
+  --go /absolute/setup-go/bin/go \
   --prepared-bundle /absolute/benchmarksgame-v2-prepared \
   --environment-qualification /absolute/authority/environment.json \
   --require-clean \

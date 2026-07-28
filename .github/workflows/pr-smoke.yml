@@ -5,8 +5,14 @@ on:
 
 jobs:
   smoke:
+    needs: benchmark-v2-portability
+    if: ${{ always() }}
     runs-on: ubuntu-latest
     steps:
+      - name: Require the three-platform Benchmark v2 matrix
+        shell: bash
+        run: |
+          test '${{ needs.benchmark-v2-portability.result }}' = 'success'
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
@@ -552,6 +558,16 @@ jobs:
         with:
           go-version: 1.25.12
           cache: false
+      - name: Resolve the pinned Go driver
+        id: benchmark-go
+        shell: pwsh
+        run: |
+          $go = Get-Command go -CommandType Application -ErrorAction Stop |
+            Select-Object -First 1 -ExpandProperty Source
+          if (-not [System.IO.Path]::IsPathRooted($go)) {
+            throw "setup-go did not expose an absolute Go invocation path: $go"
+          }
+          "path=$go" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
       - name: Verify frozen benchmark checkout uses LF bytes
         shell: pwsh
         run: |
@@ -587,13 +603,17 @@ jobs:
           python scripts/benchmarksgame_v2.py
           --mode correctness
           --nomo target/release/nomo
+          --go "${{ steps.benchmark-go.outputs.path }}"
           --require-clean
           --output performance/results/benchmarksgame-v2/pr-${{ runner.os }}.json
       - name: Upload v2 correctness evidence
+        if: ${{ always() }}
         uses: actions/upload-artifact@v7
         with:
           name: nomo-benchmarksgame-v2-${{ runner.os }}
-          path: performance/results/benchmarksgame-v2/pr-${{ runner.os }}.json
+          path: |
+            performance/results/benchmarksgame-v2/pr-${{ runner.os }}.json
+            performance/results/benchmarksgame-v2/pr-${{ runner.os }}.log
           if-no-files-found: error
 
   macos-host-runtime:

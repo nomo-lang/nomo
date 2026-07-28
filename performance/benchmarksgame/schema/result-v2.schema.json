@@ -1,0 +1,1437 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomo-lang.org/schemas/benchmarksgame-result-v2.json",
+  "title": "Nomo RFC 0043 Benchmarks Game parity result",
+  "type": "object",
+  "required": [
+    "schema",
+    "suite",
+    "manifest_version",
+    "mode",
+    "status",
+    "created_at_utc",
+    "claims",
+    "provenance",
+    "release_lanes",
+    "builds",
+    "correctness",
+    "protocols",
+    "overall_verdict"
+  ],
+  "properties": {
+    "schema": { "const": 2 },
+    "suite": { "const": "nomo-benchmarksgame-cpu-parity-v2" },
+    "manifest_version": { "const": "2026-07-28" },
+    "mode": { "enum": ["correctness", "prepare", "measure"] },
+    "status": {
+      "enum": ["correctness-only", "prepared", "unavailable", "ineligible", "completed"]
+    },
+    "created_at_utc": { "type": "string", "format": "date-time" },
+    "claims": { "$ref": "#/$defs/claims" },
+    "provenance": { "$ref": "#/$defs/provenance" },
+    "release_lanes": {
+      "type": "object",
+      "required": ["candidate", "main"],
+      "properties": {
+        "candidate": { "$ref": "#/$defs/releaseLane" },
+        "main": { "$ref": "#/$defs/releaseLane" }
+      },
+      "additionalProperties": false
+    },
+    "builds": {
+      "type": "object",
+      "propertyNames": {
+        "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
+      },
+      "additionalProperties": { "$ref": "#/$defs/workloadBuild" }
+    },
+    "correctness": {
+      "type": "array",
+      "maxItems": 3,
+      "items": { "$ref": "#/$defs/correctness" }
+    },
+    "protocols": {
+      "type": "object",
+      "required": ["release", "emit-c"],
+      "properties": {
+        "release": { "$ref": "#/$defs/protocol" },
+        "emit-c": { "$ref": "#/$defs/protocol" }
+      },
+      "additionalProperties": false
+    },
+    "overall_verdict": { "enum": ["not_evaluated", "pass", "fail"] }
+  },
+  "additionalProperties": false,
+  "allOf": [
+    {
+      "if": { "properties": { "status": { "const": "correctness-only" } } },
+      "then": {
+        "properties": {
+          "mode": { "const": "correctness" },
+          "correctness": { "minItems": 3, "maxItems": 3 },
+          "overall_verdict": { "const": "not_evaluated" },
+          "claims": {
+            "properties": { "claim_eligible": { "const": false } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "prepared" } } },
+      "then": {
+        "properties": {
+          "mode": { "const": "prepare" },
+          "correctness": { "maxItems": 0 },
+          "builds": { "minProperties": 3, "maxProperties": 3 },
+          "overall_verdict": { "const": "not_evaluated" },
+          "claims": {
+            "properties": { "claim_eligible": { "const": false } }
+          },
+          "protocols": {
+            "properties": {
+              "release": {
+                "properties": { "status": { "const": "unavailable" } }
+              },
+              "emit-c": {
+                "properties": { "status": { "const": "unavailable" } }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "status": { "enum": ["unavailable", "ineligible"] }
+        }
+      },
+      "then": {
+        "properties": {
+          "overall_verdict": { "const": "not_evaluated" },
+          "claims": {
+            "properties": { "claim_eligible": { "const": false } }
+          }
+        }
+      }
+    },
+    {
+      "if": { "properties": { "status": { "const": "completed" } } },
+      "then": {
+        "properties": {
+          "mode": { "const": "measure" },
+          "correctness": { "maxItems": 0 },
+          "builds": { "minProperties": 3, "maxProperties": 3 },
+          "release_lanes": {
+            "properties": {
+              "candidate": {
+                "properties": { "status": { "const": "available" } }
+              },
+              "main": {
+                "properties": { "status": { "const": "available" } }
+              }
+            }
+          },
+          "overall_verdict": { "enum": ["pass", "fail"] },
+          "protocols": {
+            "properties": {
+              "release": {
+                "properties": { "status": { "const": "completed" } }
+              },
+              "emit-c": {
+                "properties": { "status": { "const": "completed" } }
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "claims": {
+      "type": "object",
+      "required": ["claim_eligible", "scope", "limitations"],
+      "properties": {
+        "claim_eligible": { "type": "boolean" },
+        "scope": {
+          "const": "RFC 0043 frozen three-workload CPU parity suite only"
+        },
+        "limitations": {
+          "type": "array",
+          "minItems": 2,
+          "items": { "type": "string", "minLength": 1 }
+        }
+      },
+      "additionalProperties": false
+    },
+    "command": {
+      "type": "object",
+      "required": [
+        "argv",
+        "command",
+        "cwd",
+        "duration_ns",
+        "exit_code",
+        "environment"
+      ],
+      "properties": {
+        "argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "cwd": { "type": ["string", "null"] },
+        "duration_ns": { "type": "integer", "minimum": 0 },
+        "exit_code": { "const": 0 },
+        "environment": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
+    "file": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "toolFile": {
+      "type": "object",
+      "required": ["path", "sha256", "version_output"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "version_output": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "staticAuthorization": {
+      "type": "object",
+      "required": [
+        "kind",
+        "status",
+        "eligible",
+        "policy",
+        "qualification_path",
+        "qualification_sha256",
+        "checks",
+        "missing_or_unqualified",
+        "provided_bindings",
+        "expected_bindings",
+        "binding_mismatches",
+        "dynamic_policy",
+        "reason"
+      ],
+      "properties": {
+        "kind": { "const": "canonical-host-static-authorization-v1" },
+        "status": { "enum": ["eligible", "ineligible"] },
+        "eligible": { "type": "boolean" },
+        "policy": { "const": "fail-closed" },
+        "qualification_path": { "type": ["string", "null"] },
+        "qualification_sha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "canonical_host_id": { "type": "string", "minLength": 1 },
+        "captured_at_utc": { "type": "string", "format": "date-time" },
+        "checks": { "type": "object" },
+        "missing_or_unqualified": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "provided_bindings": { "type": ["object", "null"] },
+        "expected_bindings": { "type": "object", "minProperties": 7 },
+        "binding_mismatches": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "dynamic_policy": { "$ref": "#/$defs/dynamicPolicy" },
+        "reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "capability": {
+      "type": "object",
+      "required": ["label", "status", "reason"],
+      "properties": {
+        "label": { "enum": ["candidate", "main", "current"] },
+        "status": { "enum": ["available", "unavailable"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "help_command": { "$ref": "#/$defs/command" },
+        "nomo_path": { "type": "string" },
+        "nomo_sha256": { "$ref": "#/$defs/sha256" },
+        "emit_c_fallback_used": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "compilerBuild": {
+      "type": "object",
+      "required": [
+        "repository_before",
+        "repository_after",
+        "expected_commit",
+        "detached_head",
+        "origin_main_commit",
+        "remote_main_commit",
+        "origin_url",
+        "normalized_origin",
+        "command",
+        "environment",
+        "cargo",
+        "binary",
+        "stdout",
+        "stderr"
+      ],
+      "properties": {
+        "repository_before": { "type": "object" },
+        "repository_after": { "type": "object" },
+        "expected_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "detached_head": { "const": true },
+        "origin_main_commit": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "remote_main_commit": {
+          "type": ["string", "null"],
+          "pattern": "^[0-9a-f]{40}$"
+        },
+        "origin_url": { "type": "string", "minLength": 1 },
+        "normalized_origin": { "const": "github.com/nomo-lang/nomo" },
+        "command": { "$ref": "#/$defs/command" },
+        "environment": {
+          "type": "object",
+          "required": ["CARGO_TARGET_DIR"],
+          "properties": {
+            "CARGO_TARGET_DIR": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "cargo": { "$ref": "#/$defs/toolFile" },
+        "binary": { "$ref": "#/$defs/file" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" }
+      },
+      "additionalProperties": false
+    },
+    "releaseLane": {
+      "type": "object",
+      "required": ["label", "status", "reason", "emit_c_fallback_used"],
+      "properties": {
+        "label": { "enum": ["candidate", "main"] },
+        "status": { "enum": ["available", "unavailable"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "emit_c_fallback_used": { "const": false },
+        "help_command": { "$ref": "#/$defs/command" },
+        "nomo_path": { "type": "string" },
+        "nomo_sha256": { "$ref": "#/$defs/sha256" },
+        "checkout": { "type": "string" },
+        "expected_commit": { "type": "string", "pattern": "^[0-9a-f]{40}$" },
+        "detached_head": { "const": true },
+        "repository": { "type": "object" },
+        "compiler_build": { "$ref": "#/$defs/compilerBuild" },
+        "origin_url": { "type": "string", "minLength": 1 },
+        "normalized_origin": { "const": "github.com/nomo-lang/nomo" },
+        "capabilities": {
+          "type": "object",
+          "required": ["release", "emit-c"],
+          "properties": {
+            "release": { "$ref": "#/$defs/capability" },
+            "emit-c": { "$ref": "#/$defs/capability" }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "available" } } },
+          "then": {
+            "required": [
+              "nomo_path",
+              "nomo_sha256",
+              "checkout",
+              "expected_commit",
+              "detached_head",
+              "repository",
+              "origin_url",
+              "normalized_origin",
+              "compiler_build",
+              "capabilities"
+            ]
+          }
+        }
+      ]
+    },
+    "provenance": {
+      "type": "object",
+      "required": [
+        "repository",
+        "manifest_path",
+        "manifest_sha256",
+        "predecessor",
+        "rfc",
+        "host",
+        "toolchains",
+        "collector",
+        "methodology",
+        "thresholds",
+        "environment_qualification",
+        "source_lock",
+        "prepared_bundle_sha256",
+        "prepared_bundle_path",
+        "qualification_request_path"
+      ],
+      "properties": {
+        "repository": { "type": "object" },
+        "manifest_path": { "type": "string", "minLength": 1 },
+        "manifest_sha256": { "$ref": "#/$defs/sha256" },
+        "predecessor": { "type": "object" },
+        "rfc": { "type": "object" },
+        "host": { "type": "object" },
+        "toolchains": { "type": "object" },
+        "collector": { "type": "object" },
+        "methodology": { "type": "object" },
+        "thresholds": { "type": "object" },
+        "environment_qualification": { "$ref": "#/$defs/staticAuthorization" },
+        "prepared_bundle_sha256": {
+          "oneOf": [{ "$ref": "#/$defs/sha256" }, { "type": "null" }]
+        },
+        "prepared_bundle_path": { "type": ["string", "null"] },
+        "qualification_request_path": { "type": ["string", "null"] },
+        "source_lock": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "type": "object" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "referenceBuild": {
+      "type": "object",
+      "required": [
+        "kind",
+        "source_files",
+        "compiled_sources",
+        "commands",
+        "compiler_output",
+        "generated_c",
+        "binaries",
+        "compile_time_excluded_from_run_time"
+      ],
+      "properties": {
+        "kind": { "const": "reference-and-correctness-baseline" },
+        "source_files": { "type": "object" },
+        "compiled_sources": { "type": "object" },
+        "commands": {
+          "type": "object",
+          "required": ["c_build", "cpp_build", "semantic-c_build", "go_build"],
+          "additionalProperties": { "$ref": "#/$defs/command" }
+        },
+        "compiler_output": { "type": "object" },
+        "generated_c": { "type": ["object", "null"] },
+        "binaries": { "type": "object" },
+        "compile_time_excluded_from_run_time": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "generatedC": {
+      "type": "object",
+      "required": ["path", "sha256"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
+        "unmodified_after_build": { "const": true },
+        "unmodified_after_emit": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "releaseBackend": {
+      "type": "object",
+      "required": [
+        "schema",
+        "complete_argv",
+        "compiler",
+        "objects",
+        "compile_commands",
+        "link_command",
+        "generated_c",
+        "binary"
+      ],
+      "properties": {
+        "schema": { "const": 1 },
+        "complete_argv": { "const": true },
+        "compiler": {
+          "type": "object",
+          "required": ["path", "realpath", "sha256", "version_output", "target_triple"],
+          "properties": {
+            "path": { "type": "string", "minLength": 1 },
+            "realpath": { "type": "string", "minLength": 1 },
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "version_output": { "type": "string", "minLength": 1 },
+            "target_triple": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "objects": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/file" }
+        },
+        "compile_commands": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "$ref": "#/$defs/command" }
+        },
+        "link_command": { "$ref": "#/$defs/command" },
+        "generated_c": { "$ref": "#/$defs/file" },
+        "binary": { "$ref": "#/$defs/file" }
+      },
+      "additionalProperties": false
+    },
+    "releaseBuild": {
+      "type": "object",
+      "required": [
+        "kind",
+        "lane",
+        "repository",
+        "nomo",
+        "source",
+        "command",
+        "stdout",
+        "stderr",
+        "generated_c",
+        "binary",
+        "backend_provenance_path",
+        "backend_provenance_sha256",
+        "backend_provenance",
+        "compile_time_excluded_from_run_time",
+        "emit_c_fallback_used"
+      ],
+      "properties": {
+        "kind": { "const": "real-nomo-release" },
+        "lane": { "enum": ["candidate", "main"] },
+        "repository": { "type": "object" },
+        "nomo": { "$ref": "#/$defs/file" },
+        "source": { "$ref": "#/$defs/file" },
+        "command": { "$ref": "#/$defs/command" },
+        "stdout": { "type": "string" },
+        "stderr": { "type": "string" },
+        "generated_c": { "$ref": "#/$defs/generatedC" },
+        "binary": { "$ref": "#/$defs/file" },
+        "backend_provenance_path": { "type": "string", "minLength": 1 },
+        "backend_provenance_sha256": { "$ref": "#/$defs/sha256" },
+        "backend_provenance": { "$ref": "#/$defs/releaseBackend" },
+        "compile_time_excluded_from_run_time": { "const": true },
+        "emit_c_fallback_used": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "emitCBuild": {
+      "type": "object",
+      "required": [
+        "kind",
+        "lane",
+        "repository",
+        "nomo",
+        "source",
+        "emit_command",
+        "emit_stdout",
+        "emit_stderr",
+        "clang_command",
+        "clang_stdout",
+        "clang_stderr",
+        "generated_c",
+        "binary",
+        "compile_time_excluded_from_run_time",
+        "release_artifact_reused"
+      ],
+      "properties": {
+        "kind": { "const": "nomo-emit-c-clang" },
+        "lane": { "enum": ["candidate", "main"] },
+        "repository": { "type": "object" },
+        "nomo": { "$ref": "#/$defs/file" },
+        "source": { "$ref": "#/$defs/file" },
+        "emit_command": { "$ref": "#/$defs/command" },
+        "emit_stdout": { "type": "string" },
+        "emit_stderr": { "type": "string" },
+        "clang_command": { "$ref": "#/$defs/command" },
+        "clang_stdout": { "type": "string" },
+        "clang_stderr": { "type": "string" },
+        "generated_c": { "$ref": "#/$defs/generatedC" },
+        "binary": { "$ref": "#/$defs/file" },
+        "compile_time_excluded_from_run_time": { "const": true },
+        "release_artifact_reused": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "workloadBuild": {
+      "type": "object",
+      "required": ["references", "modes"],
+      "properties": {
+        "references": { "$ref": "#/$defs/referenceBuild" },
+        "modes": {
+          "type": "object",
+          "properties": {
+            "release": {
+              "type": "object",
+              "required": ["candidate", "main"],
+              "properties": {
+                "candidate": { "$ref": "#/$defs/releaseBuild" },
+                "main": { "$ref": "#/$defs/releaseBuild" }
+              },
+              "additionalProperties": false
+            },
+            "emit-c": {
+              "type": "object",
+              "required": ["candidate", "main"],
+              "properties": {
+                "candidate": { "$ref": "#/$defs/emitCBuild" },
+                "main": { "$ref": "#/$defs/emitCBuild" }
+              },
+              "additionalProperties": false
+            }
+          },
+          "additionalProperties": false
+        }
+      },
+      "additionalProperties": false
+    },
+    "runtimeEnvironment": {
+      "type": "object",
+      "required": ["LC_ALL", "LANG"],
+      "properties": {
+        "LC_ALL": { "const": "C" },
+        "LANG": { "const": "C" },
+        "PATH": { "type": "string", "minLength": 1 },
+        "TMPDIR": { "type": "string", "minLength": 1 },
+        "SystemRoot": { "type": "string", "minLength": 1 },
+        "WINDIR": { "type": "string", "minLength": 1 },
+        "TEMP": { "type": "string", "minLength": 1 },
+        "TMP": { "type": "string", "minLength": 1 },
+        "GOMAXPROCS": { "const": "1" }
+      },
+      "additionalProperties": false
+    },
+    "sample": {
+      "type": "object",
+      "required": [
+        "started_at_utc",
+        "finished_at_utc",
+        "command_argv",
+        "command",
+        "environment",
+        "collector",
+        "stdout",
+        "wall_ns",
+        "user_cpu_ns",
+        "system_cpu_ns",
+        "cpu_total_ns",
+        "peak_rss_bytes",
+        "exit_code",
+        "stdout_raw_sha256",
+        "stdout_normalized_sha256",
+        "stdout_normalization",
+        "executable_sha256"
+      ],
+      "properties": {
+        "started_at_utc": { "type": "string", "format": "date-time" },
+        "finished_at_utc": { "type": "string", "format": "date-time" },
+        "command_argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "environment": { "$ref": "#/$defs/runtimeEnvironment" },
+        "collector": { "type": "string", "minLength": 1 },
+        "stdout": { "const": "captured-and-verified" },
+        "wall_ns": { "type": "integer", "exclusiveMinimum": 0 },
+        "user_cpu_ns": { "type": "integer", "minimum": 0 },
+        "system_cpu_ns": { "type": "integer", "minimum": 0 },
+        "cpu_total_ns": { "type": "integer", "minimum": 0 },
+        "peak_rss_bytes": { "type": "integer", "minimum": 0 },
+        "exit_code": { "const": 0 },
+        "stdout_raw_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_normalization": { "const": "crlf-to-lf-only-v1" },
+        "executable_sha256": { "$ref": "#/$defs/sha256" },
+        "phase": { "enum": ["warmup", "sample"] },
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "batch_index": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "attempt_index": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "warmup_index": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "block_index": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "order_position": { "type": "integer", "minimum": 1, "maximum": 5 }
+      },
+      "additionalProperties": false
+    },
+    "failedSample": {
+      "type": "object",
+      "required": [
+        "status",
+        "failure_kind",
+        "failure_message",
+        "failure_source",
+        "started_at_utc",
+        "finished_at_utc",
+        "command_argv",
+        "command",
+        "environment",
+        "collector",
+        "stdout",
+        "wall_ns",
+        "user_cpu_ns",
+        "system_cpu_ns",
+        "cpu_total_ns",
+        "peak_rss_bytes",
+        "exit_code",
+        "timed_out",
+        "stdout_raw_sha256",
+        "stdout_normalized_sha256",
+        "stdout_normalization",
+        "stdout_bytes",
+        "stderr",
+        "executable_sha256"
+      ],
+      "properties": {
+        "status": { "const": "failed" },
+        "failure_kind": {
+          "enum": ["timeout", "output-mismatch", "process-failure", "collector-failure"]
+        },
+        "failure_message": { "type": "string", "minLength": 1 },
+        "failure_source": { "type": "string", "minLength": 1 },
+        "started_at_utc": { "type": "string", "format": "date-time" },
+        "finished_at_utc": { "type": "string", "format": "date-time" },
+        "command_argv": {
+          "type": "array",
+          "minItems": 1,
+          "items": { "type": "string" }
+        },
+        "command": { "type": "string", "minLength": 1 },
+        "environment": { "$ref": "#/$defs/runtimeEnvironment" },
+        "collector": { "type": "string", "minLength": 1 },
+        "stdout": { "const": "captured-failed" },
+        "wall_ns": { "type": "integer", "exclusiveMinimum": 0 },
+        "user_cpu_ns": { "type": ["integer", "null"], "minimum": 0 },
+        "system_cpu_ns": { "type": ["integer", "null"], "minimum": 0 },
+        "cpu_total_ns": { "type": ["integer", "null"], "minimum": 0 },
+        "peak_rss_bytes": { "type": ["integer", "null"], "minimum": 0 },
+        "exit_code": { "type": ["integer", "null"] },
+        "timed_out": { "type": "boolean" },
+        "stdout_raw_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+        "stdout_normalization": { "const": "crlf-to-lf-only-v1" },
+        "stdout_bytes": {
+          "type": "object",
+          "required": ["raw", "normalized"],
+          "properties": {
+            "raw": { "type": "integer", "minimum": 0 },
+            "normalized": { "type": "integer", "minimum": 0 }
+          },
+          "additionalProperties": false
+        },
+        "stderr": {
+          "type": "object",
+          "required": ["sha256", "length_bytes", "preview_utf8"],
+          "properties": {
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "length_bytes": { "type": "integer", "minimum": 0 },
+            "preview_utf8": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "executable_sha256": { "$ref": "#/$defs/sha256" },
+        "phase": { "enum": ["warmup", "sample"] },
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "batch_index": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "attempt_index": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "warmup_index": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "block_index": { "type": "integer", "minimum": 1, "maximum": 30 },
+        "order_position": { "type": "integer", "minimum": 1, "maximum": 5 }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": {
+            "properties": { "failure_kind": { "const": "timeout" } }
+          },
+          "then": {
+            "properties": { "timed_out": { "const": true } }
+          },
+          "else": {
+            "properties": { "timed_out": { "const": false } }
+          }
+        }
+      ]
+    },
+    "correctness": {
+      "type": "object",
+      "required": [
+        "id",
+        "build_mode",
+        "input",
+        "fixture_path",
+        "fixture_sha256",
+        "lanes",
+        "attempted_lanes",
+        "status",
+        "failure_reason",
+        "implementations"
+      ],
+      "properties": {
+        "id": { "enum": ["spectral-norm", "n-body", "fannkuch-redux"] },
+        "build_mode": {
+          "enum": ["baseline-emit-c", "release", "emit-c"]
+        },
+        "input": { "type": "string" },
+        "fixture_path": { "type": "string", "minLength": 1 },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "lanes": {
+          "type": "array",
+          "minItems": 5,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "attempted_lanes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 6,
+          "uniqueItems": true,
+          "items": { "type": "string" }
+        },
+        "status": { "enum": ["completed", "failed"] },
+        "failure_reason": { "type": ["string", "null"] },
+        "implementations": {
+          "type": "object",
+          "minProperties": 1,
+          "maxProperties": 6,
+          "additionalProperties": { "$ref": "#/$defs/correctnessImplementation" }
+        }
+      },
+      "additionalProperties": false
+    },
+    "correctnessImplementation": {
+      "oneOf": [
+        {
+          "type": "object",
+          "required": ["passed", "stdout_normalized_sha256", "sample"],
+          "properties": {
+            "passed": { "const": true },
+            "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+            "sample": { "$ref": "#/$defs/sample" }
+          },
+          "additionalProperties": false
+        },
+        {
+          "type": "object",
+          "required": ["passed", "stdout_normalized_sha256", "sample"],
+          "properties": {
+            "passed": { "const": false },
+            "stdout_normalized_sha256": { "$ref": "#/$defs/sha256" },
+            "sample": { "$ref": "#/$defs/failedSample" }
+          },
+          "additionalProperties": false
+        }
+      ]
+    },
+    "ratioStatistics": {
+      "type": "object",
+      "required": [
+        "sample_count",
+        "degrees_of_freedom",
+        "confidence_level",
+        "confidence_side",
+        "distribution",
+        "t_critical",
+        "mean_log_ratio",
+        "sample_standard_deviation",
+        "standard_error",
+        "point_ratio",
+        "upper_bound_99",
+        "interpretation"
+      ],
+      "properties": {
+        "sample_count": { "const": 30 },
+        "degrees_of_freedom": { "const": 29 },
+        "confidence_level": { "const": 0.99 },
+        "confidence_side": { "const": "upper-one-sided" },
+        "distribution": { "const": "student-t" },
+        "t_critical": { "const": 2.462021360150384 },
+        "log_ratios": {
+          "type": "array",
+          "minItems": 30,
+          "maxItems": 30,
+          "items": { "type": "number" }
+        },
+        "suite_block_log_ratios": {
+          "type": "array",
+          "minItems": 30,
+          "maxItems": 30,
+          "items": { "type": "number" }
+        },
+        "mean_log_ratio": { "type": "number" },
+        "sample_standard_deviation": { "type": "number", "minimum": 0 },
+        "standard_error": { "type": "number", "minimum": 0 },
+        "point_ratio": { "type": "number", "exclusiveMinimum": 0 },
+        "upper_bound_99": { "type": "number", "exclusiveMinimum": 0 },
+        "weighting": { "type": "string" },
+        "interpretation": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "gate": {
+      "type": "object",
+      "required": ["threshold", "actual", "passed"],
+      "properties": {
+        "threshold": { "type": "number", "exclusiveMinimum": 0 },
+        "actual": { "type": "number", "exclusiveMinimum": 0 },
+        "passed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "comparisons": {
+      "type": "object",
+      "required": ["c", "cpp", "main", "go"],
+      "properties": {
+        "c": { "$ref": "#/$defs/ratioStatistics" },
+        "cpp": { "$ref": "#/$defs/ratioStatistics" },
+        "main": { "$ref": "#/$defs/ratioStatistics" },
+        "go": { "$ref": "#/$defs/ratioStatistics" }
+      },
+      "additionalProperties": false
+    },
+    "workloadEvaluation": {
+      "type": "object",
+      "required": ["id", "comparisons", "gates", "verdict"],
+      "properties": {
+        "id": { "enum": ["spectral-norm", "n-body", "fannkuch-redux"] },
+        "comparisons": { "$ref": "#/$defs/comparisons" },
+        "gates": {
+          "type": "object",
+          "required": [
+            "candidate_vs_c",
+            "candidate_vs_cpp",
+            "candidate_vs_main"
+          ],
+          "properties": {
+            "candidate_vs_c": { "$ref": "#/$defs/gate" },
+            "candidate_vs_cpp": { "$ref": "#/$defs/gate" },
+            "candidate_vs_main": { "$ref": "#/$defs/gate" }
+          },
+          "additionalProperties": false
+        },
+        "verdict": { "enum": ["pass", "fail"] }
+      },
+      "additionalProperties": false
+    },
+    "suiteEvaluation": {
+      "type": "object",
+      "required": ["comparisons", "gates", "verdict"],
+      "properties": {
+        "comparisons": { "$ref": "#/$defs/comparisons" },
+        "gates": {
+          "type": "object",
+          "required": [
+            "candidate_vs_c_point",
+            "candidate_vs_c_u99",
+            "candidate_vs_cpp_point",
+            "candidate_vs_cpp_u99",
+            "candidate_vs_main_u99"
+          ],
+          "properties": {
+            "candidate_vs_c_point": { "$ref": "#/$defs/gate" },
+            "candidate_vs_c_u99": { "$ref": "#/$defs/gate" },
+            "candidate_vs_cpp_point": { "$ref": "#/$defs/gate" },
+            "candidate_vs_cpp_u99": { "$ref": "#/$defs/gate" },
+            "candidate_vs_main_u99": { "$ref": "#/$defs/gate" }
+          },
+          "additionalProperties": false
+        },
+        "verdict": { "enum": ["pass", "fail"] }
+      },
+      "additionalProperties": false
+    },
+    "fullEvaluation": {
+      "type": "object",
+      "required": ["workloads", "suite", "environment_eligible", "verdict"],
+      "properties": {
+        "workloads": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/workloadEvaluation" }
+        },
+        "suite": { "$ref": "#/$defs/suiteEvaluation" },
+        "environment_eligible": { "const": true },
+        "verdict": { "enum": ["pass", "fail"] }
+      },
+      "additionalProperties": false
+    },
+    "ineligibleEvaluation": {
+      "type": "object",
+      "required": ["environment_eligible", "verdict"],
+      "properties": {
+        "environment_eligible": { "const": false },
+        "verdict": { "const": "ineligible" }
+      },
+      "additionalProperties": false
+    },
+    "driftMetric": {
+      "type": "object",
+      "required": [
+        "workload",
+        "lane",
+        "first_half_geomean_wall_ns",
+        "second_half_geomean_wall_ns",
+        "symmetric_drift",
+        "threshold",
+        "passed"
+      ],
+      "properties": {
+        "workload": {
+          "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
+        },
+        "lane": { "enum": ["c", "cpp", "go"] },
+        "first_half_geomean_wall_ns": { "type": "number", "exclusiveMinimum": 0 },
+        "second_half_geomean_wall_ns": { "type": "number", "exclusiveMinimum": 0 },
+        "symmetric_drift": { "type": "number", "minimum": 0 },
+        "threshold": { "const": 0.02 },
+        "passed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "rsdMetric": {
+      "type": "object",
+      "required": [
+        "workload",
+        "comparator",
+        "mean_paired_ratio",
+        "sample_standard_deviation",
+        "relative_standard_deviation",
+        "threshold",
+        "passed"
+      ],
+      "properties": {
+        "workload": {
+          "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
+        },
+        "comparator": { "enum": ["c", "cpp", "main"] },
+        "mean_paired_ratio": { "type": "number", "exclusiveMinimum": 0 },
+        "sample_standard_deviation": { "type": "number", "minimum": 0 },
+        "relative_standard_deviation": { "type": "number", "minimum": 0 },
+        "threshold": { "const": 0.03 },
+        "passed": { "type": "boolean" }
+      },
+      "additionalProperties": false
+    },
+    "stability": {
+      "type": "object",
+      "required": [
+        "reference_drift",
+        "diagnostic_reference_drift",
+        "paired_ratio_rsd",
+        "issues",
+        "warnings",
+        "valid",
+        "outliers_removed"
+      ],
+      "properties": {
+        "reference_drift": {
+          "type": "array",
+          "minItems": 6,
+          "maxItems": 6,
+          "items": { "$ref": "#/$defs/driftMetric" }
+        },
+        "diagnostic_reference_drift": {
+          "type": "array",
+          "minItems": 3,
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/driftMetric" }
+        },
+        "paired_ratio_rsd": {
+          "type": "array",
+          "minItems": 9,
+          "maxItems": 9,
+          "items": { "$ref": "#/$defs/rsdMetric" }
+        },
+        "issues": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "warnings": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "valid": { "type": "boolean" },
+        "outliers_removed": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "laneSamples2": {
+      "type": "object",
+      "required": ["candidate", "main", "c", "cpp", "go"],
+      "properties": {
+        "candidate": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/sample" } },
+        "main": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/sample" } },
+        "c": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/sample" } },
+        "cpp": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/sample" } },
+        "go": { "type": "array", "minItems": 2, "maxItems": 2, "items": { "$ref": "#/$defs/sample" } }
+      },
+      "additionalProperties": false
+    },
+    "laneSamples30": {
+      "type": "object",
+      "required": ["candidate", "main", "c", "cpp", "go"],
+      "properties": {
+        "candidate": { "type": "array", "minItems": 30, "maxItems": 30, "items": { "$ref": "#/$defs/sample" } },
+        "main": { "type": "array", "minItems": 30, "maxItems": 30, "items": { "$ref": "#/$defs/sample" } },
+        "c": { "type": "array", "minItems": 30, "maxItems": 30, "items": { "$ref": "#/$defs/sample" } },
+        "cpp": { "type": "array", "minItems": 30, "maxItems": 30, "items": { "$ref": "#/$defs/sample" } },
+        "go": { "type": "array", "minItems": 30, "maxItems": 30, "items": { "$ref": "#/$defs/sample" } }
+      },
+      "additionalProperties": false
+    },
+    "laneSamplesPartial": {
+      "type": "object",
+      "required": ["candidate", "main", "c", "cpp", "go"],
+      "properties": {
+        "candidate": { "type": "array", "maxItems": 30, "items": { "oneOf": [{ "$ref": "#/$defs/sample" }, { "$ref": "#/$defs/failedSample" }] } },
+        "main": { "type": "array", "maxItems": 30, "items": { "oneOf": [{ "$ref": "#/$defs/sample" }, { "$ref": "#/$defs/failedSample" }] } },
+        "c": { "type": "array", "maxItems": 30, "items": { "oneOf": [{ "$ref": "#/$defs/sample" }, { "$ref": "#/$defs/failedSample" }] } },
+        "cpp": { "type": "array", "maxItems": 30, "items": { "oneOf": [{ "$ref": "#/$defs/sample" }, { "$ref": "#/$defs/failedSample" }] } },
+        "go": { "type": "array", "maxItems": 30, "items": { "oneOf": [{ "$ref": "#/$defs/sample" }, { "$ref": "#/$defs/failedSample" }] } }
+      },
+      "additionalProperties": false
+    },
+    "measuredWorkload": {
+      "type": "object",
+      "required": [
+        "id",
+        "build_mode",
+        "performance_input",
+        "fixture_path",
+        "fixture_sha256",
+        "warmup_orders",
+        "warmups",
+        "block_schedule",
+        "samples"
+        ,"collection_status",
+        "failure_reason"
+      ],
+      "properties": {
+        "id": { "enum": ["spectral-norm", "n-body", "fannkuch-redux"] },
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "performance_input": { "type": "string" },
+        "fixture_path": { "type": "string", "minLength": 1 },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "warmup_orders": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 2,
+          "items": {
+            "type": "array",
+            "minItems": 5,
+            "maxItems": 5,
+            "items": { "enum": ["candidate", "main", "c", "cpp", "go"] }
+          }
+        },
+        "warmups": { "$ref": "#/$defs/laneSamples2" },
+        "block_schedule": {
+          "type": "array",
+          "minItems": 30,
+          "maxItems": 30,
+          "items": {
+            "type": "object",
+            "required": ["block_index", "order"],
+            "properties": {
+              "block_index": { "type": "integer", "minimum": 1, "maximum": 30 },
+              "order": {
+                "type": "array",
+                "minItems": 5,
+                "maxItems": 5,
+                "items": { "enum": ["candidate", "main", "c", "cpp", "go"] }
+              }
+            },
+            "additionalProperties": false
+          }
+        },
+        "samples": { "$ref": "#/$defs/laneSamples30" }
+        ,"collection_status": { "const": "completed" },
+        "failure_reason": { "type": "null" }
+      },
+      "additionalProperties": false
+    },
+    "partialWorkload": {
+      "type": "object",
+      "required": [
+        "id",
+        "build_mode",
+        "performance_input",
+        "fixture_path",
+        "fixture_sha256",
+        "warmup_orders",
+        "collection_status",
+        "failure_reason",
+        "warmups",
+        "block_schedule",
+        "samples"
+      ],
+      "properties": {
+        "id": { "enum": ["spectral-norm", "n-body", "fannkuch-redux"] },
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "performance_input": { "type": "string" },
+        "fixture_path": { "type": "string" },
+        "fixture_sha256": { "$ref": "#/$defs/sha256" },
+        "warmup_orders": { "type": "array", "maxItems": 2 },
+        "warmups": { "$ref": "#/$defs/laneSamplesPartial" },
+        "block_schedule": { "type": "array", "maxItems": 30 },
+        "samples": { "$ref": "#/$defs/laneSamplesPartial" },
+        "collection_status": { "const": "failed" },
+        "failure_reason": { "type": "string", "minLength": 1 }
+      },
+      "additionalProperties": false
+    },
+    "dynamicObservation": {
+      "type": "object",
+      "required": ["status", "source", "raw", "parsed", "reason"],
+      "properties": {
+        "status": { "enum": ["qualified", "failed"] },
+        "source": { "type": "string", "minLength": 1 },
+        "raw": {
+          "type": "object",
+          "required": ["sha256", "length_bytes", "text"],
+          "properties": {
+            "sha256": { "$ref": "#/$defs/sha256" },
+            "length_bytes": { "type": "integer", "minimum": 0 },
+            "text": { "type": "string" }
+          },
+          "additionalProperties": false
+        },
+        "parsed": {},
+        "reason": { "type": "string" },
+        "command_argv": { "type": "array", "items": { "type": "string" } },
+        "command_identity": {
+          "oneOf": [
+            {
+              "type": "object",
+              "required": [
+                "path",
+                "realpath",
+                "sha256",
+                "version_output"
+              ],
+              "properties": {
+                "path": { "type": "string", "minLength": 1 },
+                "realpath": { "type": "string", "minLength": 1 },
+                "sha256": { "$ref": "#/$defs/sha256" },
+                "version_output": { "type": ["string", "null"] }
+              },
+              "additionalProperties": false
+            },
+            { "type": "null" }
+          ]
+        },
+        "environment": {
+          "type": "object",
+          "required": ["LC_ALL", "LANG", "PATH"],
+          "properties": {
+            "LC_ALL": { "const": "C" },
+            "LANG": { "const": "C" },
+            "PATH": { "type": "string", "minLength": 1 }
+          },
+          "additionalProperties": false
+        },
+        "exit_code": { "type": "integer" },
+        "raw_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "dynamicSnapshot": {
+      "type": "object",
+      "required": [
+        "schema",
+        "captured_at_utc",
+        "monotonic_ns",
+        "authority_host_sha256",
+        "observed_host_sha256",
+        "observations",
+        "policy",
+        "eligible",
+        "reason",
+        "snapshot_sha256"
+      ],
+      "properties": {
+        "schema": { "const": 1 },
+        "captured_at_utc": { "type": "string", "format": "date-time" },
+        "monotonic_ns": { "type": "integer", "minimum": 0 },
+        "authority_host_sha256": { "$ref": "#/$defs/sha256" },
+        "observed_host_sha256": { "$ref": "#/$defs/sha256" },
+        "observations": {
+          "type": "object",
+          "required": ["power_mode", "low_power_mode", "frequency_governor", "thermal_state", "concurrent_load", "swap", "affinity"],
+          "properties": {
+            "power_mode": { "$ref": "#/$defs/dynamicObservation" },
+            "low_power_mode": { "$ref": "#/$defs/dynamicObservation" },
+            "frequency_governor": { "$ref": "#/$defs/dynamicObservation" },
+            "thermal_state": { "$ref": "#/$defs/dynamicObservation" },
+            "concurrent_load": { "$ref": "#/$defs/dynamicObservation" },
+            "swap": { "$ref": "#/$defs/dynamicObservation" },
+            "affinity": { "$ref": "#/$defs/dynamicObservation" }
+          },
+          "additionalProperties": false
+        },
+        "policy": { "$ref": "#/$defs/dynamicPolicy" },
+        "eligible": { "type": "boolean" },
+        "reason": { "type": "string", "minLength": 1 },
+        "snapshot_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "dynamicPolicy": {
+      "type": "object",
+      "required": ["require_ac_power", "allow_low_power_mode", "allowed_linux_governors", "max_thermal_celsius", "max_load_per_logical_core", "max_swap_delta_bytes"],
+      "properties": {
+        "require_ac_power": { "const": true },
+        "allow_low_power_mode": { "const": false },
+        "allowed_linux_governors": { "const": ["performance"] },
+        "max_thermal_celsius": { "const": 85.0 },
+        "max_load_per_logical_core": { "const": 1.0 },
+        "max_swap_delta_bytes": { "const": 0 }
+      },
+      "additionalProperties": false
+    },
+    "batch": {
+      "type": "object",
+      "required": [
+        "build_mode",
+        "batch_index",
+        "attempt_index",
+        "started_at_utc",
+        "finished_at_utc",
+        "static_authorization_sha256",
+        "dynamic_environment_before",
+        "dynamic_environment_after",
+        "workloads",
+        "status",
+        "invalidation_reasons",
+        "stability",
+        "evaluation"
+      ],
+      "properties": {
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "batch_index": { "type": "integer", "minimum": 1, "maximum": 2 },
+        "attempt_index": { "type": "integer", "minimum": 1, "maximum": 3 },
+        "started_at_utc": { "type": "string", "format": "date-time" },
+        "finished_at_utc": { "type": "string", "format": "date-time" },
+        "static_authorization_sha256": { "$ref": "#/$defs/sha256" },
+        "dynamic_environment_before": { "$ref": "#/$defs/dynamicSnapshot" },
+        "dynamic_environment_after": { "$ref": "#/$defs/dynamicSnapshot" },
+        "workloads": {
+          "type": "array",
+          "maxItems": 3,
+          "items": {
+            "oneOf": [
+              { "$ref": "#/$defs/measuredWorkload" },
+              { "$ref": "#/$defs/partialWorkload" }
+            ]
+          }
+        },
+        "status": { "enum": ["completed", "invalidated"] },
+        "invalidation_reasons": {
+          "type": "array",
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "stability": {
+          "oneOf": [
+            { "$ref": "#/$defs/stability" },
+            { "type": "null" }
+          ]
+        },
+        "evaluation": {
+          "oneOf": [
+            { "$ref": "#/$defs/fullEvaluation" },
+            { "$ref": "#/$defs/ineligibleEvaluation" }
+          ]
+        }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "completed" } } },
+          "then": {
+            "properties": {
+              "workloads": { "minItems": 3, "maxItems": 3 },
+              "invalidation_reasons": { "maxItems": 0 },
+              "stability": {
+                "allOf": [
+                  { "$ref": "#/$defs/stability" },
+                  { "properties": { "valid": { "const": true } } }
+                ]
+              },
+              "evaluation": { "$ref": "#/$defs/fullEvaluation" }
+            }
+          }
+        }
+      ]
+    },
+    "protocol": {
+      "type": "object",
+      "required": [
+        "build_mode",
+        "status",
+        "reason",
+        "correctness",
+        "batches",
+        "verdict"
+      ],
+      "properties": {
+        "build_mode": { "enum": ["release", "emit-c"] },
+        "status": { "enum": ["unavailable", "ineligible", "completed"] },
+        "reason": { "type": "string", "minLength": 1 },
+        "correctness": {
+          "type": "array",
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/correctness" }
+        },
+        "batches": {
+          "type": "array",
+          "maxItems": 3,
+          "items": { "$ref": "#/$defs/batch" }
+        },
+        "verdict": { "enum": ["not_evaluated", "pass", "fail"] }
+      },
+      "additionalProperties": false,
+      "allOf": [
+        {
+          "if": { "properties": { "status": { "const": "completed" } } },
+          "then": {
+            "properties": {
+              "correctness": { "minItems": 3, "maxItems": 3 },
+              "batches": { "minItems": 2, "maxItems": 3 },
+              "verdict": { "enum": ["pass", "fail"] }
+            }
+          }
+        },
+        {
+          "if": {
+            "properties": {
+              "status": { "enum": ["unavailable", "ineligible"] }
+            }
+          },
+          "then": {
+            "properties": {
+              "verdict": { "const": "not_evaluated" }
+            }
+          }
+        }
+      ]
+    }
+  }
+}

@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://nomo-lang.org/schemas/benchmarksgame-environment-v2.json",
+  "title": "RFC 0043 canonical-host qualification record",
+  "type": "object",
+  "required": ["schema", "canonical_host_id", "captured_at_utc", "dynamic_policy", "bindings", "checks"],
+  "properties": {
+    "schema": { "const": 1 },
+    "canonical_host_id": { "type": "string", "minLength": 1 },
+    "captured_at_utc": { "type": "string", "format": "date-time" },
+    "dynamic_policy": {
+      "type": "object",
+      "required": ["require_ac_power", "allow_low_power_mode", "allowed_linux_governors", "max_thermal_celsius", "max_load_per_logical_core", "max_swap_delta_bytes"],
+      "properties": {
+        "require_ac_power": { "const": true },
+        "allow_low_power_mode": { "const": false },
+        "allowed_linux_governors": { "const": ["performance"] },
+        "max_thermal_celsius": { "const": 85.0 },
+        "max_load_per_logical_core": { "const": 1.0 },
+        "max_swap_delta_bytes": { "const": 0 }
+      },
+      "additionalProperties": false
+    },
+    "bindings": {
+      "type": "object",
+      "required": [
+        "authority_host_sha256",
+        "reference_toolchains_sha256",
+        "frozen_source_lock_sha256",
+        "candidate_commit",
+        "candidate_nomo_sha256",
+        "main_commit",
+        "main_nomo_sha256",
+        "prepared_bundle_sha256"
+      ],
+      "properties": {
+        "authority_host_sha256": { "$ref": "#/$defs/sha256" },
+        "reference_toolchains_sha256": { "$ref": "#/$defs/sha256" },
+        "frozen_source_lock_sha256": { "$ref": "#/$defs/sha256" },
+        "candidate_commit": { "$ref": "#/$defs/commit" },
+        "candidate_nomo_sha256": { "$ref": "#/$defs/sha256" },
+        "main_commit": { "$ref": "#/$defs/commit" },
+        "main_nomo_sha256": { "$ref": "#/$defs/sha256" },
+        "prepared_bundle_sha256": { "$ref": "#/$defs/sha256" }
+      },
+      "additionalProperties": false
+    },
+    "checks": {
+      "type": "object",
+      "required": [
+        "canonical_host_identity",
+        "os_kernel",
+        "architecture",
+        "cpu_model_topology",
+        "memory",
+        "power_mode",
+        "frequency_governor",
+        "thermal_state",
+        "virtualization",
+        "clock_source_resolution",
+        "affinity_isolation",
+        "concurrent_load",
+        "toolchain_identity",
+        "frozen_source_lock"
+      ],
+      "properties": {
+        "canonical_host_identity": { "$ref": "#/$defs/check" },
+        "os_kernel": { "$ref": "#/$defs/check" },
+        "architecture": { "$ref": "#/$defs/check" },
+        "cpu_model_topology": { "$ref": "#/$defs/check" },
+        "memory": { "$ref": "#/$defs/check" },
+        "power_mode": { "$ref": "#/$defs/check" },
+        "frequency_governor": { "$ref": "#/$defs/check" },
+        "thermal_state": { "$ref": "#/$defs/check" },
+        "virtualization": { "$ref": "#/$defs/check" },
+        "clock_source_resolution": { "$ref": "#/$defs/check" },
+        "affinity_isolation": { "$ref": "#/$defs/check" },
+        "concurrent_load": { "$ref": "#/$defs/check" },
+        "toolchain_identity": { "$ref": "#/$defs/check" },
+        "frozen_source_lock": { "$ref": "#/$defs/check" }
+      },
+      "additionalProperties": false
+    }
+  },
+  "additionalProperties": false,
+  "$defs": {
+    "sha256": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{64}$"
+    },
+    "commit": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}$"
+    },
+    "check": {
+      "type": "object",
+      "required": ["status", "value", "source", "evidence"],
+      "properties": {
+        "status": { "enum": ["qualified", "unavailable", "failed"] },
+        "value": {
+          "type": ["string", "number", "object", "array", "boolean"]
+        },
+        "source": { "type": "string", "minLength": 1 },
+        "evidence": {
+          "type": "object",
+          "required": ["kind", "captured_at_utc", "value_sha256"],
+          "properties": {
+            "kind": { "enum": ["system-api", "command", "collector", "file"] },
+            "captured_at_utc": { "type": "string", "format": "date-time" },
+            "value_sha256": { "$ref": "#/$defs/sha256" },
+            "command_argv": {
+              "type": "array",
+              "items": { "type": "string" }
+            }
+          },
+          "additionalProperties": false
+        },
+        "note": { "type": "string" }
+      },
+      "additionalProperties": false
+    }
+  }
+}

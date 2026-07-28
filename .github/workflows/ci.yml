@@ -25,6 +25,9 @@ jobs:
           go-version: 1.25.12
           cache: false
 
+      - name: Install pinned Benchmarks Game v2 schema validator
+        run: python3 -m pip install -r scripts/requirements-benchmarksgame-v2.txt
+
       - name: Format
         run: cargo fmt --check
 
@@ -53,6 +56,21 @@ jobs:
         with:
           name: nomo-benchmarksgame-correctness
           path: performance/results/benchmarksgame-ci.json
+          if-no-files-found: error
+
+      - name: Run Benchmarks Game v2 small-input correctness gate
+        run: >-
+          python3 scripts/benchmarksgame_v2.py
+          --mode correctness
+          --nomo target/release/nomo
+          --require-clean
+          --output performance/results/benchmarksgame-v2/ci.json
+
+      - name: Upload Benchmarks Game v2 correctness evidence
+        uses: actions/upload-artifact@v7
+        with:
+          name: nomo-benchmarksgame-v2-correctness
+          path: performance/results/benchmarksgame-v2/ci.json
           if-no-files-found: error
 
       - name: Run P0 async zero-cost and reference controls

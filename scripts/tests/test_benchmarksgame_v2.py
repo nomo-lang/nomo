@@ -5251,6 +5251,33 @@ print(json.dumps(
             result, self.manifest, offline_replay=True
         )
 
+    def test_windows_authorization_path_projects_to_recorded_linux(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        result["provenance"]["environment_qualification"][
+            "qualification_path"
+        ] = (
+            r"C:\Users\runneradmin\AppData\Local\Temp"
+            r"\benchmark-authority\environment.json"
+        )
+        result = self.project_windows_paths_as_linux_artifact(result)
+        qualification_path = result["provenance"][
+            "environment_qualification"
+        ]["qualification_path"]
+        self.assertEqual(result["provenance"]["host"]["os"], "Linux")
+        self.assertTrue(
+            benchmark.PurePosixPath(qualification_path).is_absolute()
+        )
+        self.assertTrue(
+            qualification_path.startswith(
+                "/recorded-windows-producer/c/"
+            )
+        )
+        benchmark.validate_result(
+            result, self.manifest, offline_replay=True
+        )
+
     def test_collector_descriptor_and_sample_derived_fields_are_authoritative(
         self,
     ) -> None:
@@ -8612,7 +8639,6 @@ print(json.dumps(
             },
             "overall_verdict": "not_evaluated",
         }
-        result = self.project_windows_paths_as_linux_artifact(result)
         self.bind_synthetic_build_environment(result)
         self.bind_synthetic_runtime_environments(result)
         result["provenance"]["environment_qualification"] = (
@@ -8720,7 +8746,7 @@ print(json.dumps(
                 batch["dynamic_environment_after"] = snapshot_factory(
                     bindings["authority_host_sha256"]
                 )
-        return result
+        return self.project_windows_paths_as_linux_artifact(result)
 
     def prepared_bundle_fixture(self) -> tuple[dict, Path]:
         root = Path(self.temporary.name) / f"prepared-{time.time_ns()}"

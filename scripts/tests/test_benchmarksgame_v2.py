@@ -5245,11 +5245,61 @@ print(json.dumps(
     def test_complete_dual_mode_artifact_validates_schema_and_recomputation(
         self,
     ) -> None:
-        result = self.completed_result()
+        result = self.project_windows_paths_as_linux_artifact(
+            self.completed_result()
+        )
         benchmark.validate_result_schema(result, self.result_schema_path)
         benchmark.validate_result(
             result, self.manifest, offline_replay=True
         )
+
+    def test_correctness_only_projects_windows_paths_before_authorization(
+        self,
+    ) -> None:
+        def windows_fixture_path(*parts: str) -> str:
+            return str(
+                benchmark.PureWindowsPath(
+                    "D:/native-windows-producer", *parts
+                )
+            )
+
+        with mock.patch.object(
+            self,
+            "fixture_path",
+            side_effect=windows_fixture_path,
+        ), mock.patch.object(
+            self,
+            "manifest_path",
+            benchmark.PureWindowsPath(
+                "D:/native-windows-producer/manifest-v2.json"
+            ),
+        ):
+            result = self.correctness_only_result()
+        provenance = result["provenance"]
+        self.assertEqual(provenance["host"]["os"], "Linux")
+        self.assertTrue(
+            provenance["manifest_path"].startswith(
+                "/recorded-windows-producer/d/"
+            )
+        )
+        self.assertTrue(
+            provenance["toolchains"]["nomo"]["path"].startswith(
+                "/recorded-windows-producer/d/"
+            )
+        )
+        expected_bindings = benchmark.qualification_bindings(
+            provenance["host"],
+            provenance["toolchains"],
+            provenance["source_lock"],
+            result["release_lanes"],
+        )
+        self.assertEqual(
+            provenance["environment_qualification"][
+                "expected_bindings"
+            ],
+            expected_bindings,
+        )
+        benchmark.validate_result_schema(result, self.result_schema_path)
 
     def test_windows_authorization_path_projects_to_recorded_linux(
         self,
@@ -8639,6 +8689,7 @@ print(json.dumps(
             },
             "overall_verdict": "not_evaluated",
         }
+        result = self.project_windows_paths_as_linux_artifact(result)
         self.bind_synthetic_build_environment(result)
         self.bind_synthetic_runtime_environments(result)
         result["provenance"]["environment_qualification"] = (
@@ -8746,7 +8797,7 @@ print(json.dumps(
                 batch["dynamic_environment_after"] = snapshot_factory(
                     bindings["authority_host_sha256"]
                 )
-        return self.project_windows_paths_as_linux_artifact(result)
+        return result
 
     def prepared_bundle_fixture(self) -> tuple[dict, Path]:
         root = Path(self.temporary.name) / f"prepared-{time.time_ns()}"

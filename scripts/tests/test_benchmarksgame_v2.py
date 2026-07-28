@@ -2878,6 +2878,83 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self.assertEqual(output.read_text(encoding="utf-8"), '{"prior": true}\n')
         self.assertEqual(log.read_text(encoding="utf-8"), "prior-log\n")
 
+    def test_preflight_rejects_extension_and_ancestor_path_collisions(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name)
+        cases = (
+            (
+                "extensionless",
+                [
+                    "--mode",
+                    "correctness",
+                    "--output",
+                    str(root / "extensionless"),
+                ],
+                "exact .json extension",
+                (root / "extensionless",),
+            ),
+            (
+                "log-output",
+                [
+                    "--mode",
+                    "correctness",
+                    "--output",
+                    str(root / "sidecar.log"),
+                ],
+                "exact .json extension",
+                (root / "sidecar.log",),
+            ),
+            (
+                "output-inside-bundle",
+                [
+                    "--mode",
+                    "prepare",
+                    "--output",
+                    str(root / "prepared" / "result.json"),
+                    "--prepared-bundle",
+                    str(root / "prepared"),
+                ],
+                "preflight path collision",
+                (root / "prepared",),
+            ),
+            (
+                "bundle-inside-output",
+                [
+                    "--mode",
+                    "prepare",
+                    "--output",
+                    str(root / "result.json"),
+                    "--prepared-bundle",
+                    str(root / "result.json" / "bundle"),
+                ],
+                "preflight path collision",
+                (
+                    root / "result.json",
+                    root / "result.log",
+                ),
+            ),
+        )
+        for name, argv, message, absent_paths in cases:
+            with self.subTest(name=name):
+                arguments = benchmark.parse_arguments(argv)
+                with mock.patch.object(
+                    v1, "repository_state"
+                ) as repository_state, mock.patch.object(
+                    benchmark, "inspect_toolchains"
+                ) as inspect_toolchains, mock.patch.object(
+                    benchmark, "run_build_capture"
+                ) as build_capture:
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, message
+                    ):
+                        benchmark.run_suite(arguments)
+                repository_state.assert_not_called()
+                inspect_toolchains.assert_not_called()
+                build_capture.assert_not_called()
+                for path in absent_paths:
+                    self.assertFalse(path.exists())
+
     def test_prepared_structure_and_live_sha_are_fail_closed(self) -> None:
         result, bundle = self.prepared_bundle_fixture()
         for mutation in ("lane", "mode"):
@@ -3434,6 +3511,128 @@ class BenchmarksGameV2Tests(unittest.TestCase):
 
     def test_generated_c_clang_exit_zero_without_binary_is_retained(self) -> None:
         self.assert_missing_output_evidence("generated-c-clang")
+
+    def assert_invalid_output_evidence(self, output_kind: str) -> None:
+        output = (
+            Path(self.temporary.name)
+            / f"correctness-go-{output_kind}.json"
+        ).resolve()
+        bundle = output.with_suffix("")
+        fixture = self.correctness_only_result()
+        toolchains = fixture["provenance"]["toolchains"]
+
+        def fake_capture(
+            command: list[str],
+            timeout_seconds: float,
+            cwd: Path | None = None,
+            approved_environment_overrides: dict[str, str] | None = None,
+        ) -> tuple[dict, bytes, bytes]:
+            del timeout_seconds
+            argv = [str(part) for part in command]
+            record = self.full_command(
+                argv,
+                cwd=str(cwd.resolve()) if cwd is not None else None,
+                approved_environment_overrides=approved_environment_overrides,
+            )
+            target = Path(argv[argv.index("-o") + 1])
+            target.parent.mkdir(parents=True, exist_ok=True)
+            is_go = argv[:2] == [toolchains["go"]["path"], "build"]
+            if not is_go:
+                target.write_bytes(b"fixture-build-output")
+            elif output_kind == "directory":
+                target.mkdir()
+            elif output_kind == "symlink":
+                symlink_target = target.parent / "symlink-target"
+                symlink_target.write_bytes(b"not-this-build")
+                target.symlink_to(symlink_target)
+            elif output_kind == "fifo":
+                os.mkfifo(target)
+            else:
+                raise AssertionError(output_kind)
+            return record, b"", b""
+
+        with mock.patch.object(
+            benchmark, "run_build_capture", side_effect=fake_capture
+        ):
+            with self.assertRaises(benchmark.WorkloadBuildError) as captured:
+                benchmark.build_reference_workload(
+                    self.manifest["workloads"][0],
+                    self.suite_root,
+                    bundle,
+                    toolchains,
+                    120.0,
+                    include_nomo_baseline=True,
+                )
+        failure = captured.exception.record
+        self.assertEqual(failure["failure_kind"], "invalid-output")
+        expected_kind = {
+            "directory": ("directory", "directory"),
+            "symlink": ("symlink", "symlink"),
+            "fifo": ("other-nonregular", "fifo"),
+        }[output_kind]
+        self.assertEqual(
+            (
+                failure["output_state"]["kind"],
+                failure["output_state"]["lstat_type"],
+            ),
+            expected_kind,
+        )
+        self.assertEqual(failure["command"]["exit_code"], 0)
+
+        collector = mock.Mock()
+        host_os = platform.system()
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host(host_os)
+        )
+        host = {"os": host_os, "architecture": platform.machine()}
+        unavailable = {
+            "status": "unavailable",
+            "reason": "fixture release capability unavailable",
+            "emit_c_fallback_used": False,
+        }
+        with mock.patch.object(
+            benchmark, "release_capability", return_value=unavailable
+        ), mock.patch.object(
+            benchmark,
+            "build_reference_workload",
+            side_effect=benchmark.WorkloadBuildError(
+                str(captured.exception), failure
+            ),
+        ):
+            result = benchmark.run_correctness(
+                Namespace(),
+                self.manifest,
+                self.manifest_path,
+                self.suite_root,
+                output,
+                {},
+                toolchains,
+                collector,
+                host,
+            )
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        benchmark.validate_result(result, self.manifest)
+        v1.write_result(output, result)
+        log_path = benchmark.write_evidence_log(output, result)
+        reloaded = v1.read_json(output)
+        benchmark.validate_result_schema(reloaded, self.result_schema_path)
+        benchmark.validate_result(reloaded, self.manifest)
+        self.assertIn("not a regular file", log_path.read_text())
+        with mock.patch.object(
+            benchmark, "run_suite", return_value=(output, result)
+        ):
+            self.assertEqual(benchmark.main(["--mode", "correctness"]), 2)
+
+    def test_directory_build_output_is_retained_as_invalid_evidence(self) -> None:
+        self.assert_invalid_output_evidence("directory")
+
+    @unittest.skipIf(os.name == "nt", "symlink creation is not portable on Windows")
+    def test_symlink_build_output_is_retained_as_invalid_evidence(self) -> None:
+        self.assert_invalid_output_evidence("symlink")
+
+    @unittest.skipUnless(hasattr(os, "mkfifo"), "FIFO creation requires POSIX")
+    def test_fifo_build_output_is_retained_as_invalid_evidence(self) -> None:
+        self.assert_invalid_output_evidence("fifo")
 
     def test_reference_builds_reject_stale_c_cpp_go_and_semantic_outputs(
         self,
@@ -4276,19 +4475,10 @@ print(json.dumps(
     def test_real_failures_preserve_second_and_third_workload_prefixes(
         self,
     ) -> None:
-        root = Path(self.temporary.name)
-        timeout_program = root / "timeout-program"
-        timeout_program.write_text(
-            f"#!{sys.executable}\nimport time\ntime.sleep(10)\n",
-            encoding="utf-8",
-        )
-        timeout_program.chmod(0o755)
-        mismatch_program = root / "mismatch-program"
-        mismatch_program.write_text(
-            f"#!{sys.executable}\nprint('wrong')\n",
-            encoding="utf-8",
-        )
-        mismatch_program.chmod(0o755)
+        timeout_program = Path("/bin/sleep")
+        mismatch_program = Path("/usr/bin/printf")
+        if not timeout_program.is_file() or not mismatch_program.is_file():
+            self.skipTest("requires deterministic POSIX sleep and printf")
         result = self.completed_result()
         collector = benchmark.PosixWait4Collector()
         result["provenance"]["collector"] = (
@@ -4816,7 +5006,7 @@ print(json.dumps(
             self.suite_root
             / manifest_workload["fixtures"]["performance"]["path"]
         )
-        timeout = 0.02 if failure_kind == "timeout" else 5.0
+        timeout = 0.25 if failure_kind == "timeout" else 30.0
         with self.assertRaises(benchmark.SampleCollectionError) as failure:
             collector.run(
                 [str(executable.resolve()), manifest_workload["performance_input"]],

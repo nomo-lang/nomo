@@ -247,12 +247,13 @@
         "phase",
         "source",
         "output_path",
+        "output_state",
         "command"
       ],
       "properties": {
         "kind": { "const": "preflight-build-failure-v1" },
         "failure_kind": {
-          "enum": ["command-failure", "missing-output"]
+          "enum": ["command-failure", "missing-output", "invalid-output"]
         },
         "workload_id": {
           "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
@@ -263,7 +264,38 @@
         },
         "source": { "$ref": "#/$defs/file" },
         "output_path": { "type": "string", "minLength": 1 },
+        "output_state": { "$ref": "#/$defs/buildOutputState" },
         "command": { "$ref": "#/$defs/failedBuildCommand" }
+      },
+      "additionalProperties": false
+    },
+    "buildOutputState": {
+      "type": "object",
+      "required": ["kind", "lstat_type", "symlink_target"],
+      "properties": {
+        "kind": {
+          "enum": [
+            "absent",
+            "directory",
+            "symlink",
+            "other-nonregular",
+            "regular"
+          ]
+        },
+        "lstat_type": {
+          "enum": [
+            "absent",
+            "directory",
+            "symlink",
+            "fifo",
+            "socket",
+            "character-device",
+            "block-device",
+            "unknown",
+            "regular"
+          ]
+        },
+        "symlink_target": { "type": ["string", "null"] }
       },
       "additionalProperties": false
     },

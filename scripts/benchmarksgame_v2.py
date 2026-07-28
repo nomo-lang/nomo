@@ -16,6 +16,7 @@ import platform
 import re
 import shutil
 import signal
+import stat
 import statistics
 import subprocess
 import sys
@@ -501,6 +502,7 @@ def workload_build_failure_record(
     command: Dict[str, Any],
     failure_kind: str = "command-failure",
 ) -> Dict[str, Any]:
+    output_path = canonical_build_output_path(output)
     return {
         "kind": "preflight-build-failure-v1",
         "failure_kind": failure_kind,
@@ -511,16 +513,73 @@ def workload_build_failure_record(
             "path": str(source.resolve()),
             "sha256": v1.sha256_file(source),
         },
-        "output_path": str(output.resolve()),
+        "output_path": str(output_path),
+        "output_state": build_output_state(output_path),
         "command": command,
     }
 
 
-def missing_build_output_command_record(
+def build_output_state(path: Path) -> Dict[str, Any]:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return {
+            "kind": "absent",
+            "lstat_type": "absent",
+            "symlink_target": None,
+        }
+    mode = metadata.st_mode
+    if stat.S_ISREG(mode):
+        kind = "regular"
+        lstat_type = "regular"
+    elif stat.S_ISDIR(mode):
+        kind = "directory"
+        lstat_type = "directory"
+    elif stat.S_ISLNK(mode):
+        kind = "symlink"
+        lstat_type = "symlink"
+    else:
+        kind = "other-nonregular"
+        if stat.S_ISFIFO(mode):
+            lstat_type = "fifo"
+        elif stat.S_ISSOCK(mode):
+            lstat_type = "socket"
+        elif stat.S_ISCHR(mode):
+            lstat_type = "character-device"
+        elif stat.S_ISBLK(mode):
+            lstat_type = "block-device"
+        else:
+            lstat_type = "unknown"
+    return {
+        "kind": kind,
+        "lstat_type": lstat_type,
+        "symlink_target": os.readlink(path) if kind == "symlink" else None,
+    }
+
+
+def canonical_build_output_path(path: Path) -> Path:
+    return path.parent.resolve() / path.name
+
+
+def build_output_failure_error(
+    expected_output: Path,
+    output_state: Dict[str, Any],
+) -> str:
+    path = canonical_build_output_path(expected_output)
+    if output_state["kind"] == "absent":
+        return f"expected build output is missing: {path}"
+    return (
+        "expected build output is not a regular file "
+        f"({output_state['lstat_type']}): {path}"
+    )
+
+
+def failed_build_output_command_record(
     command: Dict[str, Any],
     stdout: bytes,
     stderr: bytes,
     expected_output: Path,
+    output_state: Dict[str, Any],
 ) -> Dict[str, Any]:
     finished = dt.datetime.now(dt.timezone.utc)
     duration_ns = int(command["duration_ns"])
@@ -532,8 +591,48 @@ def missing_build_output_command_record(
         "finished_at_utc": finished.isoformat(),
         "stdout": stdout.decode("utf-8", errors="replace"),
         "stderr": stderr.decode("utf-8", errors="replace"),
-        "error": f"expected build output is missing: {expected_output.resolve()}",
+        "error": build_output_failure_error(expected_output, output_state),
     }
+
+
+def require_regular_workload_build_output(
+    *,
+    workload_id: str,
+    lane: str,
+    phase: str,
+    source: Path,
+    output: Path,
+    command: Dict[str, Any],
+    stdout: bytes,
+    stderr: bytes,
+) -> None:
+    output_state = build_output_state(output)
+    if output_state["kind"] == "regular":
+        return
+    failure_kind = (
+        "missing-output"
+        if output_state["kind"] == "absent"
+        else "invalid-output"
+    )
+    message = build_output_failure_error(output, output_state)
+    raise WorkloadBuildError(
+        message,
+        workload_build_failure_record(
+            workload_id,
+            lane,
+            phase,
+            source,
+            output,
+            failed_build_output_command_record(
+                command,
+                stdout,
+                stderr,
+                output,
+                output_state,
+            ),
+            failure_kind,
+        ),
+    )
 
 
 def resolve_executable(value: str, label: str) -> Path:
@@ -4191,21 +4290,16 @@ def build_reference_workload(
             "stdout": stdout.decode("utf-8", errors="replace"),
             "stderr": stderr.decode("utf-8", errors="replace"),
         }
-        if not output.is_file():
-            raise WorkloadBuildError(
-                f"{lane} build did not produce {output}",
-                workload_build_failure_record(
-                    workload_id,
-                    lane,
-                    "reference-build",
-                    copied_sources[lane],
-                    output,
-                    missing_build_output_command_record(
-                        record, stdout, stderr, output
-                    ),
-                    "missing-output",
-                ),
-            )
+        require_regular_workload_build_output(
+            workload_id=workload_id,
+            lane=lane,
+            phase="reference-build",
+            source=copied_sources[lane],
+            output=output,
+            command=record,
+            stdout=stdout,
+            stderr=stderr,
+        )
         require_new_build_file(output, f"{workload_id} {lane} output")
         binaries[lane] = output
 
@@ -4252,21 +4346,16 @@ def build_reference_workload(
                     error.record,
                 ),
             ) from error
-        if not generated_c.is_file():
-            raise WorkloadBuildError(
-                f"Nomo baseline did not emit C for {workload_id}",
-                workload_build_failure_record(
-                    workload_id,
-                    "nomo-baseline",
-                    "nomo-emit-c",
-                    nomo_source,
-                    generated_c,
-                    missing_build_output_command_record(
-                        emit_record, emit_stdout, emit_stderr, generated_c
-                    ),
-                    "missing-output",
-                ),
-            )
+        require_regular_workload_build_output(
+            workload_id=workload_id,
+            lane="nomo-baseline",
+            phase="nomo-emit-c",
+            source=nomo_source,
+            output=generated_c,
+            command=emit_record,
+            stdout=emit_stdout,
+            stderr=emit_stderr,
+        )
         require_new_build_file(
             generated_c, f"{workload_id} Nomo baseline generated C"
         )
@@ -4301,24 +4390,16 @@ def build_reference_workload(
                     error.record,
                 ),
             ) from error
-        if not nomo_binary.is_file():
-            raise WorkloadBuildError(
-                f"Nomo baseline build did not produce {nomo_binary}",
-                workload_build_failure_record(
-                    workload_id,
-                    "nomo-baseline",
-                    "nomo-generated-c-clang",
-                    generated_c,
-                    nomo_binary,
-                    missing_build_output_command_record(
-                        clang_record,
-                        clang_stdout,
-                        clang_stderr,
-                        nomo_binary,
-                    ),
-                    "missing-output",
-                ),
-            )
+        require_regular_workload_build_output(
+            workload_id=workload_id,
+            lane="nomo-baseline",
+            phase="nomo-generated-c-clang",
+            source=generated_c,
+            output=nomo_binary,
+            command=clang_record,
+            stdout=clang_stdout,
+            stderr=clang_stderr,
+        )
         require_new_build_file(
             nomo_binary, f"{workload_id} Nomo baseline binary"
         )
@@ -5901,7 +5982,11 @@ def validate_build_failure_evidence(
             str(output_path),
             *link_flags,
         ]
-    if not output_path.is_absolute() or output_path != expected_output.resolve():
+    expected_output_path = canonical_build_output_path(expected_output)
+    if (
+        not output_path.is_absolute()
+        or output_path != expected_output_path
+    ):
         raise HarnessError("preflight build failure output path changed")
     if command.get("argv") != expected_argv or command.get(
         "command"
@@ -5924,17 +6009,31 @@ def validate_build_failure_evidence(
     timed_out = command.get("timed_out")
     exit_code = command.get("exit_code")
     failure_kind = failure.get("failure_kind")
-    if failure_kind == "missing-output":
-        expected_error = (
-            f"expected build output is missing: {output_path.resolve()}"
+    output_state = failure.get("output_state")
+    live_output_state = build_output_state(output_path)
+    if output_state != live_output_state:
+        raise HarnessError("preflight build output lstat evidence changed")
+    if failure_kind in {"missing-output", "invalid-output"}:
+        expected_error = build_output_failure_error(
+            output_path, live_output_state
         )
         if (
             timed_out is not False
             or exit_code != 0
             or command.get("error") != expected_error
-            or path_lexically_exists(output_path)
+            or (
+                failure_kind == "missing-output"
+                and live_output_state.get("kind") != "absent"
+            )
+            or (
+                failure_kind == "invalid-output"
+                and live_output_state.get("kind")
+                not in {"directory", "symlink", "other-nonregular"}
+            )
         ):
-            raise HarnessError("missing-output build evidence changed")
+            raise HarnessError(
+                f"{failure_kind} build evidence changed"
+            )
     elif failure_kind == "command-failure":
         if timed_out is True:
             if exit_code is not None:
@@ -8644,22 +8743,68 @@ def require_new_evidence_destination(
     mode: str,
     prepared_bundle: Optional[str],
 ) -> None:
-    targets = [
-        (output_path, "result output"),
-        (output_path.with_suffix(".log"), "result evidence log"),
+    output = output_path.resolve()
+    if output.suffix != ".json":
+        raise HarnessError("result --output must use the exact .json extension")
+    log_path = output.with_suffix(".log")
+    if output == log_path:
+        raise HarnessError("result output and sidecar log paths collide")
+    created_targets = [
+        (output, "result output"),
+        (log_path, "result evidence log"),
     ]
+    bundle_root = None
     if mode == "correctness":
-        targets.append(
-            (output_path.with_suffix(""), "correctness build bundle")
+        bundle_root = output.with_suffix("")
+        created_targets.append(
+            (bundle_root, "correctness build bundle")
         )
     elif mode == "prepare":
         bundle_root = (
             Path(prepared_bundle).resolve()
             if prepared_bundle
-            else output_path.with_suffix("")
+            else output.with_suffix("")
         )
-        targets.append((bundle_root, "prepared build bundle"))
-    for target, label in targets:
+        created_targets.append((bundle_root, "prepared build bundle"))
+    elif prepared_bundle:
+        bundle_root = Path(prepared_bundle).resolve()
+
+    independent_targets = list(created_targets)
+    if mode == "measure" and bundle_root is not None:
+        independent_targets.append((bundle_root, "prepared build bundle"))
+    for index, (left, left_label) in enumerate(independent_targets):
+        for right, right_label in independent_targets[index + 1 :]:
+            if (
+                left == right
+                or left in right.parents
+                or right in left.parents
+            ):
+                raise HarnessError(
+                    f"preflight path collision between {left_label} "
+                    f"({left}) and {right_label} ({right})"
+                )
+
+    if mode == "prepare" and bundle_root is not None:
+        metadata = bundle_root / "prepared-bundle.json"
+        request = bundle_root / "qualification-request.json"
+        if metadata == request:
+            raise HarnessError("prepared metadata and qualification request collide")
+        for child, child_label in (
+            (metadata, "prepared metadata"),
+            (request, "qualification request"),
+        ):
+            for external, external_label in created_targets[:2]:
+                if (
+                    child == external
+                    or child in external.parents
+                    or external in child.parents
+                ):
+                    raise HarnessError(
+                        f"preflight path collision between {child_label} "
+                        f"({child}) and {external_label} ({external})"
+                    )
+
+    for target, label in created_targets:
         if path_lexically_exists(target):
             raise HarnessError(
                 f"{label} already exists; choose a new --output/"

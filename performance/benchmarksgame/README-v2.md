@@ -175,9 +175,12 @@ whitespace normalization.
 Reference, Nomo emit-C, and generated-C Clang preflight failures are retained
 as strict `build_failures` evidence. This includes both observable command
 failure and a command that exits zero without producing its exact expected
-output. The latter is recorded as `missing-output` with the successful command
-record, expected path, stdout/stderr, phase, and source identity; the validator
-requires that path to remain absent. CI uploads the result JSON and its
+output. An absent target is recorded as `missing-output`; a directory, symlink,
+FIFO, or other non-regular target is `invalid-output`. Both retain the
+successful command record, expected lexical path, stdout/stderr, phase, source
+identity, and a non-following `lstat` classification. The validator replays
+that live classification exactly, so a symlink to a regular file can never
+masquerade as a compiler-created binary. CI uploads the result JSON and its
 sidecar evidence log with `if: always()`.
 
 Every invocation requires a new result path and, for correctness/prepare, a
@@ -188,6 +191,16 @@ targets must be absent; afterward they must be newly present as regular files
 before their SHA-256 identities can enter provenance. A same-`--output` rerun
 fails before repository/toolchain inspection or process execution and preserves
 the prior evidence.
+
+`--output` must end in the exact `.json` extension. Its sidecar is derived by
+replacing that extension with `.log`; the default correctness/prepare build
+bundle is the sibling path obtained by removing `.json`. An explicit prepared
+bundle follows the same separation rule. Before creating a directory or
+starting a process, the harness rejects equal or ancestor/descendant
+relationships among the result, sidecar, and independent bundle paths, checks
+that every newly created path is absent, and reserves
+`prepared-bundle.json` plus `qualification-request.json` only as fixed children
+of a new prepared bundle.
 
 ## Formal invocation and provenance
 

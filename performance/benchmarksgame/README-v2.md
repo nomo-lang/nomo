@@ -38,10 +38,23 @@ unverifiable metadata makes the release lane unavailable. The `emit-c` mode
 separately runs `nomo build <project> --emit-c`, hashes the
 unmodified generated C, and compiles it with
 `clang --no-default-config -std=c99 -O3 -DNDEBUG -fomit-frame-pointer` plus
-`-lm` where required.
+`-lm` where required. Replay derives that link-library contract from the
+artifact's already-bound build host, never from the reviewer process, so an
+unchanged Linux/macOS command remains valid when audited on Windows and vice
+versa.
 It never reuses a release artifact. Each mode has its own correctness gate,
 warmups, 30-block schedules, batches, statistics, and verdict. Samples are
 never pooled across modes, and both modes must pass before the suite can pass.
+For every workload, candidate and main each receive separate release and
+emit-C project copies. Each project record binds the frozen original Nomo
+source and `nomo.toml`, their bundle-local copies, the exact compiler checkout
+and commit, and the build-command working directory. Reference binaries, all
+four Nomo projects, generated-C files, release objects, and final binaries
+must have distinct lexical and filesystem identities; nested projects,
+cross-lane paths, hard links, and synchronized sample rebinding are rejected.
+The embedded release backend generated-C/binary records must exactly equal the
+outer formal records, and the strict-JSON sidecar must exactly equal the
+embedded backend object.
 
 The optimizer-facing `release-provenance.json` contract includes build
 environment provenance, not only argv. Every backend `compile_commands[]`
@@ -172,16 +185,20 @@ LF. Collectors apply only `CRLF -> LF` to captured stdout, retain both raw and
 normalized SHA-256 values plus the rule identifier, and perform no other
 whitespace normalization.
 
-Reference, Nomo emit-C, and generated-C Clang preflight failures are retained
-as strict `build_failures` evidence. This includes both observable command
-failure and a command that exits zero without producing its exact expected
-output. An absent target is recorded as `missing-output`; a directory, symlink,
-FIFO, or other non-regular target is `invalid-output`. Both retain the
-successful command record, expected lexical path, stdout/stderr, phase, source
-identity, and a non-following `lstat` classification. The validator replays
-that live classification exactly, so a symlink to a regular file can never
-masquerade as a compiler-created binary. CI uploads the result JSON and its
-sidecar evidence log with `if: always()`.
+Reference, baseline Nomo emit-C, formal candidate/main release, formal emit-C,
+and generated-C Clang preflight failures are retained as strict
+`build_failures` evidence. This includes both observable command failure and a
+command that exits zero without producing each exact expected binary,
+generated-C file, or mandatory release-provenance file. An absent target is
+recorded as `missing-output`; a directory, symlink, FIFO, or other non-regular
+target is `invalid-output`. Both retain the successful command record, expected
+lexical path, stdout/stderr, lane and phase, source identity, and a
+non-following `lstat` classification. A formal build failure produces an
+`unavailable` prepare result and log while retaining the already-created bundle
+evidence; it never becomes a prepared or measurable bundle. The validator
+replays that live classification exactly, so a symlink to a regular file can
+never masquerade as a compiler-created binary. CI uploads the result JSON and
+its sidecar evidence log with `if: always()`.
 
 Every invocation requires a new result path and, for correctness/prepare, a
 new build bundle. The harness never overwrites an earlier result, log, project,
@@ -197,8 +214,22 @@ replacing that extension with `.log`; the default correctness/prepare build
 bundle is the sibling path obtained by removing `.json`. An explicit prepared
 bundle follows the same separation rule. Before creating a directory or
 starting a process, the harness rejects equal or ancestor/descendant
-relationships among the result, sidecar, and independent bundle paths, checks
-that every newly created path is absent, and reserves
+relationships among the result, sidecar, and independent bundle paths using
+the actual target filesystem's case-sensitivity. It preserves the caller's
+lexical paths, checks every final component and parent with non-following
+`lstat`, and rejects dangling links, junctions, linked parents, non-directory
+parents, or any existing creation target before canonical containment checks.
+A filesystem identity comparison normalizes every path component to Unicode
+NFC before applying the target filesystem's case-folding rule, so canonically
+equivalent composed/decomposed names cannot alias an output, sidecar, or bundle
+only after work has started. On Windows, an existing target itself, or
+otherwise its nearest existing lexical prefix, is also expanded through
+`GetLongPathNameW` before comparison. This prevents either an 8.3 short-name
+parent or a short final bundle component from disguising an output inside a
+prepared bundle.
+A transient same-directory case probe is removed before the authority or any
+build process runs. The harness checks that every newly created path is absent
+and reserves
 `prepared-bundle.json` plus `qualification-request.json` only as fixed children
 of a new prepared bundle.
 
@@ -247,6 +278,19 @@ bundle digest plus:
 
 The metadata `prepared_at_utc` timestamp is part of the bundle digest. Even a
 different otherwise-valid UTC timestamp invalidates the prepared bundle.
+The recursive payload inventory excludes only the two root control files
+`prepared-bundle.json` and `qualification-request.json` to avoid a
+self-referential file hash. Their complete canonical contracts, including the
+timestamp, exact prepared result, bundle binding, dynamic policy, and ordered
+required checks, are nevertheless inputs to the bundle authority digest.
+Every payload inventory entry binds its SHA-256, regular-file type, and a link
+count of exactly one. Preparation and measurement reject symlinks, Windows
+junctions, non-regular payloads, hardlinks, external lexical aliases, and any
+linked component between a formal project or decisive file and the bundle
+root before resolving a path.
+Both control files must be byte-for-byte canonical JSON. Duplicate JSON keys
+are rejected for the manifest, result, prepared metadata, qualification
+request, environment authorization, and release sidecars.
 
 An independent benchmark authority reviews that exact request and bundle,
 then creates `/absolute/authority/environment.json` using
@@ -274,6 +318,31 @@ Draft schema and semantic authority, canonical request, bundle inventory,
 live file SHA-256 values, official checkouts, and all executable paths. Every
 candidate, main, C, C++20, semantic-C, and Go binary must remain inside the
 bundle. A failed preflight executes neither a build nor a collector.
+
+Downloaded correctness results, completed formal results, and complete
+prepared bundles can be replayed without executing a compiler, probing a
+reviewer toolchain, consulting the reviewer build environment, or requiring
+the original absolute checkout paths:
+
+```sh
+python3 scripts/benchmarksgame_v2.py \
+  --mode validate \
+  --manifest performance/benchmarksgame/manifest-v2.json \
+  --artifact /absolute/downloaded-result.json
+
+python3 scripts/benchmarksgame_v2.py \
+  --mode validate \
+  --manifest performance/benchmarksgame/manifest-v2.json \
+  --artifact /absolute/downloaded-prepared-bundle
+```
+
+Offline replay derives paths, build environments, host link flags, compilers,
+commands, and targets from the artifact's authenticated host/toolchain/source
+authority. For a completed result it also reconstructs the canonical static
+authorization document from the embedded checks and bindings and requires its
+SHA-256 to match the recorded independent qualification file. Live `prepare`
+and `measure` retain the separate official-origin, checkout, toolchain,
+authorization-file, and prepared-file revalidation gates.
 
 Qualification JSON is static authorization only. Its complete, unique RFC
 check set and evidence hashes bind the actual canonical host, reference
@@ -311,14 +380,33 @@ directory; Windows retains only canonical locale, WinAPI-derived
 allocator, Go tuning, and `NOMO_*` parent variables are absent from both the
 actual child environment and recorded artifact. Go is the sole exception and
 adds exactly `GOMAXPROCS=1`; semantic validation recomputes the complete
-runtime environment for every successful or failed sample.
+runtime environment for every successful or failed sample. The canonical
+default and Go runtime projections are recorded in the stable toolchain
+identity before preparation, bound by the qualification request, and reused
+for offline replay; a reviewer machine's PATH, temp directory, or platform is
+never substituted into downloaded evidence.
 
 The result records complete argument vectors and rendered commands,
 stdout/stderr and replayable raw stdout bytes plus raw/normalized hashes,
 toolchain versions, source/generated-C/binary hashes, repository state,
 compiler-build provenance, host facts, collector identity, qualification,
 schedule, raw samples, stability calculations, gates, and verdicts. The
-collector descriptor is an exact host-derived contract: POSIX requires
+correctness baseline reference record has exactly six build commands: C, ISO
+C++20, semantic-C, Go, Nomo `--emit-c`, and the fixed Clang compilation of
+that unmodified generated C. The two Nomo baseline commands are mandatory
+whenever any baseline generated-C, source, binary, or command evidence is
+present; the emit command is pinned to the bound Nomo tool and copied project,
+and the Clang command is pinned to the bound compiler, generated C, output
+binary, fixed flags, and host-derived link libraries. Formal reference-only
+records have exactly the first four commands. Missing commands and unrecorded
+extra commands are rejected by both the schema and semantic replay. Reference
+source, copied-source, compiler-output, and binary key sets are exact, and all
+reference command working directories are bound to the recorded producer
+repository root. Each formal slot must repeat its enclosing lane, complete
+clean repository record, and exact Nomo path and SHA. Release generated C has
+only the `unmodified_after_build` marker; emit-C generated C has only
+`unmodified_after_emit`. Missing or cross-mode markers are invalid.
+The collector descriptor is an exact host-derived contract: POSIX requires
 `wait4` process-group CPU/RSS accounting and Windows requires the Job Object
 collector. Wall/CPU/RSS units and implementation version are fixed; each
 sample collector id, CPU total, and stdout hashes are recomputed from that

@@ -161,6 +161,25 @@
       "type": "string",
       "pattern": "^[0-9a-f]{64}$"
     },
+    "buildEnvironment": {
+      "type": "object",
+      "required": ["retained", "cleared", "cleared_values_recorded"],
+      "properties": {
+        "retained": {
+          "type": "object",
+          "additionalProperties": { "type": "string" }
+        },
+        "cleared": {
+          "type": "array",
+          "uniqueItems": true,
+          "items": { "type": "string", "minLength": 1 }
+        },
+        "cleared_values_recorded": { "const": false },
+        "darwin_sdk": { "type": "object" },
+        "windows_toolchain": { "type": "object" }
+      },
+      "additionalProperties": false
+    },
     "claims": {
       "type": "object",
       "required": ["claim_eligible", "scope", "limitations"],
@@ -258,9 +277,26 @@
         "workload_id": {
           "enum": ["spectral-norm", "n-body", "fannkuch-redux"]
         },
-        "lane": { "enum": ["c", "cpp", "semantic-c", "go", "nomo-baseline"] },
+        "lane": {
+          "enum": [
+            "c",
+            "cpp",
+            "semantic-c",
+            "go",
+            "nomo-baseline",
+            "candidate",
+            "main"
+          ]
+        },
         "phase": {
-          "enum": ["reference-build", "nomo-emit-c", "nomo-generated-c-clang"]
+          "enum": [
+            "reference-build",
+            "nomo-emit-c",
+            "nomo-generated-c-clang",
+            "nomo-release-binary",
+            "nomo-release-generated-c",
+            "nomo-release-provenance"
+          ]
         },
         "source": { "$ref": "#/$defs/file" },
         "output_path": { "type": "string", "minLength": 1 },
@@ -652,7 +688,24 @@
         "predecessor": { "type": "object" },
         "rfc": { "type": "object" },
         "host": { "type": "object" },
-        "toolchains": { "type": "object" },
+        "toolchains": {
+          "type": "object",
+          "required": ["build_environment", "runtime_environments"],
+          "properties": {
+            "build_environment": {
+              "$ref": "#/$defs/buildEnvironment"
+            },
+            "runtime_environments": {
+              "type": "object",
+              "required": ["default", "go"],
+              "properties": {
+                "default": { "$ref": "#/$defs/runtimeEnvironment" },
+                "go": { "$ref": "#/$defs/runtimeEnvironment" }
+              },
+              "additionalProperties": false
+            }
+          }
+        },
         "collector": { "$ref": "#/$defs/collectorDescriptor" },
         "methodology": { "type": "object" },
         "thresholds": { "type": "object" },
@@ -687,25 +740,108 @@
         "kind": { "const": "reference-and-correctness-baseline" },
         "source_files": { "type": "object" },
         "compiled_sources": { "type": "object" },
-        "commands": {
-          "type": "object",
-          "required": ["c_build", "cpp_build", "semantic-c_build", "go_build"],
-          "additionalProperties": { "$ref": "#/$defs/command" }
-        },
+        "commands": { "type": "object" },
         "compiler_output": { "type": "object" },
         "generated_c": { "type": ["object", "null"] },
         "binaries": { "type": "object" },
         "compile_time_excluded_from_run_time": { "const": true }
       },
+      "allOf": [
+        {
+          "if": {
+            "anyOf": [
+              {
+                "properties": {
+                  "generated_c": { "type": "object" }
+                },
+                "required": ["generated_c"]
+              },
+              {
+                "properties": {
+                  "source_files": { "required": ["nomo"] }
+                }
+              },
+              {
+                "properties": {
+                  "binaries": { "required": ["nomo-baseline"] }
+                }
+              },
+              {
+                "properties": {
+                  "commands": {
+                    "anyOf": [
+                      { "required": ["nomo_baseline_emit_c"] },
+                      { "required": ["nomo_baseline_clang"] }
+                    ]
+                  }
+                }
+              }
+            ]
+          },
+          "then": {
+            "properties": {
+              "commands": {
+                "type": "object",
+                "required": [
+                  "c_build",
+                  "cpp_build",
+                  "semantic-c_build",
+                  "go_build",
+                  "nomo_baseline_emit_c",
+                  "nomo_baseline_clang"
+                ],
+                "properties": {
+                  "c_build": { "$ref": "#/$defs/command" },
+                  "cpp_build": { "$ref": "#/$defs/command" },
+                  "semantic-c_build": { "$ref": "#/$defs/command" },
+                  "go_build": { "$ref": "#/$defs/command" },
+                  "nomo_baseline_emit_c": { "$ref": "#/$defs/command" },
+                  "nomo_baseline_clang": { "$ref": "#/$defs/command" }
+                },
+                "additionalProperties": false
+              }
+            }
+          },
+          "else": {
+            "properties": {
+              "commands": {
+                "type": "object",
+                "required": [
+                  "c_build",
+                  "cpp_build",
+                  "semantic-c_build",
+                  "go_build"
+                ],
+                "properties": {
+                  "c_build": { "$ref": "#/$defs/command" },
+                  "cpp_build": { "$ref": "#/$defs/command" },
+                  "semantic-c_build": { "$ref": "#/$defs/command" },
+                  "go_build": { "$ref": "#/$defs/command" }
+                },
+                "additionalProperties": false
+              }
+            }
+          }
+        }
+      ],
       "additionalProperties": false
     },
-    "generatedC": {
+    "releaseGeneratedC": {
       "type": "object",
-      "required": ["path", "sha256"],
+      "required": ["path", "sha256", "unmodified_after_build"],
       "properties": {
         "path": { "type": "string", "minLength": 1 },
         "sha256": { "$ref": "#/$defs/sha256" },
-        "unmodified_after_build": { "const": true },
+        "unmodified_after_build": { "const": true }
+      },
+      "additionalProperties": false
+    },
+    "emitGeneratedC": {
+      "type": "object",
+      "required": ["path", "sha256", "unmodified_after_emit"],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "sha256": { "$ref": "#/$defs/sha256" },
         "unmodified_after_emit": { "const": true }
       },
       "additionalProperties": false
@@ -761,6 +897,7 @@
         "repository",
         "nomo",
         "source",
+        "project",
         "command",
         "stdout",
         "stderr",
@@ -778,10 +915,11 @@
         "repository": { "type": "object" },
         "nomo": { "$ref": "#/$defs/file" },
         "source": { "$ref": "#/$defs/file" },
+        "project": { "$ref": "#/$defs/formalProject" },
         "command": { "$ref": "#/$defs/command" },
         "stdout": { "type": "string" },
         "stderr": { "type": "string" },
-        "generated_c": { "$ref": "#/$defs/generatedC" },
+        "generated_c": { "$ref": "#/$defs/releaseGeneratedC" },
         "binary": { "$ref": "#/$defs/file" },
         "backend_provenance_path": { "type": "string", "minLength": 1 },
         "backend_provenance_sha256": { "$ref": "#/$defs/sha256" },
@@ -799,6 +937,7 @@
         "repository",
         "nomo",
         "source",
+        "project",
         "emit_command",
         "emit_stdout",
         "emit_stderr",
@@ -816,16 +955,49 @@
         "repository": { "type": "object" },
         "nomo": { "$ref": "#/$defs/file" },
         "source": { "$ref": "#/$defs/file" },
+        "project": { "$ref": "#/$defs/formalProject" },
         "emit_command": { "$ref": "#/$defs/command" },
         "emit_stdout": { "type": "string" },
         "emit_stderr": { "type": "string" },
         "clang_command": { "$ref": "#/$defs/command" },
         "clang_stdout": { "type": "string" },
         "clang_stderr": { "type": "string" },
-        "generated_c": { "$ref": "#/$defs/generatedC" },
+        "generated_c": { "$ref": "#/$defs/emitGeneratedC" },
         "binary": { "$ref": "#/$defs/file" },
         "compile_time_excluded_from_run_time": { "const": true },
         "release_artifact_reused": { "const": false }
+      },
+      "additionalProperties": false
+    },
+    "formalProject": {
+      "type": "object",
+      "required": [
+        "path",
+        "source_relative_path",
+        "source",
+        "project_manifest_relative_path",
+        "project_manifest",
+        "copied_source",
+        "copied_project_manifest",
+        "compiler_checkout",
+        "compiler_commit"
+      ],
+      "properties": {
+        "path": { "type": "string", "minLength": 1 },
+        "source_relative_path": { "type": "string", "minLength": 1 },
+        "source": { "$ref": "#/$defs/file" },
+        "project_manifest_relative_path": {
+          "type": "string",
+          "minLength": 1
+        },
+        "project_manifest": { "$ref": "#/$defs/file" },
+        "copied_source": { "$ref": "#/$defs/file" },
+        "copied_project_manifest": { "$ref": "#/$defs/file" },
+        "compiler_checkout": { "type": "string", "minLength": 1 },
+        "compiler_commit": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{40}$"
+        }
       },
       "additionalProperties": false
     },

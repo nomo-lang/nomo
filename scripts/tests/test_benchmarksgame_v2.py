@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import contextlib
 import ctypes
 import datetime as dt
 import base64
@@ -77,6 +78,18 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             {"CARGO_TARGET_DIR", "CARGO_HOME", "RUSTC"},
         )
         self.assertIn("rustc", schema["$defs"]["compilerBuild"]["required"])
+        self.assertIn(
+            "build_environment",
+            schema["$defs"]["provenance"]["properties"]["toolchains"][
+                "required"
+            ],
+        )
+        self.assertIn(
+            "runtime_environments",
+            schema["$defs"]["provenance"]["properties"]["toolchains"][
+                "required"
+            ],
+        )
         self.assertIn("stability", schema["$defs"]["batch"]["required"])
         self.assertIn("evaluation", schema["$defs"]["batch"]["required"])
         predecessor = self.manifest["predecessor"]
@@ -631,6 +644,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             authorization,
             "Linux",
             "x86_64",
+            result["provenance"]["toolchains"]["runtime_environments"],
         )
         changed = copy.deepcopy(protocol)
         changed["batches"][0]["evaluation"]["suite"]["comparisons"]["c"][
@@ -646,6 +660,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 authorization,
                 "Linux",
                 "x86_64",
+                result["provenance"]["toolchains"]["runtime_environments"],
             )
         changed = copy.deepcopy(protocol)
         changed["batches"][0]["stability"]["valid"] = False
@@ -659,6 +674,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 authorization,
                 "Linux",
                 "x86_64",
+                result["provenance"]["toolchains"]["runtime_environments"],
             )
 
     def test_dynamic_snapshot_and_pair_issues_are_recomputed(self) -> None:
@@ -687,6 +703,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 authorization,
                 "Linux",
                 "x86_64",
+                result["provenance"]["toolchains"]["runtime_environments"],
             )
 
         protocol = copy.deepcopy(result["protocols"]["release"])
@@ -716,6 +733,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 authorization,
                 "Linux",
                 "x86_64",
+                result["provenance"]["toolchains"]["runtime_environments"],
             )
 
     def test_dynamic_command_identity_and_locale_are_fail_closed(self) -> None:
@@ -2053,10 +2071,17 @@ class BenchmarksGameV2Tests(unittest.TestCase):
 
     def test_math_link_flag_matches_platform_driver_contract(self) -> None:
         workload = {"link_math": True}
-        with mock.patch.object(benchmark.os, "name", "nt"):
+        self.assertEqual(
+            benchmark.math_flags_for_host(workload, "Windows"), []
+        )
+        for host_os in ("Darwin", "Linux"):
+            self.assertEqual(
+                benchmark.math_flags_for_host(workload, host_os), ["-lm"]
+            )
+        with mock.patch.object(
+            benchmark.platform, "system", return_value="Windows"
+        ):
             self.assertEqual(benchmark.math_flags(workload), [])
-        with mock.patch.object(benchmark.os, "name", "posix"):
-            self.assertEqual(benchmark.math_flags(workload), ["-lm"])
 
     @unittest.skipUnless(os.name == "nt", "actual Windows Job Object smoke")
     def test_windows_collector_runs_on_windows(self) -> None:
@@ -2142,6 +2167,12 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 benchmark.stable_toolchain_identity(first),
                 benchmark.stable_toolchain_identity(changed),
             )
+        changed = copy.deepcopy(first)
+        changed["runtime_environments"]["default"]["TMPDIR"] = "/different/tmp"
+        self.assertNotEqual(
+            benchmark.stable_toolchain_identity(first),
+            benchmark.stable_toolchain_identity(changed),
+        )
 
     def test_protocol_outcome_combination_table(self) -> None:
         expected = {
@@ -2719,15 +2750,13 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         ):
             changed = copy.deepcopy(canonical_request)
             changed[field] = value
-            v1.write_result(request_path, changed)
+            benchmark.write_canonical_json(request_path, changed)
             with self.subTest(request_field=field):
-                with self.assertRaisesRegex(
-                    benchmark.HarnessError, "canonical request"
-                ):
+                with self.assertRaises(benchmark.HarnessError):
                     benchmark.validate_prepared_bundle_authority(
                         result, bundle, require_exact_result=True
                     )
-            v1.write_result(request_path, canonical_request)
+            benchmark.write_canonical_json(request_path, canonical_request)
 
         metadata_path = bundle / "prepared-bundle.json"
         canonical_metadata = v1.read_json(metadata_path)
@@ -2750,11 +2779,247 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         ).isoformat()
         metadata_mutations.append(changed_valid_time)
         for changed in metadata_mutations:
-            v1.write_result(metadata_path, changed)
+            benchmark.write_canonical_json(metadata_path, changed)
             with self.assertRaises(benchmark.HarnessError):
                 benchmark.load_prepared_bundle(bundle)
-        v1.write_result(metadata_path, canonical_metadata)
+        benchmark.write_canonical_json(metadata_path, canonical_metadata)
         self.assertEqual(benchmark.load_prepared_bundle(bundle), result)
+
+    def test_strict_json_loader_covers_all_authority_surfaces(self) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        result_path = Path(self.temporary.name) / "result.json"
+        v1.write_result(result_path, result)
+        paths = {
+            "manifest": self.manifest_path,
+            "result": result_path,
+            "metadata": bundle / "prepared-bundle.json",
+            "qualification-request": bundle / "qualification-request.json",
+            "release-sidecar": Path(
+                result["builds"]["spectral-norm"]["modes"]["release"][
+                    "candidate"
+                ]["backend_provenance_path"]
+            ),
+        }
+        for label, path in paths.items():
+            duplicate = (
+                '{"authority_duplicate_probe":1,'
+                '"authority_duplicate_probe":2}'
+            )
+            probe = Path(self.temporary.name) / f"{label}.duplicate.json"
+            probe.write_text(duplicate, encoding="utf-8")
+            with self.subTest(surface=label), self.assertRaisesRegex(
+                benchmark.HarnessError, "duplicate JSON object key"
+            ):
+                benchmark.read_json_strict(probe)
+
+        metadata_path = paths["metadata"]
+        metadata_bytes = metadata_path.read_bytes()
+        metadata_path.write_bytes(
+            metadata_bytes.replace(
+                b"{\n", b'{\n  "schema": 1,\n', 1
+            )
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "duplicate JSON object key"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+        metadata_path.write_bytes(metadata_bytes)
+
+        request_path = paths["qualification-request"]
+        request_bytes = request_path.read_bytes()
+        request_path.write_bytes(
+            request_bytes.replace(
+                b"{\n", b'{\n  "schema": 1,\n', 1
+            )
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "duplicate JSON object key"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+        request_path.write_bytes(request_bytes)
+
+        duplicate_result = Path(self.temporary.name) / "duplicate-result.json"
+        duplicate_result.write_text(
+            '{"schema":2,"schema":2}\n', encoding="utf-8"
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "duplicate JSON object key"
+        ):
+            benchmark.validate_artifact_offline(
+                str(duplicate_result), str(self.manifest_path)
+            )
+
+    def test_post_approval_control_and_sidecar_mutation_is_rejected(
+        self,
+    ) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        sidecar_path = Path(
+            result["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["backend_provenance_path"]
+        )
+        sidecar = benchmark.read_json_strict(sidecar_path)
+        sidecar["complete_argv"] = False
+        v1.write_result(sidecar_path, sidecar)
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "added, removed, or changed"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+
+        # Re-authoring the envelope cannot make a sidecar disagree with the
+        # embedded, schema-bound provenance record.
+        result["builds"]["spectral-norm"]["modes"]["release"]["candidate"][
+            "backend_provenance_sha256"
+        ] = v1.sha256_file(sidecar_path)
+        benchmark.write_prepared_bundle(result, bundle, self.manifest)
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "differs from its hashed sidecar"
+        ):
+            benchmark.validate_prepared_bundle_authority(
+                result, bundle, require_exact_result=True
+            )
+
+    def test_prepared_inventory_rejects_missing_and_extra_payload_files(
+        self,
+    ) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        extra = bundle / "unapproved-extra.bin"
+        extra.write_bytes(b"unapproved")
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "added, removed, or changed"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+        extra.unlink()
+
+        copied_source = Path(
+            result["builds"]["n-body"]["modes"]["emit-c"]["main"][
+                "project"
+            ]["copied_source"]["path"]
+        )
+        copied_source.unlink()
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "added, removed, or changed"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+
+    def test_prepared_authority_rejects_external_symlink_aliases(
+        self,
+    ) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        inventory = benchmark.prepared_file_inventory(bundle)
+        formal = result["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]
+        binary = Path(formal["binary"]["path"])
+        project = Path(formal["project"]["path"])
+
+        external_binary_alias = (
+            Path(self.temporary.name) / "external-binary-alias"
+        )
+        external_project_alias = (
+            Path(self.temporary.name) / "external-project-alias"
+        )
+        try:
+            external_binary_alias.symlink_to(binary)
+            external_project_alias.symlink_to(project, target_is_directory=True)
+        except OSError as error:
+            self.skipTest(f"symlink creation is unavailable: {error}")
+        try:
+            changed = copy.deepcopy(result)
+            changed["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["binary"]["path"] = str(external_binary_alias)
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "outside|symlink|junction"
+            ):
+                benchmark.validate_prepared_bundle_files(
+                    changed, bundle, inventory
+                )
+
+            changed = copy.deepcopy(result)
+            changed["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["project"]["path"] = str(external_project_alias)
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "outside|symlink|junction"
+            ):
+                benchmark.validate_prepared_bundle_files(
+                    changed, bundle, inventory
+                )
+        finally:
+            external_binary_alias.unlink(missing_ok=True)
+            external_project_alias.unlink(missing_ok=True)
+
+    def test_prepared_authority_rejects_external_hardlinks(self) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        inventory = benchmark.prepared_file_inventory(bundle)
+        binary = Path(
+            result["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["binary"]["path"]
+        )
+        external_hardlink = Path(self.temporary.name) / "external-hardlink"
+        try:
+            os.link(binary, external_hardlink)
+        except OSError as error:
+            self.skipTest(f"hard links are unavailable: {error}")
+        try:
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "multiple hard links"
+            ):
+                benchmark.prepared_file_inventory(bundle)
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "multiple hard links"
+            ):
+                benchmark.validate_prepared_bundle_files(
+                    result, bundle, inventory
+                )
+        finally:
+            external_hardlink.unlink(missing_ok=True)
+
+    @unittest.skipUnless(os.name == "nt", "requires a native Windows junction")
+    def test_prepared_authority_rejects_external_windows_junction(self) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        inventory = benchmark.prepared_file_inventory(bundle)
+        project = Path(
+            result["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["project"]["path"]
+        )
+        junction = Path(self.temporary.name) / "external-project-junction"
+        command = (
+            f'mklink /J "{junction}" "{project}"'
+        )
+        completed = subprocess.run(
+            [
+                str(benchmark.windows_system_directory() / "cmd.exe"),
+                "/d",
+                "/s",
+                "/c",
+                command,
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            check=False,
+        )
+        self.assertEqual(
+            completed.returncode,
+            0,
+            completed.stderr.decode("utf-8", errors="replace"),
+        )
+        try:
+            changed = copy.deepcopy(result)
+            changed["builds"]["spectral-norm"]["modes"]["release"][
+                "candidate"
+            ]["project"]["path"] = str(junction)
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "outside|junction"
+            ):
+                benchmark.validate_prepared_bundle_files(
+                    changed, bundle, inventory
+                )
+        finally:
+            junction.rmdir()
 
     def test_prepared_inventory_reserved_names_and_output_collision(self) -> None:
         root = Path(self.temporary.name) / "inventory"
@@ -2796,7 +3061,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
     def test_same_output_rerun_preserves_stale_bundle_and_executes_nothing(
         self,
     ) -> None:
-        root = Path(self.temporary.name)
+        root = Path(self.temporary.name).resolve()
         for stale_relative, is_file in (
             (
                 Path("bin")
@@ -2881,7 +3146,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
     def test_preflight_rejects_extension_and_ancestor_path_collisions(
         self,
     ) -> None:
-        root = Path(self.temporary.name)
+        root = Path(self.temporary.name).resolve()
         cases = (
             (
                 "extensionless",
@@ -2954,6 +3219,324 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 build_capture.assert_not_called()
                 for path in absent_paths:
                     self.assertFalse(path.exists())
+
+    def test_preflight_rejects_dangling_lexical_targets_without_execution(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name).resolve() / "lexical-links"
+        root.mkdir()
+        cases = []
+        for name in ("output", "sidecar", "bundle", "parent"):
+            case_root = root / name
+            case_root.mkdir()
+            missing = case_root / "missing-target"
+            output = case_root / "result.json"
+            prepared_bundle = None
+            if name == "output":
+                output.symlink_to(missing)
+            elif name == "sidecar":
+                output.with_suffix(".log").symlink_to(missing)
+            elif name == "bundle":
+                prepared_bundle = case_root / "prepared"
+                prepared_bundle.symlink_to(missing, target_is_directory=True)
+            else:
+                linked_parent = case_root / "linked-parent"
+                linked_parent.symlink_to(missing, target_is_directory=True)
+                output = linked_parent / "result.json"
+            argv = ["--mode", "correctness", "--output", str(output)]
+            if prepared_bundle is not None:
+                argv = [
+                    "--mode",
+                    "prepare",
+                    "--output",
+                    str(output),
+                    "--prepared-bundle",
+                    str(prepared_bundle),
+                ]
+            cases.append((name, argv, missing, output))
+
+        for name, argv, missing, output in cases:
+            with self.subTest(name=name):
+                arguments = benchmark.parse_arguments(argv)
+                with mock.patch.object(
+                    v1, "repository_state"
+                ) as repository_state, mock.patch.object(
+                    benchmark, "inspect_toolchains"
+                ) as inspect_toolchains, mock.patch.object(
+                    benchmark, "run_build_capture"
+                ) as build_capture:
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError, "symlink|junction"
+                    ):
+                        benchmark.run_suite(arguments)
+                repository_state.assert_not_called()
+                inspect_toolchains.assert_not_called()
+                build_capture.assert_not_called()
+                self.assertFalse(missing.exists())
+                if not output.is_symlink():
+                    self.assertFalse(output.exists())
+                self.assertEqual(
+                    list(output.parent.glob(".nomo-benchmarksgame-v2-case-*")),
+                    [],
+                )
+
+    def test_preflight_case_aliases_are_filesystem_aware_and_zero_execution(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name).resolve() / "case-aliases"
+        root.mkdir()
+        cases = (
+            (
+                "bundle-vs-sidecar",
+                root / "result.json",
+                root / "RESULT.LOG",
+            ),
+            (
+                "request-vs-output",
+                root / "bundle" / "QUALIFICATION-REQUEST.json",
+                root / "BUNDLE",
+            ),
+        )
+
+        def assert_rejected(
+            output: Path,
+            bundle: Path,
+            *,
+            force_case_insensitive: bool,
+        ) -> None:
+            arguments = benchmark.parse_arguments(
+                [
+                    "--mode",
+                    "prepare",
+                    "--output",
+                    str(output),
+                    "--prepared-bundle",
+                    str(bundle),
+                ]
+            )
+            case_patch = (
+                mock.patch.object(
+                    benchmark,
+                    "filesystem_is_case_sensitive",
+                    return_value=False,
+                )
+                if force_case_insensitive
+                else contextlib.nullcontext()
+            )
+            with case_patch, mock.patch.object(
+                v1, "repository_state"
+            ) as repository_state, mock.patch.object(
+                benchmark, "inspect_toolchains"
+            ) as inspect_toolchains, mock.patch.object(
+                benchmark, "run_build_capture"
+            ) as build_capture:
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError, "preflight path collision"
+                ):
+                    benchmark.run_suite(arguments)
+            repository_state.assert_not_called()
+            inspect_toolchains.assert_not_called()
+            build_capture.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".log").exists())
+            self.assertFalse(bundle.exists())
+
+        for name, output, bundle in cases:
+            with self.subTest(name=name, contract="case-insensitive"):
+                assert_rejected(
+                    output, bundle, force_case_insensitive=True
+                )
+
+        if not benchmark.filesystem_is_case_sensitive(root / "native-probe"):
+            for name, output, bundle in cases:
+                with self.subTest(name=name, contract="native-filesystem"):
+                    assert_rejected(
+                        output, bundle, force_case_insensitive=False
+                    )
+        self.assertEqual(
+            list(root.glob(".nomo-benchmarksgame-v2-case-*")), []
+        )
+
+    def test_preflight_unicode_normalization_aliases_are_zero_execution(
+        self,
+    ) -> None:
+        root = Path(self.temporary.name).resolve() / "unicode-aliases"
+        root.mkdir()
+
+        def assert_rejected(output: Path, bundle: Path) -> None:
+            arguments = benchmark.parse_arguments(
+                [
+                    "--mode",
+                    "prepare",
+                    "--output",
+                    str(output),
+                    "--prepared-bundle",
+                    str(bundle),
+                ]
+            )
+            with mock.patch.object(
+                v1, "repository_state"
+            ) as repository_state, mock.patch.object(
+                benchmark, "inspect_toolchains"
+            ) as inspect_toolchains, mock.patch.object(
+                benchmark, "run_build_capture"
+            ) as build_capture:
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError, "preflight path collision"
+                ):
+                    benchmark.run_suite(arguments)
+            repository_state.assert_not_called()
+            inspect_toolchains.assert_not_called()
+            build_capture.assert_not_called()
+            self.assertFalse(output.exists())
+            self.assertFalse(output.with_suffix(".log").exists())
+            self.assertFalse(bundle.exists())
+
+        assert_rejected(
+            root / "result-\N{LATIN SMALL LETTER E WITH ACUTE}.json",
+            root / "result-e\u0301.log",
+        )
+
+        if platform.system() == "Darwin":
+            composed_parent = root / "caf\N{LATIN SMALL LETTER E WITH ACUTE}"
+            decomposed_parent = root / "cafe\u0301"
+            composed_parent.mkdir()
+            self.assertTrue(
+                decomposed_parent.exists(),
+                "the macOS benchmark authority filesystem must expose "
+                "canonical Unicode aliases",
+            )
+            self.assertTrue(composed_parent.samefile(decomposed_parent))
+            assert_rejected(
+                composed_parent / "result.json",
+                decomposed_parent / "result.log",
+            )
+
+        self.assertEqual(
+            list(root.glob(".nomo-benchmarksgame-v2-case-*")), []
+        )
+
+    def native_windows_short_path(self, path: Path) -> Path:
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+        kernel32.GetShortPathNameW.argtypes = [
+            benchmark.wintypes.LPCWSTR,
+            benchmark.wintypes.LPWSTR,
+            benchmark.wintypes.DWORD,
+        ]
+        kernel32.GetShortPathNameW.restype = benchmark.wintypes.DWORD
+        buffer = ctypes.create_unicode_buffer(32768)
+        length = int(
+            kernel32.GetShortPathNameW(
+                str(path),
+                buffer,
+                len(buffer),
+            )
+        )
+        self.assertGreater(length, 0)
+        self.assertLess(length, len(buffer))
+        return Path(buffer.value)
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows 8.3 aliases")
+    def test_preflight_windows_short_name_alias_is_zero_execution(self) -> None:
+        root = Path(self.temporary.name).resolve()
+        short_root = self.native_windows_short_path(root)
+        if os.path.normcase(str(short_root)) == os.path.normcase(str(root)):
+            self.skipTest("the native volume did not expose an 8.3 alias")
+        self.assertEqual(
+            os.path.normcase(str(benchmark.windows_long_path_name(short_root))),
+            os.path.normcase(str(root)),
+        )
+
+        long_bundle = root / "prepared-bundle"
+        short_output = short_root / "prepared-bundle" / "result.json"
+        arguments = benchmark.parse_arguments(
+            [
+                "--mode",
+                "prepare",
+                "--output",
+                str(short_output),
+                "--prepared-bundle",
+                str(long_bundle),
+            ]
+        )
+        with mock.patch.object(
+            v1, "repository_state"
+        ) as repository_state, mock.patch.object(
+            benchmark, "inspect_toolchains"
+        ) as inspect_toolchains, mock.patch.object(
+            benchmark, "run_build_capture"
+        ) as build_capture, mock.patch.object(
+            benchmark, "load_prepared_bundle"
+        ) as load_prepared_bundle:
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "preflight path collision"
+            ):
+                benchmark.run_suite(arguments)
+        repository_state.assert_not_called()
+        inspect_toolchains.assert_not_called()
+        build_capture.assert_not_called()
+        load_prepared_bundle.assert_not_called()
+        self.assertFalse(long_bundle.exists())
+        self.assertFalse(short_output.exists())
+        self.assertFalse(short_output.with_suffix(".log").exists())
+
+    @unittest.skipUnless(os.name == "nt", "requires native Windows 8.3 aliases")
+    def test_preflight_windows_short_bundle_alias_is_zero_execution(self) -> None:
+        root = Path(self.temporary.name).resolve()
+        long_bundle = root / "very-long-prepared-bundle-name"
+        long_bundle.mkdir()
+        (long_bundle / "prepared-bundle.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        (long_bundle / "qualification-request.json").write_text(
+            "{}\n", encoding="utf-8"
+        )
+        short_bundle = self.native_windows_short_path(long_bundle)
+        if os.path.normcase(str(short_bundle)) == os.path.normcase(
+            str(long_bundle)
+        ):
+            self.skipTest("the native volume did not expose a final 8.3 alias")
+        self.assertEqual(
+            os.path.normcase(
+                str(benchmark.windows_long_path_name(short_bundle))
+            ),
+            os.path.normcase(str(long_bundle)),
+        )
+
+        long_output = long_bundle / "result.json"
+        arguments = benchmark.parse_arguments(
+            [
+                "--mode",
+                "measure",
+                "--output",
+                str(long_output),
+                "--prepared-bundle",
+                str(short_bundle),
+            ]
+        )
+        with mock.patch.object(
+            v1, "repository_state"
+        ) as repository_state, mock.patch.object(
+            benchmark, "inspect_toolchains"
+        ) as inspect_toolchains, mock.patch.object(
+            benchmark, "run_build_capture"
+        ) as build_capture, mock.patch.object(
+            benchmark, "load_prepared_bundle"
+        ) as load_prepared_bundle:
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "preflight path collision"
+            ):
+                benchmark.run_suite(arguments)
+        repository_state.assert_not_called()
+        inspect_toolchains.assert_not_called()
+        build_capture.assert_not_called()
+        load_prepared_bundle.assert_not_called()
+        self.assertFalse(long_output.exists())
+        self.assertFalse(long_output.with_suffix(".log").exists())
+        self.assertEqual(
+            sorted(path.name for path in long_bundle.iterdir()),
+            ["prepared-bundle.json", "qualification-request.json"],
+        )
 
     def test_prepared_structure_and_live_sha_are_fail_closed(self) -> None:
         result, bundle = self.prepared_bundle_fixture()
@@ -3032,8 +3615,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         metadata["prepared_result"] = benchmark.map_bundle_paths(
             materialized, bundle, True
         )
-        v1.write_result(metadata_path, metadata)
-        v1.write_result(
+        benchmark.write_canonical_json(metadata_path, metadata)
+        benchmark.write_canonical_json(
             bundle / "qualification-request.json",
             benchmark.canonical_qualification_request(materialized),
         )
@@ -3206,6 +3789,22 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             benchmark.validate_result_schema(
                 missing, self.result_schema_path
             )
+        missing = copy.deepcopy(result)
+        del missing["provenance"]["toolchains"]["build_environment"]
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "Draft 2020-12 schema"
+        ):
+            benchmark.validate_result_schema(
+                missing, self.result_schema_path
+            )
+        changed = copy.deepcopy(result)
+        changed["provenance"]["toolchains"]["runtime_environments"][
+            "default"
+        ]["PATH"] = "/poison/runtime-path"
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "runtime environment authority"
+        ):
+            benchmark.validate_result(changed, self.manifest)
 
         for field in ("compiler_build", "capability"):
             changed = copy.deepcopy(result)
@@ -3817,6 +4416,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "nomo_path": toolchains["nomo"]["path"],
             "nomo_sha256": toolchains["nomo"].get("sha256", "0" * 64),
             "checkout": str(REPOSITORY_ROOT),
+            "expected_commit": "a" * 40,
             "repository": {"commit": "a" * 40},
         }
         for build_mode, builder in (
@@ -3934,6 +4534,274 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                             toolchains,
                             120.0,
                         )
+
+    def assert_formal_invalid_output_is_retained(
+        self,
+        stage: str,
+        output_kind: str,
+    ) -> None:
+        root = (
+            Path(self.temporary.name).resolve()
+            / f"formal-invalid-{stage}-{output_kind}-{time.time_ns()}"
+        )
+        root.mkdir()
+        bundle = root / "bundle"
+        output = root / "prepare-result.json"
+        fixture = self.completed_result()
+        toolchains = fixture["provenance"]["toolchains"]
+        host = {
+            **fixture["provenance"]["host"],
+            "os": platform.system(),
+            "architecture": platform.machine(),
+        }
+        repository = fixture["provenance"]["repository"]
+        release_lanes = [
+            copy.deepcopy(fixture["release_lanes"][lane])
+            for lane in ("candidate", "main")
+        ]
+        for lane, state in zip(("candidate", "main"), release_lanes):
+            compiler = benchmark.binary_path(
+                bundle / "compiler-build" / lane / "release", "nomo"
+            )
+            compiler.parent.mkdir(parents=True, exist_ok=True)
+            compiler.write_bytes(f"{lane}-compiler".encode())
+            compiler_sha = v1.sha256_file(compiler)
+            state["nomo_path"] = str(compiler)
+            state["nomo_sha256"] = compiler_sha
+            state["compiler_build"]["binary"] = {
+                "path": str(compiler),
+                "sha256": compiler_sha,
+            }
+            for capability in state["capabilities"].values():
+                capability["nomo_path"] = str(compiler)
+                capability["nomo_sha256"] = compiler_sha
+                capability["help_command"] = self.full_command(
+                    [str(compiler), "build", "--help"]
+                )
+
+        workload = self.manifest["workloads"][0]
+        workload_id = workload["id"]
+        reference = fixture["builds"][workload_id]["references"]
+        reference_binaries = {
+            lane: Path(record["path"])
+            for lane, record in reference["binaries"].items()
+            if lane in benchmark.REFERENCE_LANES
+        }
+
+        def materialize(path: Path, kind: str) -> None:
+            if kind == "absent":
+                return
+            path.parent.mkdir(parents=True, exist_ok=True)
+            if kind == "regular":
+                path.write_bytes(b"fixture-build-output")
+            elif kind == "directory":
+                path.mkdir()
+            elif kind == "symlink":
+                target = path.parent / f"{path.name}-symlink-target"
+                target.write_bytes(b"not-the-build-output")
+                path.symlink_to(target)
+            elif kind == "fifo":
+                os.mkfifo(path)
+            else:
+                raise AssertionError(kind)
+
+        def fake_capture(
+            command: list[str],
+            timeout_seconds: float,
+            cwd: Path | None = None,
+            approved_environment_overrides: dict[str, str] | None = None,
+        ) -> tuple[dict, bytes, bytes]:
+            del timeout_seconds
+            argv = [str(part) for part in command]
+            record = self.full_command(
+                argv,
+                cwd=str(cwd.resolve()) if cwd is not None else None,
+                approved_environment_overrides=approved_environment_overrides,
+            )
+            if argv[-1] == "--release":
+                project = Path(argv[2])
+                project_name = benchmark.parse_project_name(
+                    self.suite_root
+                    / workload["sources"]["nomo"]["project_manifest"]
+                )
+                outputs = {
+                    "release-binary": benchmark.binary_path(
+                        project / "build" / "bin", project_name
+                    ),
+                    "release-generated-c": (
+                        project / "build" / "c" / "main.c"
+                    ),
+                    "release-provenance": (
+                        project / "build" / "release-provenance.json"
+                    ),
+                }
+                for output_stage, target in outputs.items():
+                    materialize(
+                        target,
+                        output_kind if stage == output_stage else "regular",
+                    )
+            elif argv[-1] == "--emit-c":
+                generated = Path(argv[2]) / "build" / "c" / "main.c"
+                materialize(
+                    generated,
+                    output_kind
+                    if stage == "emit-generated-c"
+                    else "regular",
+                )
+            elif "-o" in argv:
+                target = Path(argv[argv.index("-o") + 1])
+                materialize(
+                    target,
+                    output_kind if stage == "emit-binary" else "regular",
+                )
+            return record, b"", b""
+
+        arguments = Namespace(
+            candidate_commit=release_lanes[0]["expected_commit"],
+            main_commit=release_lanes[1]["expected_commit"],
+            candidate_checkout=release_lanes[0]["checkout"],
+            main_checkout=release_lanes[1]["checkout"],
+            cargo="cargo",
+            environment_qualification=None,
+            prepared_bundle=str(bundle),
+        )
+        collector = mock.Mock()
+        collector.descriptor.return_value = (
+            benchmark.collector_descriptor_for_host(host["os"])
+        )
+        release_builds = {
+            lane: (
+                copy.deepcopy(
+                    fixture["builds"][workload_id]["modes"]["release"][lane]
+                ),
+                Path(
+                    fixture["builds"][workload_id]["modes"]["release"][lane][
+                        "binary"
+                    ]["path"]
+                ),
+            )
+            for lane in ("candidate", "main")
+        }
+
+        patches = [
+            mock.patch.object(
+                benchmark,
+                "release_lane_state",
+                side_effect=release_lanes,
+            ),
+            mock.patch.object(
+                benchmark,
+                "build_reference_workload",
+                return_value=(reference, reference_binaries),
+            ),
+            mock.patch.object(
+                benchmark,
+                "run_build_capture",
+                side_effect=fake_capture,
+            ),
+        ]
+        if stage.startswith("emit-"):
+            patches.append(
+                mock.patch.object(
+                    benchmark,
+                    "build_release_lane",
+                    side_effect=[
+                        release_builds["candidate"],
+                        release_builds["main"],
+                    ],
+                )
+            )
+        with contextlib.ExitStack() as stack:
+            for patch in patches:
+                stack.enter_context(patch)
+            result = benchmark.run_prepare(
+                arguments,
+                self.manifest,
+                self.manifest_path,
+                self.suite_root,
+                output,
+                repository,
+                toolchains,
+                collector,
+                host,
+            )
+        self.assertEqual(result["status"], "unavailable")
+        self.assertEqual(len(result["build_failures"]), 1)
+        failure = result["build_failures"][0]
+        self.assertEqual(failure["lane"], "candidate")
+        expected_phase = {
+            "release-binary": "nomo-release-binary",
+            "release-generated-c": "nomo-release-generated-c",
+            "release-provenance": "nomo-release-provenance",
+            "emit-generated-c": "nomo-emit-c",
+            "emit-binary": "nomo-generated-c-clang",
+        }[stage]
+        self.assertEqual(failure["phase"], expected_phase)
+        self.assertEqual(
+            failure["failure_kind"],
+            "missing-output" if output_kind == "absent" else "invalid-output",
+        )
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        with mock.patch.object(
+            benchmark, "validate_release_lane_authority"
+        ):
+            benchmark.validate_result(result, self.manifest)
+        v1.write_result(output, result)
+        log_path = benchmark.write_evidence_log(output, result)
+        reloaded = v1.read_json(output)
+        benchmark.validate_result_schema(reloaded, self.result_schema_path)
+        with mock.patch.object(
+            benchmark, "validate_release_lane_authority"
+        ):
+            benchmark.validate_result(reloaded, self.manifest)
+        self.assertIn(expected_phase, log_path.read_text(encoding="utf-8"))
+        with mock.patch.object(
+            benchmark, "run_suite", return_value=(output, result)
+        ):
+            self.assertEqual(benchmark.main(["--mode", "prepare"]), 2)
+
+    def test_formal_prepare_retains_each_invalid_output_phase(self) -> None:
+        for stage in (
+            "release-binary",
+            "release-generated-c",
+            "release-provenance",
+            "emit-generated-c",
+            "emit-binary",
+        ):
+            with self.subTest(stage=stage):
+                self.assert_formal_invalid_output_is_retained(
+                    stage, "directory"
+                )
+
+    def test_formal_failure_uses_recorded_host_math_contract(
+        self,
+    ) -> None:
+        self.assert_formal_invalid_output_is_retained(
+            "emit-binary", "directory"
+        )
+
+    def test_formal_prepare_retains_absent_symlink_and_nonregular_outputs(
+        self,
+    ) -> None:
+        kinds = ["absent", "directory"]
+        symlink_probe = (
+            Path(self.temporary.name).resolve() / "formal-symlink-probe"
+        )
+        symlink_target = symlink_probe.with_name("formal-symlink-target")
+        try:
+            symlink_probe.symlink_to(symlink_target)
+        except OSError:
+            pass
+        else:
+            symlink_probe.unlink()
+            kinds.append("symlink")
+        if hasattr(os, "mkfifo"):
+            kinds.append("fifo")
+        for output_kind in kinds:
+            with self.subTest(output_kind=output_kind):
+                self.assert_formal_invalid_output_is_retained(
+                    "release-binary", output_kind
+                )
 
     def test_clang_driver_config_is_required_once_on_every_decisive_path(
         self,
@@ -4088,7 +4956,17 @@ print(json.dumps(
         self.assertNotIn(".codex/tmp/arg0", identity(arg0_a))
 
     def test_formal_authority_checkout_is_always_required_clean(self) -> None:
-        arguments = benchmark.parse_arguments(["--mode", "measure"])
+        root = Path(self.temporary.name).resolve() / "clean-authority"
+        arguments = benchmark.parse_arguments(
+            [
+                "--mode",
+                "prepare",
+                "--output",
+                str(root / "result.json"),
+                "--prepared-bundle",
+                str(root / "bundle"),
+            ]
+        )
         with mock.patch.object(
             v1,
             "repository_state",
@@ -4114,16 +4992,16 @@ print(json.dumps(
         result = self.completed_result()
         benchmark.validate_build_provenance(result, self.manifest)
         changed = copy.deepcopy(result)
-        changed["builds"]["spectral-norm"]["modes"]["release"]["candidate"][
-            "command"
-        ] = self.command_record(
-            [
-                self.fixture_path("tools", "nomo"),
-                "build",
-                self.fixture_path("project"),
-                "--emit-c",
-            ]
-        )
+        command = changed["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]["command"]
+        command["argv"] = [
+            self.fixture_path("tools", "nomo"),
+            "build",
+            self.fixture_path("project"),
+            "--emit-c",
+        ]
+        command["command"] = v1.command_text(command["argv"])
         with self.assertRaisesRegex(benchmark.HarnessError, "release argv changed"):
             benchmark.validate_build_provenance(changed, self.manifest)
         changed = copy.deepcopy(result)
@@ -4134,6 +5012,84 @@ print(json.dumps(
         clang["command"] = v1.command_text(clang["argv"])
         with self.assertRaisesRegex(benchmark.HarnessError, "Clang argv changed"):
             benchmark.validate_build_provenance(changed, self.manifest)
+
+    def test_formal_slots_exactly_bind_lane_repository_and_nomo_identity(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        for build_mode in benchmark.FORMAL_BUILD_MODES:
+            for mutation in ("lane", "repository", "nomo-path"):
+                changed = copy.deepcopy(result)
+                formal = changed["builds"]["spectral-norm"]["modes"][
+                    build_mode
+                ]["candidate"]
+                if mutation == "lane":
+                    formal["lane"] = "main"
+                elif mutation == "repository":
+                    formal["repository"]["dirty"] = True
+                else:
+                    formal["nomo"]["path"] = "/outside/same-bytes-nomo"
+                with self.subTest(
+                    build_mode=build_mode, mutation=mutation
+                ), self.assertRaisesRegex(
+                    benchmark.HarnessError, "formal slot"
+                ):
+                    benchmark.validate_build_provenance(
+                        changed, self.manifest
+                    )
+
+    def test_formal_generated_c_markers_are_mode_specific_and_required(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        cases = (
+            ("release", "unmodified_after_build", "unmodified_after_emit"),
+            ("emit-c", "unmodified_after_emit", "unmodified_after_build"),
+        )
+        for build_mode, required_marker, wrong_marker in cases:
+            for mutation in ("missing", "wrong-mode"):
+                changed = copy.deepcopy(result)
+                generated = changed["builds"]["spectral-norm"]["modes"][
+                    build_mode
+                ]["candidate"]["generated_c"]
+                generated.pop(required_marker)
+                if mutation == "wrong-mode":
+                    generated[wrong_marker] = True
+                with self.subTest(
+                    build_mode=build_mode, mutation=mutation
+                ):
+                    with self.assertRaises(benchmark.HarnessError):
+                        benchmark.validate_result_schema(
+                            changed, self.result_schema_path
+                        )
+                    with self.assertRaisesRegex(
+                        benchmark.HarnessError,
+                        "outputs are not|project-bound",
+                    ):
+                        benchmark.validate_build_provenance(
+                            changed, self.manifest
+                        )
+
+    def test_reference_provenance_rejects_cwd_output_and_hidden_sources(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        for mutation in ("cwd", "compiler-output", "hidden-source"):
+            changed = copy.deepcopy(result)
+            references = changed["builds"]["spectral-norm"]["references"]
+            if mutation == "cwd":
+                references["commands"]["c_build"]["cwd"] = "/arbitrary"
+            elif mutation == "compiler-output":
+                references["compiler_output"] = {}
+            else:
+                references["source_files"]["hidden"] = {
+                    "path": "/outside/hidden-input.c",
+                    "sha256": "0" * 64,
+                }
+            with self.subTest(mutation=mutation), self.assertRaises(
+                benchmark.HarnessError
+            ):
+                benchmark.validate_build_provenance(changed, self.manifest)
 
     def test_independent_emit_c_lane_builds_unmodified_generated_c(self) -> None:
         nomo = benchmark.binary_path(
@@ -4146,6 +5102,7 @@ print(json.dumps(
         lane_state = {
             "status": "available",
             "checkout": str(REPOSITORY_ROOT),
+            "expected_commit": "a" * 40,
             "repository": {"commit": "a" * 40},
             "nomo_path": str(nomo),
             "nomo_sha256": v1.sha256_file(nomo),
@@ -4334,14 +5291,15 @@ print(json.dumps(
                 result["provenance"]["collector"] = (
                     benchmark.collector_descriptor_for_host("Linux")
                 )
-                self.bind_formal_candidate_binary(
+                bound_binary = self.bind_formal_candidate_binary(
                     result, "spectral-norm", "release", executable
                 )
+                bound_executable = Path(bound_binary["path"])
                 binaries = {
                     workload_id: {}
                     for workload_id in benchmark.WORKLOAD_IDS
                 }
-                binaries["spectral-norm"]["candidate"] = executable
+                binaries["spectral-norm"]["candidate"] = bound_executable
                 collection_manifest = copy.deepcopy(self.manifest)
                 if failure_kind == "timeout":
                     collection_manifest["methodology"][
@@ -4376,6 +5334,7 @@ print(json.dumps(
                         self.bind_collector(
                             measured_workload, collector.collector_id
                         )
+                self.bind_synthetic_runtime_environments(result)
                 aggregate = benchmark.aggregate_protocol_outcome(
                     result["protocols"]
                 )
@@ -4510,9 +5469,10 @@ print(json.dumps(
             failure_kind,
             prefix_ids,
         ) in configurations.items():
-            self.bind_formal_candidate_binary(
+            bound_binary = self.bind_formal_candidate_binary(
                 result, failed_workload, build_mode, executable
             )
+            executable = Path(bound_binary["path"])
             batches = []
             for attempt_index in (1, 2):
                 failed = self.real_failed_partial_workload(
@@ -4616,6 +5576,7 @@ print(json.dumps(
                 "batches": batches,
                 "verdict": "not_evaluated",
             }
+        self.bind_synthetic_runtime_environments(result)
         benchmark.validate_result_schema(result, self.result_schema_path)
         with mock.patch.object(benchmark, "validate_result_prepared_authority"):
             benchmark.validate_result(result, self.manifest)
@@ -4657,6 +5618,244 @@ print(json.dumps(
                 result,
                 self.manifest,
             )
+
+    def test_nomo_baseline_build_requires_exact_six_commands(self) -> None:
+        result = self.correctness_only_result()
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        benchmark.validate_build_provenance(result, self.manifest)
+
+        for missing_name in benchmark.NOMO_BASELINE_BUILD_COMMANDS:
+            changed = copy.deepcopy(result)
+            del changed["builds"]["spectral-norm"]["references"]["commands"][
+                missing_name
+            ]
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "Draft 2020-12 schema"
+            ):
+                benchmark.validate_result_schema(
+                    changed, self.result_schema_path
+                )
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "exact frozen command set"
+            ):
+                benchmark.validate_build_provenance(
+                    changed, self.manifest
+                )
+
+        changed = copy.deepcopy(result)
+        reference = changed["builds"]["spectral-norm"]["references"]
+        reference["commands"]["unrecorded_extra_build"] = self.full_command(
+            [
+                self.fixture_path("tools", "clang"),
+                "--fast-math",
+                "--hidden-build",
+            ]
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "Draft 2020-12 schema"
+        ):
+            benchmark.validate_result_schema(
+                changed, self.result_schema_path
+            )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "exact frozen command set"
+        ):
+            benchmark.validate_build_provenance(changed, self.manifest)
+
+    def test_nomo_baseline_emit_and_clang_argv_are_fully_pinned(self) -> None:
+        result = self.correctness_only_result()
+        changed = copy.deepcopy(result)
+        emit = changed["builds"]["spectral-norm"]["references"]["commands"][
+            "nomo_baseline_emit_c"
+        ]
+        emit["argv"] = [
+            self.fixture_path("other-nomo"),
+            "build",
+            self.fixture_path("other-project"),
+            "--release",
+            "--emit-c",
+        ]
+        emit["command"] = v1.command_text(emit["argv"])
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "baseline emit-C argv changed"
+        ):
+            benchmark.validate_build_provenance(changed, self.manifest)
+
+        changed = copy.deepcopy(result)
+        clang = changed["builds"]["spectral-norm"]["references"]["commands"][
+            "nomo_baseline_clang"
+        ]
+        clang["argv"].remove("-O3")
+        clang["command"] = v1.command_text(clang["argv"])
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "baseline generated-C argv changed"
+        ):
+            benchmark.validate_build_provenance(changed, self.manifest)
+
+        for tool in ("nomo", "clang"):
+            changed = copy.deepcopy(result)
+            changed["provenance"]["toolchains"][tool]["sha256"] = "invalid"
+            with self.assertRaisesRegex(
+                benchmark.HarnessError, "tool identity is incomplete"
+            ):
+                benchmark.validate_build_provenance(
+                    changed, self.manifest
+                )
+
+    def test_reference_only_build_rejects_extra_command(self) -> None:
+        result = self.completed_result()
+        reference = result["builds"]["spectral-norm"]["references"]
+        reference["commands"]["unrecorded_extra_build"] = self.full_command(
+            [
+                self.fixture_path("tools", "clang"),
+                "--fast-math",
+                "--hidden-build",
+            ]
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "Draft 2020-12 schema"
+        ):
+            benchmark.validate_result_schema(
+                result, self.result_schema_path
+            )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "exact frozen command set"
+        ):
+            benchmark.validate_build_provenance(result, self.manifest)
+
+    def test_formal_project_source_commit_and_cwd_are_exactly_bound(
+        self,
+    ) -> None:
+        mutations = []
+        changed = self.completed_result()
+        changed["builds"]["spectral-norm"]["modes"]["release"]["candidate"][
+            "source"
+        ]["sha256"] = "0" * 64
+        mutations.append(("source", changed))
+
+        changed = self.completed_result()
+        changed["builds"]["spectral-norm"]["modes"]["emit-c"]["main"][
+            "project"
+        ]["copied_source"]["sha256"] = "0" * 64
+        mutations.append(("copied-source", changed))
+
+        changed = self.completed_result()
+        changed["builds"]["spectral-norm"]["modes"]["release"]["candidate"][
+            "project"
+        ]["compiler_commit"] = "0" * 40
+        mutations.append(("commit", changed))
+
+        changed = self.completed_result()
+        changed["builds"]["spectral-norm"]["modes"]["emit-c"]["candidate"][
+            "emit_command"
+        ]["cwd"] = self.fixture_path("other-checkout")
+        mutations.append(("emit-c-cwd", changed))
+
+        changed = self.completed_result()
+        changed["builds"]["spectral-norm"]["modes"]["release"]["main"][
+            "backend_provenance"
+        ]["compile_commands"][0]["cwd"] = self.fixture_path("other-checkout")
+        mutations.append(("backend-cwd", changed))
+
+        for label, result in mutations:
+            with self.subTest(mutation=label), self.assertRaises(
+                benchmark.HarnessError
+            ):
+                benchmark.validate_build_provenance(result, self.manifest)
+
+    def test_formal_artifacts_cannot_reuse_reference_lane_or_each_other(
+        self,
+    ) -> None:
+        cases = []
+
+        result = self.completed_result()
+        build = result["builds"]["spectral-norm"]
+        emit = build["modes"]["emit-c"]["candidate"]
+        emit["binary"] = copy.deepcopy(build["references"]["binaries"]["c"])
+        emit["clang_command"]["argv"][-2] = emit["binary"]["path"]
+        emit["clang_command"]["command"] = v1.command_text(
+            emit["clang_command"]["argv"]
+        )
+        forged_binary = emit["binary"]
+
+        def rebind_sample(sample: dict) -> None:
+            sample["command_argv"][0] = forged_binary["path"]
+            sample["command"] = v1.command_text(sample["command_argv"])
+            sample["executable_sha256"] = forged_binary["sha256"]
+
+        for correctness in result["protocols"]["emit-c"]["correctness"]:
+            if correctness["id"] == "spectral-norm":
+                rebind_sample(
+                    correctness["implementations"]["candidate"]["sample"]
+                )
+        for batch in result["protocols"]["emit-c"]["batches"]:
+            workload = next(
+                item
+                for item in batch["workloads"]
+                if item["id"] == "spectral-norm"
+            )
+            for phase in ("warmups", "samples"):
+                for sample in workload[phase]["candidate"]:
+                    rebind_sample(sample)
+        with mock.patch.object(
+            benchmark, "validate_result_prepared_authority"
+        ), self.assertRaises(benchmark.HarnessError):
+            benchmark.validate_result(result, self.manifest)
+        cases.append(("reference-as-candidate", result))
+
+        result = self.completed_result()
+        build = result["builds"]["spectral-norm"]
+        build["modes"]["release"]["main"]["project"] = copy.deepcopy(
+            build["modes"]["release"]["candidate"]["project"]
+        )
+        cases.append(("candidate-as-main-project", result))
+
+        result = self.completed_result()
+        build = result["builds"]["spectral-norm"]
+        release = build["modes"]["release"]["candidate"]
+        emit = build["modes"]["emit-c"]["candidate"]
+        emit["generated_c"] = copy.deepcopy(release["generated_c"])
+        emit["generated_c"]["unmodified_after_emit"] = True
+        emit["generated_c"].pop("unmodified_after_build")
+        emit["binary"] = copy.deepcopy(release["binary"])
+        cases.append(("release-as-emit-c", result))
+
+        result = self.completed_result()
+        build = result["builds"]["spectral-norm"]
+        main = build["modes"]["release"]["main"]
+        candidate = build["modes"]["release"]["candidate"]
+        main["generated_c"] = copy.deepcopy(candidate["generated_c"])
+        main["binary"] = copy.deepcopy(candidate["binary"])
+        cases.append(("candidate-as-main-output", result))
+
+        for label, result in cases:
+            with self.subTest(reuse=label), self.assertRaises(
+                benchmark.HarnessError
+            ):
+                benchmark.validate_build_provenance(result, self.manifest)
+
+    def test_prepared_bundle_rejects_hardlinked_decisive_artifacts(
+        self,
+    ) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        release = result["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]["binary"]
+        emit = result["builds"]["spectral-norm"]["modes"]["emit-c"][
+            "candidate"
+        ]["binary"]
+        release_path = Path(release["path"])
+        emit_path = Path(emit["path"])
+        emit_path.unlink()
+        try:
+            os.link(release_path, emit_path)
+        except OSError as error:
+            self.skipTest(f"hard links unavailable: {error}")
+        emit["sha256"] = v1.sha256_file(emit_path)
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "multiple hard links"
+        ):
+            benchmark.write_prepared_bundle(result, bundle, self.manifest)
 
     def test_forbidden_fast_math_and_replaced_reference_are_rejected(self) -> None:
         result = self.completed_result()
@@ -4729,7 +5928,248 @@ print(json.dumps(
                     for record in records:
                         record["argv"].remove("-lm")
                         record["command"] = v1.command_text(record["argv"])
-        benchmark.validate_build_provenance(result, self.manifest)
+        with mock.patch.object(
+            benchmark,
+            "artifact_path",
+            side_effect=lambda value, _host_os: benchmark.PurePosixPath(
+                str(value)
+            ),
+        ):
+            benchmark.validate_build_provenance(result, self.manifest)
+
+    def test_same_recorded_build_evidence_replays_on_every_reviewer(
+        self,
+    ) -> None:
+        evidence = self.completed_result()
+        self.assertEqual(evidence["provenance"]["host"]["os"], "Linux")
+        for reviewer_os in ("Linux", "Darwin", "Windows"):
+            with self.subTest(reviewer_os=reviewer_os), mock.patch.object(
+                benchmark,
+                "sanitized_build_environment",
+                side_effect=AssertionError(
+                    "offline replay consulted the reviewer environment"
+                ),
+            ), mock.patch.object(
+                benchmark.platform, "system", return_value=reviewer_os
+            ):
+                benchmark.validate_build_provenance(
+                    copy.deepcopy(evidence),
+                    self.manifest,
+                    live_filesystem=False,
+                )
+
+    def test_offline_validate_cli_replays_canonical_result_without_live_tools(
+        self,
+    ) -> None:
+        result = self.correctness_only_result()
+        downloaded_suite = benchmark.PurePosixPath(
+            "/downloaded/linux/nomo/performance/benchmarksgame"
+        )
+        result["provenance"]["manifest_path"] = str(
+            downloaded_suite / "manifest-v2.json"
+        )
+        manifest_workloads = {
+            workload["id"]: workload for workload in self.manifest["workloads"]
+        }
+        for workload_id, build in result["builds"].items():
+            workload = manifest_workloads[workload_id]
+            references = build["references"]
+            for lane in benchmark.REFERENCE_LANES:
+                references["source_files"][lane]["path"] = str(
+                    downloaded_suite / workload["sources"][lane]["path"]
+                )
+            for command in references["commands"].values():
+                command["cwd"] = "/downloaded/linux/nomo"
+            for index, source in enumerate(
+                (
+                    workload["sources"]["nomo"]["path"],
+                    workload["sources"]["nomo"]["project_manifest"],
+                )
+            ):
+                references["source_files"]["nomo"][index]["path"] = str(
+                    downloaded_suite / source
+                )
+        for correctness in result["correctness"]:
+            workload = manifest_workloads[correctness["id"]]
+            correctness["fixture_path"] = str(
+                downloaded_suite
+                / workload["fixtures"]["correctness"]["path"]
+            )
+        artifact = Path(self.temporary.name) / "downloaded-linux-result.json"
+        v1.write_result(artifact, result)
+        with mock.patch.object(
+            benchmark,
+            "inspect_toolchains",
+            side_effect=AssertionError("offline validation probed toolchains"),
+        ), mock.patch.object(
+            benchmark,
+            "sanitized_build_environment",
+            side_effect=AssertionError("offline validation read reviewer env"),
+        ), mock.patch.object(
+            benchmark,
+            "run_build_capture",
+            side_effect=AssertionError("offline validation executed a tool"),
+        ), mock.patch.object(
+            benchmark,
+            "_environment",
+            side_effect=AssertionError(
+                "offline validation rebuilt reviewer runtime env"
+            ),
+        ):
+            path, replayed = benchmark.validate_artifact_offline(
+                str(artifact), str(self.manifest_path)
+            )
+        self.assertEqual(path, artifact)
+        self.assertEqual(replayed, result)
+
+        prepared, bundle = self.prepared_bundle_fixture()
+        for reviewer_os in ("Linux", "Darwin", "Windows"):
+            with self.subTest(
+                prepared_reviewer_os=reviewer_os
+            ), mock.patch.object(
+                benchmark.platform, "system", return_value=reviewer_os
+            ), mock.patch.object(
+                benchmark,
+                "inspect_toolchains",
+                side_effect=AssertionError(
+                    "offline validation probed toolchains"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "sanitized_build_environment",
+                side_effect=AssertionError(
+                    "offline validation read reviewer env"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "run_build_capture",
+                side_effect=AssertionError(
+                    "offline validation executed a tool"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "_environment",
+                side_effect=AssertionError(
+                    "offline validation rebuilt reviewer runtime env"
+                ),
+            ):
+                prepared_path, replayed_prepared = (
+                    benchmark.validate_artifact_offline(
+                        str(bundle), str(self.manifest_path)
+                    )
+                )
+            self.assertEqual(prepared_path, bundle)
+            self.assertEqual(replayed_prepared, prepared)
+
+    def test_completed_artifact_replays_cross_host_without_live_authority(
+        self,
+    ) -> None:
+        result = self.completed_result()
+        downloaded_suite = benchmark.PurePosixPath(
+            "/downloaded/linux/nomo/performance/benchmarksgame"
+        )
+        result["provenance"]["manifest_path"] = str(
+            downloaded_suite / "manifest-v2.json"
+        )
+        workloads = {
+            workload["id"]: workload for workload in self.manifest["workloads"]
+        }
+        for workload_id, build in result["builds"].items():
+            workload = workloads[workload_id]
+            references = build["references"]
+            for lane in benchmark.REFERENCE_LANES:
+                references["source_files"][lane]["path"] = str(
+                    downloaded_suite / workload["sources"][lane]["path"]
+                )
+            for command in references["commands"].values():
+                command["cwd"] = "/downloaded/linux/nomo"
+            for build_mode in benchmark.FORMAL_BUILD_MODES:
+                for lane in ("candidate", "main"):
+                    formal = build["modes"][build_mode][lane]
+                    project = formal["project"]
+                    source_path = str(
+                        downloaded_suite
+                        / workload["sources"]["nomo"]["path"]
+                    )
+                    project["source"]["path"] = source_path
+                    formal["source"]["path"] = source_path
+                    project["project_manifest"]["path"] = str(
+                        downloaded_suite
+                        / workload["sources"]["nomo"]["project_manifest"]
+                    )
+        for protocol in result["protocols"].values():
+            for correctness in protocol["correctness"]:
+                workload = workloads[correctness["id"]]
+                correctness["fixture_path"] = str(
+                    downloaded_suite
+                    / workload["fixtures"]["correctness"]["path"]
+                )
+            for batch in protocol["batches"]:
+                for measured in batch["workloads"]:
+                    workload = workloads[measured["id"]]
+                    measured["fixture_path"] = str(
+                        downloaded_suite
+                        / workload["fixtures"]["performance"]["path"]
+                    )
+        qualification_path = Path(
+            result["provenance"]["environment_qualification"][
+                "qualification_path"
+            ]
+        )
+        qualification_path.unlink()
+        result["provenance"]["environment_qualification"][
+            "qualification_path"
+        ] = "/downloaded/linux/authority/environment.json"
+        artifact = (
+            Path(self.temporary.name) / "downloaded-completed-linux-result.json"
+        )
+        v1.write_result(artifact, result)
+        for reviewer_os in ("Linux", "Darwin", "Windows"):
+            with self.subTest(reviewer_os=reviewer_os), mock.patch.object(
+                benchmark.platform, "system", return_value=reviewer_os
+            ), mock.patch.object(
+                benchmark,
+                "inspect_toolchains",
+                side_effect=AssertionError(
+                    "offline validation probed toolchains"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "sanitized_build_environment",
+                side_effect=AssertionError(
+                    "offline validation read reviewer env"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "run_build_capture",
+                side_effect=AssertionError(
+                    "offline validation executed a tool"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "_environment",
+                side_effect=AssertionError(
+                    "offline validation rebuilt reviewer runtime env"
+                ),
+            ):
+                path, replayed = benchmark.validate_artifact_offline(
+                    str(artifact), str(self.manifest_path)
+                )
+            self.assertEqual(path, artifact)
+            self.assertEqual(replayed, result)
+
+        tampered = copy.deepcopy(result)
+        tampered["provenance"]["environment_qualification"]["checks"][
+            "power_mode"
+        ]["value"] = "forged"
+        tampered_artifact = Path(self.temporary.name) / "tampered-completed.json"
+        v1.write_result(tampered_artifact, tampered)
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "canonical qualification file SHA"
+        ):
+            benchmark.validate_artifact_offline(
+                str(tampered_artifact), str(self.manifest_path)
+            )
 
     def synthetic_workload(
         self, workload_id: str, candidate_wall: int, comparator_wall: int
@@ -4946,13 +6386,28 @@ print(json.dumps(
         build_mode: str,
         executable: Path,
     ) -> dict:
-        binary = {
-            "path": str(executable.resolve()),
-            "sha256": v1.sha256_file(executable),
-        }
         formal = result["builds"][workload_id]["modes"][build_mode][
             "candidate"
         ]
+        target = Path(formal["binary"]["path"])
+        target.parent.mkdir(parents=True, exist_ok=True)
+        if executable == Path("/bin/sleep"):
+            target.write_text(
+                "#!/bin/sh\nexec /bin/sleep 5\n", encoding="utf-8"
+            )
+            target.chmod(0o755)
+        elif executable == Path("/usr/bin/printf"):
+            target.write_text(
+                "#!/bin/sh\nexec /usr/bin/printf x\n", encoding="utf-8"
+            )
+            target.chmod(0o755)
+        else:
+            shutil.copyfile(executable, target)
+            target.chmod(executable.stat().st_mode)
+        binary = {
+            "path": str(target.resolve()),
+            "sha256": v1.sha256_file(target),
+        }
         formal["binary"] = binary
         workload = next(
             item
@@ -4963,6 +6418,9 @@ print(json.dumps(
         if build_mode == "release":
             backend = formal["backend_provenance"]
             backend["binary"] = binary
+            previous_environment = copy.deepcopy(
+                backend["link_command"]["environment"]
+            )
             backend["link_command"] = self.full_command(
                 [
                     backend["compiler"]["path"],
@@ -4971,9 +6429,14 @@ print(json.dumps(
                     "-o",
                     binary["path"],
                     *link_flags,
-                ]
+                ],
+                cwd=formal["command"]["cwd"],
             )
+            backend["link_command"]["environment"] = previous_environment
         else:
+            previous_environment = copy.deepcopy(
+                formal["clang_command"]["environment"]
+            )
             formal["clang_command"] = self.full_command(
                 [
                     self.fixture_path("tools", "clang"),
@@ -4983,8 +6446,10 @@ print(json.dumps(
                     "-o",
                     binary["path"],
                     *link_flags,
-                ]
+                ],
+                cwd=formal["emit_command"]["cwd"],
             )
+            formal["clang_command"]["environment"] = previous_environment
         return binary
 
     def real_failed_partial_workload(
@@ -5327,6 +6792,140 @@ print(json.dumps(
     def fixture_path(self, *parts: str) -> str:
         return str(Path(self.temporary.name).resolve().joinpath(*parts))
 
+    def project_windows_paths_as_linux_artifact(self, value):
+        if os.name != "nt":
+            return value
+        if isinstance(value, dict):
+            projected = {
+                key: self.project_windows_paths_as_linux_artifact(item)
+                for key, item in value.items()
+            }
+            if (
+                isinstance(projected.get("argv"), list)
+                and "command" in projected
+            ):
+                projected["command"] = v1.command_text(projected["argv"])
+            return projected
+        if isinstance(value, list):
+            return [
+                self.project_windows_paths_as_linux_artifact(item)
+                for item in value
+            ]
+        if not isinstance(value, str) or ";" in value or "\n" in value:
+            return value
+        path = benchmark.PureWindowsPath(value)
+        if not path.is_absolute():
+            return value
+        drive = path.drive.rstrip(":\\/").casefold() or "unc"
+        relative_parts = path.parts[1:]
+        return str(
+            benchmark.PurePosixPath(
+                "/recorded-windows-producer", drive, *relative_parts
+            )
+        )
+
+    def synthetic_linux_runtime_environments(self) -> dict:
+        default = {
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/usr/bin:/bin",
+            "TMPDIR": "/tmp",
+        }
+        return {
+            "default": default,
+            "go": {**default, "GOMAXPROCS": "1"},
+        }
+
+    def bind_synthetic_build_environment(self, result: dict) -> None:
+        retained = {
+            "GOENV": "off",
+            "HOME": "/home/benchmark-authority",
+            "LANG": "C",
+            "LC_ALL": "C",
+            "PATH": "/usr/bin:/bin",
+            "TMPDIR": "/tmp",
+        }
+        projection = {
+            "retained": retained,
+            "cleared": [
+                name
+                for name in benchmark.COMPILER_AFFECTING_ENVIRONMENT
+                if name not in retained
+            ],
+            "cleared_values_recorded": False,
+        }
+        override_names = {
+            "CARGO_TARGET_DIR",
+            "CARGO_HOME",
+            "RUSTC",
+            "GOCACHE",
+            "GOMODCACHE",
+        }
+
+        def bind(value) -> None:
+            if isinstance(value, dict):
+                environment = value.get("environment")
+                if (
+                    isinstance(environment, dict)
+                    and isinstance(environment.get("retained"), dict)
+                    and isinstance(value.get("argv"), list)
+                ):
+                    overrides = {
+                        key: item
+                        for key, item in environment["retained"].items()
+                        if key in override_names
+                    }
+                    rebound = copy.deepcopy(projection)
+                    rebound["retained"].update(overrides)
+                    rebound["retained"] = dict(
+                        sorted(rebound["retained"].items())
+                    )
+                    rebound["cleared"] = [
+                        name
+                        for name in benchmark.COMPILER_AFFECTING_ENVIRONMENT
+                        if name not in rebound["retained"]
+                    ]
+                    value["environment"] = rebound
+                for item in value.values():
+                    bind(item)
+            elif isinstance(value, list):
+                for item in value:
+                    bind(item)
+
+        bind(result)
+        result["provenance"]["toolchains"]["build_environment"] = projection
+
+    def bind_synthetic_runtime_environments(self, result: dict) -> None:
+        environments = self.synthetic_linux_runtime_environments()
+        result["provenance"]["toolchains"]["runtime_environments"] = (
+            copy.deepcopy(environments)
+        )
+
+        def bind_correctness(items: list[dict]) -> None:
+            for item in items:
+                for lane, implementation in item.get(
+                    "implementations", {}
+                ).items():
+                    implementation["sample"]["environment"] = copy.deepcopy(
+                        environments["go" if lane == "go" else "default"]
+                    )
+
+        bind_correctness(result.get("correctness", []))
+        for protocol in result.get("protocols", {}).values():
+            bind_correctness(protocol.get("correctness", []))
+            for batch in protocol.get("batches", []):
+                for workload in batch.get("workloads", []):
+                    for phase in ("warmups", "samples"):
+                        for lane, samples in workload.get(
+                            phase, {}
+                        ).items():
+                            for sample in samples:
+                                sample["environment"] = copy.deepcopy(
+                                    environments[
+                                        "go" if lane == "go" else "default"
+                                    ]
+                                )
+
     def command_record(
         self,
         argv: list[str],
@@ -5461,18 +7060,61 @@ print(json.dumps(
     def formal_build(
         self, lane: str, build_mode: str, workload_id: str = "spectral-norm"
     ) -> dict:
+        workload = next(
+            item
+            for item in self.manifest["workloads"]
+            if item["id"] == workload_id
+        )
         commit = ("a" if lane == "candidate" else "b") * 40
         nomo_sha = ("c" if lane == "candidate" else "d") * 64
         nomo_path = self.fixture_path(lane, "target", "release", "nomo")
         project = self.fixture_path(workload_id, build_mode, lane, "project")
         generated_c = f"{project}/build/c/main.c"
         binary = self.binary_record(workload_id, build_mode, lane)
+        nomo_source = workload["sources"]["nomo"]
+        source_path = str(
+            (self.suite_root / nomo_source["path"]).resolve()
+        )
+        manifest_path = str(
+            (
+                self.suite_root / nomo_source["project_manifest"]
+            ).resolve()
+        )
         base = {
             "repository": {"commit": commit},
             "nomo": {"path": nomo_path, "sha256": nomo_sha},
             "source": {
-                "path": self.fixture_path("main.nomo"),
-                "sha256": "f" * 64,
+                "path": source_path,
+                "sha256": nomo_source["sha256"],
+            },
+            "project": {
+                "path": project,
+                "source_relative_path": nomo_source["path"],
+                "source": {
+                    "path": source_path,
+                    "sha256": nomo_source["sha256"],
+                },
+                "project_manifest_relative_path": nomo_source[
+                    "project_manifest"
+                ],
+                "project_manifest": {
+                    "path": manifest_path,
+                    "sha256": nomo_source[
+                        "project_manifest_sha256"
+                    ],
+                },
+                "copied_source": {
+                    "path": f"{project}/src/main.nomo",
+                    "sha256": nomo_source["sha256"],
+                },
+                "copied_project_manifest": {
+                    "path": f"{project}/nomo.toml",
+                    "sha256": nomo_source[
+                        "project_manifest_sha256"
+                    ],
+                },
+                "compiler_checkout": self.fixture_path(lane),
+                "compiler_commit": commit,
             },
             "lane": lane,
             "binary": binary,
@@ -5483,7 +7125,8 @@ print(json.dumps(
                 **base,
                 "kind": "real-nomo-release",
                 "command": self.full_command(
-                    [nomo_path, "build", project, "--release"]
+                    [nomo_path, "build", project, "--release"],
+                    cwd=self.fixture_path(lane),
                 ),
                 "stdout": "",
                 "stderr": "",
@@ -5495,7 +7138,7 @@ print(json.dumps(
                 "backend_provenance_path": f"{project}/build/release-provenance.json",
                 "backend_provenance_sha256": "5" * 64,
                 "backend_provenance": self.release_backend(
-                    workload_id, generated_c, binary
+                    workload_id, generated_c, binary, lane
                 ),
                 "emit_c_fallback_used": False,
             }
@@ -5503,7 +7146,8 @@ print(json.dumps(
             **base,
             "kind": "nomo-emit-c-clang",
             "emit_command": self.full_command(
-                [nomo_path, "build", project, "--emit-c"]
+                [nomo_path, "build", project, "--emit-c"],
+                cwd=self.fixture_path(lane),
             ),
             "emit_stdout": "",
             "emit_stderr": "",
@@ -5524,7 +7168,8 @@ print(json.dumps(
                         ).get("link_math")
                         else []
                     ),
-                ]
+                ],
+                cwd=self.fixture_path(lane),
             ),
             "clang_stdout": "",
             "clang_stderr": "",
@@ -5537,7 +7182,7 @@ print(json.dumps(
         }
 
     def release_backend(
-        self, workload_id: str, generated_c: str, binary: dict
+        self, workload_id: str, generated_c: str, binary: dict, lane: str
     ) -> dict:
         workload = next(
             item for item in self.manifest["workloads"] if item["id"] == workload_id
@@ -5565,7 +7210,8 @@ print(json.dumps(
                         generated_c,
                         "-o",
                         object_path,
-                    ]
+                    ],
+                    cwd=self.fixture_path(lane),
                 )
             ],
             "link_command": self.full_command(
@@ -5576,14 +7222,94 @@ print(json.dumps(
                     "-o",
                     binary["path"],
                     *(["-lm"] if workload.get("link_math") else []),
-                ]
+                ],
+                cwd=self.fixture_path(lane),
             ),
             "generated_c": {"path": generated_c, "sha256": "2" * 64},
             "binary": binary,
         }
 
-    def schema_reference_build(self, workload_id: str = "spectral-norm") -> dict:
+    def schema_reference_build(
+        self,
+        workload_id: str = "spectral-norm",
+        include_nomo_baseline: bool = False,
+    ) -> dict:
         reference = self.reference_build(workload_id)
+        generated_c = None
+        if include_nomo_baseline:
+            workload = next(
+                item
+                for item in self.manifest["workloads"]
+                if item["id"] == workload_id
+            )
+            nomo_source = workload["sources"]["nomo"]
+            project = Path(
+                self.fixture_path(
+                    "reference-build",
+                    workload_id,
+                    "nomo-baseline-project",
+                )
+            )
+            generated_path = str(
+                (project / "build" / "c" / "main.c").resolve()
+            )
+            baseline_binary = self.binary_record(
+                workload_id, "reference", "nomo-baseline"
+            )
+            reference["source_files"]["nomo"] = [
+                {
+                    "path": str(
+                        (
+                            self.suite_root / nomo_source["path"]
+                        ).resolve()
+                    ),
+                    "sha256": nomo_source["sha256"],
+                },
+                {
+                    "path": str(
+                        (
+                            self.suite_root
+                            / nomo_source["project_manifest"]
+                        ).resolve()
+                    ),
+                    "sha256": nomo_source["project_manifest_sha256"],
+                },
+            ]
+            reference["binaries"]["nomo-baseline"] = baseline_binary
+            reference["commands"]["nomo_baseline_emit_c"] = (
+                self.command_record(
+                    [
+                        self.fixture_path("tools", "nomo"),
+                        "build",
+                        str(project.resolve()),
+                        "--emit-c",
+                    ]
+                )
+            )
+            link_flags = (
+                ["-lm"]
+                if workload.get("link_math")
+                else []
+            )
+            reference["commands"]["nomo_baseline_clang"] = (
+                self.command_record(
+                    [
+                        self.fixture_path("tools", "clang"),
+                        *benchmark.CLANG_DRIVER_CONFIG_FLAGS,
+                        *benchmark.BASE_C_FLAGS,
+                        generated_path,
+                        "-o",
+                        baseline_binary["path"],
+                        *link_flags,
+                    ]
+                )
+            )
+            generated_c = {
+                "path": generated_path,
+                "sha256": "7" * 64,
+                "unmodified_after_emit": True,
+                "decisional_release_lane": False,
+            }
         return {
             "kind": "reference-and-correctness-baseline",
             "source_files": reference["source_files"],
@@ -5591,14 +7317,31 @@ print(json.dumps(
             "commands": {
                 name: {
                     **record,
-                    "cwd": None,
+                    "cwd": str(self.suite_root.parent.parent.resolve()),
                     "duration_ns": 1,
                     "exit_code": 0,
                 }
                 for name, record in reference["commands"].items()
             },
-            "compiler_output": {},
-            "generated_c": None,
+            "compiler_output": {
+                **{
+                    lane: {"stdout": "", "stderr": ""}
+                    for lane in benchmark.REFERENCE_LANES
+                },
+                **(
+                    {
+                        "nomo-baseline": {
+                            "emit_stdout": "",
+                            "emit_stderr": "",
+                            "clang_stdout": "",
+                            "clang_stderr": "",
+                        }
+                    }
+                    if include_nomo_baseline
+                    else {}
+                ),
+            },
+            "generated_c": generated_c,
             "binaries": reference["binaries"],
             "compile_time_excluded_from_run_time": True,
         }
@@ -5792,7 +7535,15 @@ print(json.dumps(
     def correctness_only_result(self) -> dict:
         host = {"os": "Linux", "fixture": True}
         toolchains = {
-            "nomo": {"path": self.fixture_path("tools", "nomo")},
+            "build_environment": benchmark.sanitized_build_environment()[1],
+            "runtime_environments": {
+                "default": benchmark._environment({})[1],
+                "go": benchmark._environment({"GOMAXPROCS": "1"})[1],
+            },
+            "nomo": {
+                "path": self.fixture_path("tools", "nomo"),
+                "sha256": "7" * 64,
+            },
             "clang": {
                 "path": self.fixture_path("tools", "clang"),
                 "realpath": self.fixture_path("tools", "clang"),
@@ -5882,7 +7633,9 @@ print(json.dumps(
             "release_lanes": release_lanes,
             "builds": {
                 workload: {
-                    "references": self.schema_reference_build(workload),
+                    "references": self.schema_reference_build(
+                        workload, include_nomo_baseline=True
+                    ),
                     "modes": {},
                 }
                 for workload in benchmark.WORKLOAD_IDS
@@ -5905,10 +7658,21 @@ print(json.dumps(
             },
             "overall_verdict": "not_evaluated",
         }
-        for workload in benchmark.WORKLOAD_IDS:
-            result["builds"][workload]["references"]["binaries"][
-                "nomo-baseline"
-            ] = self.binary_record(workload, "reference", "nomo-baseline")
+        result = self.project_windows_paths_as_linux_artifact(result)
+        self.bind_synthetic_build_environment(result)
+        self.bind_synthetic_runtime_environments(result)
+        result["provenance"]["environment_qualification"] = (
+            benchmark.environment_qualification(
+                self.manifest,
+                None,
+                benchmark.qualification_bindings(
+                    result["provenance"]["host"],
+                    result["provenance"]["toolchains"],
+                    result["provenance"]["source_lock"],
+                    result["release_lanes"],
+                ),
+            )
+        )
         return result
 
     def completed_result(self) -> dict:
@@ -5951,6 +7715,9 @@ print(json.dumps(
         result["provenance"]["manifest_path"] = str(self.manifest_path)
         result["provenance"]["manifest_sha256"] = benchmark.EXPECTED_V2_MANIFEST_SHA
         result["provenance"]["prepared_bundle_sha256"] = "e" * 64
+        result = self.project_windows_paths_as_linux_artifact(result)
+        self.bind_synthetic_build_environment(result)
+        self.bind_synthetic_runtime_environments(result)
         bindings = benchmark.qualification_bindings(
             result["provenance"]["host"],
             result["provenance"]["toolchains"],
@@ -5980,7 +7747,7 @@ print(json.dumps(
             "checks": checks,
         }
         qualification_path = Path(self.temporary.name) / "environment.json"
-        qualification_path.write_text(json.dumps(document), encoding="utf-8")
+        benchmark.write_canonical_json(qualification_path, document)
         result["provenance"]["environment_qualification"] = (
             benchmark.environment_qualification(
                 self.manifest, str(qualification_path), bindings
@@ -6021,6 +7788,37 @@ print(json.dumps(
             for build_mode in benchmark.FORMAL_BUILD_MODES
         }
         result["overall_verdict"] = "not_evaluated"
+        result["provenance"]["toolchains"]["build_environment"] = (
+            benchmark.sanitized_build_environment()[1]
+        )
+        result["provenance"]["toolchains"]["runtime_environments"] = {
+            "default": benchmark._environment({})[1],
+            "go": benchmark._environment({"GOMAXPROCS": "1"})[1],
+        }
+        if os.name == "nt":
+            result["provenance"]["host"] = {
+                "os": "Windows",
+                "architecture": platform.machine(),
+                "fixture": True,
+            }
+            result["provenance"]["manifest_path"] = str(
+                self.manifest_path.resolve()
+            )
+            result["provenance"]["collector"] = (
+                benchmark.collector_descriptor_for_host("Windows")
+            )
+            for workload in self.manifest["workloads"]:
+                references = result["builds"][workload["id"]]["references"]
+                for lane in benchmark.REFERENCE_LANES:
+                    source = workload["sources"][lane]
+                    references["source_files"][lane] = {
+                        "path": str(
+                            (
+                                self.suite_root / source["path"]
+                            ).resolve()
+                        ),
+                        "sha256": source["sha256"],
+                    }
 
         def write_file(path: Path, content: bytes) -> dict:
             path.parent.mkdir(parents=True, exist_ok=True)
@@ -6029,6 +7827,16 @@ print(json.dumps(
 
         for lane in ("candidate", "main"):
             state = result["release_lanes"][lane]
+            if os.name == "nt":
+                checkout = root / "checkouts" / lane
+                checkout.mkdir(parents=True)
+                state["checkout"] = str(checkout.resolve())
+                state["compiler_build"]["repository_before"] = state[
+                    "repository"
+                ]
+                state["compiler_build"]["repository_after"] = state[
+                    "repository"
+                ]
             target_dir = root / "compiler-build" / lane
             cargo_home = (
                 root / "compiler-build" / f"{lane}-cargo-home"
@@ -6120,6 +7928,7 @@ print(json.dumps(
                 and result["provenance"]["host"]["os"] != "Windows"
                 else []
             )
+            reference_cwd = str(self.suite_root.parent.parent.resolve())
             references["commands"] = {
                 "c_build": self.full_command(
                     [
@@ -6130,7 +7939,8 @@ print(json.dumps(
                         "-o",
                         reference_binaries["c"]["path"],
                         *link_flags,
-                    ]
+                    ],
+                    cwd=reference_cwd,
                 ),
                 "cpp_build": self.full_command(
                     [
@@ -6141,7 +7951,8 @@ print(json.dumps(
                         "-o",
                         reference_binaries["cpp"]["path"],
                         *link_flags,
-                    ]
+                    ],
+                    cwd=reference_cwd,
                 ),
                 "semantic-c_build": self.full_command(
                     [
@@ -6152,7 +7963,8 @@ print(json.dumps(
                         "-o",
                         reference_binaries["semantic-c"]["path"],
                         *link_flags,
-                    ]
+                    ],
+                    cwd=reference_cwd,
                 ),
                 "go_build": self.full_command(
                     [
@@ -6162,6 +7974,7 @@ print(json.dumps(
                         reference_binaries["go"]["path"],
                         copied_sources["go"]["path"],
                     ],
+                    cwd=reference_cwd,
                     approved_environment_overrides={
                         key: str(
                             (
@@ -6185,6 +7998,20 @@ print(json.dumps(
                         / lane
                         / "project"
                     )
+                    nomo_source = (
+                        self.suite_root / workload["sources"]["nomo"]["path"]
+                    )
+                    nomo_manifest = (
+                        self.suite_root
+                        / workload["sources"]["nomo"]["project_manifest"]
+                    )
+                    copied_source_path = project / "src" / "main.nomo"
+                    copied_manifest_path = project / "nomo.toml"
+                    copied_source_path.parent.mkdir(
+                        parents=True, exist_ok=True
+                    )
+                    shutil.copy2(nomo_source, copied_source_path)
+                    shutil.copy2(nomo_manifest, copied_manifest_path)
                     generated = write_file(
                         project / "build" / "c" / "main.c",
                         f"{workload_id}-{build_mode}-{lane}-c".encode(),
@@ -6198,12 +8025,33 @@ print(json.dumps(
                         "path": state["nomo_path"],
                         "sha256": state["nomo_sha256"],
                     }
-                    nomo_source = (
-                        self.suite_root / workload["sources"]["nomo"]["path"]
-                    )
                     formal["source"] = {
                         "path": str(nomo_source.resolve()),
                         "sha256": v1.sha256_file(nomo_source),
+                    }
+                    formal["project"] = {
+                        "path": str(project.resolve()),
+                        "source_relative_path": workload["sources"]["nomo"][
+                            "path"
+                        ],
+                        "source": formal["source"],
+                        "project_manifest_relative_path": workload["sources"][
+                            "nomo"
+                        ]["project_manifest"],
+                        "project_manifest": {
+                            "path": str(nomo_manifest.resolve()),
+                            "sha256": v1.sha256_file(nomo_manifest),
+                        },
+                        "copied_source": {
+                            "path": str(copied_source_path.resolve()),
+                            "sha256": v1.sha256_file(copied_source_path),
+                        },
+                        "copied_project_manifest": {
+                            "path": str(copied_manifest_path.resolve()),
+                            "sha256": v1.sha256_file(copied_manifest_path),
+                        },
+                        "compiler_checkout": state["checkout"],
+                        "compiler_commit": state["expected_commit"],
                     }
                     formal["generated_c"] = {
                         **generated,
@@ -6253,7 +8101,8 @@ print(json.dumps(
                                         generated["path"],
                                         "-o",
                                         object_file["path"],
-                                    ]
+                                    ],
+                                    cwd=state["checkout"],
                                 )
                             ],
                             "link_command": self.full_command(
@@ -6264,7 +8113,8 @@ print(json.dumps(
                                     "-o",
                                     binary["path"],
                                     *link_flags,
-                                ]
+                                ],
+                                cwd=state["checkout"],
                             ),
                             "generated_c": generated,
                             "binary": binary,
@@ -6299,7 +8149,8 @@ print(json.dumps(
                                 "-o",
                                 binary["path"],
                                 *link_flags,
-                            ]
+                            ],
+                            cwd=state["checkout"],
                         )
         return benchmark.write_prepared_bundle(
             result, root, self.manifest

@@ -22,8 +22,9 @@ import subprocess
 import sys
 import tempfile
 import time
+import unicodedata
 import uuid
-from pathlib import Path
+from pathlib import Path, PurePath, PurePosixPath, PureWindowsPath
 from typing import Any, Callable, Dict, Iterator, Optional, Sequence, Tuple
 from ctypes import wintypes
 
@@ -40,6 +41,36 @@ except ImportError:
     Draft202012Validator = None  # type: ignore[assignment,misc]
     FormatChecker = None  # type: ignore[assignment,misc]
 
+
+def _strict_json_object(pairs: Sequence[Tuple[str, Any]]) -> Dict[str, Any]:
+    result: Dict[str, Any] = {}
+    for key, value in pairs:
+        if key in result:
+            raise HarnessError(f"duplicate JSON object key: {key}")
+        result[key] = value
+    return result
+
+
+def read_json_strict(path: Path) -> Dict[str, Any]:
+    try:
+        with path.open("r", encoding="utf-8") as source:
+            value = json.load(source, object_pairs_hook=_strict_json_object)
+    except (OSError, UnicodeError, json.JSONDecodeError) as error:
+        raise HarnessError(f"cannot read strict JSON {path}: {error}") from error
+    if not isinstance(value, dict):
+        raise HarnessError(f"strict JSON root must be an object: {path}")
+    return value
+
+
+def write_canonical_json(path: Path, value: Dict[str, Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_suffix(path.suffix + ".tmp")
+    temporary.write_bytes(
+        (json.dumps(value, indent=2, sort_keys=True) + "\n").encode("utf-8")
+    )
+    temporary.replace(path)
+
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = (
     REPOSITORY_ROOT / "performance" / "benchmarksgame" / "manifest-v2.json"
@@ -53,6 +84,16 @@ TIMED_LANES = ("candidate", "main", "c", "cpp", "go")
 REFERENCE_LANES = ("c", "cpp", "semantic-c", "go")
 CORRECTNESS_BASELINE_LANES = ("nomo-baseline", *REFERENCE_LANES)
 CORRECTNESS_FORMAL_LANES = ("candidate", "main", *REFERENCE_LANES)
+REFERENCE_BUILD_COMMANDS = (
+    "c_build",
+    "cpp_build",
+    "semantic-c_build",
+    "go_build",
+)
+NOMO_BASELINE_BUILD_COMMANDS = (
+    "nomo_baseline_emit_c",
+    "nomo_baseline_clang",
+)
 DECISIVE_COMPARATORS = ("c", "cpp", "main")
 DIAGNOSTIC_COMPARATORS = ("go",)
 FORBIDDEN_COMPILER_FLAG_PREFIXES = (
@@ -364,8 +405,34 @@ def validate_build_command_environment(
     record: Dict[str, Any],
     label: str,
     approved_overrides: Optional[Dict[str, str]] = None,
+    authority_projection: Optional[Dict[str, Any]] = None,
 ) -> None:
-    expected = sanitized_build_environment(approved_overrides)[1]
+    if authority_projection is None:
+        expected = sanitized_build_environment(approved_overrides)[1]
+    else:
+        expected = json.loads(json.dumps(authority_projection))
+        retained = expected.get("retained")
+        cleared = expected.get("cleared")
+        if (
+            not isinstance(retained, dict)
+            or not isinstance(cleared, list)
+            or expected.get("cleared_values_recorded") is not False
+        ):
+            raise HarnessError(
+                f"{label} build environment authority is incomplete"
+            )
+        for key, value in (approved_overrides or {}).items():
+            retained[key] = value
+            if key in cleared:
+                cleared.remove(key)
+        expected["retained"] = {
+            key: retained[key] for key in sorted(retained)
+        }
+        expected["cleared"] = [
+            name
+            for name in COMPILER_AFFECTING_ENVIRONMENT
+            if name not in expected["retained"]
+        ]
     if record.get("environment") != expected:
         raise HarnessError(
             f"{label} build environment differs from the canonical sanitized projection"
@@ -935,7 +1002,7 @@ def validate_json_schema(
             "Draft 2020-12 validation requires "
             "python3 -m pip install -r scripts/requirements-benchmarksgame-v2.txt"
         )
-    schema = v1.read_json(schema_path)
+    schema = read_json_strict(schema_path)
     Draft202012Validator.check_schema(schema)
     validator = Draft202012Validator(schema, format_checker=FormatChecker())
     errors = sorted(
@@ -1620,6 +1687,74 @@ def _environment(
         )
     environment.update(requested)
     return dict(environment), dict(environment)
+
+
+def validate_runtime_environment_authority(
+    runtime_environments: Any,
+    build_environment: Dict[str, Any],
+    host_os: str,
+) -> Dict[str, Dict[str, str]]:
+    if (
+        not isinstance(runtime_environments, dict)
+        or set(runtime_environments) != {"default", "go"}
+        or not all(
+            isinstance(runtime_environments[name], dict)
+            for name in ("default", "go")
+        )
+    ):
+        raise HarnessError("runtime environment authority is incomplete")
+    default = runtime_environments["default"]
+    go = runtime_environments["go"]
+    if go != {**default, "GOMAXPROCS": "1"}:
+        raise HarnessError("Go runtime environment authority changed")
+    if default.get("LC_ALL") != "C" or default.get("LANG") != "C":
+        raise HarnessError("runtime locale authority changed")
+    retained = build_environment.get("retained", {})
+    if not isinstance(retained, dict):
+        raise HarnessError("build environment retained authority is missing")
+    if host_os == "Windows":
+        expected_keys = {
+            "LC_ALL",
+            "LANG",
+            "SystemRoot",
+            "WINDIR",
+            "TEMP",
+            "TMP",
+        }
+        system_root = default.get("SystemRoot")
+        if (
+            set(default) != expected_keys
+            or default.get("WINDIR") != system_root
+            or system_root != retained.get("SystemRoot")
+            or system_root != retained.get("WINDIR")
+            or not artifact_path_is_absolute(system_root, host_os)
+            or default.get("TEMP") != default.get("TMP")
+            or artifact_path(default.get("TEMP"), host_os)
+            != artifact_path(system_root, host_os) / "Temp"
+        ):
+            raise HarnessError("Windows runtime environment authority changed")
+    elif host_os in {"Darwin", "Linux"}:
+        if (
+            set(default) != {"LC_ALL", "LANG", "PATH", "TMPDIR"}
+            or default.get("PATH") != retained.get("PATH")
+            or default.get("TMPDIR")
+            not in {"/var/tmp", "/private/var/tmp", "/tmp", "/private/tmp"}
+        ):
+            raise HarnessError("POSIX runtime environment authority changed")
+        entries = str(default["PATH"]).split(":")
+        if (
+            not entries
+            or len(entries) != len(set(entries))
+            or any(
+                not PurePosixPath(entry).is_absolute()
+                or "/.codex/tmp/arg0/" in f"{entry.replace(chr(92), '/')}/"
+                for entry in entries
+            )
+        ):
+            raise HarnessError("POSIX runtime PATH authority changed")
+    else:
+        raise HarnessError("runtime environment host OS is unsupported")
+    return runtime_environments
 
 
 def _validate_process_output(
@@ -2548,6 +2683,11 @@ def inspect_toolchains(
     if mismatches:
         raise ToolchainMismatch("toolchain mismatch: " + "; ".join(mismatches))
     return {
+        "build_environment": sanitized_build_environment()[1],
+        "runtime_environments": {
+            "default": _environment({})[1],
+            "go": _environment({"GOMAXPROCS": "1"})[1],
+        },
         "nomo": {
             "path": str(nomo),
             "realpath": str(nomo.resolve()),
@@ -4015,7 +4155,8 @@ def stable_toolchain_identity(toolchains: Dict[str, Any]) -> Dict[str, Any]:
         "c_flags": list(BASE_C_FLAGS),
         "cpp_flags": list(BASE_CPP_FLAGS),
         "forbidden_flags": list(FORBIDDEN_COMPILER_FLAG_PREFIXES),
-        "environment": sanitized_build_environment()[1],
+        "environment": toolchains.get("build_environment"),
+        "runtime_environments": toolchains.get("runtime_environments"),
     }
     return identity
 
@@ -4070,7 +4211,24 @@ def environment_qualification(
             "reason": "no canonical-host qualification record was supplied",
         }
     path = Path(qualification_path).resolve()
-    record = v1.read_json(path)
+    record = read_json_strict(path)
+    return derive_environment_qualification(
+        manifest,
+        record,
+        str(path),
+        v1.sha256_file(path),
+        expected_bindings,
+    )
+
+
+def derive_environment_qualification(
+    manifest: Dict[str, Any],
+    record: Dict[str, Any],
+    qualification_path: str,
+    qualification_sha256: str,
+    expected_bindings: Dict[str, Any],
+) -> Dict[str, Any]:
+    required = manifest["environment_qualification"]["required_checks"]
     validate_json_schema(
         record,
         DEFAULT_MANIFEST.parent / "schema" / "environment-v2.schema.json",
@@ -4125,8 +4283,8 @@ def environment_qualification(
         "status": "eligible" if eligible else "ineligible",
         "eligible": eligible,
         "policy": "fail-closed",
-        "qualification_path": str(path),
-        "qualification_sha256": v1.sha256_file(path),
+        "qualification_path": qualification_path,
+        "qualification_sha256": qualification_sha256,
         "canonical_host_id": canonical_host_id,
         "captured_at_utc": captured_at_utc,
         "checks": checks,
@@ -4153,6 +4311,219 @@ def path_lexically_exists(path: Path) -> bool:
     return path.exists() or path.is_symlink()
 
 
+def lexical_absolute_path(path: Path) -> Path:
+    """Return an absolute path without following its final component or parents."""
+    return Path(os.path.abspath(os.fspath(path.expanduser())))
+
+
+def lexical_path_lstat(path: Path) -> Optional[os.stat_result]:
+    try:
+        return path.lstat()
+    except FileNotFoundError:
+        return None
+    except OSError as error:
+        raise HarnessError(f"cannot inspect lexical path {path}: {error}") from error
+
+
+def lexical_path_is_link(path: Path, metadata: os.stat_result) -> bool:
+    if stat.S_ISLNK(metadata.st_mode):
+        return True
+    is_junction = getattr(path, "is_junction", None)
+    return bool(is_junction is not None and is_junction())
+
+
+def validate_lexical_path_chain(
+    path: Path,
+    label: str,
+    *,
+    final_kind: str,
+) -> Path:
+    """Validate a target without resolving a dangling link or linked parent."""
+    target = lexical_absolute_path(path)
+    metadata = lexical_path_lstat(target)
+    if metadata is not None:
+        if lexical_path_is_link(target, metadata):
+            raise HarnessError(f"{label} is a symlink or junction: {target}")
+        if final_kind == "absent":
+            raise HarnessError(
+                f"{label} already exists; choose a fresh evidence path: {target}"
+            )
+        if final_kind == "directory" and not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError(f"{label} is not a directory: {target}")
+        if final_kind == "regular" and not stat.S_ISREG(metadata.st_mode):
+            raise HarnessError(f"{label} is not a regular file: {target}")
+    elif final_kind != "absent":
+        raise HarnessError(f"{label} does not exist: {target}")
+
+    for parent in target.parents:
+        parent_metadata = lexical_path_lstat(parent)
+        if parent_metadata is None:
+            continue
+        if lexical_path_is_link(parent, parent_metadata):
+            raise HarnessError(
+                f"{label} has a symlink or junction parent: {parent}"
+            )
+        if not stat.S_ISDIR(parent_metadata.st_mode):
+            raise HarnessError(
+                f"{label} has a non-directory parent: {parent}"
+            )
+    return target
+
+
+_FILESYSTEM_CASE_SENSITIVITY: Dict[Tuple[int, int, str], bool] = {}
+
+
+def nearest_existing_lexical_directory(path: Path) -> Path:
+    target = lexical_absolute_path(path)
+    for parent in target.parents:
+        metadata = lexical_path_lstat(parent)
+        if metadata is None:
+            continue
+        if lexical_path_is_link(parent, metadata):
+            raise HarnessError(
+                f"cannot determine path identity through symlink or junction: {parent}"
+            )
+        if not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError(
+                f"cannot determine path identity through non-directory: {parent}"
+            )
+        return parent
+    raise HarnessError(f"cannot find an existing filesystem for path: {target}")
+
+
+def nearest_existing_lexical_path(path: Path) -> Path:
+    target = lexical_absolute_path(path)
+    for candidate in (target, *target.parents):
+        metadata = lexical_path_lstat(candidate)
+        if metadata is None:
+            continue
+        if lexical_path_is_link(candidate, metadata):
+            raise HarnessError(
+                "cannot determine path identity through symlink or junction: "
+                f"{candidate}"
+            )
+        return candidate
+    raise HarnessError(f"cannot find an existing filesystem for path: {target}")
+
+
+def filesystem_is_case_sensitive(path: Path) -> bool:
+    """Probe the target filesystem without retaining a file or directory."""
+    directory = nearest_existing_lexical_directory(path)
+    metadata = directory.lstat()
+    cache_key = (
+        int(metadata.st_dev),
+        int(metadata.st_ino),
+        str(directory),
+    )
+    cached = _FILESYSTEM_CASE_SENSITIVITY.get(cache_key)
+    if cached is not None:
+        return cached
+
+    probe_name = f".nomo-benchmarksgame-v2-case-{uuid.uuid4().hex}a"
+    probe = directory / probe_name
+    alias = directory / f"{probe_name[:-1]}A"
+    descriptor: Optional[int] = None
+    try:
+        descriptor = os.open(
+            probe,
+            os.O_CREAT | os.O_EXCL | os.O_WRONLY,
+            0o600,
+        )
+        alias_metadata = lexical_path_lstat(alias)
+        case_sensitive = alias_metadata is None
+    except OSError as error:
+        raise HarnessError(
+            f"cannot safely determine filesystem case sensitivity in {directory}: "
+            f"{error}"
+        ) from error
+    finally:
+        if descriptor is not None:
+            os.close(descriptor)
+        try:
+            probe.unlink()
+        except FileNotFoundError:
+            pass
+        except OSError as error:
+            raise HarnessError(
+                f"cannot remove filesystem case-sensitivity probe {probe}: {error}"
+            ) from error
+    _FILESYSTEM_CASE_SENSITIVITY[cache_key] = case_sensitive
+    return case_sensitive
+
+
+def windows_long_path_name(
+    path: Path,
+    kernel32: Optional[Any] = None,
+) -> Path:
+    """Expand an existing Windows path through the authoritative Win32 API."""
+    if kernel32 is None:
+        if os.name != "nt":
+            raise HarnessError("GetLongPathNameW is available only on Windows")
+        kernel32 = ctypes.WinDLL("kernel32", use_last_error=True)
+    kernel32.GetLongPathNameW.argtypes = [
+        wintypes.LPCWSTR,
+        wintypes.LPWSTR,
+        wintypes.DWORD,
+    ]
+    kernel32.GetLongPathNameW.restype = wintypes.DWORD
+    source = lexical_absolute_path(path)
+    buffer = ctypes.create_unicode_buffer(32768)
+    length = int(
+        kernel32.GetLongPathNameW(
+            str(source),
+            buffer,
+            len(buffer),
+        )
+    )
+    if length == 0 or length >= len(buffer):
+        raise HarnessError(f"GetLongPathNameW failed for path identity: {source}")
+    expanded = lexical_absolute_path(Path(buffer.value))
+    if not expanded.is_absolute():
+        raise HarnessError(
+            f"GetLongPathNameW returned a non-absolute path: {expanded}"
+        )
+    return expanded
+
+
+def filesystem_identity_path(path: Path, existing_prefix: Path) -> Path:
+    target = lexical_absolute_path(path)
+    if os.name != "nt":
+        return target
+    expanded_prefix = windows_long_path_name(existing_prefix)
+    try:
+        suffix = target.relative_to(existing_prefix)
+    except ValueError as error:
+        raise HarnessError(
+            f"Windows path identity prefix changed: {target} vs {existing_prefix}"
+        ) from error
+    return expanded_prefix.joinpath(*suffix.parts)
+
+
+def filesystem_path_identity(path: Path) -> Tuple[int, Tuple[str, ...]]:
+    target = lexical_absolute_path(path)
+    existing_prefix = nearest_existing_lexical_path(target)
+    metadata = existing_prefix.lstat()
+    case_sensitive = filesystem_is_case_sensitive(target)
+    identity_path = filesystem_identity_path(target, existing_prefix)
+    parts = tuple(
+        normalized
+        if case_sensitive
+        else normalized.casefold()
+        for part in identity_path.parts
+        for normalized in (unicodedata.normalize("NFC", part),)
+    )
+    return int(metadata.st_dev), parts
+
+
+def filesystem_paths_overlap(left: Path, right: Path) -> bool:
+    left_device, left_parts = filesystem_path_identity(left)
+    right_device, right_parts = filesystem_path_identity(right)
+    if left_device != right_device:
+        return False
+    shortest = min(len(left_parts), len(right_parts))
+    return left_parts[:shortest] == right_parts[:shortest]
+
+
 def require_absent_build_path(path: Path, label: str) -> None:
     if path_lexically_exists(path):
         raise HarnessError(
@@ -4168,10 +4539,19 @@ def require_new_build_file(path: Path, label: str) -> None:
         )
 
 
-def math_flags(workload: Dict[str, Any]) -> list[str]:
-    if workload.get("link_math") and os.name != "nt":
+def math_flags_for_host(
+    workload: Dict[str, Any],
+    host_os: str,
+) -> list[str]:
+    if host_os not in {"Darwin", "Linux", "Windows"}:
+        raise HarnessError(f"unsupported build host OS: {host_os}")
+    if workload.get("link_math") and host_os != "Windows":
         return ["-lm"]
     return []
+
+
+def math_flags(workload: Dict[str, Any]) -> list[str]:
+    return math_flags_for_host(workload, platform.system())
 
 
 def parse_project_name(manifest_path: Path) -> str:
@@ -4655,6 +5035,48 @@ def normalize_nomo_origin(value: str) -> Optional[str]:
     return None
 
 
+def formal_project_provenance(
+    project: Path,
+    nomo_source: Path,
+    nomo_manifest: Path,
+    source_relative_path: str,
+    manifest_relative_path: str,
+    lane_state: Dict[str, Any],
+) -> Dict[str, Any]:
+    project_root = nomo_manifest.parent
+    copied_source = project / nomo_source.relative_to(project_root)
+    copied_manifest = project / nomo_manifest.relative_to(project_root)
+    for path, label in (
+        (copied_source, "copied Nomo source"),
+        (copied_manifest, "copied Nomo project manifest"),
+    ):
+        if not path.is_file():
+            raise HarnessError(f"{label} is missing from formal project: {path}")
+    return {
+        "path": str(project.resolve()),
+        "source_relative_path": source_relative_path,
+        "source": {
+            "path": str(nomo_source),
+            "sha256": v1.sha256_file(nomo_source),
+        },
+        "project_manifest_relative_path": manifest_relative_path,
+        "project_manifest": {
+            "path": str(nomo_manifest),
+            "sha256": v1.sha256_file(nomo_manifest),
+        },
+        "copied_source": {
+            "path": str(copied_source.resolve()),
+            "sha256": v1.sha256_file(copied_source),
+        },
+        "copied_project_manifest": {
+            "path": str(copied_manifest.resolve()),
+            "sha256": v1.sha256_file(copied_manifest),
+        },
+        "compiler_checkout": str(Path(lane_state["checkout"]).resolve()),
+        "compiler_commit": lane_state["expected_commit"],
+    }
+
+
 def build_release_lane(
     workload: Dict[str, Any],
     suite_root: Path,
@@ -4686,6 +5108,14 @@ def build_release_lane(
     project = bundle_root / "build" / workload_id / "release" / lane / "project"
     require_absent_build_path(project, f"{workload_id} {lane} release project")
     v1.copy_nomo_project(nomo_source, nomo_manifest, project)
+    project_provenance = formal_project_provenance(
+        project,
+        nomo_source,
+        nomo_manifest,
+        sources["nomo"]["path"],
+        sources["nomo"]["project_manifest"],
+        lane_state,
+    )
     project_name = parse_project_name(nomo_manifest)
     binary = binary_path(project / "build" / "bin", project_name)
     generated_c = project / "build" / "c" / "main.c"
@@ -4701,32 +5131,47 @@ def build_release_lane(
         f"{workload_id} {lane} release backend provenance",
     )
     command = [lane_state["nomo_path"], "build", str(project), "--release"]
-    record, stdout, stderr = run_build_capture(
-        command,
-        timeout_seconds=build_timeout_seconds,
-        cwd=Path(lane_state["checkout"]),
-    )
+    try:
+        record, stdout, stderr = run_build_capture(
+            command,
+            timeout_seconds=build_timeout_seconds,
+            cwd=Path(lane_state["checkout"]),
+        )
+    except BuildCollectionError as error:
+        raise WorkloadBuildError(
+            str(error),
+            workload_build_failure_record(
+                workload_id,
+                lane,
+                "nomo-release-binary",
+                nomo_source,
+                binary,
+                error.record,
+            ),
+        ) from error
     if "--emit-c" in command or "--release" not in command:
         raise HarnessError(f"{lane} did not use the real release command")
-    if (
-        not binary.is_file()
-        or not generated_c.is_file()
-        or not backend_provenance_path.is_file()
+    for output, phase, label in (
+        (binary, "nomo-release-binary", "release binary"),
+        (generated_c, "nomo-release-generated-c", "release generated C"),
+        (
+            backend_provenance_path,
+            "nomo-release-provenance",
+            "release backend provenance",
+        ),
     ):
-        raise HarnessError(
-            f"{lane} release build did not produce build/bin/{project_name} "
-            "build/c/main.c, and build/release-provenance.json; machine-readable "
-            "backend provenance is mandatory"
+        require_regular_workload_build_output(
+            workload_id=workload_id,
+            lane=lane,
+            phase=phase,
+            source=nomo_source,
+            output=output,
+            command=record,
+            stdout=stdout,
+            stderr=stderr,
         )
-    require_new_build_file(binary, f"{workload_id} {lane} release binary")
-    require_new_build_file(
-        generated_c, f"{workload_id} {lane} release generated C"
-    )
-    require_new_build_file(
-        backend_provenance_path,
-        f"{workload_id} {lane} release backend provenance",
-    )
-    backend = v1.read_json(backend_provenance_path)
+        require_new_build_file(output, f"{workload_id} {lane} {label}")
+    backend = read_json_strict(backend_provenance_path)
     validate_release_backend_provenance(
         backend,
         generated_c.resolve(),
@@ -4734,6 +5179,7 @@ def build_release_lane(
         workload,
         lane,
         toolchains["clang"],
+        Path(lane_state["checkout"]),
     )
     return {
         "kind": "real-nomo-release",
@@ -4744,6 +5190,7 @@ def build_release_lane(
             "sha256": lane_state["nomo_sha256"],
         },
         "source": {"path": str(nomo_source), "sha256": v1.sha256_file(nomo_source)},
+        "project": project_provenance,
         "command": record,
         "stdout": stdout.decode("utf-8", errors="replace"),
         "stderr": stderr.decode("utf-8", errors="replace"),
@@ -4771,6 +5218,7 @@ def validate_release_backend_provenance(
     workload: Dict[str, Any],
     lane: str,
     clang: Dict[str, Any],
+    expected_cwd: Path,
 ) -> None:
     workload_id = workload["id"]
     label = f"{workload_id} {lane} release backend"
@@ -4853,6 +5301,8 @@ def validate_release_backend_provenance(
         raise HarnessError(f"{label} link argv changed")
     for index, command in enumerate([*compile_commands, link_command]):
         validate_command_record(command, f"{label} command {index}")
+        if command.get("cwd") != str(expected_cwd):
+            raise HarnessError(f"{label} command {index} cwd changed")
         validate_build_command_environment(
             command, f"{label} command {index}"
         )
@@ -4894,18 +5344,47 @@ def build_emit_c_lane(
     project = bundle_root / "build" / workload_id / "emit-c" / lane / "project"
     require_absent_build_path(project, f"{workload_id} {lane} emit-C project")
     v1.copy_nomo_project(nomo_source, nomo_manifest, project)
+    project_provenance = formal_project_provenance(
+        project,
+        nomo_source,
+        nomo_manifest,
+        sources["nomo"]["path"],
+        sources["nomo"]["project_manifest"],
+        lane_state,
+    )
     generated_c = project / "build" / "c" / "main.c"
     require_absent_build_path(
         generated_c, f"{workload_id} {lane} emit-C generated C"
     )
     emit_command = [lane_state["nomo_path"], "build", str(project), "--emit-c"]
-    emit_record, emit_stdout, emit_stderr = run_build_capture(
-        emit_command,
-        timeout_seconds=build_timeout_seconds,
-        cwd=Path(lane_state["checkout"]),
+    try:
+        emit_record, emit_stdout, emit_stderr = run_build_capture(
+            emit_command,
+            timeout_seconds=build_timeout_seconds,
+            cwd=Path(lane_state["checkout"]),
+        )
+    except BuildCollectionError as error:
+        raise WorkloadBuildError(
+            str(error),
+            workload_build_failure_record(
+                workload_id,
+                lane,
+                "nomo-emit-c",
+                nomo_source,
+                generated_c,
+                error.record,
+            ),
+        ) from error
+    require_regular_workload_build_output(
+        workload_id=workload_id,
+        lane=lane,
+        phase="nomo-emit-c",
+        source=nomo_source,
+        output=generated_c,
+        command=emit_record,
+        stdout=emit_stdout,
+        stderr=emit_stderr,
     )
-    if not generated_c.is_file():
-        raise HarnessError(f"{lane} emit-c did not produce generated C")
     require_new_build_file(
         generated_c, f"{workload_id} {lane} emit-C generated C"
     )
@@ -4923,13 +5402,34 @@ def build_emit_c_lane(
         str(binary),
         *math_flags(workload),
     ]
-    clang_record, clang_stdout, clang_stderr = run_build_capture(
-        clang_command,
-        timeout_seconds=build_timeout_seconds,
-        cwd=Path(lane_state["checkout"]),
+    try:
+        clang_record, clang_stdout, clang_stderr = run_build_capture(
+            clang_command,
+            timeout_seconds=build_timeout_seconds,
+            cwd=Path(lane_state["checkout"]),
+        )
+    except BuildCollectionError as error:
+        raise WorkloadBuildError(
+            str(error),
+            workload_build_failure_record(
+                workload_id,
+                lane,
+                "nomo-generated-c-clang",
+                generated_c,
+                binary,
+                error.record,
+            ),
+        ) from error
+    require_regular_workload_build_output(
+        workload_id=workload_id,
+        lane=lane,
+        phase="nomo-generated-c-clang",
+        source=generated_c,
+        output=binary,
+        command=clang_record,
+        stdout=clang_stdout,
+        stderr=clang_stderr,
     )
-    if not binary.is_file():
-        raise HarnessError(f"{lane} emit-c Clang build did not produce {binary}")
     require_new_build_file(binary, f"{workload_id} {lane} emit-C binary")
     generated_sha_after = v1.sha256_file(generated_c)
     if generated_sha_after != generated_sha_before:
@@ -4943,6 +5443,7 @@ def build_emit_c_lane(
             "sha256": lane_state["nomo_sha256"],
         },
         "source": {"path": str(nomo_source), "sha256": v1.sha256_file(nomo_source)},
+        "project": project_provenance,
         "emit_command": emit_record,
         "emit_stdout": emit_stdout.decode("utf-8", errors="replace"),
         "emit_stderr": emit_stderr.decode("utf-8", errors="replace"),
@@ -5509,54 +6010,274 @@ def aggregate_protocol_outcome(
     }
 
 
-def validate_build_provenance(
-    result: Dict[str, Any], manifest: Dict[str, Any]
+def artifact_path(value: Any, host_os: str) -> PurePath:
+    path_type = PureWindowsPath if host_os == "Windows" else PurePosixPath
+    return path_type(str(value))
+
+
+def artifact_path_is_absolute(value: Any, host_os: str) -> bool:
+    return artifact_path(value, host_os).is_absolute()
+
+
+def artifact_paths_overlap(
+    left: Any, right: Any, host_os: str
+) -> bool:
+    left_path = artifact_path(left, host_os)
+    right_path = artifact_path(right, host_os)
+    if host_os == "Windows":
+        left_parts = tuple(part.casefold() for part in left_path.parts)
+        right_parts = tuple(part.casefold() for part in right_path.parts)
+    else:
+        left_parts = left_path.parts
+        right_parts = right_path.parts
+    shorter = min(len(left_parts), len(right_parts))
+    return left_parts[:shorter] == right_parts[:shorter]
+
+
+def artifact_file_identity_equal(
+    left: Any,
+    right: Any,
+    host_os: str,
+    *,
+    inspect_live_filesystem: bool = True,
+) -> bool:
+    left_text = str(left)
+    right_text = str(right)
+    if artifact_paths_overlap(left_text, right_text, host_os):
+        left_path = artifact_path(left_text, host_os)
+        right_path = artifact_path(right_text, host_os)
+        if len(left_path.parts) == len(right_path.parts):
+            return True
+    if inspect_live_filesystem and platform.system() == host_os:
+        left_live = Path(left_text)
+        right_live = Path(right_text)
+        if left_live.exists() and right_live.exists():
+            try:
+                return os.path.samefile(left_live, right_live)
+            except OSError:
+                return False
+    return False
+
+
+def validate_formal_project_record(
+    formal: Dict[str, Any],
+    workload: Dict[str, Any],
+    lane: str,
+    lane_state: Dict[str, Any],
+    recorded_suite_root: PurePath,
+    recorded_host_os: str,
+) -> PurePath:
+    workload_id = workload["id"]
+    project = formal.get("project", {})
+    project_path_value = project.get("path")
+    if not artifact_path_is_absolute(
+        project_path_value, recorded_host_os
+    ):
+        raise HarnessError(
+            f"{workload_id} {lane} formal project path is not absolute"
+        )
+    project_path = artifact_path(project_path_value, recorded_host_os)
+    nomo_source = workload["sources"]["nomo"]
+    source_relative = nomo_source["path"]
+    manifest_relative = nomo_source["project_manifest"]
+    expected_source = {
+        "path": str(recorded_suite_root / source_relative),
+        "sha256": nomo_source["sha256"],
+    }
+    expected_manifest = {
+        "path": str(recorded_suite_root / manifest_relative),
+        "sha256": nomo_source["project_manifest_sha256"],
+    }
+    manifest_relative_path = PurePosixPath(manifest_relative)
+    source_project_relative = PurePosixPath(source_relative).relative_to(
+        manifest_relative_path.parent
+    )
+    copied_source = {
+        "path": str(project_path / str(source_project_relative)),
+        "sha256": nomo_source["sha256"],
+    }
+    copied_manifest = {
+        "path": str(project_path / manifest_relative_path.name),
+        "sha256": nomo_source["project_manifest_sha256"],
+    }
+    if (
+        project.get("source_relative_path") != source_relative
+        or project.get("source") != expected_source
+        or formal.get("source") != expected_source
+        or project.get("project_manifest_relative_path")
+        != manifest_relative
+        or project.get("project_manifest") != expected_manifest
+        or project.get("copied_source") != copied_source
+        or project.get("copied_project_manifest") != copied_manifest
+        or project.get("compiler_checkout")
+        != lane_state.get("checkout")
+        or project.get("compiler_commit")
+        != lane_state.get("expected_commit")
+    ):
+        raise HarnessError(
+            f"{workload_id} {lane} formal project input is not "
+            "manifest/checkpoint-bound"
+        )
+    return project_path
+
+
+def validate_formal_slot_record(
+    formal: Dict[str, Any],
+    workload_id: str,
+    build_mode: str,
+    lane: str,
+    lane_state: Dict[str, Any],
 ) -> None:
-    toolchains = result.get("provenance", {}).get("toolchains", {})
-    host_os = result.get("provenance", {}).get("host", {}).get("os")
+    expected_nomo = {
+        "path": lane_state.get("nomo_path"),
+        "sha256": lane_state.get("nomo_sha256"),
+    }
+    if (
+        formal.get("lane") != lane
+        or formal.get("repository") != lane_state.get("repository")
+        or formal.get("nomo") != expected_nomo
+    ):
+        raise HarnessError(
+            f"{workload_id} {build_mode} {lane} formal slot is not "
+            "exactly bound to its compiler lane authority"
+        )
+
+
+def validate_build_provenance(
+    result: Dict[str, Any],
+    manifest: Dict[str, Any],
+    *,
+    live_filesystem: bool = True,
+) -> None:
+    provenance = result.get("provenance", {})
+    toolchains = provenance.get("toolchains", {})
+    recorded_host_os = str(
+        provenance.get("host", {}).get("os", "")
+    )
+    build_environment = toolchains.get("build_environment")
+    if not isinstance(build_environment, dict):
+        raise HarnessError("recorded build environment authority is missing")
+    manifest_path = provenance.get("manifest_path")
+    if not isinstance(manifest_path, str) or not artifact_path_is_absolute(
+        manifest_path, recorded_host_os
+    ):
+        raise HarnessError("recorded manifest path is not absolute")
+    recorded_suite_root = artifact_path(
+        manifest_path, recorded_host_os
+    ).parent
     workloads = {workload["id"]: workload for workload in manifest["workloads"]}
     for workload_id, build in result.get("builds", {}).items():
         if workload_id not in workloads:
             raise HarnessError(f"unknown workload build provenance: {workload_id}")
         workload = workloads[workload_id]
-        link_flags = ["-lm"] if workload.get("link_math") and host_os != "Windows" else []
+        link_flags = math_flags_for_host(workload, recorded_host_os)
         references = build.get("references")
         if references is None:
             continue
         commands = references.get("commands", {})
-        required = {"c_build", "cpp_build", "semantic-c_build", "go_build"}
-        if not required.issubset(commands):
-            raise HarnessError(f"{workload_id} reference build provenance is incomplete")
+        source_files = references.get("source_files", {})
+        binaries = references.get("binaries", {})
+        generated_c = references.get("generated_c")
+        baseline_present = (
+            isinstance(generated_c, dict)
+            or "nomo" in source_files
+            or "nomo-baseline" in binaries
+            or any(name in commands for name in NOMO_BASELINE_BUILD_COMMANDS)
+        )
+        baseline_required = baseline_present or result.get("mode") == "correctness"
+        expected_reference_lanes = set(REFERENCE_LANES)
+        expected_source_names = set(expected_reference_lanes)
+        expected_binary_names = set(expected_reference_lanes)
+        expected_output_names = set(expected_reference_lanes)
+        if baseline_required:
+            expected_source_names.add("nomo")
+            expected_binary_names.add("nomo-baseline")
+            expected_output_names.add("nomo-baseline")
         compiled_sources = references.get("compiled_sources", {})
-        go_source_path = Path(str(compiled_sources.get("go", {}).get("path", "")))
+        compiler_output = references.get("compiler_output", {})
+        if (
+            set(source_files) != expected_source_names
+            or set(compiled_sources) != expected_reference_lanes
+            or set(binaries) != expected_binary_names
+            or set(compiler_output) != expected_output_names
+        ):
+            raise HarnessError(
+                f"{workload_id} reference provenance must contain the exact "
+                "frozen source, compiled-source, output, and binary key sets"
+            )
+        for lane in REFERENCE_LANES:
+            output = compiler_output.get(lane)
+            if (
+                not isinstance(output, dict)
+                or set(output) != {"stdout", "stderr"}
+                or not all(isinstance(value, str) for value in output.values())
+            ):
+                raise HarnessError(
+                    f"{workload_id} {lane} compiler output evidence is incomplete"
+                )
+        if baseline_required:
+            baseline_output = compiler_output.get("nomo-baseline")
+            if (
+                not isinstance(baseline_output, dict)
+                or set(baseline_output)
+                != {
+                    "emit_stdout",
+                    "emit_stderr",
+                    "clang_stdout",
+                    "clang_stderr",
+                }
+                or not all(
+                    isinstance(value, str)
+                    for value in baseline_output.values()
+                )
+            ):
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline compiler output is incomplete"
+                )
+        expected_command_names = set(REFERENCE_BUILD_COMMANDS)
+        if baseline_required:
+            expected_command_names.update(NOMO_BASELINE_BUILD_COMMANDS)
+        if set(commands) != expected_command_names:
+            raise HarnessError(
+                f"{workload_id} reference build must contain the exact frozen "
+                f"command set: {', '.join(sorted(expected_command_names))}"
+            )
+        go_source_path = artifact_path(
+            compiled_sources.get("go", {}).get("path", ""),
+            recorded_host_os,
+        )
         go_cache_environment = {
-            key: str((go_source_path.parent / directory).resolve())
+            key: str(go_source_path.parent / directory)
             for key, directory in GO_BUILD_CACHE_DIRECTORIES.items()
         }
         for name, record in commands.items():
             validate_command_record(record, f"{workload_id} {name}")
+            expected_reference_cwd = str(
+                recorded_suite_root.parent.parent
+            )
+            if record.get("cwd") != expected_reference_cwd:
+                raise HarnessError(
+                    f"{workload_id} {name} cwd is not the canonical repository root"
+                )
             validate_build_command_environment(
                 record,
                 f"{workload_id} {name}",
                 go_cache_environment if name == "go_build" else None,
+                build_environment,
             )
-        if any(Path(path).exists() for path in go_cache_environment.values()):
+            reject_forbidden_compiler_flags(
+                record["argv"], f"{workload_id} {name}"
+            )
+        if live_filesystem and any(
+            Path(path).exists() for path in go_cache_environment.values()
+        ):
             raise HarnessError(
                 f"{workload_id} isolated Go build cache was not removed"
             )
-        binaries = references.get("binaries", {})
-        source_files = references.get("source_files", {})
-        suite_root = DEFAULT_MANIFEST.parent
         for lane in REFERENCE_LANES:
             manifest_source = workload["sources"][lane]
             expected_original = {
-                "path": str(
-                    resolve_suite_path(
-                        suite_root,
-                        manifest_source["path"],
-                        f"{workload_id} {lane} source",
-                    )
-                ),
+                "path": str(recorded_suite_root / manifest_source["path"]),
                 "sha256": manifest_source["sha256"],
             }
             if source_files.get(lane) != expected_original:
@@ -5565,7 +6286,9 @@ def validate_build_provenance(
                 )
             compiled = compiled_sources.get(lane, {})
             if (
-                not Path(str(compiled.get("path"))).is_absolute()
+                not artifact_path_is_absolute(
+                    compiled.get("path"), recorded_host_os
+                )
                 or compiled.get("sha256") != manifest_source["sha256"]
             ):
                 raise HarnessError(
@@ -5573,7 +6296,9 @@ def validate_build_provenance(
                 )
             binary = binaries.get(lane, {})
             if (
-                not Path(str(binary.get("path"))).is_absolute()
+                not artifact_path_is_absolute(
+                    binary.get("path"), recorded_host_os
+                )
                 or re.fullmatch(r"[0-9a-f]{64}", str(binary.get("sha256")))
                 is None
             ):
@@ -5626,11 +6351,105 @@ def validate_build_provenance(
                 reject_forbidden_compiler_flags(
                     commands[name]["argv"], f"{workload_id} {name}"
                 )
-        if "nomo_baseline_clang" in commands:
-            baseline_binary = binaries.get("nomo-baseline", {}).get("path")
-            generated_path = references.get("generated_c", {}).get("path")
+        if baseline_required:
+            manifest_nomo = workload["sources"]["nomo"]
+            expected_nomo_sources = [
+                {
+                    "path": str(
+                        recorded_suite_root / manifest_nomo["path"]
+                    ),
+                    "sha256": manifest_nomo["sha256"],
+                },
+                {
+                    "path": str(
+                        recorded_suite_root
+                        / manifest_nomo["project_manifest"]
+                    ),
+                    "sha256": manifest_nomo["project_manifest_sha256"],
+                },
+            ]
+            if source_files.get("nomo") != expected_nomo_sources:
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline sources are not manifest-bound"
+                )
+            generated_path = (
+                generated_c.get("path")
+                if isinstance(generated_c, dict)
+                else None
+            )
+            generated_sha = (
+                generated_c.get("sha256")
+                if isinstance(generated_c, dict)
+                else None
+            )
+            baseline_binary_record = binaries.get("nomo-baseline", {})
+            baseline_binary = baseline_binary_record.get("path")
+            baseline_binary_sha = baseline_binary_record.get("sha256")
+            if (
+                not isinstance(generated_path, str)
+                or not artifact_path_is_absolute(
+                    generated_path, recorded_host_os
+                )
+                or re.fullmatch(r"[0-9a-f]{64}", str(generated_sha)) is None
+                or not isinstance(baseline_binary, str)
+                or not artifact_path_is_absolute(
+                    baseline_binary, recorded_host_os
+                )
+                or re.fullmatch(r"[0-9a-f]{64}", str(baseline_binary_sha))
+                is None
+            ):
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline output identity is incomplete"
+                )
+            generated_path_object = artifact_path(
+                generated_path, recorded_host_os
+            )
+            try:
+                baseline_project = generated_path_object.parents[2]
+            except IndexError as error:
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline generated-C path is invalid"
+                ) from error
+            if generated_path_object != (
+                baseline_project / "build" / "c" / "main.c"
+            ):
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline generated-C path changed"
+                )
+            nomo_toolchain = toolchains.get("nomo", {})
+            nomo_path = nomo_toolchain.get("path")
+            if (
+                not isinstance(nomo_path, str)
+                or not artifact_path_is_absolute(
+                    nomo_path, recorded_host_os
+                )
+                or re.fullmatch(
+                    r"[0-9a-f]{64}", str(nomo_toolchain.get("sha256"))
+                )
+                is None
+            ):
+                raise HarnessError(
+                    f"{workload_id} Nomo baseline tool identity is incomplete"
+                )
+            clang_toolchain = toolchains.get("clang", {})
+            if re.fullmatch(
+                r"[0-9a-f]{64}", str(clang_toolchain.get("sha256"))
+            ) is None:
+                raise HarnessError(
+                    f"{workload_id} baseline Clang tool identity is incomplete"
+                )
+            expected_emit = [
+                nomo_path,
+                "build",
+                str(baseline_project),
+                "--emit-c",
+            ]
+            if commands["nomo_baseline_emit_c"]["argv"] != expected_emit:
+                raise HarnessError(
+                    f"{workload_id} baseline emit-C argv changed"
+                )
             expected_clang = [
-                toolchains.get("clang", {}).get("path"),
+                clang_toolchain.get("path"),
                 *CLANG_DRIVER_CONFIG_FLAGS,
                 *BASE_C_FLAGS,
                 generated_path,
@@ -5651,35 +6470,92 @@ def validate_build_provenance(
                 f"{workload_id} baseline generated-C",
             )
         modes = build.get("modes", {})
+        formal_projects: list[Tuple[str, str]] = []
+        formal_generated: list[Tuple[str, str]] = []
+        formal_objects: list[Tuple[str, str]] = []
+        all_binaries: list[Tuple[str, str]] = [
+            (f"reference {lane}", binaries[lane]["path"])
+            for lane in REFERENCE_LANES
+        ]
         for lane in ("candidate", "main"):
+            lane_state = result.get("release_lanes", {}).get(lane, {})
             release = modes.get("release", {}).get(lane)
             if release is not None:
+                validate_formal_slot_record(
+                    release,
+                    workload_id,
+                    "release",
+                    lane,
+                    lane_state,
+                )
+                release_project = validate_formal_project_record(
+                    release,
+                    workload,
+                    lane,
+                    lane_state,
+                    recorded_suite_root,
+                    recorded_host_os,
+                )
                 command = release.get("command", {})
                 validate_command_record(command, f"{workload_id} {lane} release")
                 validate_build_command_environment(
-                    command, f"{workload_id} {lane} release"
+                    command,
+                    f"{workload_id} {lane} release",
+                    authority_projection=build_environment,
                 )
                 argv = command["argv"]
-                generated_path = release.get("generated_c", {}).get("path")
-                project = (
-                    str(Path(generated_path).parents[2])
-                    if isinstance(generated_path, str)
-                    else None
-                )
+                release_generated = release.get("generated_c", {})
+                generated_path = release_generated.get("path")
+                binary_path_value = release.get("binary", {}).get("path")
                 expected_release = [
                     lane_state_path
                     if (lane_state_path := result.get("release_lanes", {}).get(lane, {}).get("nomo_path"))
                     else None,
                     "build",
-                    project,
+                    str(release_project),
                     "--release",
                 ]
-                if argv != expected_release:
+                if (
+                    argv != expected_release
+                    or command.get("cwd") != lane_state.get("checkout")
+                ):
                     raise HarnessError(
-                        f"{workload_id} {lane} release argv changed"
+                        f"{workload_id} {lane} release argv changed or cwd changed"
                     )
                 if release.get("emit_c_fallback_used") is not False:
                     raise HarnessError("release protocol cannot use emit-c fallback")
+                if (
+                    set(release_generated)
+                    != {"path", "sha256", "unmodified_after_build"}
+                    or release_generated.get("unmodified_after_build") is not True
+                    or not artifact_path_is_absolute(
+                        generated_path, recorded_host_os
+                    )
+                    or artifact_path(generated_path, recorded_host_os)
+                    != release_project / "build" / "c" / "main.c"
+                    or not artifact_path_is_absolute(
+                        binary_path_value, recorded_host_os
+                    )
+                    or not artifact_paths_overlap(
+                        release_project,
+                        binary_path_value,
+                        recorded_host_os,
+                    )
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(release.get("generated_c", {}).get("sha256")),
+                    )
+                    is None
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(release.get("binary", {}).get("sha256")),
+                    )
+                    is None
+                ):
+                    raise HarnessError(
+                        f"{workload_id} {lane} release outputs are not "
+                        "project-bound"
+                    )
                 backend = release.get("backend_provenance")
                 if not isinstance(backend, dict):
                     raise HarnessError(
@@ -5730,6 +6606,39 @@ def validate_build_provenance(
                     raise HarnessError(
                         f"{workload_id} {lane} release backend link argv changed"
                     )
+                if backend.get("generated_c") != {
+                    "path": generated_path,
+                    "sha256": release["generated_c"]["sha256"],
+                } or backend.get("binary") != release.get("binary"):
+                    raise HarnessError(
+                        f"{workload_id} {lane} release backend outputs differ "
+                        "from the outer formal record"
+                    )
+                backend_path = release.get("backend_provenance_path")
+                if (
+                    not artifact_path_is_absolute(
+                        backend_path, recorded_host_os
+                    )
+                    or artifact_path(backend_path, recorded_host_os)
+                    != release_project / "build" / "release-provenance.json"
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(release.get("backend_provenance_sha256")),
+                    )
+                    is None
+                    or not artifact_path_is_absolute(
+                        objects[0].get("path"), recorded_host_os
+                    )
+                    or not artifact_paths_overlap(
+                        release_project,
+                        objects[0].get("path"),
+                        recorded_host_os,
+                    )
+                ):
+                    raise HarnessError(
+                        f"{workload_id} {lane} release sidecar or object is "
+                        "not project-bound"
+                    )
                 for index, backend_command in enumerate(
                     [
                         *backend.get("compile_commands", []),
@@ -5740,9 +6649,17 @@ def validate_build_provenance(
                         backend_command,
                         f"{workload_id} {lane} release backend {index}",
                     )
+                    if backend_command.get("cwd") != lane_state.get(
+                        "checkout"
+                    ):
+                        raise HarnessError(
+                            f"{workload_id} {lane} release backend {index} "
+                            "cwd changed"
+                        )
                     validate_build_command_environment(
                         backend_command,
                         f"{workload_id} {lane} release backend {index}",
+                        authority_projection=build_environment,
                     )
                     reject_forbidden_compiler_flags(
                         backend_command["argv"],
@@ -5752,15 +6669,44 @@ def validate_build_provenance(
                         backend_command["argv"],
                         f"{workload_id} {lane} release backend {index}",
                     )
+                formal_projects.append(
+                    (f"release {lane}", str(release_project))
+                )
+                formal_generated.append(
+                    (f"release {lane}", str(generated_path))
+                )
+                formal_objects.append(
+                    (f"release {lane}", str(objects[0]["path"]))
+                )
+                all_binaries.append(
+                    (f"release {lane}", str(binary_path_value))
+                )
             emit_c = modes.get("emit-c", {}).get(lane)
             if emit_c is not None:
+                validate_formal_slot_record(
+                    emit_c,
+                    workload_id,
+                    "emit-c",
+                    lane,
+                    lane_state,
+                )
+                emit_project = validate_formal_project_record(
+                    emit_c,
+                    workload,
+                    lane,
+                    lane_state,
+                    recorded_suite_root,
+                    recorded_host_os,
+                )
                 emit_command = emit_c.get("emit_command", {})
                 clang_command = emit_c.get("clang_command", {})
                 validate_command_record(
                     emit_command, f"{workload_id} {lane} emit-c"
                 )
                 validate_build_command_environment(
-                    emit_command, f"{workload_id} {lane} emit-c"
+                    emit_command,
+                    f"{workload_id} {lane} emit-c",
+                    authority_projection=build_environment,
                 )
                 validate_command_record(
                     clang_command, f"{workload_id} {lane} generated-C Clang"
@@ -5768,23 +6714,22 @@ def validate_build_provenance(
                 validate_build_command_environment(
                     clang_command,
                     f"{workload_id} {lane} generated-C Clang",
+                    authority_projection=build_environment,
                 )
                 generated_path = emit_c.get("generated_c", {}).get("path")
                 binary_path_value = emit_c.get("binary", {}).get("path")
-                project = (
-                    str(Path(generated_path).parents[2])
-                    if isinstance(generated_path, str)
-                    else None
-                )
                 expected_emit = [
                     result.get("release_lanes", {}).get(lane, {}).get("nomo_path"),
                     "build",
-                    project,
+                    str(emit_project),
                     "--emit-c",
                 ]
-                if emit_command["argv"] != expected_emit:
+                if (
+                    emit_command["argv"] != expected_emit
+                    or emit_command.get("cwd") != lane_state.get("checkout")
+                ):
                     raise HarnessError(
-                        f"{workload_id} {lane} emit-c command changed"
+                        f"{workload_id} {lane} emit-c command or cwd changed"
                     )
                 expected_clang = [
                     toolchains.get("clang", {}).get("path"),
@@ -5795,9 +6740,13 @@ def validate_build_provenance(
                     binary_path_value,
                     *link_flags,
                 ]
-                if clang_command["argv"] != expected_clang:
+                if (
+                    clang_command["argv"] != expected_clang
+                    or clang_command.get("cwd") != lane_state.get("checkout")
+                ):
                     raise HarnessError(
-                        f"{workload_id} {lane} generated-C Clang argv changed"
+                        f"{workload_id} {lane} generated-C Clang argv changed "
+                        "or cwd changed"
                     )
                 reject_forbidden_compiler_flags(
                     clang_command["argv"],
@@ -5812,11 +6761,46 @@ def validate_build_provenance(
                         f"{workload_id} {lane} emit-c must be an independent build"
                     )
                 generated = emit_c.get("generated_c", {})
-                if generated.get("unmodified_after_emit") is not True:
-                    raise HarnessError(
-                        f"{workload_id} {lane} generated C was not preserved"
+                if (
+                    set(generated)
+                    != {"path", "sha256", "unmodified_after_emit"}
+                    or generated.get("unmodified_after_emit") is not True
+                    or not artifact_path_is_absolute(
+                        generated_path, recorded_host_os
                     )
-            lane_state = result.get("release_lanes", {}).get(lane, {})
+                    or artifact_path(generated_path, recorded_host_os)
+                    != emit_project / "build" / "c" / "main.c"
+                    or not artifact_path_is_absolute(
+                        binary_path_value, recorded_host_os
+                    )
+                    or not artifact_paths_overlap(
+                        emit_project,
+                        binary_path_value,
+                        recorded_host_os,
+                    )
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}", str(generated.get("sha256"))
+                    )
+                    is None
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(emit_c.get("binary", {}).get("sha256")),
+                    )
+                    is None
+                ):
+                    raise HarnessError(
+                        f"{workload_id} {lane} emit-C outputs are not "
+                        "independent project-bound files"
+                    )
+                formal_projects.append(
+                    (f"emit-c {lane}", str(emit_project))
+                )
+                formal_generated.append(
+                    (f"emit-c {lane}", str(generated_path))
+                )
+                all_binaries.append(
+                    (f"emit-c {lane}", str(binary_path_value))
+                )
             expected_commit = lane_state.get("expected_commit")
             for formal_build in (release, emit_c):
                 if formal_build is None:
@@ -5830,6 +6814,42 @@ def validate_build_provenance(
                 ):
                     raise HarnessError(
                         f"{workload_id} {lane} build used a different compiler binary"
+                    )
+        for index, (left_label, left_path) in enumerate(formal_projects):
+            for right_label, right_path in formal_projects[index + 1 :]:
+                if artifact_paths_overlap(
+                    left_path, right_path, recorded_host_os
+                ):
+                    raise HarnessError(
+                        f"{workload_id} formal projects are reused or nested: "
+                        f"{left_label}, {right_label}"
+                    )
+        formal_output_files = [
+            *formal_generated,
+            *formal_objects,
+            *all_binaries,
+        ]
+        for index, (left_label, left_path) in enumerate(formal_output_files):
+            for right_label, right_path in formal_output_files[index + 1 :]:
+                if artifact_file_identity_equal(
+                    left_path,
+                    right_path,
+                    recorded_host_os,
+                    inspect_live_filesystem=live_filesystem,
+                ):
+                    raise HarnessError(
+                        f"{workload_id} build artifact identity was reused: "
+                        f"{left_label}, {right_label}"
+                    )
+        for reference_lane in REFERENCE_LANES:
+            reference_path = binaries[reference_lane]["path"]
+            for project_label, project_path in formal_projects:
+                if artifact_paths_overlap(
+                    reference_path, project_path, recorded_host_os
+                ):
+                    raise HarnessError(
+                        f"{workload_id} reference {reference_lane} binary "
+                        f"overlaps {project_label} project"
                     )
 
 
@@ -5852,11 +6872,30 @@ def validate_build_failure_evidence(
         )
     lane = failure.get("lane")
     phase = failure.get("phase")
-    if (lane, phase) not in {
+    correctness_failure_phases = {
         *((reference_lane, "reference-build") for reference_lane in REFERENCE_LANES),
         ("nomo-baseline", "nomo-emit-c"),
         ("nomo-baseline", "nomo-generated-c-clang"),
-    }:
+    }
+    formal_failure_phases = {
+        *((formal_lane, formal_phase)
+          for formal_lane in ("candidate", "main")
+          for formal_phase in (
+              "nomo-release-binary",
+              "nomo-release-generated-c",
+              "nomo-release-provenance",
+              "nomo-emit-c",
+              "nomo-generated-c-clang",
+          )),
+        *((reference_lane, "reference-build")
+          for reference_lane in REFERENCE_LANES),
+    }
+    allowed_phases = (
+        formal_failure_phases
+        if result.get("mode") == "prepare"
+        else correctness_failure_phases
+    )
+    if (lane, phase) not in allowed_phases:
         raise HarnessError("preflight build failure phase changed")
     workload = manifest["workloads"][workload_index]
     source = failure.get("source", {})
@@ -5870,12 +6909,11 @@ def validate_build_failure_evidence(
     output_path = Path(str(failure.get("output_path", "")))
     command = failure.get("command", {})
     toolchains = result.get("provenance", {}).get("toolchains", {})
-    link_flags = (
-        ["-lm"]
-        if workload.get("link_math")
-        and result.get("provenance", {}).get("host", {}).get("os") != "Windows"
-        else []
+    recorded_host_os = str(
+        result.get("provenance", {}).get("host", {}).get("os", "")
     )
+    link_flags = math_flags_for_host(workload, recorded_host_os)
+    expected_cwd = str(REPOSITORY_ROOT.resolve())
     if phase == "reference-build":
         if (
             source.get("sha256") != workload["sources"][lane]["sha256"]
@@ -5927,7 +6965,7 @@ def validate_build_failure_evidence(
                 str(source_path),
             ],
         }[lane]
-    elif phase == "nomo-emit-c":
+    elif lane == "nomo-baseline" and phase == "nomo-emit-c":
         expected_source = resolve_suite_path(
             DEFAULT_MANIFEST.parent,
             workload["sources"]["nomo"]["path"],
@@ -5954,7 +6992,7 @@ def validate_build_failure_evidence(
             str(project),
             "--emit-c",
         ]
-    else:
+    elif lane == "nomo-baseline":
         if len(source_path.parents) < 7:
             raise HarnessError("failed generated-C source is outside a bundle")
         bundle_root = source_path.parents[6]
@@ -5982,6 +7020,97 @@ def validate_build_failure_evidence(
             str(output_path),
             *link_flags,
         ]
+    else:
+        lane_state = result.get("release_lanes", {}).get(lane, {})
+        checkout = Path(str(lane_state.get("checkout", "")))
+        if not checkout.is_absolute():
+            raise HarnessError("formal build failure checkout is not absolute")
+        expected_cwd = str(checkout.resolve())
+        project = next(
+            (
+                parent
+                for parent in output_path.parents
+                if parent.name == "project"
+            ),
+            None,
+        )
+        if project is None or len(project.parents) < 5:
+            raise HarnessError("formal build failure output is outside a project")
+        build_mode = (
+            "release"
+            if str(phase).startswith("nomo-release-")
+            else "emit-c"
+        )
+        bundle_root = project.parents[4]
+        expected_project = (
+            bundle_root
+            / "build"
+            / workload_id
+            / build_mode
+            / str(lane)
+            / "project"
+        )
+        if project != expected_project:
+            raise HarnessError("formal build failure project path changed")
+        compiler_path = Path(str(lane_state.get("nomo_path", "")))
+        expected_compiler = binary_path(
+            bundle_root / "compiler-build" / str(lane) / "release",
+            "nomo",
+        )
+        if compiler_path != expected_compiler:
+            raise HarnessError(
+                "formal build failure used a compiler outside its build bundle"
+            )
+        canonical_nomo_source = resolve_suite_path(
+            DEFAULT_MANIFEST.parent,
+            workload["sources"]["nomo"]["path"],
+            f"{workload_id} failed formal Nomo source",
+        )
+        generated_c = project / "build" / "c" / "main.c"
+        project_name = parse_project_name(
+            resolve_suite_path(
+                DEFAULT_MANIFEST.parent,
+                workload["sources"]["nomo"]["project_manifest"],
+                f"{workload_id} failed formal Nomo manifest",
+            )
+        )
+        formal_binary = binary_path(
+            project / "build" / "bin", project_name
+        )
+        if phase == "nomo-release-binary":
+            expected_output = formal_binary
+        elif phase == "nomo-release-generated-c":
+            expected_output = generated_c
+        elif phase == "nomo-release-provenance":
+            expected_output = project / "build" / "release-provenance.json"
+        elif phase == "nomo-emit-c":
+            expected_output = generated_c
+        else:
+            expected_output = formal_binary
+        if phase == "nomo-generated-c-clang":
+            if source_path != generated_c:
+                raise HarnessError("failed formal generated-C source changed")
+            expected_argv = [
+                toolchains.get("clang", {}).get("path"),
+                *CLANG_DRIVER_CONFIG_FLAGS,
+                *BASE_C_FLAGS,
+                str(generated_c),
+                "-o",
+                str(output_path),
+                *link_flags,
+            ]
+        else:
+            if (
+                source_path != canonical_nomo_source
+                or source.get("sha256") != workload["sources"]["nomo"]["sha256"]
+            ):
+                raise HarnessError("failed formal Nomo source changed")
+            expected_argv = [
+                lane_state.get("nomo_path"),
+                "build",
+                str(project),
+                "--release" if build_mode == "release" else "--emit-c",
+            ]
     expected_output_path = canonical_build_output_path(expected_output)
     if (
         not output_path.is_absolute()
@@ -5995,7 +7124,7 @@ def validate_build_failure_evidence(
             "preflight build failure command changed: "
             f"expected {expected_argv!r}, found {command.get('argv')!r}"
         )
-    if command.get("cwd") != str(REPOSITORY_ROOT.resolve()):
+    if command.get("cwd") != expected_cwd:
         raise HarnessError("preflight build failure cwd changed")
     if (
         not isinstance(command.get("duration_ns"), int)
@@ -6166,12 +7295,17 @@ def validate_sample_binding(
     fixture_sha256: str,
     collector_id: str,
     lane: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_host_os: Optional[str] = None,
 ) -> None:
     binary_path_value = binary.get("path")
     binary_sha = binary.get("sha256")
     if (
         not isinstance(binary_path_value, str)
-        or not Path(binary_path_value).is_absolute()
+        or not artifact_path_is_absolute(
+            binary_path_value,
+            recorded_host_os or platform.system(),
+        )
         or re.fullmatch(r"[0-9a-f]{64}", str(binary_sha)) is None
     ):
         raise HarnessError(f"{lane} build binary identity is incomplete")
@@ -6202,9 +7336,12 @@ def validate_sample_binding(
         != sample["user_cpu_ns"] + sample["system_cpu_ns"]
     ):
         raise HarnessError(f"{lane} sample CPU total is not user plus system")
-    expected_environment = _environment(
-        {"GOMAXPROCS": "1"} if lane == "go" else {}
-    )[1]
+    expected_environment = (
+        runtime_environments or {
+            "default": _environment({})[1],
+            "go": _environment({"GOMAXPROCS": "1"})[1],
+        }
+    )["go" if lane == "go" else "default"]
     if sample.get("environment") != expected_environment:
         raise HarnessError(f"{lane} sample environment changed")
     if parse_utc_timestamp(sample.get("started_at_utc")) > parse_utc_timestamp(
@@ -6220,6 +7357,9 @@ def validate_correctness_evidence(
     manifest: Dict[str, Any],
     builds: Dict[str, Any],
     collector_id: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_host_os: Optional[str] = None,
+    recorded_suite_root: Optional[PurePath] = None,
 ) -> Optional[str]:
     workload_ids = tuple(item.get("id") for item in items)
     if (
@@ -6231,15 +7371,14 @@ def validate_correctness_evidence(
             "correctness evidence must be a nonempty frozen-order workload prefix"
         )
     workloads = {workload["id"]: workload for workload in manifest["workloads"]}
-    suite_root = Path(DEFAULT_MANIFEST).parent
+    host_os = recorded_host_os or platform.system()
+    suite_root = recorded_suite_root or artifact_path(
+        DEFAULT_MANIFEST.parent, host_os
+    )
     failure_reason = None
     for item_index, item in enumerate(items):
         workload = workloads[item["id"]]
-        fixture = resolve_suite_path(
-            suite_root,
-            workload["fixtures"]["correctness"]["path"],
-            f"{item['id']} correctness fixture",
-        )
+        fixture = suite_root / workload["fixtures"]["correctness"]["path"]
         if (
             item.get("build_mode") != build_mode
             or item.get("input") != workload["correctness_input"]
@@ -6310,6 +7449,8 @@ def validate_correctness_evidence(
                     workload["fixtures"]["correctness"]["sha256"],
                     collector_id,
                     lane,
+                    runtime_environments,
+                    host_os,
                 )
             else:
                 if implementation.get("passed") is not True:
@@ -6323,6 +7464,8 @@ def validate_correctness_evidence(
                     workload["fixtures"]["correctness"]["sha256"],
                     collector_id,
                     lane,
+                    runtime_environments,
+                    host_os,
                 )
                 if (
                     implementation.get("stdout_normalized_sha256")
@@ -6356,17 +7499,20 @@ def validate_measured_workload(
     manifest: Dict[str, Any],
     builds: Dict[str, Any],
     collector_id: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_host_os: Optional[str] = None,
+    recorded_suite_root: Optional[PurePath] = None,
 ) -> None:
     if workload.get("build_mode") != build_mode:
         raise HarnessError("measured workload build mode changed")
     manifest_workload = next(
         item for item in manifest["workloads"] if item["id"] == workload.get("id")
     )
-    fixture = resolve_suite_path(
-        DEFAULT_MANIFEST.parent,
-        manifest_workload["fixtures"]["performance"]["path"],
-        f"{workload.get('id')} formal fixture",
+    host_os = recorded_host_os or platform.system()
+    suite_root = recorded_suite_root or artifact_path(
+        DEFAULT_MANIFEST.parent, host_os
     )
+    fixture = suite_root / manifest_workload["fixtures"]["performance"]["path"]
     if (
         workload.get("performance_input") != manifest_workload["performance_input"]
         or workload.get("fixture_path") != str(fixture)
@@ -6414,6 +7560,8 @@ def validate_measured_workload(
                 manifest_workload["fixtures"]["performance"]["sha256"],
                 collector_id,
                 lane,
+                runtime_environments,
+                host_os,
             )
         for block_index, sample in enumerate(samples, start=1):
             expected_position = schedule[block_index - 1].index(lane) + 1
@@ -6439,6 +7587,8 @@ def validate_measured_workload(
                 manifest_workload["fixtures"]["performance"]["sha256"],
                 collector_id,
                 lane,
+                runtime_environments,
+                host_os,
             )
 
 
@@ -6450,6 +7600,9 @@ def validate_partial_workload(
     manifest: Dict[str, Any],
     builds: Dict[str, Any],
     collector_id: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_host_os: Optional[str] = None,
+    recorded_suite_root: Optional[PurePath] = None,
 ) -> None:
     if (
         workload.get("build_mode") != build_mode
@@ -6460,11 +7613,11 @@ def validate_partial_workload(
     manifest_workload = next(
         item for item in manifest["workloads"] if item["id"] == workload.get("id")
     )
-    fixture = resolve_suite_path(
-        DEFAULT_MANIFEST.parent,
-        manifest_workload["fixtures"]["performance"]["path"],
-        f"{workload.get('id')} formal fixture",
+    host_os = recorded_host_os or platform.system()
+    suite_root = recorded_suite_root or artifact_path(
+        DEFAULT_MANIFEST.parent, host_os
     )
+    fixture = suite_root / manifest_workload["fixtures"]["performance"]["path"]
     schedule = williams_schedule(TIMED_LANES, 30)
     if (
         workload.get("performance_input") != manifest_workload["performance_input"]
@@ -6526,6 +7679,8 @@ def validate_partial_workload(
                     manifest_workload["fixtures"]["performance"]["sha256"],
                     collector_id,
                     lane,
+                    runtime_environments,
+                    host_os,
                 )
                 if sample.get("failure_message") != workload.get(
                     "failure_reason"
@@ -6541,6 +7696,8 @@ def validate_partial_workload(
                     manifest_workload["fixtures"]["performance"]["sha256"],
                     collector_id,
                     lane,
+                    runtime_environments,
+                    host_os,
                 )
     observed_events.sort(key=lambda item: item[0])
     ordinals = [item[0] for item in observed_events]
@@ -6573,11 +7730,16 @@ def validate_failed_sample_binding(
     fixture_sha256: str,
     collector_id: str,
     lane: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_host_os: Optional[str] = None,
 ) -> None:
     expected_argv = [binary.get("path"), input_value]
-    expected_environment = _environment(
-        {"GOMAXPROCS": "1"} if lane == "go" else {}
-    )[1]
+    expected_environment = (
+        runtime_environments or {
+            "default": _environment({})[1],
+            "go": _environment({"GOMAXPROCS": "1"})[1],
+        }
+    )["go" if lane == "go" else "default"]
     if (
         sample.get("status") != "failed"
         or sample.get("command_argv") != expected_argv
@@ -7148,6 +8310,8 @@ def validate_protocol(
     static_authorization: Dict[str, Any],
     host_os: str,
     host_architecture: str,
+    runtime_environments: Optional[Dict[str, Any]] = None,
+    recorded_suite_root: Optional[PurePath] = None,
 ) -> set[str]:
     if protocol.get("build_mode") != build_mode:
         raise HarnessError(f"{build_mode} protocol identity changed")
@@ -7160,6 +8324,9 @@ def validate_protocol(
             manifest,
             builds,
             collector_id,
+            runtime_environments,
+            host_os,
+            recorded_suite_root,
         )
     batches = protocol.get("batches", [])
     if len(batches) > 3:
@@ -7226,6 +8393,9 @@ def validate_protocol(
                     manifest,
                     builds,
                     collector_id,
+                    runtime_environments,
+                    host_os,
+                    recorded_suite_root,
                 )
             recomputed_stability = batch_stability(
                 workloads, manifest["methodology"]["batch_invalidation"]
@@ -7266,6 +8436,9 @@ def validate_protocol(
                     manifest,
                     builds,
                     collector_id,
+                    runtime_environments,
+                    host_os,
+                    recorded_suite_root,
                 )
             if workloads:
                 validate_partial_workload(
@@ -7276,6 +8449,9 @@ def validate_protocol(
                     manifest,
                     builds,
                     collector_id,
+                    runtime_environments,
+                    host_os,
+                    recorded_suite_root,
                 )
         snapshot_before_utc = parse_utc_timestamp(
             environment_before["captured_at_utc"]
@@ -7436,7 +8612,11 @@ def validate_protocol(
 
 
 def validate_static_authorization(
-    result: Dict[str, Any], manifest: Dict[str, Any], require_eligible: bool
+    result: Dict[str, Any],
+    manifest: Dict[str, Any],
+    require_eligible: bool,
+    *,
+    live_file: bool = True,
 ) -> None:
     provenance = result.get("provenance", {})
     qualification = provenance.get("environment_qualification", {})
@@ -7450,11 +8630,37 @@ def validate_static_authorization(
         provenance.get("prepared_bundle_sha256"),
     )
     path_value = qualification.get("qualification_path")
-    derived_qualification = environment_qualification(
-        manifest,
-        path_value if isinstance(path_value, str) else None,
-        expected_bindings,
-    )
+    if live_file or not isinstance(path_value, str):
+        derived_qualification = environment_qualification(
+            manifest,
+            path_value if isinstance(path_value, str) else None,
+            expected_bindings,
+        )
+    else:
+        source_record = {
+            "schema": 1,
+            "canonical_host_id": qualification.get("canonical_host_id"),
+            "captured_at_utc": qualification.get("captured_at_utc"),
+            "dynamic_policy": qualification.get("dynamic_policy"),
+            "bindings": qualification.get("provided_bindings"),
+            "checks": qualification.get("checks"),
+        }
+        canonical_source = (
+            json.dumps(source_record, indent=2, sort_keys=True) + "\n"
+        ).encode("utf-8")
+        source_sha256 = v1.sha256_bytes(canonical_source)
+        if source_sha256 != qualification.get("qualification_sha256"):
+            raise HarnessError(
+                "embedded static authorization does not reproduce its "
+                "canonical qualification file SHA"
+            )
+        derived_qualification = derive_environment_qualification(
+            manifest,
+            source_record,
+            path_value,
+            source_sha256,
+            expected_bindings,
+        )
     if qualification != derived_qualification:
         raise HarnessError(
             "embedded static authorization differs from the qualification file"
@@ -7475,13 +8681,24 @@ def validate_static_authorization(
             or qualification.get("missing_or_unqualified") != []
         ):
             raise HarnessError("completed artifact lacks eligible static authorization")
-        if not isinstance(path_value, str) or not Path(path_value).is_absolute():
+        recorded_host_os = str(
+            provenance.get("host", {}).get("os", "")
+        )
+        path_is_absolute = (
+            Path(path_value).is_absolute()
+            if live_file and isinstance(path_value, str)
+            else artifact_path_is_absolute(path_value, recorded_host_os)
+        )
+        if not isinstance(path_value, str) or not path_is_absolute:
             raise HarnessError("static authorization path is not canonical")
-        path = Path(path_value)
-        if not path.is_file() or v1.sha256_file(path) != qualification.get(
-            "qualification_sha256"
-        ):
-            raise HarnessError("static authorization file binding is invalid")
+        if live_file:
+            path = Path(path_value)
+            if not path.is_file() or v1.sha256_file(path) != qualification.get(
+                "qualification_sha256"
+            ):
+                raise HarnessError(
+                    "static authorization file binding is invalid"
+                )
         checks = qualification.get("checks", {})
         if set(checks) != set(EXPECTED_REQUIRED_CHECKS):
             raise HarnessError("static authorization checks are incomplete")
@@ -7996,10 +9213,13 @@ def validate_live_go_authority(toolchains: Dict[str, Any]) -> None:
 
 
 def validate_result(
-    result: Dict[str, Any], manifest: Optional[Dict[str, Any]] = None
+    result: Dict[str, Any],
+    manifest: Optional[Dict[str, Any]] = None,
+    *,
+    offline_replay: bool = False,
 ) -> None:
     if manifest is None:
-        manifest = v1.read_json(DEFAULT_MANIFEST)
+        manifest = read_json_strict(DEFAULT_MANIFEST)
     required = {
         "schema",
         "suite",
@@ -8045,10 +9265,24 @@ def validate_result(
     result_host_os = str(
         result.get("provenance", {}).get("host", {}).get("os")
     )
-    if result_host_os == "Windows" and os.name == "nt":
+    if (
+        not offline_replay
+        and result_host_os == "Windows"
+        and os.name == "nt"
+    ):
         canonical_windows_build_support(refresh=True)
-    validate_build_provenance(result, manifest)
+    validate_build_provenance(
+        result, manifest, live_filesystem=not offline_replay
+    )
     provenance = result.get("provenance", {})
+    runtime_environments = validate_runtime_environment_authority(
+        provenance.get("toolchains", {}).get("runtime_environments"),
+        provenance.get("toolchains", {}).get("build_environment", {}),
+        result_host_os,
+    )
+    recorded_suite_root = artifact_path(
+        provenance.get("manifest_path"), result_host_os
+    ).parent
     if provenance.get("source_lock") != frozen_source_lock(manifest):
         raise HarnessError("result source lock changed")
     if (
@@ -8080,6 +9314,9 @@ def validate_result(
                 manifest,
                 result["builds"],
                 collector_id,
+                runtime_environments,
+                result_host_os,
+                recorded_suite_root,
             )
             if status == "correctness-only":
                 if correctness_failure is not None:
@@ -8096,9 +9333,30 @@ def validate_result(
                     "correctness mode status must be correctness-only or ineligible"
                 )
     elif result.get("build_failures"):
-        raise HarnessError(
-            "formal artifacts cannot embed correctness preflight build failures"
-        )
+        if (
+            mode != "prepare"
+            or status != "unavailable"
+            or result.get("correctness")
+        ):
+            raise HarnessError(
+                "formal build failure evidence requires unavailable prepare mode"
+            )
+        validate_build_failure_evidence(result, manifest)
+        if any(
+            lane.get("status") != "available"
+            for lane in result.get("release_lanes", {}).values()
+        ):
+            raise HarnessError(
+                "formal build failure requires both exact compiler authorities"
+            )
+        validate_release_lane_authority(result)
+        if (
+            provenance.get("manifest_path") != str(DEFAULT_MANIFEST.resolve())
+            or provenance.get("manifest_sha256") != EXPECTED_V2_MANIFEST_SHA
+        ):
+            raise HarnessError(
+                "formal build failure lacks canonical manifest authority"
+            )
     if status in {"prepared", "unavailable", "ineligible"}:
         if result["overall_verdict"] != "not_evaluated":
             raise HarnessError("unavailable/ineligible evidence cannot have a verdict")
@@ -8126,12 +9384,16 @@ def validate_result(
         result,
         manifest,
         status == "completed" or has_formal_evidence,
+        live_file=not offline_replay,
     )
     if status == "prepared" or has_formal_evidence:
-        validate_result_prepared_authority(
-            result,
-            require_exact_result=status == "prepared",
-        )
+        if offline_replay:
+            validate_prepared_structure(result)
+        else:
+            validate_result_prepared_authority(
+                result,
+                require_exact_result=status == "prepared",
+            )
     all_snapshot_ids: set[str] = set()
     for build_mode in FORMAL_BUILD_MODES:
         mode_snapshot_ids = validate_protocol(
@@ -8143,14 +9405,20 @@ def validate_result(
             provenance["environment_qualification"],
             str(provenance.get("host", {}).get("os")),
             str(provenance.get("host", {}).get("architecture")),
+            runtime_environments,
+            recorded_suite_root,
         )
         if all_snapshot_ids.intersection(mode_snapshot_ids):
             raise HarnessError("dynamic qualification snapshots were reused across modes")
         all_snapshot_ids.update(mode_snapshot_ids)
     if has_formal_evidence:
         if (
-            provenance.get("manifest_path") != str(DEFAULT_MANIFEST.resolve())
-            or provenance.get("manifest_sha256") != EXPECTED_V2_MANIFEST_SHA
+            provenance.get("manifest_sha256") != EXPECTED_V2_MANIFEST_SHA
+            or (
+                not offline_replay
+                and provenance.get("manifest_path")
+                != str(DEFAULT_MANIFEST.resolve())
+            )
         ):
             raise HarnessError(
                 "formal artifact lacks canonical manifest authority"
@@ -8345,22 +9613,96 @@ def map_bundle_paths(value: Any, bundle_root: Path, tokenize: bool) -> Any:
     return value
 
 
-def prepared_file_inventory(bundle_root: Path) -> list[Dict[str, str]]:
+def prepared_file_inventory(bundle_root: Path) -> list[Dict[str, Any]]:
     excluded = {"prepared-bundle.json", "qualification-request.json"}
     inventory = []
     for path in sorted(bundle_root.rglob("*")):
-        if path.is_symlink():
-            raise HarnessError("prepared bundle cannot contain symlinks")
+        metadata = lexical_path_lstat(path)
+        if metadata is None:
+            raise HarnessError(
+                f"prepared bundle entry disappeared during inventory: {path}"
+            )
+        if lexical_path_is_link(path, metadata):
+            raise HarnessError(
+                "prepared bundle cannot contain symlinks or junctions"
+            )
         relative = path.relative_to(bundle_root).as_posix()
-        if path.is_dir() or relative in excluded:
+        if stat.S_ISDIR(metadata.st_mode) or relative in excluded:
             continue
+        if not stat.S_ISREG(metadata.st_mode):
+            raise HarnessError(
+                f"prepared bundle payload is not a regular file: {relative}"
+            )
+        if int(metadata.st_nlink) != 1:
+            raise HarnessError(
+                f"prepared bundle payload has multiple hard links: {relative}"
+            )
         inventory.append(
             {
                 "path": relative,
                 "sha256": v1.sha256_file(path),
+                "lstat_type": "regular",
+                "link_count": 1,
             }
         )
     return inventory
+
+
+def canonical_prepared_bundle_root(bundle_root: Path) -> Path:
+    lexical = lexical_absolute_path(bundle_root)
+    metadata = lexical_path_lstat(lexical)
+    if (
+        metadata is None
+        or lexical_path_is_link(lexical, metadata)
+        or not stat.S_ISDIR(metadata.st_mode)
+    ):
+        raise HarnessError(
+            f"prepared bundle root is not a lexical directory: {lexical}"
+        )
+    return lexical.resolve()
+
+
+def validate_prepared_descendant(
+    path: Path,
+    root: Path,
+    label: str,
+    *,
+    final_kind: str,
+) -> Path:
+    lexical = lexical_absolute_path(path)
+    try:
+        relative = lexical.relative_to(root)
+    except ValueError as error:
+        raise HarnessError(f"{label} points outside the prepared bundle") from error
+    if not relative.parts:
+        raise HarnessError(f"{label} aliases the prepared bundle root")
+    for candidate in (lexical, *lexical.parents):
+        metadata = lexical_path_lstat(candidate)
+        if metadata is None:
+            raise HarnessError(f"{label} lexical path is missing: {candidate}")
+        if lexical_path_is_link(candidate, metadata):
+            raise HarnessError(
+                f"{label} contains a symlink or junction: {candidate}"
+            )
+        if candidate == lexical:
+            expected_kind = (
+                stat.S_ISREG(metadata.st_mode)
+                if final_kind == "regular"
+                else stat.S_ISDIR(metadata.st_mode)
+            )
+            if not expected_kind:
+                raise HarnessError(
+                    f"{label} is not a {final_kind} path: {candidate}"
+                )
+        elif not stat.S_ISDIR(metadata.st_mode):
+            raise HarnessError(
+                f"{label} has a non-directory lexical parent: {candidate}"
+            )
+        if candidate == root:
+            break
+    else:
+        raise HarnessError(f"{label} does not descend from the prepared bundle")
+    return lexical
 
 
 def prepared_result_projection(
@@ -8425,6 +9767,15 @@ def canonical_qualification_request(result: Dict[str, Any]) -> Dict[str, Any]:
     }
 
 
+def canonical_qualification_request_contract(
+    result: Dict[str, Any],
+) -> Dict[str, Any]:
+    request = canonical_qualification_request(result)
+    request["bundle_sha256"] = None
+    request["bindings"].pop("prepared_bundle_sha256", None)
+    return request
+
+
 def validate_prepared_structure(result: Dict[str, Any]) -> None:
     release_lanes = result.get("release_lanes", {})
     if set(release_lanes) != {"candidate", "main"} or any(
@@ -8469,14 +9820,23 @@ def validate_prepared_structure(result: Dict[str, Any]) -> None:
 def validate_prepared_bundle_files(
     result: Dict[str, Any],
     bundle_root: Path,
-    inventory: Sequence[Dict[str, str]],
+    inventory: Sequence[Dict[str, Any]],
 ) -> None:
-    root = bundle_root.resolve()
+    root = canonical_prepared_bundle_root(bundle_root)
+    root_resolved = root
     inventory_by_path = {
-        item["path"]: item["sha256"] for item in inventory
+        item["path"]: item for item in inventory
     }
 
-    def require_bundle_file(record: Dict[str, Any], label: str) -> None:
+    def require_bundle_directory(path_value: Any, label: str) -> Path:
+        if not isinstance(path_value, str):
+            raise HarnessError(f"{label} prepared directory identity is incomplete")
+        lexical = validate_prepared_descendant(
+            Path(path_value), root, label, final_kind="directory"
+        )
+        return lexical.resolve()
+
+    def require_bundle_file(record: Dict[str, Any], label: str) -> Path:
         path_value = record.get("path")
         expected_sha = record.get("sha256")
         if (
@@ -8484,21 +9844,34 @@ def validate_prepared_bundle_files(
             or re.fullmatch(r"[0-9a-f]{64}", str(expected_sha)) is None
         ):
             raise HarnessError(f"{label} prepared file identity is incomplete")
-        path = Path(path_value).resolve()
+        lexical = validate_prepared_descendant(
+            Path(path_value), root, label, final_kind="regular"
+        )
+        metadata = lexical.lstat()
+        if int(metadata.st_nlink) != 1:
+            raise HarnessError(f"{label} has multiple hard links")
+        path = lexical.resolve()
         try:
-            relative = path.relative_to(root).as_posix()
+            relative = path.relative_to(root_resolved).as_posix()
         except ValueError as error:
             raise HarnessError(
                 f"{label} points outside the prepared bundle"
             ) from error
+        expected_inventory = {
+            "path": relative,
+            "sha256": expected_sha,
+            "lstat_type": "regular",
+            "link_count": 1,
+        }
         if (
             not path.is_file()
             or v1.sha256_file(path) != expected_sha
-            or inventory_by_path.get(relative) != expected_sha
+            or inventory_by_path.get(relative) != expected_inventory
         ):
             raise HarnessError(
                 f"{label} does not match the prepared inventory and live file"
             )
+        return path
 
     for lane in ("candidate", "main"):
         require_bundle_file(
@@ -8511,25 +9884,54 @@ def validate_prepared_bundle_files(
     for workload_id in WORKLOAD_IDS:
         build = result["builds"][workload_id]
         references = build["references"]
+        decisive_artifacts: list[Tuple[str, Path]] = []
         for lane in REFERENCE_LANES:
             require_bundle_file(
                 references["compiled_sources"][lane],
                 f"{workload_id} {lane} copied source",
             )
-            require_bundle_file(
-                references["binaries"][lane],
-                f"{workload_id} {lane} reference binary",
+            decisive_artifacts.append(
+                (
+                    f"{lane} reference binary",
+                    require_bundle_file(
+                        references["binaries"][lane],
+                        f"{workload_id} {lane} reference binary",
+                    ),
+                )
             )
         for build_mode in FORMAL_BUILD_MODES:
             for lane in ("candidate", "main"):
                 formal = build["modes"][build_mode][lane]
-                require_bundle_file(
-                    formal["binary"],
-                    f"{workload_id} {build_mode} {lane} binary",
+                project = formal["project"]
+                require_bundle_directory(
+                    project["path"],
+                    f"{workload_id} {build_mode} {lane} project",
                 )
                 require_bundle_file(
-                    formal["generated_c"],
-                    f"{workload_id} {build_mode} {lane} generated C",
+                    project["copied_source"],
+                    f"{workload_id} {build_mode} {lane} copied Nomo source",
+                )
+                require_bundle_file(
+                    project["copied_project_manifest"],
+                    f"{workload_id} {build_mode} {lane} copied Nomo manifest",
+                )
+                decisive_artifacts.append(
+                    (
+                        f"{build_mode} {lane} binary",
+                        require_bundle_file(
+                            formal["binary"],
+                            f"{workload_id} {build_mode} {lane} binary",
+                        ),
+                    )
+                )
+                decisive_artifacts.append(
+                    (
+                        f"{build_mode} {lane} generated C",
+                        require_bundle_file(
+                            formal["generated_c"],
+                            f"{workload_id} {build_mode} {lane} generated C",
+                        ),
+                    )
                 )
                 if build_mode == "release":
                     require_bundle_file(
@@ -8539,13 +9941,40 @@ def validate_prepared_bundle_files(
                         },
                         f"{workload_id} {lane} backend provenance",
                     )
+                    sidecar = read_json_strict(
+                        Path(formal["backend_provenance_path"])
+                    )
+                    if sidecar != formal["backend_provenance"]:
+                        raise HarnessError(
+                            f"{workload_id} {lane} embedded release backend "
+                            "differs from its hashed sidecar"
+                        )
                     for index, object_file in enumerate(
                         formal["backend_provenance"]["objects"]
                     ):
-                        require_bundle_file(
-                            object_file,
-                            f"{workload_id} {lane} backend object {index}",
+                        decisive_artifacts.append(
+                            (
+                                f"release {lane} backend object {index}",
+                                require_bundle_file(
+                                    object_file,
+                                    f"{workload_id} {lane} backend object {index}",
+                                ),
+                            )
                         )
+        for index, (left_label, left_path) in enumerate(decisive_artifacts):
+            for right_label, right_path in decisive_artifacts[index + 1 :]:
+                try:
+                    reused = os.path.samefile(left_path, right_path)
+                except OSError as error:
+                    raise HarnessError(
+                        f"{workload_id} cannot verify prepared artifact identity: "
+                        f"{error}"
+                    ) from error
+                if reused:
+                    raise HarnessError(
+                        f"{workload_id} prepared artifact identity was reused: "
+                        f"{left_label}, {right_label}"
+                    )
 
 
 def validate_prepared_bundle_authority(
@@ -8554,7 +9983,7 @@ def validate_prepared_bundle_authority(
     *,
     require_exact_result: bool,
 ) -> Dict[str, Any]:
-    root = bundle_root.resolve()
+    root = canonical_prepared_bundle_root(bundle_root)
     loaded = load_prepared_bundle(root)
     if require_exact_result:
         if loaded != result:
@@ -8571,7 +10000,7 @@ def validate_prepared_bundle_authority(
     request_path = root / "qualification-request.json"
     if not request_path.is_file():
         raise HarnessError("prepared qualification request is missing")
-    request = v1.read_json(request_path)
+    request = read_json_strict(request_path)
     expected_request = canonical_qualification_request(loaded)
     if request != expected_request:
         raise HarnessError(
@@ -8584,7 +10013,10 @@ def validate_prepared_bundle_authority(
 
 
 def validate_result_prepared_authority(
-    result: Dict[str, Any], *, require_exact_result: bool
+    result: Dict[str, Any],
+    *,
+    require_exact_result: bool,
+    live_authority: bool = True,
 ) -> None:
     provenance = result.get("provenance", {})
     prepared_path = provenance.get("prepared_bundle_path")
@@ -8605,13 +10037,14 @@ def validate_result_prepared_authority(
         Path(prepared_path).parent,
         require_exact_result=require_exact_result,
     )
-    validate_release_lane_authority(result)
+    if live_authority:
+        validate_release_lane_authority(result)
 
 
 def prepared_bundle_digest(
     result: Dict[str, Any],
     bundle_root: Path,
-    inventory: Sequence[Dict[str, str]],
+    inventory: Sequence[Dict[str, Any]],
     prepared_at_utc: str,
 ) -> str:
     parse_utc_timestamp(prepared_at_utc)
@@ -8623,6 +10056,9 @@ def prepared_bundle_digest(
                 result, bundle_root
             ),
             "files": list(inventory),
+            "qualification_request_contract": (
+                canonical_qualification_request_contract(result)
+            ),
         }
     )
 
@@ -8663,17 +10099,23 @@ def write_prepared_bundle(
         "prepared_result": map_bundle_paths(result, bundle_root, True),
     }
     request = canonical_qualification_request(result)
-    v1.write_result(bundle_root / "prepared-bundle.json", metadata)
-    v1.write_result(bundle_root / "qualification-request.json", request)
+    write_canonical_json(bundle_root / "prepared-bundle.json", metadata)
+    write_canonical_json(bundle_root / "qualification-request.json", request)
     return result
 
 
 def load_prepared_bundle(bundle_root: Path) -> Dict[str, Any]:
-    root = bundle_root.resolve()
+    root = canonical_prepared_bundle_root(bundle_root)
     metadata_path = root / "prepared-bundle.json"
     if not metadata_path.is_file():
         raise HarnessError("prepared bundle metadata is missing")
-    metadata = v1.read_json(metadata_path)
+    metadata = read_json_strict(metadata_path)
+    if metadata_path.read_bytes() != (
+        json.dumps(metadata, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8"):
+        raise HarnessError(
+            "prepared bundle metadata is not canonical byte-for-byte JSON"
+        )
     expected_metadata_keys = {
         "schema",
         "bundle_sha256",
@@ -8696,12 +10138,19 @@ def load_prepared_bundle(bundle_root: Path) -> Dict[str, Any]:
     stored_inventory = metadata.get("files")
     if any(
         not isinstance(item, dict)
-        or set(item) != {"path", "sha256"}
+        or set(item) != {
+            "path",
+            "sha256",
+            "lstat_type",
+            "link_count",
+        }
         or not isinstance(item.get("path"), str)
         or not item["path"]
         or Path(item["path"]).is_absolute()
         or ".." in Path(item["path"]).parts
         or re.fullmatch(r"[0-9a-f]{64}", str(item.get("sha256"))) is None
+        or item.get("lstat_type") != "regular"
+        or item.get("link_count") != 1
         for item in stored_inventory
     ):
         raise HarnessError("prepared bundle inventory envelope changed")
@@ -8724,15 +10173,23 @@ def load_prepared_bundle(bundle_root: Path) -> Dict[str, Any]:
         != recomputed
     ):
         raise HarnessError("prepared bundle digest is invalid")
+    request_path = root / "qualification-request.json"
+    request = read_json_strict(request_path)
+    if request_path.read_bytes() != (
+        json.dumps(request, indent=2, sort_keys=True) + "\n"
+    ).encode("utf-8"):
+        raise HarnessError(
+            "prepared qualification request is not canonical byte-for-byte JSON"
+        )
     return result
 
 
 def validate_output_outside_bundle(
     output_path: Path, bundle_root: Path
 ) -> None:
-    output = output_path.resolve()
-    root = bundle_root.resolve()
-    if output == root or root in output.parents:
+    output = lexical_absolute_path(output_path)
+    root = lexical_absolute_path(bundle_root)
+    if filesystem_paths_overlap(output, root):
         raise HarnessError(
             "result output must be outside the prepared bundle"
         )
@@ -8743,17 +10200,16 @@ def require_new_evidence_destination(
     mode: str,
     prepared_bundle: Optional[str],
 ) -> None:
-    output = output_path.resolve()
+    output = lexical_absolute_path(output_path)
     if output.suffix != ".json":
         raise HarnessError("result --output must use the exact .json extension")
     log_path = output.with_suffix(".log")
-    if output == log_path:
-        raise HarnessError("result output and sidecar log paths collide")
     created_targets = [
         (output, "result output"),
         (log_path, "result evidence log"),
     ]
     bundle_root = None
+    prepared_children: Tuple[Tuple[Path, str], ...] = ()
     if mode == "correctness":
         bundle_root = output.with_suffix("")
         created_targets.append(
@@ -8761,56 +10217,87 @@ def require_new_evidence_destination(
         )
     elif mode == "prepare":
         bundle_root = (
-            Path(prepared_bundle).resolve()
+            lexical_absolute_path(Path(prepared_bundle))
             if prepared_bundle
             else output.with_suffix("")
         )
         created_targets.append((bundle_root, "prepared build bundle"))
-    elif prepared_bundle:
-        bundle_root = Path(prepared_bundle).resolve()
+        prepared_children = (
+            (bundle_root / "prepared-bundle.json", "prepared metadata"),
+            (
+                bundle_root / "qualification-request.json",
+                "qualification request",
+            ),
+        )
+        created_targets.extend(prepared_children)
+    elif mode == "measure":
+        if not prepared_bundle:
+            raise HarnessError("measure requires --prepared-bundle")
+        bundle_root = lexical_absolute_path(Path(prepared_bundle))
 
-    independent_targets = list(created_targets)
+    for target, label in created_targets:
+        validate_lexical_path_chain(target, label, final_kind="absent")
+
+    prepared_inputs: Tuple[Tuple[Path, str], ...] = ()
     if mode == "measure" and bundle_root is not None:
-        independent_targets.append((bundle_root, "prepared build bundle"))
+        prepared_inputs = (
+            (bundle_root, "prepared build bundle"),
+            (bundle_root / "prepared-bundle.json", "prepared metadata"),
+            (
+                bundle_root / "qualification-request.json",
+                "qualification request",
+            ),
+        )
+        validate_lexical_path_chain(
+            prepared_inputs[0][0],
+            prepared_inputs[0][1],
+            final_kind="directory",
+        )
+        for target, label in prepared_inputs[1:]:
+            validate_lexical_path_chain(target, label, final_kind="regular")
+
+    independent_targets = list(created_targets[:2])
+    if bundle_root is not None:
+        independent_targets.append(
+            (
+                bundle_root,
+                (
+                    "prepared build bundle"
+                    if mode in {"prepare", "measure"}
+                    else "correctness build bundle"
+                ),
+            )
+        )
     for index, (left, left_label) in enumerate(independent_targets):
         for right, right_label in independent_targets[index + 1 :]:
-            if (
-                left == right
-                or left in right.parents
-                or right in left.parents
-            ):
+            if filesystem_paths_overlap(left, right):
                 raise HarnessError(
                     f"preflight path collision between {left_label} "
                     f"({left}) and {right_label} ({right})"
                 )
 
-    if mode == "prepare" and bundle_root is not None:
-        metadata = bundle_root / "prepared-bundle.json"
-        request = bundle_root / "qualification-request.json"
-        if metadata == request:
-            raise HarnessError("prepared metadata and qualification request collide")
-        for child, child_label in (
-            (metadata, "prepared metadata"),
-            (request, "qualification request"),
+    if prepared_children:
+        if filesystem_paths_overlap(
+            prepared_children[0][0], prepared_children[1][0]
         ):
+            raise HarnessError(
+                "prepared metadata and qualification request collide"
+            )
+        for child, child_label in prepared_children:
             for external, external_label in created_targets[:2]:
-                if (
-                    child == external
-                    or child in external.parents
-                    or external in child.parents
-                ):
+                if filesystem_paths_overlap(child, external):
                     raise HarnessError(
                         f"preflight path collision between {child_label} "
                         f"({child}) and {external_label} ({external})"
                     )
 
-    for target, label in created_targets:
-        if path_lexically_exists(target):
-            raise HarnessError(
-                f"{label} already exists; choose a new --output/"
-                f"--prepared-bundle and preserve the prior evidence: "
-                f"{target.resolve()}"
-            )
+    for child, child_label in prepared_inputs[1:]:
+        for external, external_label in created_targets[:2]:
+            if filesystem_paths_overlap(child, external):
+                raise HarnessError(
+                    f"preflight path collision between {child_label} "
+                    f"({child}) and {external_label} ({external})"
+                )
 
 
 def write_result_exclusive(path: Path, result: Dict[str, Any]) -> None:
@@ -8836,12 +10323,10 @@ def run_prepare(
     host: Dict[str, Any],
 ) -> Dict[str, Any]:
     bundle_root = (
-        Path(arguments.prepared_bundle).resolve()
+        lexical_absolute_path(Path(arguments.prepared_bundle))
         if arguments.prepared_bundle
         else output_path.with_suffix("")
     )
-    if bundle_root.exists():
-        raise HarnessError("prepare requires a new bundle directory")
     validate_output_outside_bundle(output_path, bundle_root)
     build_timeout_seconds = float(manifest["methodology"]["build_timeout_seconds"])
     duplicate_reason = lane_pair_conflict(arguments)
@@ -8943,14 +10428,19 @@ def run_prepare(
         build_mode: {} for build_mode in FORMAL_BUILD_MODES
     }
     for workload in manifest["workloads"]:
-        reference_build, reference_binaries = build_reference_workload(
-            workload,
-            suite_root,
-            bundle_root,
-            toolchains,
-            float(manifest["methodology"]["build_timeout_seconds"]),
-            include_nomo_baseline=False,
-        )
+        try:
+            reference_build, reference_binaries = build_reference_workload(
+                workload,
+                suite_root,
+                bundle_root,
+                toolchains,
+                float(manifest["methodology"]["build_timeout_seconds"]),
+                include_nomo_baseline=False,
+            )
+        except WorkloadBuildError as error:
+            result["build_failures"].append(error.record)
+            result["status"] = "unavailable"
+            return result
         build_record: Dict[str, Any] = {"references": reference_build, "modes": {}}
         for build_mode in FORMAL_BUILD_MODES:
             if not mode_availability[build_mode]:
@@ -8958,26 +10448,31 @@ def run_prepare(
             binaries = dict(reference_binaries)
             mode_builds = {}
             for lane in ("candidate", "main"):
-                if build_mode == "release":
-                    formal_build, binary = build_release_lane(
-                        workload,
-                        suite_root,
-                        bundle_root,
-                        lane,
-                        release_lanes[lane],
-                        toolchains,
-                        build_timeout_seconds,
-                    )
-                else:
-                    formal_build, binary = build_emit_c_lane(
-                        workload,
-                        suite_root,
-                        bundle_root,
-                        lane,
-                        release_lanes[lane],
-                        toolchains,
-                        build_timeout_seconds,
-                    )
+                try:
+                    if build_mode == "release":
+                        formal_build, binary = build_release_lane(
+                            workload,
+                            suite_root,
+                            bundle_root,
+                            lane,
+                            release_lanes[lane],
+                            toolchains,
+                            build_timeout_seconds,
+                        )
+                    else:
+                        formal_build, binary = build_emit_c_lane(
+                            workload,
+                            suite_root,
+                            bundle_root,
+                            lane,
+                            release_lanes[lane],
+                            toolchains,
+                            build_timeout_seconds,
+                        )
+                except WorkloadBuildError as error:
+                    result["build_failures"].append(error.record)
+                    result["status"] = "unavailable"
+                    return result
                 mode_builds[lane] = formal_build
                 binaries[lane] = binary
             build_record["modes"][build_mode] = mode_builds
@@ -8999,7 +10494,7 @@ def run_measurement(
 ) -> Dict[str, Any]:
     if not arguments.prepared_bundle:
         raise HarnessError("measure requires --prepared-bundle")
-    bundle_root = Path(arguments.prepared_bundle).resolve()
+    bundle_root = lexical_absolute_path(Path(arguments.prepared_bundle))
     validate_output_outside_bundle(output_path, bundle_root)
     result = load_prepared_bundle(bundle_root)
     validate_result_schema(
@@ -9097,13 +10592,13 @@ def run_suite(arguments: argparse.Namespace) -> Tuple[Path, Dict[str, Any]]:
             )
         if v1.sha256_file(manifest_path) != EXPECTED_V2_MANIFEST_SHA:
             raise HarnessError("canonical v2 manifest digest changed")
-    manifest = v1.read_json(manifest_path)
+    manifest = read_json_strict(manifest_path)
     suite_root = manifest_path.parent
     validate_manifest(manifest, suite_root)
-    output_path = (
-        Path(arguments.output).resolve()
+    output_path = lexical_absolute_path(
+        Path(arguments.output)
         if arguments.output
-        else default_output_path(arguments.mode).resolve()
+        else default_output_path(arguments.mode)
     )
     require_new_evidence_destination(
         output_path,
@@ -9178,13 +10673,14 @@ def run_suite(arguments: argparse.Namespace) -> Tuple[Path, Dict[str, Any]]:
         result, suite_root / "schema" / "result-v2.schema.json"
     )
     validate_result(result, manifest)
-    if path_lexically_exists(output_path) or path_lexically_exists(
-        output_path.with_suffix(".log")
-    ):
-        raise HarnessError(
-            "result destination changed during the run; refusing to overwrite "
-            "existing evidence"
-        )
+    validate_lexical_path_chain(
+        output_path, "result output", final_kind="absent"
+    )
+    validate_lexical_path_chain(
+        output_path.with_suffix(".log"),
+        "result evidence log",
+        final_kind="absent",
+    )
     write_result_exclusive(output_path, result)
     write_evidence_log(output_path, result)
     return output_path, result
@@ -9235,8 +10731,15 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     parser.add_argument("--cargo", default="cargo")
     parser.add_argument(
         "--mode",
-        choices=("correctness", "prepare", "measure"),
+        choices=("correctness", "prepare", "measure", "validate"),
         default="correctness",
+    )
+    parser.add_argument(
+        "--artifact",
+        help=(
+            "result JSON or prepared bundle directory for offline, "
+            "cross-host validation"
+        ),
     )
     parser.add_argument("--candidate-checkout")
     parser.add_argument("--candidate-commit")
@@ -9249,9 +10752,45 @@ def parse_arguments(argv: Optional[Sequence[str]] = None) -> argparse.Namespace:
     return parser.parse_args(argv)
 
 
+def validate_artifact_offline(
+    artifact_argument: str, manifest_argument: str
+) -> Tuple[Path, Dict[str, Any]]:
+    artifact = lexical_absolute_path(Path(artifact_argument))
+    manifest_path = lexical_absolute_path(Path(manifest_argument))
+    manifest = read_json_strict(manifest_path)
+    validate_manifest(manifest, manifest_path.parent)
+    result = (
+        load_prepared_bundle(artifact)
+        if artifact.is_dir()
+        else read_json_strict(artifact)
+    )
+    validate_result_schema(
+        result, manifest_path.parent / "schema" / "result-v2.schema.json"
+    )
+    validate_result(result, manifest, offline_replay=True)
+    return artifact, result
+
+
 def main(argv: Optional[Sequence[str]] = None) -> int:
     try:
         arguments = parse_arguments(argv)
+        if arguments.mode == "validate":
+            if not arguments.artifact:
+                raise HarnessError(
+                    "offline validate requires --artifact JSON-or-bundle"
+                )
+            artifact_path_value, result = validate_artifact_offline(
+                arguments.artifact, arguments.manifest
+            )
+            print(f"validated {artifact_path_value}")
+            print(f"status: {result['status']}")
+            print(
+                "formal parity: "
+                f"{result['overall_verdict']}; "
+                f"claim_eligible="
+                f"{str(result['claims']['claim_eligible']).lower()}"
+            )
+            return 0
         output_path, result = run_suite(arguments)
     except HarnessError as error:
         print(f"benchmarksgame-v2: {error}", file=sys.stderr)

@@ -1,12 +1,18 @@
 use nomo::project::{
-    BuildError, DependencyResolutionOptions, Project, build_project_for_target_with_options,
-    build_project_with_options, check_project_with_persistent_cache, clean_project,
-    discover_project, discover_workspace, discover_workspace_for_target, project_package_id,
-    run_project_with_args_and_diagnostics, run_standalone_script_with_args_and_diagnostics,
+    BuildError, BuildProfile, DependencyResolutionOptions, Project, WorkspaceEvidenceSelection,
+    build_project_for_target_with_profile_options, build_project_with_profile_options,
+    check_project_with_persistent_cache, clean_project, clear_failed_workspace_build_metadata,
+    clear_requested_build_metadata, clear_workspace_project_build_metadata, discover_project,
+    discover_workspace, discover_workspace_for_target, project_package_id,
+    refresh_workspace_build_evidence_catalog, run_project_with_args_and_profile_and_diagnostics,
+    run_standalone_script_with_args_and_profile_and_diagnostics,
 };
 use nomo::target::TargetTriple;
 use std::env;
 use std::path::{Path, PathBuf};
+
+const BUILD_USAGE: &str = "usage: nomo build [path] [--target <triple>] [--release] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]";
+const RUN_USAGE: &str = "usage: nomo run [path] [--release] [--json-errors] [-- args...]";
 
 pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
     let (path, json, workspace) = parse_path_json_workspace(
@@ -36,21 +42,50 @@ pub(super) fn run_check_command(args: Vec<String>) -> Result<(), String> {
 }
 
 pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
-    let (path, emit_c, json, workspace, deps, target, target_explicit) = parse_build_args(
-        args,
-        "usage: nomo build [path] [--target <triple>] [--emit-c] [--json-errors] [--workspace] [--locked] [--offline] [--frozen]",
-    )?;
+    if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
+        println!("{BUILD_USAGE}");
+        return Ok(());
+    }
+    let (path, emit_c, json, workspace, deps, target, target_explicit, profile) =
+        parse_build_args(args, BUILD_USAGE)?;
     if workspace {
-        let workspace = if target_explicit {
-            discover_workspace_for_target(&path, &target)?
+        let discovered = if target_explicit {
+            discover_workspace_for_target(&path, &target)
         } else {
-            discover_workspace(&path)?
+            discover_workspace(&path)
         };
-        for project in workspace.members {
+        let workspace = match discovered {
+            Ok(workspace) => workspace,
+            Err(discovery_error) => {
+                let cleanup = clear_failed_workspace_build_metadata(
+                    &path,
+                    &target,
+                    target_explicit,
+                    profile,
+                    &WorkspaceEvidenceSelection::AllMembers,
+                );
+                return match cleanup {
+                    Ok(()) => Err(discovery_error),
+                    Err(cleanup_error) => {
+                        Err(format!("{discovery_error}\n{}", cleanup_error.human()))
+                    }
+                };
+            }
+        };
+        refresh_workspace_build_evidence_catalog(&workspace).map_err(|error| error.human())?;
+        let projects = workspace.members.clone();
+        clear_workspace_project_build_metadata(&projects, &target, target_explicit)
+            .map_err(|error| error.human())?;
+        if emit_c && profile == BuildProfile::Release {
+            return Err("`--release` and `--emit-c` cannot be used together".to_string());
+        }
+        for project in projects {
             let artifact = match if target_explicit {
-                build_project_for_target_with_options(&project, emit_c, deps, &target)
+                build_project_for_target_with_profile_options(
+                    &project, emit_c, deps, &target, profile,
+                )
             } else {
-                build_project_with_options(&project, emit_c, deps)
+                build_project_with_profile_options(&project, emit_c, deps, profile)
             } {
                 Ok(artifact) => artifact,
                 Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
@@ -59,11 +94,16 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
             println!("built {}", artifact.display());
         }
     } else {
+        clear_requested_build_metadata(&path, &target, target_explicit)
+            .map_err(|error| error.human())?;
+        if emit_c && profile == BuildProfile::Release {
+            return Err("`--release` and `--emit-c` cannot be used together".to_string());
+        }
         let project = discover_project(&path)?;
         let artifact = match if target_explicit {
-            build_project_for_target_with_options(&project, emit_c, deps, &target)
+            build_project_for_target_with_profile_options(&project, emit_c, deps, &target, profile)
         } else {
-            build_project_with_options(&project, emit_c, deps)
+            build_project_with_profile_options(&project, emit_c, deps, profile)
         } {
             Ok(artifact) => artifact,
             Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
@@ -75,15 +115,29 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
 }
 
 pub(super) fn run_run_command(args: Vec<String>) -> Result<(), String> {
-    let (path, program_args, json) = parse_run_args(args)?;
+    if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
+        println!("{RUN_USAGE}");
+        return Ok(());
+    }
+    let (path, program_args, json, profile) = parse_run_args(args)?;
+    let target = TargetTriple::host()?;
+    clear_requested_build_metadata(&path, &target, false).map_err(|error| error.human())?;
     let code = match discover_project(&path) {
-        Ok(project) => match run_project_with_args_and_diagnostics(&project, &program_args) {
+        Ok(project) => match run_project_with_args_and_profile_and_diagnostics(
+            &project,
+            &program_args,
+            profile,
+        ) {
             Ok(code) => code,
             Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
             Err(err) => return Err(err.human()),
         },
         Err(err) if is_nomo_source_file(&path) && is_missing_manifest_error(&err) => {
-            match run_standalone_script_with_args_and_diagnostics(&path, &program_args) {
+            match run_standalone_script_with_args_and_profile_and_diagnostics(
+                &path,
+                &program_args,
+                profile,
+            ) {
                 Ok(code) => code,
                 Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
                 Err(err) => return Err(err.human()),
@@ -143,6 +197,7 @@ pub(super) fn parse_build_args(
         DependencyResolutionOptions,
         TargetTriple,
         bool,
+        BuildProfile,
     ),
     String,
 > {
@@ -152,10 +207,18 @@ pub(super) fn parse_build_args(
     let mut deps = DependencyResolutionOptions::default();
     let mut target = None;
     let mut path = None;
+    let mut profile = BuildProfile::Debug;
+    let mut release_seen = false;
     let mut args = args.into_iter();
     while let Some(arg) = args.next() {
         if arg == "--emit-c" {
             emit_c = true;
+        } else if arg == "--release" {
+            if release_seen {
+                return Err("--release may only be specified once".to_string());
+            }
+            release_seen = true;
+            profile = BuildProfile::Release;
         } else if arg == "--json-errors" {
             json = true;
         } else if arg == "--workspace" {
@@ -188,6 +251,7 @@ pub(super) fn parse_build_args(
         deps,
         target.unwrap_or(TargetTriple::host()?),
         target_explicit,
+        profile,
     ))
 }
 
@@ -199,10 +263,14 @@ pub(super) fn parse_optional_path(args: Vec<String>, usage: &str) -> Result<Path
     }
 }
 
-pub(super) fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>, bool), String> {
+pub(super) fn parse_run_args(
+    args: Vec<String>,
+) -> Result<(PathBuf, Vec<String>, bool, BuildProfile), String> {
     let current_dir = || env::current_dir().map_err(|err| err.to_string());
     let mut path = None;
     let mut json = false;
+    let mut profile = BuildProfile::Debug;
+    let mut release_seen = false;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
         if arg == "--" {
@@ -210,18 +278,25 @@ pub(super) fn parse_run_args(args: Vec<String>) -> Result<(PathBuf, Vec<String>,
                 path.unwrap_or(current_dir()?),
                 args.into_iter().skip(index + 1).collect(),
                 json,
+                profile,
             ));
         }
         if arg == "--json-errors" {
             json = true;
+        } else if arg == "--release" {
+            if release_seen {
+                return Err("--release may only be specified once".to_string());
+            }
+            release_seen = true;
+            profile = BuildProfile::Release;
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
-            return Err("usage: nomo run [path] [--json-errors] [-- args...]".to_string());
+            return Err(RUN_USAGE.to_string());
         }
         index += 1;
     }
-    Ok((path.unwrap_or(current_dir()?), Vec::new(), json))
+    Ok((path.unwrap_or(current_dir()?), Vec::new(), json, profile))
 }
 
 pub(super) fn filter_projects_by_package(

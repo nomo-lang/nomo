@@ -62,6 +62,12 @@ files participate in package checksums, publish archives, and vendoring.
 and source dependencies; standalone script mode does not read a manifest and
 therefore does not use `[ffi]`.
 
+In `nomo test --release`, the generated harness and every FFI translation unit
+are compiled with Nomo's fixed C99 release flags before a separate link step.
+Raw `link_args` remain accepted at that link step and never replace the fixed
+compile optimization flags. Custom link arguments can be platform-specific and
+can make an artifact ineligible for a formal fixed-argv performance baseline.
+
 Target-specific native metadata uses restricted `arch`, `os`, and `env`
 selectors. Each selector accepts one string or a set of strings:
 

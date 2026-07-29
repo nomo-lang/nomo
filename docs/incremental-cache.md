@@ -7,13 +7,16 @@ must produce the same diagnostics and generated output as a clean invocation.
 
 ## Cached values
 
-The first persistent layer stores two conservative values:
+The first persistent layer stores conservative values for:
 
 - a successful `nomo check` result keyed by all project and dependency Nomo
   sources, relevant manifests, the host target, query schema, and toolchain
   version;
-- generated C from `nomo build`, keyed by the same source set plus the selected
-  target.
+- generated C from project build/run/emit-C commands, standalone `nomoc` and
+  script runs, and individual test harnesses, keyed by their complete source
+  inputs plus the selected target, `debug` or `release` profile,
+  the SHA-256 revision of the exact producer executable, pass-pipeline version,
+  and relevant native-toolchain configuration.
 
 Failed checks are not persisted. Linking still runs on every build, so the
 selected system or cross C toolchain remains authoritative for the final
@@ -62,6 +65,21 @@ configured capacity. `prune` is safe to run while other processes are using the
 cache because a missing entry is a normal miss. `clean` removes only the
 incremental cache. `nomo clean` remains scoped to generated build artifacts.
 
+Debug and release entries never alias. A cold debug build may warm only its
+debug key; a cold release build writes a distinct release key, and alternating
+profiles reuses only the matching entry. Incrementing the pass-pipeline version
+or changing a bound toolchain input forces a miss. The producer revision uses
+the executable bytes (`exe-sha256:<digest>`), not `CARGO_PKG_VERSION` or Git
+availability: copying identical bytes to another path keeps the key, while a
+one-byte producer change misses. Failure to read and hash the producer fails
+closed without publishing cache or build evidence.
+
+The public `nomo-build-metadata.json` document discloses the cache-key formula,
+ordered inputs, exact serialized `QueryKey`, and resulting key for the completed
+build. The disclosed key is passed directly from the compilation/cache lookup;
+metadata generation does not reread source files to derive a parallel key. See
+[Release Builds and Backend Provenance](release-builds.md).
+
 Set `NOMO_INCREMENTAL_TRACE=1` to print `hit`, `write`, and `corrupt` events to
 stderr for diagnostics and benchmark collection.
 
@@ -69,6 +87,7 @@ stderr for diagnostics and benchmark collection.
 
 The test suite compares persistent and clean checks across deterministic
 randomized edit sequences. CLI integration tests execute cold and warm cache
-paths in separate processes, corrupt an on-disk entry, verify automatic
-recovery, reject a stale success after a source edit, exercise persistent C
-codegen reuse, and force capacity eviction.
+paths in separate processes, alternate debug and release builds, validate a
+pipeline-version miss, corrupt an on-disk entry, verify automatic recovery,
+reject a stale success after a source edit, exercise persistent C codegen reuse,
+and force capacity eviction.

@@ -410,6 +410,7 @@ dependencies = [
  "nomo-test",
  "rcgen",
  "rustls",
+ "same-file",
  "serde",
  "serde_json",
  "sha2",

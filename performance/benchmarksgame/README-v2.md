@@ -33,9 +33,27 @@ The `release` mode uses the real `nomo build <project> --release` binary. That
 command must also emit `build/release-provenance.json`: a machine-readable,
 complete backend record whose Clang realpath, SHA-256, version, target triple,
 C99 compile argv, link argv, generated-C SHA, object SHA, and final binary SHA
-match the harness-selected toolchain and produced files. Missing or
-unverifiable metadata makes the release lane unavailable. The `emit-c` mode
-separately runs `nomo build <project> --emit-c`, hashes the
+match the harness-selected toolchain and produced files. It must additionally
+emit canonical strict JSON at `build/nomo-build-metadata.json`. The release
+record binds that file's raw SHA-256 and embedded schema-1 content, including
+`selected_profile=release`, the exact producer executable, target and compiler,
+the actual persistent QueryKey JSON/cache digest, complete compile/link argv,
+generated C, binary, release sidecar, and the independently recomputed framed
+content binding. Unknown or duplicate keys, non-canonical bytes, a stale
+producer/artifact, a candidate/main lane exchange, or any path/SHA mismatch
+makes the release lane unavailable. The prepared inventory content-addresses
+the original metadata bytes; offline replay recomputes its schema, QueryKey,
+cache digest, canonical subdocuments, and framed binding without consulting
+the reviewer host.
+
+The fixed, independently verified Nomo producer is the trust boundary for the
+fact that the recorded QueryKey is the key used by the compiler cache. The
+runner does not enlarge the authority bundle with every compiler/std source
+needed to derive the semantic fingerprint a second time; it instead validates
+the exact QueryKey bytes and every surrounding producer, profile, target,
+command, artifact, and content binding fail closed. Missing or unverifiable
+release evidence makes the lane unavailable. The `emit-c` mode separately runs
+`nomo build <project> --emit-c`, hashes the
 unmodified generated C, and compiles it with
 `clang --no-default-config -std=c99 -O3 -DNDEBUG -fomit-frame-pointer` plus
 `-lm` where required. Replay derives that link-library contract from the
@@ -194,7 +212,8 @@ Reference, baseline Nomo emit-C, formal candidate/main release, formal emit-C,
 and generated-C Clang preflight failures are retained as strict
 `build_failures` evidence. This includes both observable command failure and a
 command that exits zero without producing each exact expected binary,
-generated-C file, or mandatory release-provenance file. An absent target is
+generated-C file, mandatory release-provenance file, or canonical
+`nomo-build-metadata.json`. An absent target is
 recorded as `missing-output`; a directory, symlink, FIFO, or other non-regular
 target is `invalid-output`. Both retain the successful command record, expected
 lexical path, stdout/stderr, lane and phase, source identity, and a

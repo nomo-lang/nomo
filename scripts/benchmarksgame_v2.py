@@ -71,6 +71,40 @@ def write_canonical_json(path: Path, value: Dict[str, Any]) -> None:
     temporary.replace(path)
 
 
+def build_metadata_canonical_bytes(value: Dict[str, Any]) -> bytes:
+    return (
+        json.dumps(value, indent=2, sort_keys=True, ensure_ascii=False) + "\n"
+    ).encode("utf-8")
+
+
+def build_metadata_compact_json(value: Any) -> str:
+    return json.dumps(
+        value,
+        ensure_ascii=False,
+        separators=(",", ":"),
+        sort_keys=True,
+    )
+
+
+def read_build_metadata_strict(path: Path) -> Tuple[Dict[str, Any], bytes]:
+    try:
+        raw = path.read_bytes()
+    except OSError as error:
+        raise HarnessError(f"cannot read build metadata {path}: {error}") from error
+    try:
+        metadata = json.loads(
+            raw.decode("utf-8"),
+            object_pairs_hook=_strict_json_object,
+        )
+    except (UnicodeError, json.JSONDecodeError) as error:
+        raise HarnessError(f"cannot read build metadata {path}: {error}") from error
+    if not isinstance(metadata, dict):
+        raise HarnessError(f"build metadata root must be an object: {path}")
+    if raw != build_metadata_canonical_bytes(metadata):
+        raise HarnessError(f"build metadata is not canonical JSON: {path}")
+    return metadata, raw
+
+
 REPOSITORY_ROOT = Path(__file__).resolve().parents[1]
 DEFAULT_MANIFEST = (
     REPOSITORY_ROOT / "performance" / "benchmarksgame" / "manifest-v2.json"
@@ -118,6 +152,48 @@ BASE_CPP_FLAGS = (
     "-fomit-frame-pointer",
 )
 CLANG_DRIVER_CONFIG_FLAGS = ("--no-default-config",)
+BUILD_METADATA_SCHEMA = 1
+BUILD_METADATA_PRODUCER_SCHEMA = 1
+BUILD_METADATA_CACHE_SCHEMA = 1
+BUILD_METADATA_CONTENT_BINDING_SCHEMA = 1
+BUILD_METADATA_QUERY_SCHEMA = 1
+BUILD_METADATA_CACHE_INPUT_ORDER = (
+    "profile",
+    "target_triple",
+    "producer_executable_sha256",
+    "compiler_revision",
+    "runtime_revision",
+    "pass_pipeline_version",
+    "toolchain_config_version",
+    "toolchain_config",
+    "toolchain_config_sha256",
+    "query_schema",
+    "query_toolchain",
+    "query_target",
+    "query_namespace",
+    "query_identity",
+    "query_fingerprint",
+)
+BUILD_METADATA_CONTENT_INPUT_ORDER = (
+    "profile",
+    "target_triple",
+    "cache_key",
+    "producer_identity_sha256",
+    "compiler_identity_sha256",
+    "commands_sha256",
+    "generated_c_path",
+    "generated_c_sha256",
+    "binary_path",
+    "binary_sha256",
+    "release_provenance_path",
+    "release_provenance_sha256",
+)
+BUILD_METADATA_CONTENT_DOMAIN = "nomo-build-metadata-content-binding-v1"
+BUILD_METADATA_CACHE_FORMULA = "sha256(UTF-8 bytes of query_key_json)"
+BUILD_METADATA_CONTENT_FORMULA = (
+    "sha256(concat(u64be(length(utf8(part))), utf8(part)) for domain, "
+    "then each ordered input name and value)"
+)
 GO_BUILD_ENVIRONMENT_CONTRACT = {
     "GOENV": "off",
     "GOCACHE": "isolated-empty-per-build-removed-after-build",
@@ -5461,6 +5537,7 @@ def build_release_lane(
     binary = binary_path(project / "build" / "bin", project_name)
     generated_c = project / "build" / "c" / "main.c"
     backend_provenance_path = project / "build" / "release-provenance.json"
+    build_metadata_path = project / "build" / "nomo-build-metadata.json"
     require_absent_build_path(
         binary, f"{workload_id} {lane} release binary"
     )
@@ -5470,6 +5547,10 @@ def build_release_lane(
     require_absent_build_path(
         backend_provenance_path,
         f"{workload_id} {lane} release backend provenance",
+    )
+    require_absent_build_path(
+        build_metadata_path,
+        f"{workload_id} {lane} release build metadata",
     )
     command = [lane_state["nomo_path"], "build", str(project), "--release"]
     try:
@@ -5500,6 +5581,11 @@ def build_release_lane(
             "nomo-release-provenance",
             "release backend provenance",
         ),
+        (
+            build_metadata_path,
+            "nomo-release-metadata",
+            "release build metadata",
+        ),
     ):
         require_regular_workload_build_output(
             workload_id=workload_id,
@@ -5513,6 +5599,7 @@ def build_release_lane(
         )
         require_new_build_file(output, f"{workload_id} {lane} {label}")
     backend = read_json_strict(backend_provenance_path)
+    build_metadata, _ = read_build_metadata_strict(build_metadata_path)
     validate_release_backend_provenance(
         backend,
         generated_c.resolve(),
@@ -5522,7 +5609,7 @@ def build_release_lane(
         toolchains["clang"],
         Path(lane_state["checkout"]),
     )
-    return {
+    release_record = {
         "kind": "real-nomo-release",
         "lane": lane,
         "repository": lane_state["repository"],
@@ -5547,9 +5634,21 @@ def build_release_lane(
         "backend_provenance_path": str(backend_provenance_path.resolve()),
         "backend_provenance_sha256": v1.sha256_file(backend_provenance_path),
         "backend_provenance": backend,
+        "build_metadata_path": str(build_metadata_path.resolve()),
+        "build_metadata_sha256": v1.sha256_file(build_metadata_path),
+        "build_metadata": build_metadata,
         "compile_time_excluded_from_run_time": True,
         "emit_c_fallback_used": False,
-    }, binary.resolve()
+    }
+    validate_release_build_metadata(
+        build_metadata,
+        release_record,
+        lane_state,
+        toolchains,
+        platform.system(),
+        live_filesystem=True,
+    )
+    return release_record, binary.resolve()
 
 
 def validate_release_backend_provenance(
@@ -5652,6 +5751,347 @@ def validate_release_backend_provenance(
         reject_forbidden_compiler_flags(argv, f"{label} command {index}")
         if argv[0] != compiler["path"]:
             raise HarnessError(f"{label} command switched backend compiler")
+
+
+def nomo_target_matches_backend_target(
+    nomo_target: Any,
+    backend_target: Any,
+    recorded_host_os: str,
+) -> bool:
+    if not isinstance(nomo_target, str) or not isinstance(backend_target, str):
+        return False
+    nomo_match = re.fullmatch(
+        r"(x86_64|aarch64)-(apple-darwin-none|unknown-linux-gnu|pc-windows-msvc)",
+        nomo_target,
+    )
+    if nomo_match is None:
+        return False
+    nomo_arch, nomo_platform = nomo_match.groups()
+    backend = backend_target.lower()
+    backend_arch = backend.split("-", 1)[0]
+    if backend_arch == "arm64":
+        backend_arch = "aarch64"
+    if backend_arch != nomo_arch:
+        return False
+    if recorded_host_os == "Darwin":
+        return (
+            nomo_platform == "apple-darwin-none"
+            and re.fullmatch(
+                rf"(?:{nomo_arch}|arm64)-apple-darwin"
+                r"(?:[0-9]+(?:\.[0-9]+)*)?",
+                backend,
+            )
+            is not None
+        )
+    if recorded_host_os == "Linux":
+        return (
+            nomo_platform == "unknown-linux-gnu"
+            and backend == f"{nomo_arch}-unknown-linux-gnu"
+        )
+    if recorded_host_os == "Windows":
+        return (
+            nomo_platform == "pc-windows-msvc"
+            and backend == f"{nomo_arch}-pc-windows-msvc"
+        )
+    return False
+
+
+def validate_release_build_metadata(
+    metadata: Dict[str, Any],
+    release: Dict[str, Any],
+    lane_state: Dict[str, Any],
+    toolchains: Dict[str, Any],
+    recorded_host_os: str,
+    *,
+    live_filesystem: bool,
+) -> None:
+    workload_id = str(release.get("project", {}).get("source_relative_path", ""))
+    lane = str(release.get("lane", ""))
+    label = f"{workload_id or 'formal workload'} {lane} release build metadata"
+    expected_top_level = {
+        "schema",
+        "selected_profile",
+        "target_triple",
+        "producer_executable",
+        "cache_identity",
+        "content_binding",
+        "compiler",
+        "complete_argv",
+        "compile_commands",
+        "link_command",
+        "combined_compile_link_command",
+        "generated_c",
+        "binary",
+        "release_provenance",
+    }
+    if set(metadata) != expected_top_level:
+        raise HarnessError(f"{label} top-level schema changed")
+    if release.get("build_metadata_sha256") != v1.sha256_bytes(
+        build_metadata_canonical_bytes(metadata)
+    ):
+        raise HarnessError(f"{label} canonical raw-content digest changed")
+    if (
+        metadata.get("schema") != BUILD_METADATA_SCHEMA
+        or metadata.get("selected_profile") != "release"
+        or metadata.get("complete_argv") is not True
+        or metadata.get("combined_compile_link_command") is not None
+    ):
+        raise HarnessError(f"{label} is not a complete release-profile record")
+
+    backend = release.get("backend_provenance", {})
+    compiler = metadata.get("compiler")
+    expected_compiler = backend.get("compiler")
+    target_triple = metadata.get("target_triple")
+    if (
+        not isinstance(compiler, dict)
+        or compiler != expected_compiler
+        or compiler.get("target_triple")
+        != toolchains.get("clang", {}).get("target_triple")
+        or not nomo_target_matches_backend_target(
+            target_triple,
+            compiler.get("target_triple"),
+            recorded_host_os,
+        )
+        or metadata.get("compile_commands")
+        != backend.get("compile_commands")
+        or metadata.get("link_command") != backend.get("link_command")
+    ):
+        raise HarnessError(f"{label} compiler, target, or argv binding changed")
+
+    generated = {
+        "path": release.get("generated_c", {}).get("path"),
+        "sha256": release.get("generated_c", {}).get("sha256"),
+    }
+    binary = release.get("binary")
+    release_provenance = {
+        "path": release.get("backend_provenance_path"),
+        "sha256": release.get("backend_provenance_sha256"),
+    }
+    if (
+        metadata.get("generated_c") != generated
+        or metadata.get("binary") != binary
+        or metadata.get("release_provenance") != release_provenance
+        or backend.get("generated_c") != generated
+        or backend.get("binary") != binary
+    ):
+        raise HarnessError(f"{label} output or release-sidecar binding changed")
+
+    producer = metadata.get("producer_executable")
+    expected_producer_keys = {
+        "schema",
+        "path",
+        "realpath",
+        "sha256",
+        "size_bytes",
+        "package_version",
+    }
+    release_nomo = release.get("nomo", {})
+    if (
+        not isinstance(producer, dict)
+        or set(producer) != expected_producer_keys
+        or producer.get("schema") != BUILD_METADATA_PRODUCER_SCHEMA
+        or producer.get("path") != release_nomo.get("path")
+        or producer.get("sha256") != release_nomo.get("sha256")
+        or release_nomo
+        != {
+            "path": lane_state.get("nomo_path"),
+            "sha256": lane_state.get("nomo_sha256"),
+        }
+        or not artifact_path_is_absolute(
+            producer.get("path"), recorded_host_os
+        )
+        or not artifact_path_is_absolute(
+            producer.get("realpath"), recorded_host_os
+        )
+        or not isinstance(producer.get("size_bytes"), int)
+        or isinstance(producer.get("size_bytes"), bool)
+        or producer.get("size_bytes", 0) <= 0
+        or not isinstance(producer.get("package_version"), str)
+        or not producer.get("package_version")
+    ):
+        raise HarnessError(f"{label} producer identity changed")
+    if live_filesystem:
+        producer_path = Path(str(producer["path"]))
+        try:
+            producer_lstat = producer_path.lstat()
+        except OSError as error:
+            raise HarnessError(f"{label} producer is unavailable: {error}") from error
+        if (
+            not stat.S_ISREG(producer_lstat.st_mode)
+            or producer_path.resolve() != Path(str(producer["realpath"]))
+            or producer_lstat.st_size != producer["size_bytes"]
+            or v1.sha256_file(producer_path) != producer["sha256"]
+        ):
+            raise HarnessError(f"{label} live producer identity changed")
+
+    cache = metadata.get("cache_identity")
+    expected_cache_keys = {
+        "schema",
+        "algorithm",
+        "formula",
+        "input_order",
+        "inputs",
+        "cache_key",
+        "query_key",
+        "query_key_json",
+    }
+    query_keys = (
+        "schema",
+        "toolchain",
+        "target",
+        "namespace",
+        "identity",
+        "fingerprint",
+    )
+    if not isinstance(cache, dict) or set(cache) != expected_cache_keys:
+        raise HarnessError(f"{label} cache identity schema changed")
+    query_key = cache.get("query_key")
+    query_json = cache.get("query_key_json")
+    if (
+        cache.get("schema") != BUILD_METADATA_CACHE_SCHEMA
+        or cache.get("algorithm") != "sha256"
+        or cache.get("formula") != BUILD_METADATA_CACHE_FORMULA
+        or cache.get("input_order")
+        != list(BUILD_METADATA_CACHE_INPUT_ORDER)
+        or not isinstance(cache.get("inputs"), dict)
+        or set(cache["inputs"]) != set(BUILD_METADATA_CACHE_INPUT_ORDER)
+        or not isinstance(query_key, dict)
+        or set(query_key) != set(query_keys)
+        or not isinstance(query_json, str)
+    ):
+        raise HarnessError(f"{label} cache identity contract changed")
+    expected_query_json = json.dumps(
+        {key: query_key[key] for key in query_keys},
+        ensure_ascii=False,
+        separators=(",", ":"),
+    )
+    if (
+        query_json != expected_query_json
+        or cache.get("cache_key")
+        != v1.sha256_bytes(query_json.encode("utf-8"))
+        or query_key.get("schema") != BUILD_METADATA_QUERY_SCHEMA
+        or query_key.get("toolchain") != producer.get("package_version")
+        or query_key.get("target") != target_triple
+        or query_key.get("namespace") != "codegen-c"
+        or not isinstance(query_key.get("identity"), str)
+        or not query_key.get("identity")
+        or re.fullmatch(
+            r"sha256:[0-9a-f]{64}", str(query_key.get("fingerprint"))
+        )
+        is None
+    ):
+        raise HarnessError(f"{label} QueryKey or cache digest changed")
+    cache_inputs = cache["inputs"]
+    toolchain_config = cache_inputs.get("toolchain_config")
+    producer_sha = str(producer["sha256"])
+    toolchain_pattern = (
+        rf"profile-release:compiler-exe-sha256:{producer_sha}:"
+        rf"runtime-exe-sha256:{producer_sha}:pipeline-1:"
+        r"driver-[0-9a-f]{64}:cflags-[0-9a-f]{64}:"
+        r"sqlite-[^:]+:[0-9a-f]{64}:[0-9a-f]{64}:"
+        r"[0-9a-f]{64}:[0-9a-f]{64}"
+    )
+    expected_cache_inputs = {
+        "profile": "release",
+        "target_triple": str(target_triple),
+        "producer_executable_sha256": producer_sha,
+        "compiler_revision": f"exe-sha256:{producer_sha}",
+        "runtime_revision": f"exe-sha256:{producer_sha}",
+        "pass_pipeline_version": "1",
+        "toolchain_config_version": "1",
+        "toolchain_config": toolchain_config,
+        "toolchain_config_sha256": v1.sha256_bytes(
+            str(toolchain_config).encode("utf-8")
+        ),
+        "query_schema": str(query_key["schema"]),
+        "query_toolchain": str(query_key["toolchain"]),
+        "query_target": str(query_key["target"]),
+        "query_namespace": str(query_key["namespace"]),
+        "query_identity": str(query_key["identity"]),
+        "query_fingerprint": str(query_key["fingerprint"]),
+    }
+    if (
+        not isinstance(toolchain_config, str)
+        or re.fullmatch(toolchain_pattern, toolchain_config) is None
+        or not str(query_key["identity"]).endswith(toolchain_config)
+        or cache_inputs != expected_cache_inputs
+    ):
+        raise HarnessError(f"{label} cache inputs are not producer-bound")
+
+    content = metadata.get("content_binding")
+    expected_content_keys = {
+        "schema",
+        "algorithm",
+        "domain",
+        "formula",
+        "input_order",
+        "inputs",
+        "canonical_subdocuments",
+        "sha256",
+    }
+    commands_document = {
+        "compile_commands": metadata["compile_commands"],
+        "link_command": metadata["link_command"],
+        "combined_compile_link_command": metadata[
+            "combined_compile_link_command"
+        ],
+    }
+    expected_subdocuments = {
+        "producer_identity": build_metadata_compact_json(producer),
+        "compiler_identity": build_metadata_compact_json(compiler),
+        "commands": build_metadata_compact_json(commands_document),
+    }
+    if (
+        not isinstance(content, dict)
+        or set(content) != expected_content_keys
+        or content.get("schema") != BUILD_METADATA_CONTENT_BINDING_SCHEMA
+        or content.get("algorithm") != "sha256"
+        or content.get("domain") != BUILD_METADATA_CONTENT_DOMAIN
+        or content.get("formula") != BUILD_METADATA_CONTENT_FORMULA
+        or content.get("input_order")
+        != list(BUILD_METADATA_CONTENT_INPUT_ORDER)
+        or content.get("canonical_subdocuments") != expected_subdocuments
+        or not isinstance(content.get("inputs"), dict)
+        or set(content["inputs"]) != set(BUILD_METADATA_CONTENT_INPUT_ORDER)
+    ):
+        raise HarnessError(f"{label} content-binding schema changed")
+    expected_content_inputs = {
+        "profile": "release",
+        "target_triple": str(target_triple),
+        "cache_key": str(cache["cache_key"]),
+        "producer_identity_sha256": v1.sha256_bytes(
+            expected_subdocuments["producer_identity"].encode("utf-8")
+        ),
+        "compiler_identity_sha256": v1.sha256_bytes(
+            expected_subdocuments["compiler_identity"].encode("utf-8")
+        ),
+        "commands_sha256": v1.sha256_bytes(
+            expected_subdocuments["commands"].encode("utf-8")
+        ),
+        "generated_c_path": str(generated["path"]),
+        "generated_c_sha256": str(generated["sha256"]),
+        "binary_path": str(binary["path"]),
+        "binary_sha256": str(binary["sha256"]),
+        "release_provenance_path": str(release_provenance["path"]),
+        "release_provenance_sha256": str(release_provenance["sha256"]),
+    }
+    framed = bytearray()
+    for part in (
+        BUILD_METADATA_CONTENT_DOMAIN,
+        *(
+            component
+            for name in BUILD_METADATA_CONTENT_INPUT_ORDER
+            for component in (name, expected_content_inputs[name])
+        ),
+    ):
+        encoded = part.encode("utf-8")
+        framed.extend(len(encoded).to_bytes(8, "big"))
+        framed.extend(encoded)
+    if (
+        content["inputs"] != expected_content_inputs
+        or content.get("sha256") != v1.sha256_bytes(bytes(framed))
+    ):
+        raise HarnessError(f"{label} content binding changed")
 
 
 def build_emit_c_lane(
@@ -6986,6 +7426,33 @@ def validate_build_provenance(
                         f"{workload_id} {lane} release sidecar or object is "
                         "not project-bound"
                     )
+                metadata_path = release.get("build_metadata_path")
+                metadata = release.get("build_metadata")
+                if (
+                    not isinstance(metadata, dict)
+                    or not artifact_path_is_absolute(
+                        metadata_path, recorded_host_os
+                    )
+                    or artifact_path(metadata_path, recorded_host_os)
+                    != release_project / "build" / "nomo-build-metadata.json"
+                    or re.fullmatch(
+                        r"[0-9a-f]{64}",
+                        str(release.get("build_metadata_sha256")),
+                    )
+                    is None
+                ):
+                    raise HarnessError(
+                        f"{workload_id} {lane} release build metadata is "
+                        "not project-bound"
+                    )
+                validate_release_build_metadata(
+                    metadata,
+                    release,
+                    lane_state,
+                    toolchains,
+                    recorded_host_os,
+                    live_filesystem=False,
+                )
                 for index, backend_command in enumerate(
                     [
                         *backend.get("compile_commands", []),
@@ -7234,6 +7701,7 @@ def validate_build_failure_evidence(
               "nomo-release-binary",
               "nomo-release-generated-c",
               "nomo-release-provenance",
+              "nomo-release-metadata",
               "nomo-emit-c",
               "nomo-generated-c-clang",
           )),
@@ -7456,6 +7924,8 @@ def validate_build_failure_evidence(
             expected_output = generated_c
         elif phase == "nomo-release-provenance":
             expected_output = project / "build" / "release-provenance.json"
+        elif phase == "nomo-release-metadata":
+            expected_output = project / "build" / "nomo-build-metadata.json"
         elif phase == "nomo-emit-c":
             expected_output = generated_c
         else:
@@ -11019,6 +11489,10 @@ def validate_prepared_bundle_files(
     inventory_by_path = {
         item["path"]: item for item in inventory
     }
+    recorded_host_os = str(
+        result.get("provenance", {}).get("host", {}).get("os", "")
+    )
+    toolchains = result.get("provenance", {}).get("toolchains", {})
 
     def require_bundle_directory(path_value: Any, label: str) -> Path:
         if not isinstance(path_value, str):
@@ -11133,6 +11607,13 @@ def validate_prepared_bundle_files(
                         },
                         f"{workload_id} {lane} backend provenance",
                     )
+                    metadata_path = require_bundle_file(
+                        {
+                            "path": formal["build_metadata_path"],
+                            "sha256": formal["build_metadata_sha256"],
+                        },
+                        f"{workload_id} {lane} release build metadata",
+                    )
                     sidecar = read_json_strict(
                         Path(formal["backend_provenance_path"])
                     )
@@ -11141,6 +11622,26 @@ def validate_prepared_bundle_files(
                             f"{workload_id} {lane} embedded release backend "
                             "differs from its hashed sidecar"
                         )
+                    metadata, raw_metadata = read_build_metadata_strict(
+                        metadata_path
+                    )
+                    if (
+                        metadata != formal["build_metadata"]
+                        or v1.sha256_bytes(raw_metadata)
+                        != formal["build_metadata_sha256"]
+                    ):
+                        raise HarnessError(
+                            f"{workload_id} {lane} embedded release build "
+                            "metadata differs from its canonical file"
+                        )
+                    validate_release_build_metadata(
+                        metadata,
+                        formal,
+                        result["release_lanes"][lane],
+                        toolchains,
+                        recorded_host_os,
+                        live_filesystem=True,
+                    )
                     for index, object_file in enumerate(
                         formal["backend_provenance"]["objects"]
                     ):

@@ -90,6 +90,16 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 "required"
             ],
         )
+        self.assertTrue(
+            {
+                "build_metadata_path",
+                "build_metadata_sha256",
+                "build_metadata",
+            }.issubset(schema["$defs"]["releaseBuild"]["required"])
+        )
+        self.assertFalse(
+            schema["$defs"]["buildMetadata"]["additionalProperties"]
+        )
         self.assertIn("stability", schema["$defs"]["batch"]["required"])
         self.assertIn("evaluation", schema["$defs"]["batch"]["required"])
         predecessor = self.manifest["predecessor"]
@@ -3933,7 +3943,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             self.assertIsNotNone(target)
             target["environment"] = {"tampered": True}
             with self.assertRaisesRegex(
-                benchmark.HarnessError, "build environment"
+                benchmark.HarnessError, "build environment|metadata"
             ):
                 benchmark.validate_build_provenance(
                     changed, self.manifest
@@ -4620,6 +4630,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ("release", "binary", benchmark.build_release_lane),
             ("release", "generated-c", benchmark.build_release_lane),
             ("release", "provenance", benchmark.build_release_lane),
+            ("release", "metadata", benchmark.build_release_lane),
             ("emit-c", "generated-c", benchmark.build_emit_c_lane),
             ("emit-c", "binary", benchmark.build_emit_c_lane),
         )
@@ -4648,6 +4659,11 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                             destination
                             / "build"
                             / "release-provenance.json"
+                        ),
+                        "metadata": (
+                            destination
+                            / "build"
+                            / "nomo-build-metadata.json"
                         ),
                     }
                     stale = stale_paths[stale_kind]
@@ -4800,6 +4816,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                     "release-provenance": (
                         project / "build" / "release-provenance.json"
                     ),
+                    "release-metadata": (
+                        project / "build" / "nomo-build-metadata.json"
+                    ),
                 }
                 for output_stage, target in outputs.items():
                     materialize(
@@ -4899,6 +4918,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "release-binary": "nomo-release-binary",
             "release-generated-c": "nomo-release-generated-c",
             "release-provenance": "nomo-release-provenance",
+            "release-metadata": "nomo-release-metadata",
             "emit-generated-c": "nomo-emit-c",
             "emit-binary": "nomo-generated-c-clang",
         }[stage]
@@ -4931,6 +4951,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             "release-binary",
             "release-generated-c",
             "release-provenance",
+            "release-metadata",
             "emit-generated-c",
             "emit-binary",
         ):
@@ -4963,11 +4984,12 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             kinds.append("symlink")
         if hasattr(os, "mkfifo"):
             kinds.append("fifo")
-        for output_kind in kinds:
-            with self.subTest(output_kind=output_kind):
-                self.assert_formal_invalid_output_is_retained(
-                    "release-binary", output_kind
-                )
+        for stage in ("release-binary", "release-metadata"):
+            for output_kind in kinds:
+                with self.subTest(stage=stage, output_kind=output_kind):
+                    self.assert_formal_invalid_output_is_retained(
+                        stage, output_kind
+                    )
 
     def test_clang_driver_config_is_required_once_on_every_decisive_path(
         self,
@@ -6142,7 +6164,7 @@ print(json.dumps(
                 backend["compile_commands"][0]["argv"][0] = gcc
                 backend["link_command"]["argv"][0] = gcc
             elif mutation == "target":
-                backend["compiler"]["target_triple"] = "x86_64-unknown-linux-gnu"
+                backend["compiler"]["target_triple"] = "arm64-apple-darwin"
             else:
                 backend["compile_commands"][0]["argv"].remove("-O3")
             for record in [
@@ -6153,15 +6175,286 @@ print(json.dumps(
             with self.assertRaises(benchmark.HarnessError):
                 benchmark.validate_build_provenance(result, self.manifest)
 
+    def test_release_build_metadata_is_schema_strict_and_recomputed(self) -> None:
+        valid = self.completed_result()
+        benchmark.validate_result_schema(valid, self.result_schema_path)
+        benchmark.validate_build_provenance(
+            valid, self.manifest, live_filesystem=False
+        )
+        release = valid["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]
+        self.assertEqual(
+            self.build_metadata_bytes(release["build_metadata"]),
+            benchmark.build_metadata_canonical_bytes(
+                release["build_metadata"]
+            ),
+        )
+
+        for mutation in ("missing", "extra", "nested-extra"):
+            changed = copy.deepcopy(valid)
+            formal = changed["builds"]["spectral-norm"]["modes"][
+                "release"
+            ]["candidate"]
+            if mutation == "missing":
+                del formal["build_metadata"]
+            elif mutation == "extra":
+                formal["build_metadata"]["unapproved"] = True
+            else:
+                formal["build_metadata"]["cache_identity"][
+                    "unapproved"
+                ] = True
+            with self.subTest(schema=mutation), self.assertRaisesRegex(
+                benchmark.HarnessError, "Draft 2020-12 schema"
+            ):
+                benchmark.validate_result_schema(
+                    changed, self.result_schema_path
+                )
+
+        def mutate_profile(metadata: dict) -> None:
+            metadata["selected_profile"] = "debug"
+
+        def mutate_target(metadata: dict) -> None:
+            metadata["target_triple"] = "x86_64-apple-darwin-none"
+
+        def mutate_producer(metadata: dict) -> None:
+            metadata["producer_executable"]["sha256"] = "0" * 64
+
+        def mutate_query_json(metadata: dict) -> None:
+            metadata["cache_identity"]["query_key_json"] += " "
+
+        def mutate_cache_key(metadata: dict) -> None:
+            metadata["cache_identity"]["cache_key"] = "0" * 64
+
+        def mutate_cache_input(metadata: dict) -> None:
+            metadata["cache_identity"]["inputs"]["query_identity"] = "stale"
+
+        def mutate_compiler(metadata: dict) -> None:
+            metadata["compiler"]["path"] = self.fixture_path(
+                "tools", "other-clang"
+            )
+
+        def mutate_argv(metadata: dict) -> None:
+            metadata["compile_commands"][0]["argv"].append("-ffast-math")
+
+        def mutate_generated(metadata: dict) -> None:
+            metadata["generated_c"]["sha256"] = "0" * 64
+
+        def mutate_binary(metadata: dict) -> None:
+            metadata["binary"]["path"] = self.fixture_path("stale-binary")
+
+        def mutate_sidecar(metadata: dict) -> None:
+            metadata["release_provenance"]["sha256"] = "0" * 64
+
+        def mutate_subdocument(metadata: dict) -> None:
+            metadata["content_binding"]["canonical_subdocuments"][
+                "commands"
+            ] = "{}"
+
+        def mutate_binding(metadata: dict) -> None:
+            metadata["content_binding"]["sha256"] = "0" * 64
+
+        mutations = {
+            "profile": mutate_profile,
+            "target": mutate_target,
+            "producer": mutate_producer,
+            "query-json": mutate_query_json,
+            "cache-key": mutate_cache_key,
+            "cache-input": mutate_cache_input,
+            "compiler": mutate_compiler,
+            "argv": mutate_argv,
+            "generated-c": mutate_generated,
+            "binary": mutate_binary,
+            "sidecar": mutate_sidecar,
+            "canonical-subdocument": mutate_subdocument,
+            "content-binding": mutate_binding,
+        }
+        for label, mutation in mutations.items():
+            changed = copy.deepcopy(valid)
+            changed_release = changed["builds"]["spectral-norm"]["modes"][
+                "release"
+            ]["candidate"]
+            metadata = changed_release["build_metadata"]
+            mutation(metadata)
+            changed_release["build_metadata_sha256"] = v1.sha256_bytes(
+                self.build_metadata_bytes(metadata)
+            )
+            with self.subTest(binding=label), self.assertRaises(
+                benchmark.HarnessError
+            ):
+                benchmark.validate_build_provenance(
+                    changed,
+                    self.manifest,
+                    live_filesystem=False,
+                )
+
+    def test_release_metadata_target_binds_nomo_and_backend_domains(self) -> None:
+        valid = (
+            ("aarch64-apple-darwin-none", "arm64-apple-darwin25.5.0", "Darwin"),
+            (
+                "aarch64-apple-darwin-none",
+                "aarch64-apple-darwin25.5.0",
+                "Darwin",
+            ),
+            ("x86_64-apple-darwin-none", "x86_64-apple-darwin24.6.0", "Darwin"),
+            ("x86_64-unknown-linux-gnu", "x86_64-unknown-linux-gnu", "Linux"),
+            ("aarch64-unknown-linux-gnu", "aarch64-unknown-linux-gnu", "Linux"),
+            ("x86_64-pc-windows-msvc", "x86_64-pc-windows-msvc", "Windows"),
+            ("aarch64-pc-windows-msvc", "aarch64-pc-windows-msvc", "Windows"),
+        )
+        for nomo_target, backend_target, host_os in valid:
+            with self.subTest(
+                nomo=nomo_target, backend=backend_target, host=host_os
+            ):
+                self.assertTrue(
+                    benchmark.nomo_target_matches_backend_target(
+                        nomo_target, backend_target, host_os
+                    )
+                )
+        for nomo_target, backend_target, host_os in (
+            ("aarch64-apple-darwin-none", "x86_64-apple-darwin25.5.0", "Darwin"),
+            ("aarch64-apple-darwin-none", "arm64-apple-darwin25.5.0", "Linux"),
+            ("x86_64-unknown-linux-gnu", "x86_64-pc-windows-msvc", "Linux"),
+            ("x86_64-pc-windows-msvc", "x86_64-pc-windows-msvc", "Darwin"),
+            ("arm64-apple-darwin-none", "arm64-apple-darwin25.5.0", "Darwin"),
+            ("aarch64-apple-darwin-none", "arm64-apple-darwin.", "Darwin"),
+            ("aarch64-apple-darwin-none", "arm64-apple-darwin25..5", "Darwin"),
+            (
+                "x86_64-unknown-linux-gnu",
+                "x86_64-unknown-linux-gnu6.8",
+                "Linux",
+            ),
+            (
+                "x86_64-pc-windows-msvc",
+                "x86_64-pc-windows-msvc19",
+                "Windows",
+            ),
+            (
+                "aarch64-unknown-linux-gnu",
+                "arm64-unknown-linux-gnu",
+                "Linux",
+            ),
+            (
+                "aarch64-pc-windows-msvc",
+                "arm64-pc-windows-msvc",
+                "Windows",
+            ),
+        ):
+            with self.subTest(
+                nomo=nomo_target, backend=backend_target, host=host_os
+            ):
+                self.assertFalse(
+                    benchmark.nomo_target_matches_backend_target(
+                        nomo_target, backend_target, host_os
+                    )
+                )
+
+    def test_release_build_metadata_rejects_stale_and_lane_exchange(self) -> None:
+        valid = self.completed_result()
+        workload = valid["builds"]["spectral-norm"]["modes"]["release"]
+
+        exchanged = copy.deepcopy(valid)
+        exchanged_workload = exchanged["builds"]["spectral-norm"]["modes"][
+            "release"
+        ]
+        exchanged_workload["candidate"]["build_metadata"] = copy.deepcopy(
+            exchanged_workload["main"]["build_metadata"]
+        )
+        exchanged_workload["candidate"]["build_metadata_sha256"] = (
+            exchanged_workload["main"]["build_metadata_sha256"]
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "producer identity|binding"
+        ):
+            benchmark.validate_build_provenance(
+                exchanged, self.manifest, live_filesystem=False
+            )
+
+        stale = copy.deepcopy(valid)
+        candidate = stale["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]
+        candidate["binary"]["sha256"] = "f" * 64
+        candidate["backend_provenance"]["binary"] = copy.deepcopy(
+            candidate["binary"]
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "output or release-sidecar binding"
+        ):
+            benchmark.validate_build_provenance(
+                stale, self.manifest, live_filesystem=False
+            )
+
+        self.assertNotEqual(
+            workload["candidate"]["build_metadata"]["content_binding"][
+                "sha256"
+            ],
+            workload["main"]["build_metadata"]["content_binding"]["sha256"],
+        )
+
+    def test_prepared_release_metadata_raw_bytes_are_authoritative(self) -> None:
+        result, bundle = self.prepared_bundle_fixture()
+        formal = result["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]
+        metadata_path = Path(formal["build_metadata_path"])
+        canonical = metadata_path.read_bytes()
+        self.assertEqual(
+            canonical,
+            benchmark.build_metadata_canonical_bytes(
+                formal["build_metadata"]
+            ),
+        )
+
+        mutations = {
+            "noncanonical": (
+                json.dumps(
+                    formal["build_metadata"],
+                    indent=4,
+                    sort_keys=True,
+                    ensure_ascii=False,
+                )
+                + "\n"
+            ).encode("utf-8"),
+            "duplicate": canonical.replace(
+                b"{\n", b'{\n  "schema": 1,\n', 1
+            ),
+        }
+        for label, raw in mutations.items():
+            with self.subTest(raw=label):
+                metadata_path.write_bytes(raw)
+                changed = copy.deepcopy(result)
+                changed_formal = changed["builds"]["spectral-norm"]["modes"][
+                    "release"
+                ]["candidate"]
+                changed_formal["build_metadata_sha256"] = v1.sha256_bytes(
+                    raw
+                )
+                inventory = benchmark.prepared_file_inventory(bundle)
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError,
+                    "canonical JSON|duplicate JSON object key",
+                ):
+                    benchmark.validate_prepared_bundle_files(
+                        changed, bundle, inventory
+                    )
+                metadata_path.write_bytes(canonical)
+
+        metadata_path.write_bytes(canonical.replace(b'"release"', b'"debug"', 1))
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "added, removed, or changed"
+        ):
+            benchmark.load_prepared_bundle(bundle)
+
     def test_windows_exact_argv_does_not_expect_libm(self) -> None:
-        result = self.completed_result()
-        result["provenance"]["host"]["os"] = "Windows"
+        result = self.project_result_to_producer_os(
+            self.completed_result(), "Windows"
+        )
         for workload_id in ("spectral-norm", "n-body"):
             build = result["builds"][workload_id]
             for name in ("c_build", "cpp_build", "semantic-c_build"):
                 record = build["references"]["commands"][name]
-                record["argv"].remove("-lm")
-                record["command"] = v1.command_text(record["argv"])
+                self.assertNotIn("-lm", record["argv"])
             for mode in benchmark.FORMAL_BUILD_MODES:
                 for lane in ("candidate", "main"):
                     formal = build["modes"][mode][lane]
@@ -6170,16 +6463,10 @@ print(json.dumps(
                     else:
                         records = [formal["backend_provenance"]["link_command"]]
                     for record in records:
-                        record["argv"].remove("-lm")
-                        record["command"] = v1.command_text(record["argv"])
-        with mock.patch.object(
-            benchmark,
-            "artifact_path",
-            side_effect=lambda value, _host_os: benchmark.PurePosixPath(
-                str(value)
-            ),
-        ):
-            benchmark.validate_build_provenance(result, self.manifest)
+                        self.assertNotIn("-lm", record["argv"])
+        benchmark.validate_build_provenance(
+            result, self.manifest, live_filesystem=False
+        )
 
     def test_same_recorded_build_evidence_replays_on_every_reviewer(
         self,
@@ -6889,6 +7176,7 @@ print(json.dumps(
                 cwd=formal["emit_command"]["cwd"],
             )
             formal["clang_command"]["environment"] = previous_environment
+        self.rebind_release_metadata(result)
         return binary
 
     def real_failed_partial_workload(
@@ -7336,6 +7624,22 @@ print(json.dumps(
         projected["provenance"]["host"]["architecture"] = (
             "arm64" if producer_os == "Darwin" else "x86_64"
         )
+        backend_target = {
+            "Darwin": "arm64-apple-darwin25.0.0",
+            "Linux": "x86_64-unknown-linux-gnu",
+            "Windows": "x86_64-pc-windows-msvc",
+        }[producer_os]
+        for compiler_name in ("clang", "clangxx"):
+            projected["provenance"]["toolchains"][compiler_name][
+                "target_triple"
+            ] = backend_target
+        for build in projected.get("builds", {}).values():
+            for formal in build.get("modes", {}).get(
+                "release", {}
+            ).values():
+                backend = formal.get("backend_provenance")
+                if isinstance(backend, dict):
+                    backend["compiler"]["target_triple"] = backend_target
         projected["provenance"]["collector"] = (
             benchmark.collector_descriptor_for_host(producer_os)
         )
@@ -7457,8 +7761,31 @@ print(json.dumps(
         self.bind_build_command_environments(
             projected, build_projection
         )
+        self.rebind_release_metadata(projected)
         self.bind_runtime_environments(projected, runtime)
         return projected
+
+    def rebind_release_metadata(self, result: dict) -> None:
+        for build in result.get("builds", {}).values():
+            for formal in build.get("modes", {}).get(
+                "release", {}
+            ).values():
+                if formal.get("kind") != "real-nomo-release":
+                    continue
+                previous = formal.get("build_metadata", {})
+                producer_size = (
+                    previous.get("producer_executable", {}).get(
+                        "size_bytes", 1
+                    )
+                )
+                metadata = self.release_build_metadata(
+                    formal,
+                    producer_size_bytes=producer_size,
+                )
+                formal["build_metadata"] = metadata
+                formal["build_metadata_sha256"] = v1.sha256_bytes(
+                    self.build_metadata_bytes(metadata)
+                )
 
     def synthetic_linux_runtime_environments(self) -> dict:
         default = {
@@ -8238,7 +8565,7 @@ print(json.dumps(
             "compile_time_excluded_from_run_time": True,
         }
         if build_mode == "release":
-            return {
+            release = {
                 **base,
                 "kind": "real-nomo-release",
                 "command": self.full_command(
@@ -8259,6 +8586,15 @@ print(json.dumps(
                 ),
                 "emit_c_fallback_used": False,
             }
+            metadata = self.release_build_metadata(release)
+            release["build_metadata_path"] = (
+                f"{project}/build/nomo-build-metadata.json"
+            )
+            release["build_metadata_sha256"] = v1.sha256_bytes(
+                self.build_metadata_bytes(metadata)
+            )
+            release["build_metadata"] = metadata
+            return release
         return {
             **base,
             "kind": "nomo-emit-c-clang",
@@ -8298,6 +8634,230 @@ print(json.dumps(
             "release_artifact_reused": False,
         }
 
+    @staticmethod
+    def build_metadata_bytes(metadata: dict) -> bytes:
+        return (
+            json.dumps(
+                metadata,
+                indent=2,
+                sort_keys=True,
+                ensure_ascii=False,
+            )
+            + "\n"
+        ).encode("utf-8")
+
+    def release_build_metadata(
+        self,
+        release: dict,
+        *,
+        producer_size_bytes: int = 1,
+    ) -> dict:
+        producer_sha = release["nomo"]["sha256"]
+        producer = {
+            "schema": 1,
+            "path": release["nomo"]["path"],
+            "realpath": release["nomo"]["path"],
+            "sha256": producer_sha,
+            "size_bytes": producer_size_bytes,
+            "package_version": "0.0.0-fixture",
+        }
+        backend_target = release["backend_provenance"]["compiler"][
+            "target_triple"
+        ]
+        if backend_target.startswith(("arm64-", "aarch64-apple-")):
+            target = "aarch64-apple-darwin-none"
+        elif backend_target.startswith("x86_64-apple-"):
+            target = "x86_64-apple-darwin-none"
+        elif backend_target.startswith("aarch64-unknown-linux-gnu"):
+            target = "aarch64-unknown-linux-gnu"
+        elif backend_target.startswith("x86_64-unknown-linux-gnu"):
+            target = "x86_64-unknown-linux-gnu"
+        elif backend_target.startswith("aarch64-pc-windows-msvc"):
+            target = "aarch64-pc-windows-msvc"
+        elif backend_target.startswith("x86_64-pc-windows-msvc"):
+            target = "x86_64-pc-windows-msvc"
+        else:
+            raise AssertionError(
+                f"unsupported fixture backend target: {backend_target}"
+            )
+        toolchain_config = (
+            "profile-release:"
+            f"compiler-exe-sha256:{producer_sha}:"
+            f"runtime-exe-sha256:{producer_sha}:"
+            "pipeline-1:"
+            f"driver-{'1' * 64}:"
+            f"cflags-{'2' * 64}:"
+            f"sqlite-3.50.4:{'3' * 64}:{'4' * 64}:{'5' * 64}:{'6' * 64}"
+        )
+        query_key = {
+            "schema": 1,
+            "toolchain": producer["package_version"],
+            "target": target,
+            "namespace": "codegen-c",
+            "identity": f"project-fixture:{toolchain_config}",
+            "fingerprint": f"sha256:{'7' * 64}",
+        }
+        query_json = json.dumps(
+            query_key,
+            ensure_ascii=False,
+            separators=(",", ":"),
+        )
+        cache_input_order = (
+            "profile",
+            "target_triple",
+            "producer_executable_sha256",
+            "compiler_revision",
+            "runtime_revision",
+            "pass_pipeline_version",
+            "toolchain_config_version",
+            "toolchain_config",
+            "toolchain_config_sha256",
+            "query_schema",
+            "query_toolchain",
+            "query_target",
+            "query_namespace",
+            "query_identity",
+            "query_fingerprint",
+        )
+        cache_inputs = {
+            "profile": "release",
+            "target_triple": target,
+            "producer_executable_sha256": producer_sha,
+            "compiler_revision": f"exe-sha256:{producer_sha}",
+            "runtime_revision": f"exe-sha256:{producer_sha}",
+            "pass_pipeline_version": "1",
+            "toolchain_config_version": "1",
+            "toolchain_config": toolchain_config,
+            "toolchain_config_sha256": v1.sha256_bytes(
+                toolchain_config.encode("utf-8")
+            ),
+            "query_schema": "1",
+            "query_toolchain": query_key["toolchain"],
+            "query_target": query_key["target"],
+            "query_namespace": query_key["namespace"],
+            "query_identity": query_key["identity"],
+            "query_fingerprint": query_key["fingerprint"],
+        }
+        cache = {
+            "schema": 1,
+            "algorithm": "sha256",
+            "formula": "sha256(UTF-8 bytes of query_key_json)",
+            "input_order": list(cache_input_order),
+            "inputs": cache_inputs,
+            "cache_key": v1.sha256_bytes(query_json.encode("utf-8")),
+            "query_key": query_key,
+            "query_key_json": query_json,
+        }
+        compiler = copy.deepcopy(release["backend_provenance"]["compiler"])
+        compile_commands = copy.deepcopy(
+            release["backend_provenance"]["compile_commands"]
+        )
+        link_command = copy.deepcopy(
+            release["backend_provenance"]["link_command"]
+        )
+        generated = {
+            "path": release["generated_c"]["path"],
+            "sha256": release["generated_c"]["sha256"],
+        }
+        binary = copy.deepcopy(release["binary"])
+        sidecar = {
+            "path": release["backend_provenance_path"],
+            "sha256": release["backend_provenance_sha256"],
+        }
+        commands_document = {
+            "compile_commands": compile_commands,
+            "link_command": link_command,
+            "combined_compile_link_command": None,
+        }
+
+        def compact(value) -> str:
+            return json.dumps(
+                value,
+                ensure_ascii=False,
+                separators=(",", ":"),
+                sort_keys=True,
+            )
+
+        subdocuments = {
+            "producer_identity": compact(producer),
+            "compiler_identity": compact(compiler),
+            "commands": compact(commands_document),
+        }
+        content_input_order = (
+            "profile",
+            "target_triple",
+            "cache_key",
+            "producer_identity_sha256",
+            "compiler_identity_sha256",
+            "commands_sha256",
+            "generated_c_path",
+            "generated_c_sha256",
+            "binary_path",
+            "binary_sha256",
+            "release_provenance_path",
+            "release_provenance_sha256",
+        )
+        content_inputs = {
+            "profile": "release",
+            "target_triple": target,
+            "cache_key": cache["cache_key"],
+            "producer_identity_sha256": v1.sha256_bytes(
+                subdocuments["producer_identity"].encode("utf-8")
+            ),
+            "compiler_identity_sha256": v1.sha256_bytes(
+                subdocuments["compiler_identity"].encode("utf-8")
+            ),
+            "commands_sha256": v1.sha256_bytes(
+                subdocuments["commands"].encode("utf-8")
+            ),
+            "generated_c_path": generated["path"],
+            "generated_c_sha256": generated["sha256"],
+            "binary_path": binary["path"],
+            "binary_sha256": binary["sha256"],
+            "release_provenance_path": sidecar["path"],
+            "release_provenance_sha256": sidecar["sha256"],
+        }
+        framed = bytearray()
+        for part in (
+            "nomo-build-metadata-content-binding-v1",
+            *(
+                component
+                for name in content_input_order
+                for component in (name, content_inputs[name])
+            ),
+        ):
+            encoded = part.encode("utf-8")
+            framed.extend(len(encoded).to_bytes(8, "big"))
+            framed.extend(encoded)
+        return {
+            "schema": 1,
+            "selected_profile": "release",
+            "target_triple": target,
+            "producer_executable": producer,
+            "cache_identity": cache,
+            "content_binding": {
+                "schema": 1,
+                "algorithm": "sha256",
+                "domain": "nomo-build-metadata-content-binding-v1",
+                "formula": (
+                    "sha256(concat(u64be(length(utf8(part))), utf8(part)) "
+                    "for domain, then each ordered input name and value)"
+                ),
+                "input_order": list(content_input_order),
+                "inputs": content_inputs,
+                "canonical_subdocuments": subdocuments,
+                "sha256": v1.sha256_bytes(bytes(framed)),
+            },
+            "compiler": compiler,
+            "complete_argv": True,
+            "compile_commands": compile_commands,
+            "link_command": link_command,
+            "combined_compile_link_command": None,
+            "generated_c": generated,
+            "binary": binary,
+            "release_provenance": sidecar,
+        }
+
     def release_backend(
         self, workload_id: str, generated_c: str, binary: dict, lane: str
     ) -> dict:
@@ -8310,7 +8870,7 @@ print(json.dumps(
             "realpath": self.fixture_path("tools", "clang"),
             "sha256": "9" * 64,
             "version_output": "Apple clang version 21.0.0",
-            "target_triple": "arm64-apple-darwin",
+            "target_triple": "x86_64-unknown-linux-gnu",
         }
         return {
             "schema": 1,
@@ -8670,7 +9230,7 @@ print(json.dumps(
                 "version": "21.0.0",
                 "version_output": "Apple clang version 21.0.0",
                 "installation": self.fixture_path("tools"),
-                "target_triple": "arm64-apple-darwin",
+                "target_triple": "x86_64-unknown-linux-gnu",
                 "driver_config_flags": list(
                     benchmark.CLANG_DRIVER_CONFIG_FLAGS
                 ),
@@ -8689,7 +9249,7 @@ print(json.dumps(
                 "version": "21.0.0",
                 "version_output": "Apple clang version 21.0.0",
                 "installation": self.fixture_path("tools"),
-                "target_triple": "arm64-apple-darwin",
+                "target_triple": "x86_64-unknown-linux-gnu",
                 "driver_config_flags": list(
                     benchmark.CLANG_DRIVER_CONFIG_FLAGS
                 ),
@@ -8779,6 +9339,7 @@ print(json.dumps(
         }
         result = self.project_windows_paths_as_linux_artifact(result)
         self.bind_synthetic_build_environment(result)
+        self.rebind_release_metadata(result)
         self.bind_synthetic_runtime_environments(result)
         result["provenance"]["environment_qualification"] = (
             benchmark.environment_qualification(
@@ -8836,6 +9397,7 @@ print(json.dumps(
         result["provenance"]["prepared_bundle_sha256"] = "e" * 64
         result = self.project_windows_paths_as_linux_artifact(result)
         self.bind_synthetic_build_environment(result)
+        self.rebind_release_metadata(result)
         self.bind_synthetic_runtime_environments(result)
         bindings = benchmark.qualification_bindings(
             result["provenance"]["host"],
@@ -9278,6 +9840,25 @@ print(json.dumps(
                         )
                         formal["backend_provenance_sha256"] = v1.sha256_file(
                             provenance_path
+                        )
+                        metadata = self.release_build_metadata(
+                            formal,
+                            producer_size_bytes=Path(
+                                state["nomo_path"]
+                            ).stat().st_size,
+                        )
+                        metadata_path = (
+                            project / "build" / "nomo-build-metadata.json"
+                        )
+                        metadata_path.write_bytes(
+                            self.build_metadata_bytes(metadata)
+                        )
+                        formal["build_metadata"] = metadata
+                        formal["build_metadata_path"] = str(
+                            metadata_path.resolve()
+                        )
+                        formal["build_metadata_sha256"] = v1.sha256_file(
+                            metadata_path
                         )
                     else:
                         formal["emit_command"] = self.full_command(

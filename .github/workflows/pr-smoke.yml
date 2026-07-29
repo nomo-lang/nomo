@@ -146,6 +146,35 @@ jobs:
           path: performance/results/async-p3.json
           if-no-files-found: error
 
+  linux-cross-release:
+    name: Build release with the configured arm64 GNU driver
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Install arm64 GNU toolchain and QEMU
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes gcc-aarch64-linux-gnu qemu-user
+      - name: Build the release compiler
+        run: cargo build --locked --release --bin nomo
+      - name: Link, validate, and execute an arm64 release artifact
+        shell: bash
+        run: |
+          target/release/nomo build examples/result_helpers \
+            --release --target aarch64-unknown-linux-gnu
+          build_dir="examples/result_helpers/build/aarch64-unknown-linux-gnu"
+          artifact="$build_dir/bin/result_helpers"
+          metadata="$build_dir/nomo-build-metadata.json"
+          provenance="$build_dir/release-provenance.json"
+          grep '"selected_profile": "release"' "$metadata"
+          grep '"target_triple": "aarch64-unknown-linux-gnu"' "$metadata"
+          grep 'aarch64-linux-gnu-gcc' "$metadata"
+          grep '"complete_argv": true' "$provenance"
+          readelf -h "$artifact" | grep 'Machine:.*AArch64'
+          file "$artifact" | grep 'ELF 64-bit.*ARM aarch64'
+          qemu-aarch64 -L /usr/aarch64-linux-gnu "$artifact"
+
   windows-host-runtime:
     name: Run native host runtimes on Windows
     runs-on: windows-2022

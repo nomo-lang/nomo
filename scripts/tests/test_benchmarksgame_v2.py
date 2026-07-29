@@ -2205,7 +2205,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
     def test_release_capable_driver_does_not_create_correctness_release_lanes(
         self,
     ) -> None:
-        fixture = self.correctness_only_result()
+        fixture = self.project_result_to_producer_os(
+            self.correctness_only_result(), platform.system()
+        )
         toolchains = fixture["provenance"]["toolchains"]
         collector = mock.Mock()
         collector.descriptor.return_value = fixture["provenance"]["collector"]
@@ -2226,6 +2228,7 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             ),
         }
         output = Path(self.temporary.name) / "release-capable-correctness.json"
+        manifest_path = self.manifest_path.resolve()
         with mock.patch.object(
             benchmark,
             "release_capability",
@@ -2242,8 +2245,8 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             result = benchmark.run_correctness(
                 Namespace(),
                 self.manifest,
-                self.manifest_path,
-                self.suite_root,
+                manifest_path,
+                manifest_path.parent,
                 output,
                 fixture["provenance"]["repository"],
                 toolchains,
@@ -2252,6 +2255,16 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             )
 
         capability_probe.assert_not_called()
+        self.assertEqual(result["provenance"]["host"]["os"], platform.system())
+        self.assertEqual(
+            result["provenance"]["manifest_path"], str(manifest_path)
+        )
+        self.assertTrue(
+            benchmark.artifact_path_is_absolute(
+                result["provenance"]["manifest_path"],
+                result["provenance"]["host"]["os"],
+            )
+        )
         self.assertEqual(result["status"], "correctness-only")
         self.assertFalse(result["claims"]["claim_eligible"])
         self.assertEqual(result["overall_verdict"], "not_evaluated")

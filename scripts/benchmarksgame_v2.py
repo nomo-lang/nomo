@@ -10710,7 +10710,6 @@ def run_correctness(
     collector: ProcessCollector,
     host: Dict[str, Any],
 ) -> Dict[str, Any]:
-    current_capability = release_capability(Path(toolchains["nomo"]["path"]), "current")
     release_lanes = {
         "candidate": {
             "label": "candidate",
@@ -10719,8 +10718,10 @@ def run_correctness(
             "emit_c_fallback_used": False,
         },
         "main": {
-            **current_capability,
             "label": "main",
+            "status": "unavailable",
+            "reason": "formal main was not supplied in correctness-only mode",
+            "emit_c_fallback_used": False,
         },
     }
     qualification = environment_qualification(

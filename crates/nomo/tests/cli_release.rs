@@ -1528,6 +1528,8 @@ fn main() {
     let maximum: i64 = math.max(minimum, 20)
     if maximum < 0 {
         panic("unreachable")
+    } else {
+        void
     }
 }
 "#;

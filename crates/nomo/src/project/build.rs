@@ -1603,10 +1603,8 @@ fn ensure_safe_child_directory(parent: &Path, name: &str) -> Result<PathBuf, Bui
 }
 
 fn reject_existing_symlink_or_reparse_components(path: &Path) -> Result<(), BuildError> {
-    let mut cursor = PathBuf::new();
-    for component in path.components() {
-        cursor.push(component.as_os_str());
-        match fs::symlink_metadata(&cursor) {
+    visit_complete_path_components(path, |cursor| {
+        match fs::symlink_metadata(cursor) {
             Ok(metadata) if metadata_is_symlink_or_reparse(&metadata) => {
                 return Err(BuildError::Message(format!(
                     "refusing symlink or reparse-point path component: {}",
@@ -1622,6 +1620,24 @@ fn reject_existing_symlink_or_reparse_components(path: &Path) -> Result<(), Buil
                 )));
             }
         }
+        Ok(())
+    })
+}
+
+fn visit_complete_path_components(
+    path: &Path,
+    mut visit: impl FnMut(&Path) -> Result<(), BuildError>,
+) -> Result<(), BuildError> {
+    let mut cursor = PathBuf::new();
+    for component in path.components() {
+        cursor.push(component.as_os_str());
+        // A Windows verbatim/drive/UNC prefix is not a complete path that can
+        // be opened on its own. The following root component completes the
+        // anchor, after which every existing component is inspected.
+        if matches!(component, std::path::Component::Prefix(_)) {
+            continue;
+        }
+        visit(&cursor)?;
     }
     Ok(())
 }
@@ -2723,6 +2739,7 @@ mod tests {
 
         let target = root.join("target");
         fs::create_dir_all(&target).unwrap();
+        reject_existing_symlink_or_reparse_components(&target).unwrap();
         let lock_path = target.join(".nomo-build.lock");
         #[cfg(unix)]
         std::os::unix::fs::symlink(&external_file, &lock_path).unwrap();
@@ -2753,6 +2770,37 @@ mod tests {
         );
         assert_eq!(fs::read_to_string(&external_file).unwrap(), "untouched");
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(windows)]
+    #[test]
+    fn windows_path_component_walker_completes_drive_and_unc_anchors_before_inspection() {
+        fn visited(path: &str) -> Vec<PathBuf> {
+            let mut visited = Vec::new();
+            visit_complete_path_components(Path::new(path), |component| {
+                visited.push(component.to_path_buf());
+                Ok(())
+            })
+            .unwrap();
+            visited
+        }
+
+        let drive = visited(r"D:\a\nomo");
+        assert_eq!(drive.first(), Some(&PathBuf::from(r"D:\")));
+        assert!(!drive.contains(&PathBuf::from("D:")));
+
+        let verbatim_drive = visited(r"\\?\D:\a\nomo");
+        assert_eq!(verbatim_drive.first(), Some(&PathBuf::from(r"\\?\D:\")));
+        assert!(!verbatim_drive.contains(&PathBuf::from(r"\\?\D:")));
+
+        let unc = visited(r"\\server\share\a\nomo");
+        assert_eq!(unc.first(), Some(&PathBuf::from(r"\\server\share\")));
+
+        let verbatim_unc = visited(r"\\?\UNC\server\share\a\nomo");
+        assert_eq!(
+            verbatim_unc.first(),
+            Some(&PathBuf::from(r"\\?\UNC\server\share\"))
+        );
     }
 
     #[test]

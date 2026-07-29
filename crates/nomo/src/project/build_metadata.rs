@@ -486,6 +486,9 @@ pub(super) fn inspect_compiler(
 }
 
 fn release_compiler_realpath(compiler_path: &Path, release: bool) -> Result<PathBuf, BuildError> {
+    #[cfg(not(target_os = "macos"))]
+    let _ = release;
+
     #[cfg(target_os = "macos")]
     if release && compiler_path == Path::new("/usr/bin/clang") {
         let environment = canonical_build_environment()?;
@@ -1091,12 +1094,18 @@ fn canonical_build_environment() -> Result<CanonicalBuildEnvironment, BuildError
 
 fn compute_canonical_build_environment() -> Result<CanonicalBuildEnvironment, BuildError> {
     #[cfg(windows)]
-    let (mut values, platform_authority) = {
+    let (mut values, platform_authority): (
+        BTreeMap<String, String>,
+        Option<(&'static str, Value)>,
+    ) = {
         let (values, authority) = windows_authority::canonical_windows_build_support()?;
         (values, Some(("windows_toolchain", authority)))
     };
     #[cfg(not(windows))]
-    let (mut values, platform_authority) = {
+    let (mut values, platform_authority): (
+        BTreeMap<String, String>,
+        Option<(&'static str, Value)>,
+    ) = {
         let mut values = BTreeMap::new();
         for name in POSIX_RETAINED_ENVIRONMENT {
             if *name == "PATH" || *name == "GOENV" || *name == "SDKROOT" {

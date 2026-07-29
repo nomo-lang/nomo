@@ -2202,6 +2202,81 @@ class BenchmarksGameV2Tests(unittest.TestCase):
             result = benchmark.release_capability(executable, "candidate")
         self.assertEqual(result["status"], "available", result)
 
+    def test_release_capable_driver_does_not_create_correctness_release_lanes(
+        self,
+    ) -> None:
+        fixture = self.correctness_only_result()
+        toolchains = fixture["provenance"]["toolchains"]
+        collector = mock.Mock()
+        collector.descriptor.return_value = fixture["provenance"]["collector"]
+        reference_builds = [
+            (
+                fixture["builds"][workload]["references"],
+                {},
+            )
+            for workload in benchmark.WORKLOAD_IDS
+        ]
+        available_probe = {
+            "label": "current",
+            "status": "available",
+            "reason": "nomo build --help exposes --release",
+            "emit_c_fallback_used": False,
+            "help_command": self.full_command(
+                [toolchains["nomo"]["path"], "build", "--help"]
+            ),
+        }
+        output = Path(self.temporary.name) / "release-capable-correctness.json"
+        with mock.patch.object(
+            benchmark,
+            "release_capability",
+            return_value=available_probe,
+        ) as capability_probe, mock.patch.object(
+            benchmark,
+            "build_reference_workload",
+            side_effect=reference_builds,
+        ), mock.patch.object(
+            benchmark,
+            "correctness_gate",
+            return_value=fixture["correctness"],
+        ):
+            result = benchmark.run_correctness(
+                Namespace(),
+                self.manifest,
+                self.manifest_path,
+                self.suite_root,
+                output,
+                fixture["provenance"]["repository"],
+                toolchains,
+                collector,
+                fixture["provenance"]["host"],
+            )
+
+        capability_probe.assert_not_called()
+        self.assertEqual(result["status"], "correctness-only")
+        self.assertFalse(result["claims"]["claim_eligible"])
+        self.assertEqual(result["overall_verdict"], "not_evaluated")
+        for lane in ("candidate", "main"):
+            self.assertEqual(
+                result["release_lanes"][lane],
+                {
+                    "label": lane,
+                    "status": "unavailable",
+                    "reason": (
+                        f"formal {lane} was not supplied in "
+                        "correctness-only mode"
+                    ),
+                    "emit_c_fallback_used": False,
+                },
+            )
+        self.assertTrue(
+            all(
+                protocol["verdict"] == "not_evaluated"
+                for protocol in result["protocols"].values()
+            )
+        )
+        benchmark.validate_result_schema(result, self.result_schema_path)
+        benchmark.validate_result(result, self.manifest)
+
     def test_stable_toolchain_identity_excludes_probe_telemetry(self) -> None:
         result = self.correctness_only_result()
         first = copy.deepcopy(result["provenance"]["toolchains"])

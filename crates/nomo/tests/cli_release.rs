@@ -1,7 +1,11 @@
+use nomo::incremental::PersistentQueryCache;
+use nomo::project::{
+    BuildProfile, compile_standalone_source_with_profile_cache, record_standalone_c_build_metadata,
+};
 use nomo::target::TargetTriple;
 use serde_json::Value;
 use sha2::{Digest, Sha256};
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
@@ -32,7 +36,7 @@ fn create_project(root: &Path, name: &str, source: Option<&str>) -> PathBuf {
     assert_success(&output);
     let project = root.join(name);
     if let Some(source) = source {
-        fs::write(project.join("src/main.nomo"), source).unwrap();
+        fs::write(project.join("src").join("main.nomo"), source).unwrap();
     }
     project
 }
@@ -84,6 +88,67 @@ fn recompute_content_binding(metadata: &Value) -> String {
     format!("{:x}", hasher.finalize())
 }
 
+fn canonical_json_external(value: &Value) -> String {
+    fn canonicalize(value: &Value) -> Value {
+        match value {
+            Value::Array(values) => Value::Array(values.iter().map(canonicalize).collect()),
+            Value::Object(values) => {
+                let values = values
+                    .iter()
+                    .map(|(name, value)| (name.clone(), canonicalize(value)))
+                    .collect::<BTreeMap<_, _>>();
+                Value::Object(values.into_iter().collect())
+            }
+            value => value.clone(),
+        }
+    }
+    serde_json::to_string(&canonicalize(value)).unwrap()
+}
+
+fn assert_independently_recomputable_binding(metadata: &Value) {
+    let producer = canonical_json_external(&metadata["producer_executable"]);
+    let compiler = canonical_json_external(&metadata["compiler"]);
+    let commands = canonical_json_external(&serde_json::json!({
+        "compile_commands": metadata["compile_commands"].clone(),
+        "link_command": metadata["link_command"].clone(),
+        "combined_compile_link_command": metadata["combined_compile_link_command"].clone(),
+    }));
+    let subdocuments = &metadata["content_binding"]["canonical_subdocuments"];
+    assert_eq!(subdocuments["producer_identity"], producer);
+    assert_eq!(subdocuments["compiler_identity"], compiler);
+    assert_eq!(subdocuments["commands"], commands);
+    assert_eq!(
+        metadata["content_binding"]["inputs"]["producer_identity_sha256"],
+        format!("{:x}", Sha256::digest(producer.as_bytes()))
+    );
+    assert_eq!(
+        metadata["content_binding"]["inputs"]["compiler_identity_sha256"],
+        format!("{:x}", Sha256::digest(compiler.as_bytes()))
+    );
+    assert_eq!(
+        metadata["content_binding"]["inputs"]["commands_sha256"],
+        format!("{:x}", Sha256::digest(commands.as_bytes()))
+    );
+    assert_eq!(
+        metadata["content_binding"]["sha256"],
+        recompute_content_binding(metadata)
+    );
+}
+
+fn collect_json_files(root: &Path, files: &mut Vec<PathBuf>) {
+    if !root.exists() {
+        return;
+    }
+    for entry in fs::read_dir(root).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            collect_json_files(&path, files);
+        } else if path.extension().and_then(|extension| extension.to_str()) == Some("json") {
+            files.push(path);
+        }
+    }
+}
+
 fn executable(path: PathBuf) -> PathBuf {
     if cfg!(windows) {
         path.with_extension("exe")
@@ -115,6 +180,58 @@ fn shlex_join(argv: &[Value]) -> String {
 }
 
 #[test]
+fn release_subcommand_help_is_documented_and_side_effect_free() {
+    let root = test_root("help");
+    let build = root.join("build");
+    fs::create_dir_all(&build).unwrap();
+    let sidecar = build.join("release-provenance.json");
+    let metadata = build.join("nomo-build-metadata.json");
+    fs::write(&sidecar, b"stale-sidecar").unwrap();
+    fs::write(&metadata, b"stale-metadata").unwrap();
+    let expected_sidecar = fs::read(&sidecar).unwrap();
+    let expected_metadata = fs::read(&metadata).unwrap();
+    let expected_entries = fs::read_dir(&build).unwrap().count();
+
+    for (program, args, usage) in [
+        (
+            env!("CARGO_BIN_EXE_nomo"),
+            &["build", "--help"][..],
+            "usage: nomo build",
+        ),
+        (
+            env!("CARGO_BIN_EXE_nomo"),
+            &["run", "--help"][..],
+            "usage: nomo run",
+        ),
+        (
+            env!("CARGO_BIN_EXE_nomo"),
+            &["test", "--help"][..],
+            "usage: nomo test",
+        ),
+        (
+            env!("CARGO_BIN_EXE_nomoc"),
+            &["build", "--help"][..],
+            "usage: nomoc build",
+        ),
+    ] {
+        let output = Command::new(program)
+            .args(args)
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert!(output.stderr.is_empty(), "{args:?}");
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        assert!(stdout.contains(usage), "{stdout}");
+        assert!(stdout.contains("--release"), "{stdout}");
+        assert_eq!(fs::read(&sidecar).unwrap(), expected_sidecar);
+        assert_eq!(fs::read(&metadata).unwrap(), expected_metadata);
+        assert_eq!(fs::read_dir(&build).unwrap().count(), expected_entries);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
 fn build_help_and_release_artifacts_satisfy_schema_one() {
     let help = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .args(["build", "--help"])
@@ -136,12 +253,25 @@ fn build_help_and_release_artifacts_satisfy_schema_one() {
         .unwrap();
     assert_success(&output);
     let build = project.join("build");
-    let c_path = build.join("c/main.c");
-    let binary = executable(build.join("bin/release-demo"));
+    let c_path = build.join("c").join("main.c");
+    let binary = executable(build.join("bin").join("release-demo"));
     let sidecar_path = build.join("release-provenance.json");
     let metadata_path = build.join("nomo-build-metadata.json");
     let sidecar = read_json(&sidecar_path);
     let metadata = read_json(&metadata_path);
+    assert_eq!(
+        metadata["producer_executable"]["path"],
+        env!("CARGO_BIN_EXE_nomo")
+    );
+    assert_eq!(
+        metadata["producer_executable"]["sha256"],
+        sha256(Path::new(env!("CARGO_BIN_EXE_nomo")))
+    );
+    assert_eq!(
+        metadata["producer_executable"]["size_bytes"],
+        fs::metadata(env!("CARGO_BIN_EXE_nomo")).unwrap().len()
+    );
+    assert_independently_recomputable_binding(&metadata);
 
     let expected_sidecar_keys = BTreeSet::from([
         "binary",
@@ -359,7 +489,7 @@ fn build_help_and_release_artifacts_satisfy_schema_one() {
     assert_success(&run);
     assert_eq!(normalized_stdout(&run), "Hello, Nomo\n");
     fs::write(
-        project.join("src/main.nomo"),
+        project.join("src").join("main.nomo"),
         "package release_demo\n\nfn main( {\n",
     )
     .unwrap();
@@ -372,6 +502,179 @@ fn build_help_and_release_artifacts_satisfy_schema_one() {
     assert!(!failed_rebuild.status.success());
     assert!(!sidecar_path.exists());
     assert!(!metadata_path.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn manifest_failure_removes_stale_release_evidence_before_discovery() {
+    let root = test_root("manifest-failure");
+    let project = create_project(&root, "manifest-failure", None);
+    resolve_dependencies(&project, false);
+    let seed = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&seed);
+    let sidecar = project.join("build").join("release-provenance.json");
+    let metadata = project.join("build").join("nomo-build-metadata.json");
+    assert!(sidecar.is_file());
+    assert!(metadata.is_file());
+
+    fs::write(project.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
+    let failed = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert!(!failed.status.success());
+    assert!(!sidecar.exists());
+    assert!(!metadata.exists());
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn broken_workspace_discovery_clears_every_locatable_member_evidence() {
+    let root = test_root("workspace-stale-evidence");
+    let first = create_project(&root, "first-member", None);
+    let second = create_project(&root, "second-member", None);
+    let workspace_manifest = "[workspace]\nmembers = [\"first-member\", \"second-member\"]\n";
+    fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    resolve_dependencies(&root, true);
+
+    let first_manifest = fs::read_to_string(first.join("nomo.toml")).unwrap();
+    let seed_evidence = || {
+        for project in [&first, &second] {
+            let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+                .arg("build")
+                .arg(project)
+                .arg("--release")
+                .output()
+                .unwrap();
+            assert_success(&output);
+            assert!(
+                project
+                    .join("build")
+                    .join("release-provenance.json")
+                    .is_file()
+            );
+            assert!(
+                project
+                    .join("build")
+                    .join("nomo-build-metadata.json")
+                    .is_file()
+            );
+        }
+    };
+    let assert_member_evidence_absent = || {
+        for project in [&first, &second] {
+            assert!(
+                !project
+                    .join("build")
+                    .join("release-provenance.json")
+                    .exists()
+            );
+            assert!(
+                !project
+                    .join("build")
+                    .join("nomo-build-metadata.json")
+                    .exists()
+            );
+        }
+    };
+
+    let dependency = root.join("vendor").join("dependency");
+    fs::create_dir_all(dependency.join("build")).unwrap();
+    fs::write(
+        dependency.join("nomo.toml"),
+        "[package]\nname = \"dependency\"\n",
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("build").join("release-provenance.json"),
+        "dependency sidecar",
+    )
+    .unwrap();
+    fs::write(
+        dependency.join("build").join("nomo-build-metadata.json"),
+        "dependency metadata",
+    )
+    .unwrap();
+
+    seed_evidence();
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    fs::write(first.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
+    let failed_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&root)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert!(!failed_build.status.success());
+    assert_member_evidence_absent();
+
+    fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    fs::write(first.join("nomo.toml"), &first_manifest).unwrap();
+    seed_evidence();
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    fs::write(first.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
+    let failed_test = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&root)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert!(!failed_test.status.success());
+    assert_member_evidence_absent();
+
+    assert_eq!(
+        fs::read_to_string(dependency.join("build").join("release-provenance.json")).unwrap(),
+        "dependency sidecar"
+    );
+    assert_eq!(
+        fs::read_to_string(dependency.join("build").join("nomo-build-metadata.json")).unwrap(),
+        "dependency metadata"
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn concurrent_release_builds_publish_one_self_consistent_final_evidence_pair() {
+    let root = test_root("concurrent-build");
+    let project = create_project(&root, "concurrent-build", None);
+    resolve_dependencies(&project, false);
+    let spawn = || {
+        Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("build")
+            .arg(&project)
+            .arg("--release")
+            .spawn()
+            .unwrap()
+    };
+    let first = spawn();
+    let second = spawn();
+    let first = first.wait_with_output().unwrap();
+    let second = second.wait_with_output().unwrap();
+    assert_success(&first);
+    assert_success(&second);
+
+    let build = project.join("build");
+    let sidecar_path = build.join("release-provenance.json");
+    let metadata_path = build.join("nomo-build-metadata.json");
+    let sidecar = read_json(&sidecar_path);
+    let metadata = read_json(&metadata_path);
+    assert_eq!(
+        metadata["release_provenance"]["sha256"],
+        sha256(&sidecar_path)
+    );
+    assert_eq!(metadata["compiler"], sidecar["compiler"]);
+    assert_eq!(metadata["compile_commands"], sidecar["compile_commands"]);
+    assert_eq!(metadata["link_command"], sidecar["link_command"]);
+    assert_eq!(metadata["generated_c"], sidecar["generated_c"]);
+    assert_eq!(metadata["binary"], sidecar["binary"]);
+    assert_independently_recomputable_binding(&metadata);
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -407,12 +710,12 @@ fn main() {
     assert_success(&run);
     assert_eq!(normalized_stdout(&run), "--release\n");
     assert_eq!(
-        read_json(&project.join("build/nomo-build-metadata.json"))["selected_profile"],
+        read_json(&project.join("build").join("nomo-build-metadata.json"),)["selected_profile"],
         "release"
     );
 
     fs::write(
-        project.join("src/main.nomo"),
+        project.join("src").join("main.nomo"),
         "package args_demo\n\n#[test]\nfn release_test() {\n}\n",
     )
     .unwrap();
@@ -446,8 +749,22 @@ fn main() {
             "release={release} expected={expected}\n{stderr}"
         );
     }
-    assert!(project.join("build/test/release/c").is_dir());
-    assert!(project.join("build/test/release/bin").is_dir());
+    assert!(
+        project
+            .join("build")
+            .join("test")
+            .join("release")
+            .join("c")
+            .is_dir()
+    );
+    assert!(
+        project
+            .join("build")
+            .join("test")
+            .join("release")
+            .join("bin")
+            .is_dir()
+    );
 
     let workspace_root = test_root("workspace-options");
     let workspace_member = create_project(&workspace_root, "workspace-member", None);
@@ -494,12 +811,14 @@ fn main() {
     assert_success(&seed);
     assert!(
         conflict_project
-            .join("build/release-provenance.json")
+            .join("build")
+            .join("release-provenance.json")
             .exists()
     );
     assert!(
         conflict_project
-            .join("build/nomo-build-metadata.json")
+            .join("build")
+            .join("nomo-build-metadata.json")
             .exists()
     );
     let conflict = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -515,17 +834,100 @@ fn main() {
     );
     assert!(
         !conflict_project
-            .join("build/release-provenance.json")
+            .join("build")
+            .join("release-provenance.json")
             .exists()
     );
     assert!(
         !conflict_project
-            .join("build/nomo-build-metadata.json")
+            .join("build")
+            .join("nomo-build-metadata.json")
             .exists()
     );
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(workspace_root).unwrap();
     fs::remove_dir_all(conflict_root).unwrap();
+}
+
+#[test]
+fn standalone_release_run_uses_lexical_absolute_paths_for_every_input_form() {
+    let root = test_root("standalone-run-paths");
+    let nested = root.join("nested");
+    fs::create_dir_all(&nested).unwrap();
+    let cases = [
+        (
+            root.join("bare.nomo"),
+            PathBuf::from("bare.nomo"),
+            root.join("build"),
+            "bare",
+        ),
+        (
+            nested.join("nested.nomo"),
+            PathBuf::from("nested").join("nested.nomo"),
+            nested.join("build"),
+            "nested",
+        ),
+        (
+            root.join("absolute.nomo"),
+            root.join("absolute.nomo"),
+            root.join("build"),
+            "absolute",
+        ),
+    ];
+    for (source, argument, build, expected) in cases {
+        fs::write(
+            &source,
+            format!(
+                "package {expected}\n\nimport std.io\n\nfn main() {{\n    io.println(\"{expected}\")\n}}\n"
+            ),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(&argument)
+            .arg("--release")
+            .current_dir(&root)
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert_eq!(normalized_stdout(&output), format!("{expected}\n"));
+        assert!(build.join("release-provenance.json").is_file());
+        assert!(build.join("nomo-build-metadata.json").is_file());
+        assert!(executable(build.join("bin").join(expected)).is_file());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn release_tests_compile_every_translation_unit_with_fixed_optimization_flags() {
+    let root = test_root("release-test-ffi-flags");
+    let project = create_project(
+        &root,
+        "release-test-ffi-flags",
+        Some("package release_test_ffi_flags\n\n#[test]\nfn optimized_release_harness() {\n}\n"),
+    );
+    let native = project.join("native");
+    fs::create_dir_all(&native).unwrap();
+    fs::write(
+        native.join("guard.c"),
+        "#ifndef NDEBUG\n#error release test FFI translation unit requires NDEBUG\n#endif\n#ifndef __OPTIMIZE__\n#error release test FFI translation unit requires optimization\n#endif\nint nomo_release_test_ffi_guard(void) { return 1; }\n",
+    )
+    .unwrap();
+    let mut manifest = fs::read_to_string(project.join("nomo.toml")).unwrap();
+    manifest.push_str("\n[ffi]\nsources = [\"native/guard.c\"]\nlink_args = [\"-O0\"]\n");
+    fs::write(project.join("nomo.toml"), manifest).unwrap();
+
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&output);
+    assert!(
+        normalized_stdout(&output).contains("ok release_test_ffi_flags.optimized_release_harness")
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -546,8 +948,17 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
     assert!(!stdout.contains("built "));
     assert!(!stdout.contains("metadata"));
     assert!(stdout_build.stderr.is_empty());
-    let metadata_path = root.join("build/nomo-build-metadata.json");
+    let metadata_path = root.join("build").join("nomo-build-metadata.json");
     let metadata = read_json(&metadata_path);
+    assert_eq!(
+        metadata["producer_executable"]["path"],
+        env!("CARGO_BIN_EXE_nomoc")
+    );
+    assert_eq!(
+        metadata["producer_executable"]["sha256"],
+        sha256(Path::new(env!("CARGO_BIN_EXE_nomoc")))
+    );
+    assert_independently_recomputable_binding(&metadata);
     assert_eq!(metadata["selected_profile"], "release");
     assert!(metadata["binary"].is_null());
     assert!(metadata["release_provenance"].is_null());
@@ -596,7 +1007,7 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
         "nomoc debug and release cache identities must not alias"
     );
 
-    let output_c = root.join("out/generated.c");
+    let output_c = root.join("out").join("generated.c");
     let host = TargetTriple::host().unwrap().to_string();
     let out_build = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("build")
@@ -644,7 +1055,8 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
     assert_success(&seed);
     assert!(
         conflict_root
-            .join("build/nomo-build-metadata.json")
+            .join("build")
+            .join("nomo-build-metadata.json")
             .exists()
     );
     let conflict = Command::new(env!("CARGO_BIN_EXE_nomoc"))
@@ -658,14 +1070,98 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
         String::from_utf8_lossy(&conflict.stderr)
             .contains("`--release` and `--emit-c` cannot be used together")
     );
-    assert!(!conflict_root.join("build/release-provenance.json").exists());
     assert!(
         !conflict_root
-            .join("build/nomo-build-metadata.json")
+            .join("build")
+            .join("release-provenance.json")
+            .exists()
+    );
+    assert!(
+        !conflict_root
+            .join("build")
+            .join("nomo-build-metadata.json")
             .exists()
     );
     fs::remove_dir_all(root).unwrap();
     fs::remove_dir_all(conflict_root).unwrap();
+}
+
+#[test]
+fn nomoc_rejects_lexical_canonical_symlink_and_hardlink_source_aliases() {
+    let root = test_root("nomoc-alias");
+    let source = root.join("single.nomo");
+    let original = b"package single\n\nfn main() {\n}\n";
+    fs::write(&source, original).unwrap();
+    fs::create_dir_all(root.join("nested")).unwrap();
+    let mut aliases = vec![
+        source.clone(),
+        root.join("nested").join("..").join("single.nomo"),
+    ];
+    let hardlink = root.join("hardlink.nomo");
+    fs::hard_link(&source, &hardlink).unwrap();
+    aliases.push(hardlink);
+    #[cfg(unix)]
+    {
+        let symlink = root.join("symlink.nomo");
+        std::os::unix::fs::symlink(&source, &symlink).unwrap();
+        aliases.push(symlink);
+    }
+
+    for alias in aliases {
+        let output = Command::new(env!("CARGO_BIN_EXE_nomoc"))
+            .arg("build")
+            .arg(&source)
+            .arg("--release")
+            .arg("--out")
+            .arg(&alias)
+            .output()
+            .unwrap();
+        assert!(!output.status.success(), "alias={}", alias.display());
+        assert!(
+            String::from_utf8_lossy(&output.stderr).contains("must not overwrite or alias source"),
+            "alias={}\nstderr={}",
+            alias.display(),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert_eq!(fs::read(&source).unwrap(), original);
+        assert!(!root.join("build").join("nomo-build-metadata.json").exists());
+        assert!(!root.join("build").join("release-provenance.json").exists());
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn standalone_metadata_uses_the_exact_query_key_used_before_source_mutation() {
+    let root = test_root("standalone-exact-query-key");
+    let source = root.join("single.nomo");
+    fs::write(&source, "package single\n\nfn main() {\n}\n").unwrap();
+    let target = TargetTriple::host().unwrap();
+    let generated =
+        compile_standalone_source_with_profile_cache(&source, &target, BuildProfile::Release)
+            .unwrap();
+    let cache = PersistentQueryCache::at_root(&root);
+    let mut entries = Vec::new();
+    collect_json_files(cache.root(), &mut entries);
+    assert_eq!(entries.len(), 1);
+    let actual_cache_key = entries[0]
+        .file_stem()
+        .and_then(|stem| stem.to_str())
+        .unwrap()
+        .to_string();
+
+    fs::write(
+        &source,
+        "package single\n\nfn main() {\n    let changed: i64 = 1\n}\n",
+    )
+    .unwrap();
+    record_standalone_c_build_metadata(&source, &generated, None, &target, BuildProfile::Release)
+        .unwrap();
+    let metadata = read_json(&root.join("build").join("nomo-build-metadata.json"));
+    assert_eq!(
+        metadata["cache_identity"]["cache_key"], actual_cache_key,
+        "metadata must retain the exact QueryKey used by compilation instead of rereading source"
+    );
+    fs::remove_dir_all(root).unwrap();
 }
 
 #[test]
@@ -699,7 +1195,7 @@ fn codegen_cache_is_warm_per_profile_and_never_crosses_profiles() {
             stderr.contains(&format!("incremental-cache {expected} codegen-c")),
             "release={release} expected={expected}\n{stderr}"
         );
-        let metadata = read_json(&project.join("build/nomo-build-metadata.json"));
+        let metadata = read_json(&project.join("build").join("nomo-build-metadata.json"));
         let metadata_key = metadata["cache_identity"]["cache_key"]
             .as_str()
             .unwrap()
@@ -740,12 +1236,135 @@ fn codegen_cache_is_warm_per_profile_and_never_crosses_profiles() {
         .unwrap();
     assert_success(&emit_c);
     assert!(String::from_utf8_lossy(&emit_c.stderr).contains("incremental-cache hit codegen-c"));
-    let emit_metadata = read_json(&project.join("build/nomo-build-metadata.json"));
+    let emit_metadata = read_json(&project.join("build").join("nomo-build-metadata.json"));
     assert_eq!(emit_metadata["selected_profile"], "debug");
     assert_eq!(
         emit_metadata["cache_identity"]["cache_key"],
         Value::String(debug_key.unwrap())
     );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn linux_release_links_libm_only_for_generated_raw_math_calls() {
+    let root = test_root("libm");
+    let math_source = r#"package math_calls
+
+import std.math
+
+fn main() {
+    let floor_value: f64 = math.floor(1.25)
+    let ceil_value: f64 = math.ceil(1.25)
+    let round_value: f64 = math.round(1.25)
+    let sqrt_value: f64 = math.sqrt(4.0)
+    let sin_value: f64 = math.sin(0.5)
+    let cos_value: f64 = math.cos(0.5)
+    let pow_value: f64 = math.pow(2.0, 3.0)
+    let total: f64 = floor_value + ceil_value + round_value + sqrt_value + sin_value + cos_value + pow_value
+    if total < 0.0 {
+        panic("unreachable")
+    }
+}
+"#;
+    let math_project = create_project(&root, "math-calls", Some(math_source));
+    resolve_dependencies(&math_project, false);
+    let math_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&math_project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&math_build);
+    let math_sidecar = read_json(&math_project.join("build").join("release-provenance.json"));
+    assert!(
+        math_sidecar["link_command"]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|argument| argument == "-lm")
+    );
+
+    let control_source = r#"package math_control
+
+import std.math
+
+fn main() {
+    let absolute: i64 = math.abs(-5)
+    let minimum: i64 = math.min(absolute, 10)
+    let maximum: i64 = math.max(minimum, 20)
+    if maximum < 0 {
+        panic("unreachable")
+    }
+}
+"#;
+    let control_project = create_project(&root, "math-control", Some(control_source));
+    resolve_dependencies(&control_project, false);
+    let control_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&control_project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&control_build);
+    let control_sidecar = read_json(
+        &control_project
+            .join("build")
+            .join("release-provenance.json"),
+    );
+    assert!(
+        !control_sidecar["link_command"]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|argument| argument == "-lm")
+    );
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(target_os = "linux")]
+#[test]
+fn formal_benchmark_projects_retain_generic_libm_capability_results() {
+    let root = test_root("formal-libm");
+    let repository = Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .parent()
+        .unwrap();
+    for (name, expected_libm) in [
+        ("spectral-norm", true),
+        ("n-body", false),
+        ("fannkuch-redux", false),
+    ] {
+        let source = repository
+            .join("performance")
+            .join("benchmarksgame")
+            .join("reference")
+            .join("nomo")
+            .join(name);
+        let project = root.join(name);
+        fs::create_dir_all(project.join("src")).unwrap();
+        fs::copy(source.join("nomo.toml"), project.join("nomo.toml")).unwrap();
+        fs::copy(
+            source.join("src").join("main.nomo"),
+            project.join("src").join("main.nomo"),
+        )
+        .unwrap();
+        let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("build")
+            .arg(&project)
+            .arg("--release")
+            .output()
+            .unwrap();
+        assert_success(&output);
+        let sidecar = read_json(&project.join("build").join("release-provenance.json"));
+        let has_libm = sidecar["link_command"]["argv"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|argument| argument == "-lm");
+        assert_eq!(has_libm, expected_libm, "{name}");
+    }
     fs::remove_dir_all(root).unwrap();
 }
 
@@ -890,7 +1509,7 @@ fn main() {
         normalized_stdout(&release),
         "one\ntwo\nleft\nright\nnegative f64\ncleanup\nstop\n"
     );
-    let sidecar = read_json(&project.join("build/release-provenance.json"));
+    let sidecar = read_json(&project.join("build").join("release-provenance.json"));
     let all_argv = sidecar["compile_commands"]
         .as_array()
         .unwrap()

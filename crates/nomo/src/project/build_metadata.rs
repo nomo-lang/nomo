@@ -21,10 +21,9 @@ const BUILD_METADATA_SCHEMA: u32 = 1;
 const RELEASE_PROVENANCE_SCHEMA: u32 = 1;
 const CACHE_IDENTITY_SCHEMA: u32 = 1;
 const CONTENT_BINDING_SCHEMA: u32 = 1;
+const PRODUCER_EXECUTABLE_SCHEMA: u32 = 1;
 const CONTENT_BINDING_DOMAIN: &str = "nomo-build-metadata-content-binding-v1";
 pub(super) const PASS_PIPELINE_VERSION: u32 = 1;
-pub(super) const COMPILER_REVISION: &str = concat!("nomo-", env!("CARGO_PKG_VERSION"));
-pub(super) const RUNTIME_REVISION: &str = concat!("nomo-runtime-", env!("CARGO_PKG_VERSION"));
 const TOOLCHAIN_CONFIG_VERSION: u32 = 1;
 const RELEASE_DRIVER_CONFIG_FLAGS: &[&str] = &["--no-default-config"];
 const RELEASE_C_FLAGS: &[&str] = &["-std=c99", "-O3", "-DNDEBUG", "-fomit-frame-pointer"];
@@ -107,6 +106,7 @@ const PATH_ENVIRONMENT: &[&str] = &[
 const CACHE_INPUT_ORDER: &[&str] = &[
     "profile",
     "target_triple",
+    "producer_executable_sha256",
     "compiler_revision",
     "runtime_revision",
     "pass_pipeline_version",
@@ -125,6 +125,7 @@ const CONTENT_BINDING_INPUT_ORDER: &[&str] = &[
     "profile",
     "target_triple",
     "cache_key",
+    "producer_identity_sha256",
     "compiler_identity_sha256",
     "commands_sha256",
     "generated_c_path",
@@ -143,6 +144,7 @@ struct CanonicalBuildEnvironment {
 
 static CANONICAL_BUILD_ENVIRONMENT: OnceLock<Result<CanonicalBuildEnvironment, String>> =
     OnceLock::new();
+static PRODUCER_EXECUTABLE: OnceLock<Result<ProducerExecutableIdentity, String>> = OnceLock::new();
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(deny_unknown_fields)]
@@ -171,6 +173,28 @@ impl FileRecord {
             sha256: sha256_file(&absolute)?,
         })
     }
+
+    pub(super) fn for_canonical_json<T: Serialize>(
+        path: &Path,
+        value: &T,
+    ) -> Result<Self, BuildError> {
+        let absolute = absolute_path(path)?;
+        Ok(Self {
+            path: absolute.to_string_lossy().into_owned(),
+            sha256: sha256_bytes(&canonical_json_bytes(value)?),
+        })
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub(super) struct ProducerExecutableIdentity {
+    pub schema: u32,
+    pub path: String,
+    pub realpath: String,
+    pub sha256: String,
+    pub size_bytes: u64,
+    pub package_version: String,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
@@ -251,6 +275,7 @@ struct ContentBinding {
     formula: String,
     input_order: Vec<String>,
     inputs: BTreeMap<String, String>,
+    canonical_subdocuments: BTreeMap<String, String>,
     sha256: String,
 }
 
@@ -260,6 +285,7 @@ pub(super) struct BuildMetadata {
     schema: u32,
     selected_profile: BuildProfile,
     target_triple: String,
+    producer_executable: ProducerExecutableIdentity,
     cache_identity: CacheIdentity,
     content_binding: ContentBinding,
     compiler: Option<CompilerIdentity>,
@@ -277,6 +303,7 @@ impl BuildMetadata {
         profile: BuildProfile,
         target_triple: String,
         cache_query_key: QueryKey,
+        producer_executable: ProducerExecutableIdentity,
         compiler: Option<CompilerIdentity>,
         compile_commands: Vec<CommandRecord>,
         link_command: Option<CommandRecord>,
@@ -313,11 +340,17 @@ impl BuildMetadata {
                 "build metadata command shape does not match the selected profile".to_string(),
             ));
         }
-        let cache_identity = cache_identity(profile, &target_triple, cache_query_key)?;
+        let cache_identity = cache_identity(
+            profile,
+            &target_triple,
+            cache_query_key,
+            &producer_executable,
+        )?;
         let content_binding = content_binding(
             profile,
             &target_triple,
             &cache_identity.cache_key,
+            &producer_executable,
             &generated_c,
             compiler.as_ref(),
             &compile_commands,
@@ -330,6 +363,7 @@ impl BuildMetadata {
             schema: BUILD_METADATA_SCHEMA,
             selected_profile: profile,
             target_triple,
+            producer_executable,
             cache_identity,
             content_binding,
             compiler,
@@ -348,8 +382,61 @@ pub(super) fn release_driver_config_flags() -> &'static [&'static str] {
     RELEASE_DRIVER_CONFIG_FLAGS
 }
 
+pub(super) fn release_driver_config_flags_for_compiler(
+    compiler_path: &Path,
+) -> &'static [&'static str] {
+    if is_gnu_compiler(compiler_path) {
+        &[]
+    } else {
+        RELEASE_DRIVER_CONFIG_FLAGS
+    }
+}
+
 pub(super) fn release_c_flags() -> &'static [&'static str] {
     RELEASE_C_FLAGS
+}
+
+pub(super) fn producer_executable_identity() -> Result<ProducerExecutableIdentity, BuildError> {
+    PRODUCER_EXECUTABLE
+        .get_or_init(|| {
+            let path = env::current_exe()
+                .map_err(|error| format!("failed to locate producer executable: {error}"))?;
+            producer_executable_identity_from_path(&path).map_err(|error| error.human())
+        })
+        .clone()
+        .map_err(BuildError::Message)
+}
+
+fn producer_executable_identity_from_path(
+    path: &Path,
+) -> Result<ProducerExecutableIdentity, BuildError> {
+    let path = absolute_path(path)?;
+    let realpath = fs::canonicalize(&path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to resolve producer executable {}: {error}",
+            path.display()
+        ))
+    })?;
+    let metadata = fs::metadata(&realpath).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect producer executable {}: {error}",
+            realpath.display()
+        ))
+    })?;
+    if !metadata.is_file() {
+        return Err(BuildError::Message(format!(
+            "producer executable is not a regular file: {}",
+            realpath.display()
+        )));
+    }
+    Ok(ProducerExecutableIdentity {
+        schema: PRODUCER_EXECUTABLE_SCHEMA,
+        path: path.to_string_lossy().into_owned(),
+        realpath: realpath.to_string_lossy().into_owned(),
+        sha256: sha256_file(&realpath)?,
+        size_bytes: metadata.len(),
+        package_version: env!("CARGO_PKG_VERSION").to_string(),
+    })
 }
 
 pub(super) fn resolve_executable(
@@ -439,27 +526,27 @@ pub(super) fn inspect_compiler(
 ) -> Result<CompilerIdentity, BuildError> {
     let compiler_path = absolute_path(compiler_path)?;
     let realpath = release_compiler_realpath(&compiler_path, release)?;
+    let release_driver_flags = if release {
+        release_driver_config_flags_for_compiler(&compiler_path)
+    } else {
+        &[]
+    };
     let mut version_argv = vec![compiler_path.to_string_lossy().into_owned()];
-    if release {
-        version_argv.extend(
-            RELEASE_DRIVER_CONFIG_FLAGS
-                .iter()
-                .map(|flag| flag.to_string()),
-        );
-    }
+    version_argv.extend(release_driver_flags.iter().map(|flag| flag.to_string()));
     version_argv.push("--version".to_string());
     let version_output = probe_output(&version_argv, "C compiler version", release)?;
 
     let mut target_argv = vec![compiler_path.to_string_lossy().into_owned()];
-    if release {
-        target_argv.extend(
-            RELEASE_DRIVER_CONFIG_FLAGS
-                .iter()
-                .map(|flag| flag.to_string()),
-        );
-    }
+    target_argv.extend(release_driver_flags.iter().map(|flag| flag.to_string()));
     target_argv.extend(toolchain_args.iter().cloned());
-    target_argv.push("-print-target-triple".to_string());
+    target_argv.push(
+        if release && is_gnu_compiler(&compiler_path) {
+            "-dumpmachine"
+        } else {
+            "-print-target-triple"
+        }
+        .to_string(),
+    );
     let target_triple = match probe_output(&target_argv, "C compiler target", release) {
         Ok(target) => target,
         Err(_) if !release => {
@@ -483,6 +570,19 @@ pub(super) fn inspect_compiler(
         version_output,
         target_triple,
     })
+}
+
+fn is_gnu_compiler(path: &Path) -> bool {
+    path.file_name()
+        .and_then(OsStr::to_str)
+        .map(|name| {
+            let name = name.to_ascii_lowercase();
+            name == "gcc"
+                || name == "gcc.exe"
+                || name.ends_with("-gcc")
+                || name.ends_with("-gcc.exe")
+        })
+        .unwrap_or(false)
 }
 
 fn release_compiler_realpath(compiler_path: &Path, release: bool) -> Result<PathBuf, BuildError> {
@@ -654,6 +754,13 @@ pub(super) fn validate_build_metadata(path: &Path) -> Result<BuildMetadata, Buil
             "build metadata is not canonical JSON".to_string(),
         ));
     }
+    let current_producer =
+        producer_executable_identity_from_path(Path::new(&metadata.producer_executable.path))?;
+    if current_producer != metadata.producer_executable {
+        return Err(BuildError::Message(
+            "build metadata producer executable identity is stale".to_string(),
+        ));
+    }
     validate_file_record(&metadata.generated_c, "generated C")?;
     if let Some(binary) = &metadata.binary {
         validate_file_record(binary, "binary")?;
@@ -705,6 +812,7 @@ pub(super) fn validate_build_metadata(path: &Path) -> Result<BuildMetadata, Buil
         metadata.selected_profile,
         metadata.target_triple.clone(),
         metadata.cache_identity.query_key.clone(),
+        metadata.producer_executable.clone(),
         metadata.compiler.clone(),
         metadata.compile_commands.clone(),
         metadata.link_command.clone(),
@@ -828,6 +936,35 @@ fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, BuildError> 
     Ok(bytes)
 }
 
+fn canonical_compact_json<T: Serialize>(value: &T) -> Result<String, BuildError> {
+    let value = serde_json::to_value(value).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to encode canonical JSON subdocument: {error}"
+        ))
+    })?;
+    serde_json::to_string(&canonicalize_json_value(value)).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to serialize canonical JSON subdocument: {error}"
+        ))
+    })
+}
+
+fn canonicalize_json_value(value: Value) -> Value {
+    match value {
+        Value::Array(values) => {
+            Value::Array(values.into_iter().map(canonicalize_json_value).collect())
+        }
+        Value::Object(values) => {
+            let ordered = values
+                .into_iter()
+                .map(|(name, value)| (name, canonicalize_json_value(value)))
+                .collect::<BTreeMap<_, _>>();
+            Value::Object(ordered.into_iter().collect())
+        }
+        value => value,
+    }
+}
+
 fn require_replaceable_file(path: &Path) -> Result<(), BuildError> {
     match fs::symlink_metadata(path) {
         Ok(metadata) if metadata.file_type().is_file() => Ok(()),
@@ -909,8 +1046,10 @@ fn cache_identity(
     profile: BuildProfile,
     target_triple: &str,
     query_key: QueryKey,
+    producer_executable: &ProducerExecutableIdentity,
 ) -> Result<CacheIdentity, BuildError> {
-    let toolchain_config = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION);
+    let toolchain_config =
+        codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, producer_executable);
     if query_key.target != target_triple {
         return Err(BuildError::Message(
             "cache query target does not match build metadata".to_string(),
@@ -930,10 +1069,17 @@ fn cache_identity(
     inputs.insert("profile".to_string(), profile.as_str().to_string());
     inputs.insert("target_triple".to_string(), target_triple.to_string());
     inputs.insert(
-        "compiler_revision".to_string(),
-        COMPILER_REVISION.to_string(),
+        "producer_executable_sha256".to_string(),
+        producer_executable.sha256.clone(),
     );
-    inputs.insert("runtime_revision".to_string(), RUNTIME_REVISION.to_string());
+    inputs.insert(
+        "compiler_revision".to_string(),
+        format!("exe-sha256:{}", producer_executable.sha256),
+    );
+    inputs.insert(
+        "runtime_revision".to_string(),
+        format!("exe-sha256:{}", producer_executable.sha256),
+    );
     inputs.insert(
         "pass_pipeline_version".to_string(),
         PASS_PIPELINE_VERSION.to_string(),
@@ -975,12 +1121,16 @@ fn cache_identity(
     })
 }
 
-pub(super) fn codegen_cache_configuration(profile: BuildProfile, pipeline_version: u32) -> String {
+pub(super) fn codegen_cache_configuration(
+    profile: BuildProfile,
+    pipeline_version: u32,
+    producer_executable: &ProducerExecutableIdentity,
+) -> String {
     format!(
-        "profile-{}:compiler-{}:runtime-{}:pipeline-{}:driver-{:x}:cflags-{:x}:sqlite-{}:{}:{}:{:x}:{:x}",
+        "profile-{}:compiler-exe-sha256:{}:runtime-exe-sha256:{}:pipeline-{}:driver-{:x}:cflags-{:x}:sqlite-{}:{}:{}:{:x}:{:x}",
         profile.as_str(),
-        COMPILER_REVISION,
-        RUNTIME_REVISION,
+        producer_executable.sha256,
+        producer_executable.sha256,
         pipeline_version,
         Sha256::digest(release_driver_config_flags().join("\n")),
         Sha256::digest(release_c_flags().join("\n")),
@@ -996,6 +1146,7 @@ fn content_binding(
     profile: BuildProfile,
     target_triple: &str,
     cache_key: &str,
+    producer_executable: &ProducerExecutableIdentity,
     generated_c: &FileRecord,
     compiler: Option<&CompilerIdentity>,
     compile_commands: &[CommandRecord],
@@ -1004,30 +1155,50 @@ fn content_binding(
     binary: Option<&FileRecord>,
     release_provenance: Option<&FileRecord>,
 ) -> Result<ContentBinding, BuildError> {
-    let compiler_json = serde_json::to_vec(&compiler).map_err(|error| {
+    let producer_json = canonical_compact_json(producer_executable).map_err(|error| {
         BuildError::Message(format!(
-            "failed to encode compiler identity for content binding: {error}"
+            "failed to encode producer identity for content binding: {}",
+            error.human()
         ))
     })?;
-    let commands_json = serde_json::to_vec(&serde_json::json!({
+    let compiler_json = canonical_compact_json(&compiler).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to encode compiler identity for content binding: {}",
+            error.human()
+        ))
+    })?;
+    let commands_json = canonical_compact_json(&serde_json::json!({
         "compile_commands": compile_commands,
         "link_command": link_command,
         "combined_compile_link_command": combined_compile_link_command,
     }))
     .map_err(|error| {
         BuildError::Message(format!(
-            "failed to encode build commands for content binding: {error}"
+            "failed to encode build commands for content binding: {}",
+            error.human()
         ))
     })?;
+    let canonical_subdocuments = BTreeMap::from([
+        ("commands".to_string(), commands_json.clone()),
+        ("compiler_identity".to_string(), compiler_json.clone()),
+        ("producer_identity".to_string(), producer_json.clone()),
+    ]);
     let mut inputs = BTreeMap::new();
     inputs.insert("profile".to_string(), profile.as_str().to_string());
     inputs.insert("target_triple".to_string(), target_triple.to_string());
     inputs.insert("cache_key".to_string(), cache_key.to_string());
     inputs.insert(
-        "compiler_identity_sha256".to_string(),
-        sha256_bytes(&compiler_json),
+        "producer_identity_sha256".to_string(),
+        sha256_bytes(producer_json.as_bytes()),
     );
-    inputs.insert("commands_sha256".to_string(), sha256_bytes(&commands_json));
+    inputs.insert(
+        "compiler_identity_sha256".to_string(),
+        sha256_bytes(compiler_json.as_bytes()),
+    );
+    inputs.insert(
+        "commands_sha256".to_string(),
+        sha256_bytes(commands_json.as_bytes()),
+    );
     inputs.insert("generated_c_path".to_string(), generated_c.path.clone());
     inputs.insert("generated_c_sha256".to_string(), generated_c.sha256.clone());
     inputs.insert(
@@ -1076,6 +1247,7 @@ fn content_binding(
             .map(|input| (*input).to_string())
             .collect(),
         inputs,
+        canonical_subdocuments,
         sha256: format!("{:x}", hasher.finalize()),
     })
 }
@@ -1418,7 +1590,8 @@ mod tests {
     fn emit_only_metadata(root: &Path, profile: BuildProfile) -> BuildMetadata {
         let generated = root.join("main.c");
         fs::write(&generated, b"int main(void) { return 0; }\n").unwrap();
-        let configuration = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION);
+        let producer = producer_executable_identity().unwrap();
+        let configuration = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, &producer);
         let query_key = QueryKey::new(
             "x86_64-unknown-linux-gnu",
             "codegen-c",
@@ -1429,6 +1602,7 @@ mod tests {
             profile,
             "x86_64-unknown-linux-gnu".to_string(),
             query_key,
+            producer,
             None,
             Vec::new(),
             None,
@@ -1485,7 +1659,8 @@ mod tests {
         );
         let generated_c = FileRecord::from_path(&generated_path).unwrap();
         let binary = FileRecord::from_path(&binary_path).unwrap();
-        let configuration = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION);
+        let producer = producer_executable_identity().unwrap();
+        let configuration = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, &producer);
         let query_key = QueryKey::new(
             "x86_64-unknown-linux-gnu",
             "codegen-c",
@@ -1508,6 +1683,7 @@ mod tests {
                 profile,
                 "x86_64-unknown-linux-gnu".to_string(),
                 query_key,
+                producer,
                 Some(compiler),
                 vec![compile],
                 Some(link),
@@ -1522,6 +1698,7 @@ mod tests {
                 profile,
                 "x86_64-unknown-linux-gnu".to_string(),
                 query_key,
+                producer,
                 Some(compiler),
                 Vec::new(),
                 None,
@@ -1566,6 +1743,76 @@ mod tests {
     }
 
     #[test]
+    fn producer_identity_is_content_addressed_path_independent_and_fail_closed() {
+        let root = test_root("producer");
+        let first_path = root.join("first-nomo");
+        let second_path = root.join("second-nomo");
+        fs::write(&first_path, b"identical producer bytes").unwrap();
+        fs::copy(&first_path, &second_path).unwrap();
+        let first = producer_executable_identity_from_path(&first_path).unwrap();
+        let second = producer_executable_identity_from_path(&second_path).unwrap();
+        assert_ne!(first.path, second.path);
+        assert_eq!(first.sha256, second.sha256);
+        assert_eq!(first.size_bytes, second.size_bytes);
+        assert_eq!(first.package_version, second.package_version);
+        let first_configuration =
+            codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION, &first);
+        let second_configuration =
+            codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION, &second);
+        assert_eq!(
+            first_configuration, second_configuration,
+            "identical producer bytes at another path must retain one cache identity"
+        );
+        let fingerprint = crate::incremental::ContentFingerprint::of_text("producer-bound source");
+        let first_key = QueryKey::new(
+            "test-target",
+            "codegen-c",
+            first_configuration,
+            fingerprint.clone(),
+        );
+        let second_key = QueryKey::new(
+            "test-target",
+            "codegen-c",
+            second_configuration,
+            fingerprint.clone(),
+        );
+        let cache = crate::incremental::PersistentQueryCache::at_root(&root.join("cache"));
+        cache
+            .insert(&first_key, &"generated by identical bytes".to_string())
+            .unwrap();
+        assert_eq!(
+            cache.get::<String>(&second_key).as_deref(),
+            Some("generated by identical bytes"),
+            "identical producer bytes at another path must hit the actual persistent QueryKey"
+        );
+
+        fs::write(&second_path, b"identical producer byte!").unwrap();
+        let changed = producer_executable_identity_from_path(&second_path).unwrap();
+        assert_ne!(first.sha256, changed.sha256);
+        assert_eq!(first.package_version, changed.package_version);
+        let changed_configuration =
+            codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION, &changed);
+        assert_ne!(
+            second_key.identity, changed_configuration,
+            "one changed producer byte must force a distinct cache identity"
+        );
+        let changed_key = QueryKey::new(
+            "test-target",
+            "codegen-c",
+            changed_configuration,
+            fingerprint,
+        );
+        assert_eq!(
+            cache.get::<String>(&changed_key),
+            None,
+            "same package version with one changed producer byte must miss"
+        );
+        assert!(producer_executable_identity_from_path(&root.join("missing")).is_err());
+        assert!(producer_executable_identity_from_path(&root).is_err());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
     fn command_rendering_matches_posix_shlex_join() {
         assert_eq!(
             command_text(&[
@@ -1587,6 +1834,27 @@ mod tests {
         write_build_metadata(&path, &debug).unwrap();
         let decoded = validate_build_metadata(&path).unwrap();
         assert_eq!(decoded, debug);
+        let value = serde_json::from_slice::<Value>(&fs::read(&path).unwrap()).unwrap();
+        let producer_json = canonical_compact_json(&value["producer_executable"]).unwrap();
+        let compiler_json = canonical_compact_json(&value["compiler"]).unwrap();
+        let commands_json = canonical_compact_json(&serde_json::json!({
+            "compile_commands": value["compile_commands"].clone(),
+            "link_command": value["link_command"].clone(),
+            "combined_compile_link_command": value["combined_compile_link_command"].clone(),
+        }))
+        .unwrap();
+        assert_eq!(
+            value["content_binding"]["canonical_subdocuments"]["producer_identity"],
+            producer_json
+        );
+        assert_eq!(
+            value["content_binding"]["canonical_subdocuments"]["compiler_identity"],
+            compiler_json
+        );
+        assert_eq!(
+            value["content_binding"]["canonical_subdocuments"]["commands"],
+            commands_json
+        );
         assert_eq!(
             fs::read(&path).unwrap(),
             canonical_json_bytes(&debug).unwrap()
@@ -1647,6 +1915,13 @@ mod tests {
         });
         assert_metadata_mutation_rejected(&path, &metadata, |value| {
             value["content_binding"]["sha256"] = Value::String("3".repeat(64));
+        });
+        assert_metadata_mutation_rejected(&path, &metadata, |value| {
+            value["content_binding"]["canonical_subdocuments"]["commands"] =
+                Value::String("{\"tampered\":true}".to_string());
+        });
+        assert_metadata_mutation_rejected(&path, &metadata, |value| {
+            value["producer_executable"]["size_bytes"] = Value::from(1_u64);
         });
         assert_metadata_mutation_rejected(&path, &metadata, |value| {
             value["target_triple"] = Value::String("aarch64-unknown-linux-gnu".to_string());

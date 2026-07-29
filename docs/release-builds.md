@@ -49,7 +49,11 @@ executable. Windows records the selected Program Files LLVM invocation, Visual
 Studio installation, SDK roots, tool identities, and filtered compiler paths.
 
 Configured native cross-links retain their target-specific toolchain arguments.
-Recognized targets without a configured native linker fail explicitly.
+GNU cross drivers are identified by their target-prefixed `*-gcc` executable,
+use `-dumpmachine` for the reported target, and receive the fixed C99/release
+flags without Clang-only `--no-default-config`. Clang host release builds keep
+the exact argv above. Recognized targets without a configured native linker fail
+explicitly.
 The browser `nomo-wasm` compiler/interpreter and its sandbox are not converted
 into Clang builds by `--release`.
 
@@ -96,6 +100,9 @@ profile, while `generated_c.path` identifies either `--out` or the materialized
 Schema 1 contains:
 
 - `selected_profile` (`debug` or `release`) and canonical `target_triple`;
+- `producer_executable`, including the invocation path, resolved path, file
+  size, package version, and SHA-256 of the exact `nomo` or `nomoc` executable
+  that produced the output;
 - `compiler`, full compile/link command records, `generated_c`, and `binary`
   content records when those stages exist;
 - `release_provenance.path` and `release_provenance.sha256` for native release
@@ -117,8 +124,11 @@ hashed by the cache, while `query_key` exposes the parsed object. Schema 1
 discloses the query schema, toolchain, target, namespace, identity, and source
 fingerprint alongside the selected profile, Nomo compiler/runtime revisions,
 pass-pipeline version, and toolchain-configuration version/text/digest. The
-same inputs therefore produce the same key on cold and warm builds, while a
-profile or pipeline change misses.
+compiler/runtime revision is `exe-sha256:<producer digest>` rather than the
+human package version, and that revision is part of the actual persistent
+`QueryKey`. Identical executable bytes at another path reuse the key; a
+one-byte producer change, profile change, or pipeline change misses. Producer
+identity failure is fail-closed before cache or build evidence is published.
 
 `content_binding` uses the separate domain
 `nomo-build-metadata-content-binding-v1`. Starting with that UTF-8 domain, then
@@ -133,9 +143,38 @@ invocation-specific. Metadata for one profile cannot authenticate an otherwise
 identical binary or sidecar as the other profile, and an equal-content artifact
 at another path cannot be substituted.
 
-Both JSON files are written atomically and contain canonical bytes. A consumer
+The three hashed structured inputs are independently reproducible without Rust
+field-order assumptions. `content_binding.canonical_subdocuments` stores compact
+UTF-8 canonical JSON for `producer_identity`, `compiler_identity`, and
+`commands`; object keys are recursively sorted lexicographically, array order
+is preserved, and JSON uses no insignificant whitespace. Each corresponding
+input is the SHA-256 of those exact stored bytes. An external validator rebuilds
+the same subdocuments from the top-level metadata values before trusting their
+digests or the final framed binding.
+
+Evidence publication is serialized by `<target-dir>/.nomo-build.lock`. Every
+build, and every pre-discovery cleanup that finds an existing target directory,
+takes that same lock. Cleanup clears an old pair; a publishing build holds the
+lock through generated-output materialization and publication.
+Metadata is atomically published first and `release-provenance.json` is
+published last as the commit marker; any discovery, compilation, link, or write
+failure removes both. Workspace cleanup conservatively locates ordinary
+`nomo.toml` files below the requested workspace while skipping build, cache,
+vendor, VCS, and dependency-manager directories and never following directory
+symlinks. It removes only the two evidence files, not source or dependency
+content.
+
+Both JSON files contain canonical bytes. Temporary files are flushed and
+atomically replaced, with best-effort parent-directory synchronization; a
+stronger platform-wide power-loss guarantee remains future work. A consumer
 must reject unknown schema versions, non-canonical bytes, missing files,
-changed artifact hashes, mismatched commands, or stale compiler identity. The
-release sidecar remains schema-compatible with the frozen Benchmarks Game v2
-contract; formal release-lane eligibility additionally requires the benchmark
-runner's independent metadata-binding contract.
+changed artifact hashes, mismatched commands, or stale compiler/producer
+identity. The release sidecar remains schema-compatible with the frozen
+Benchmarks Game v2 contract; formal release-lane eligibility additionally
+requires the benchmark runner's independent metadata-binding contract.
+
+For `nomo test --release`, the harness, generated runtime translation unit, and
+declared FFI sources are compiled separately with the fixed release compile
+flags. Raw `[ffi].link_args` are applied only by the link command. Such custom
+link flags remain supported, but can make a build non-portable or ineligible
+for a formal baseline whose validator permits only the fixed argv.

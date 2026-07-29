@@ -408,8 +408,14 @@ jobs:
         shell: bash
         run: |
           test "$(uname -m)" = "x86_64"
-          target/release/nomo build examples/result_helpers --target aarch64-unknown-linux-gnu
+          target/release/nomo build examples/result_helpers --release --target aarch64-unknown-linux-gnu
           artifact="examples/result_helpers/build/aarch64-unknown-linux-gnu/bin/result_helpers"
+          metadata="examples/result_helpers/build/aarch64-unknown-linux-gnu/nomo-build-metadata.json"
+          provenance="examples/result_helpers/build/aarch64-unknown-linux-gnu/release-provenance.json"
+          grep '"selected_profile": "release"' "$metadata"
+          grep '"target_triple": "aarch64-unknown-linux-gnu"' "$metadata"
+          grep 'aarch64-linux-gnu-gcc' "$metadata"
+          test -s "$provenance"
           readelf -h "$artifact" | grep 'Machine:.*AArch64'
           file "$artifact" | grep 'ELF 64-bit.*ARM aarch64'
           qemu-aarch64 -L /usr/aarch64-linux-gnu "$artifact"

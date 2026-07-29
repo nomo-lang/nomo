@@ -1,15 +1,30 @@
 use super::cli_common::{filter_projects_by_package, validate_project_package};
 use nomo::project::{
-    BuildProfile, DependencyResolutionOptions, ProjectTestOptions, discover_project,
-    discover_workspace, run_project_tests_with_options,
+    BuildProfile, DependencyResolutionOptions, ProjectTestOptions, clear_requested_build_metadata,
+    clear_requested_workspace_build_metadata, discover_project, discover_workspace,
+    run_project_tests_with_options,
 };
+use nomo::target::TargetTriple;
 use nomo_test::{json_report, reports_have_failures, text_report};
 use std::env;
 use std::path::PathBuf;
 use std::process;
 
+const TEST_USAGE: &str = "usage: nomo test [path] [--release] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]";
+
 pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
+    if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
+        println!("{TEST_USAGE}");
+        return Ok(());
+    }
     let (path, workspace, package, filter, json, deps, profile) = parse_test_args(args)?;
+    let target = TargetTriple::host()?;
+    if workspace {
+        clear_requested_workspace_build_metadata(&path, &target, false)
+            .map_err(|error| error.human())?;
+    } else {
+        clear_requested_build_metadata(&path, &target, false).map_err(|error| error.human())?;
+    }
     let mut reports = Vec::new();
     if workspace {
         let mut projects = discover_workspace(&path)?.members;
@@ -75,7 +90,6 @@ pub(super) fn parse_test_args(
     ),
     String,
 > {
-    let usage = "usage: nomo test [path] [--release] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]";
     let mut workspace = false;
     let mut package = None;
     let mut filter = None;
@@ -128,7 +142,7 @@ pub(super) fn parse_test_args(
         } else if path.is_none() {
             path = Some(PathBuf::from(arg));
         } else {
-            return Err(usage.to_string());
+            return Err(TEST_USAGE.to_string());
         }
         index += 1;
     }

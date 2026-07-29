@@ -6,7 +6,7 @@ use nomo::project::{
 use nomo::target::TargetTriple;
 use std::env;
 use std::fs;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process;
 
 struct BuildArgs {
@@ -46,6 +46,10 @@ fn run() -> Result<(), String> {
             }
         }
         "build" => {
+            if args.as_slice() == ["--help"] || args.as_slice() == ["-h"] {
+                println!("{}", build_usage());
+                return Ok(());
+            }
             let BuildArgs {
                 source,
                 out,
@@ -58,23 +62,33 @@ fn run() -> Result<(), String> {
             if emit_c && profile == BuildProfile::Release {
                 return Err("`--release` and `--emit-c` cannot be used together".to_string());
             }
-            let c = match compile_standalone_source_with_profile_cache(&source, &target, profile) {
-                Ok(c) => c,
-                Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
-                Err(error) => return Err(error.human()),
-            };
+            if let Some(out) = out.as_deref() {
+                reject_source_output_alias(&source, out)?;
+            }
+            let generated =
+                match compile_standalone_source_with_profile_cache(&source, &target, profile) {
+                    Ok(generated) => generated,
+                    Err(BuildError::Diagnostic(diag)) if json => return Err(diag.json()),
+                    Err(error) => return Err(error.human()),
+                };
             if let Some(out) = out {
-                if let Some(parent) = out.parent() {
+                if let Some(parent) = out.parent().filter(|parent| !parent.as_os_str().is_empty()) {
                     fs::create_dir_all(parent).map_err(|err| err.to_string())?;
                 }
-                fs::write(&out, &c).map_err(|err| err.to_string())?;
-                record_standalone_c_build_metadata(&source, &c, Some(&out), &target, profile)
-                    .map_err(|error| error.human())?;
+                fs::write(&out, generated.generated_source()).map_err(|err| err.to_string())?;
+                record_standalone_c_build_metadata(
+                    &source,
+                    &generated,
+                    Some(&out),
+                    &target,
+                    profile,
+                )
+                .map_err(|error| error.human())?;
                 println!("emitted {}", out.display());
             } else {
-                record_standalone_c_build_metadata(&source, &c, None, &target, profile)
+                record_standalone_c_build_metadata(&source, &generated, None, &target, profile)
                     .map_err(|error| error.human())?;
-                print!("{c}");
+                print!("{}", generated.generated_source());
             }
             Ok(())
         }
@@ -84,6 +98,33 @@ fn run() -> Result<(), String> {
         }
         other => Err(format!("unknown command `{other}`")),
     }
+}
+
+fn reject_source_output_alias(source: &Path, output: &Path) -> Result<(), String> {
+    let current_dir = env::current_dir().map_err(|error| error.to_string())?;
+    let absolute = |path: &Path| {
+        if path.is_absolute() {
+            path.to_path_buf()
+        } else {
+            current_dir.join(path)
+        }
+    };
+    let aliases_source = absolute(source) == absolute(output)
+        || (output.exists()
+            && same_file::is_same_file(source, output).map_err(|error| {
+                format!(
+                    "failed to compare source {} and output {}: {error}",
+                    source.display(),
+                    output.display()
+                )
+            })?);
+    if aliases_source {
+        return Err(format!(
+            "`--out` must not overwrite or alias source {}",
+            source.display()
+        ));
+    }
+    Ok(())
 }
 
 fn parse_source_and_json(args: Vec<String>) -> Result<(PathBuf, bool), String> {

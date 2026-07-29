@@ -15,8 +15,8 @@ The first persistent layer stores conservative values for:
 - generated C from project build/run/emit-C commands, standalone `nomoc` and
   script runs, and individual test harnesses, keyed by their complete source
   inputs plus the selected target, `debug` or `release` profile,
-  compiler/runtime revisions, pass-pipeline version, and relevant
-  native-toolchain configuration.
+  the SHA-256 revision of the exact producer executable, pass-pipeline version,
+  and relevant native-toolchain configuration.
 
 Failed checks are not persisted. Linking still runs on every build, so the
 selected system or cross C toolchain remains authoritative for the final
@@ -68,10 +68,16 @@ incremental cache. `nomo clean` remains scoped to generated build artifacts.
 Debug and release entries never alias. A cold debug build may warm only its
 debug key; a cold release build writes a distinct release key, and alternating
 profiles reuses only the matching entry. Incrementing the pass-pipeline version
-or changing a bound toolchain input forces a miss.
+or changing a bound toolchain input forces a miss. The producer revision uses
+the executable bytes (`exe-sha256:<digest>`), not `CARGO_PKG_VERSION` or Git
+availability: copying identical bytes to another path keeps the key, while a
+one-byte producer change misses. Failure to read and hash the producer fails
+closed without publishing cache or build evidence.
 
 The public `nomo-build-metadata.json` document discloses the cache-key formula,
-ordered inputs, and resulting key for the completed build. See
+ordered inputs, exact serialized `QueryKey`, and resulting key for the completed
+build. The disclosed key is passed directly from the compilation/cache lookup;
+metadata generation does not reread source files to derive a parallel key. See
 [Release Builds and Backend Provenance](release-builds.md).
 
 Set `NOMO_INCREMENTAL_TRACE=1` to print `hit`, `write`, and `corrupt` events to

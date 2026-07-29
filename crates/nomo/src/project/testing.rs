@@ -1,6 +1,6 @@
 use super::build_metadata::{
-    PASS_PIPELINE_VERSION, codegen_cache_configuration, release_c_flags,
-    release_driver_config_flags, resolve_executable, run_recorded_command,
+    PASS_PIPELINE_VERSION, codegen_cache_configuration, producer_executable_identity,
+    resolve_executable, run_recorded_command,
 };
 use super::{
     BuildError, BuildProfile, DependencyResolutionOptions, Project, ProjectModuleContext,
@@ -194,6 +194,7 @@ fn run_single_project_test(
         .as_deref()
         .unwrap_or(project.root.as_path());
     let cache = PersistentQueryCache::at_root(cache_root);
+    let producer_executable = producer_executable_identity().map_err(|error| error.human())?;
     let cache_key = project_query_key(
         project,
         &context.external_modules,
@@ -204,7 +205,7 @@ fn run_single_project_test(
             "{}:{}:{}",
             project.name,
             test.name,
-            codegen_cache_configuration(profile, PASS_PIPELINE_VERSION)
+            codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, &producer_executable)
         ),
     );
     let c = match cache.get::<String>(&cache_key) {
@@ -225,10 +226,10 @@ fn run_single_project_test(
     };
     let file_stem = safe_test_artifact_name(&test.name);
     let c_path = c_dir.join(format!("{file_stem}.c"));
-    let bin_path = bin_dir.join(file_stem);
+    let bin_path = bin_dir.join(&file_stem);
     let uses_native_tasks = super::build::generated_c_uses_native_tasks(&c);
     let uses_bundled_sqlite = super::build::generated_c_uses_bundled_sqlite(&c);
-    fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
+    fs::write(&c_path, &c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
     super::build::materialize_bundled_sqlite(c_dir, uses_bundled_sqlite)
         .map_err(|err| format!("failed to materialize bundled SQLite: {err}"))?;
     let mut toolchain = target.c_toolchain_from(&target)?;
@@ -240,33 +241,47 @@ fn run_single_project_test(
     } else {
         PathBuf::from(&toolchain.program)
     };
-    let mut command = Command::new(&compiler);
-    command.args(&toolchain.args);
     if profile == BuildProfile::Release {
-        command.args(release_driver_config_flags());
-        command.args(
-            release_c_flags()
-                .iter()
-                .copied()
-                .filter(|flag| *flag != "-std=c99"),
-        );
-    }
-    configure_c_compile_command(
-        &mut command,
-        &c_path,
-        &bin_path,
-        ffi_link_metadata,
-        &target,
-        uses_native_tasks,
-        uses_bundled_sqlite,
-    );
-    if profile == BuildProfile::Release {
-        let argv = std::iter::once(command.get_program())
-            .chain(command.get_args())
-            .map(|part| part.to_string_lossy().into_owned())
-            .collect();
-        run_recorded_command(argv, profile).map_err(|error| error.human())?;
+        let object_dir = c_dir.parent().unwrap_or(c_dir).join("obj").join(&file_stem);
+        fs::create_dir_all(&object_dir)
+            .map_err(|error| format!("failed to create {}: {error}", object_dir.display()))?;
+        let (objects, _) = super::build::compile_release_translation_units(
+            &compiler,
+            &toolchain,
+            &c_path,
+            c_dir,
+            &object_dir,
+            ffi_link_metadata,
+            uses_bundled_sqlite,
+        )
+        .map_err(|error| error.human())?;
+        let link_argv = super::build::release_link_argv(
+            &compiler,
+            &toolchain,
+            &objects,
+            &bin_path,
+            ffi_link_metadata,
+            &target,
+            uses_native_tasks,
+            uses_bundled_sqlite,
+            super::build::generated_c_uses_math(&c),
+            super::build::generated_c_uses_dynamic_loader(&c),
+            super::build::generated_c_uses_winsock(&c),
+        )
+        .map_err(|error| error.human())?;
+        run_recorded_command(link_argv, profile).map_err(|error| error.human())?;
     } else {
+        let mut command = Command::new(&compiler);
+        command.args(&toolchain.args);
+        configure_c_compile_command(
+            &mut command,
+            &c_path,
+            &bin_path,
+            ffi_link_metadata,
+            &target,
+            uses_native_tasks,
+            uses_bundled_sqlite,
+        );
         let output = command.output().map_err(|err| {
             format!(
                 "failed to run C compiler `{}` for target `{target}`: {err}",

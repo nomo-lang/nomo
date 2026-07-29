@@ -1,6 +1,7 @@
 use super::build_metadata::{
-    BuildMetadata, FileRecord, PASS_PIPELINE_VERSION, ReleaseBackendProvenance,
-    codegen_cache_configuration, inspect_compiler, release_c_flags, release_driver_config_flags,
+    BuildMetadata, FileRecord, PASS_PIPELINE_VERSION, ProducerExecutableIdentity,
+    ReleaseBackendProvenance, codegen_cache_configuration, inspect_compiler,
+    producer_executable_identity, release_c_flags, release_driver_config_flags_for_compiler,
     remove_stale_file, resolve_executable, run_recorded_command, write_build_metadata,
     write_release_provenance,
 };
@@ -14,9 +15,122 @@ use crate::incremental::{ContentFingerprint, PersistentQueryCache, QueryKey, pro
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::{CToolchain, TargetTriple};
 use sha2::{Digest, Sha256};
-use std::fs;
+use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
+
+#[derive(Debug, Clone)]
+pub struct CachedStandaloneSource {
+    generated_source: String,
+    query_key: QueryKey,
+    producer_executable: ProducerExecutableIdentity,
+}
+
+impl CachedStandaloneSource {
+    pub fn generated_source(&self) -> &str {
+        &self.generated_source
+    }
+}
+
+struct BuildEvidenceTransaction {
+    target_dir: PathBuf,
+    _lock: File,
+    committed: bool,
+}
+
+impl BuildEvidenceTransaction {
+    fn acquire(target_dir: &Path) -> Result<Self, BuildError> {
+        fs::create_dir_all(target_dir).map_err(|error| {
+            BuildError::Message(format!(
+                "failed to create build output directory {}: {error}",
+                target_dir.display()
+            ))
+        })?;
+        let lock_path = target_dir.join(".nomo-build.lock");
+        let lock = OpenOptions::new()
+            .create(true)
+            .read(true)
+            .write(true)
+            .truncate(false)
+            .open(&lock_path)
+            .map_err(|error| {
+                BuildError::Message(format!(
+                    "failed to open build lock {}: {error}",
+                    lock_path.display()
+                ))
+            })?;
+        lock.lock().map_err(|error| {
+            BuildError::Message(format!(
+                "failed to acquire build lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+        let transaction = Self {
+            target_dir: target_dir.to_path_buf(),
+            _lock: lock,
+            committed: false,
+        };
+        transaction.clear_evidence()?;
+        Ok(transaction)
+    }
+
+    fn clear_evidence(&self) -> Result<(), BuildError> {
+        remove_stale_file(&self.target_dir.join("release-provenance.json"))?;
+        remove_stale_file(&self.target_dir.join("nomo-build-metadata.json"))
+    }
+
+    fn commit(mut self) {
+        self.committed = true;
+    }
+}
+
+impl Drop for BuildEvidenceTransaction {
+    fn drop(&mut self) {
+        if !self.committed {
+            let _ = self.clear_evidence();
+        }
+    }
+}
+
+fn publish_release_evidence(
+    metadata_path: &Path,
+    metadata: &BuildMetadata,
+    provenance_path: &Path,
+    provenance: &ReleaseBackendProvenance,
+    expected_provenance: &FileRecord,
+) -> Result<(), BuildError> {
+    publish_release_evidence_with(
+        metadata_path,
+        provenance_path,
+        expected_provenance,
+        || write_build_metadata(metadata_path, metadata).map(|_| ()),
+        || write_release_provenance(provenance_path, provenance),
+    )
+}
+
+fn publish_release_evidence_with(
+    metadata_path: &Path,
+    provenance_path: &Path,
+    expected_provenance: &FileRecord,
+    write_metadata: impl FnOnce() -> Result<(), BuildError>,
+    write_provenance: impl FnOnce() -> Result<FileRecord, BuildError>,
+) -> Result<(), BuildError> {
+    let result = (|| {
+        write_metadata()?;
+        let written_provenance = write_provenance()?;
+        if &written_provenance != expected_provenance {
+            return Err(BuildError::Message(
+                "published release provenance does not match build metadata".to_string(),
+            ));
+        }
+        Ok(())
+    })();
+    if result.is_err() {
+        let _ = remove_stale_file(metadata_path);
+        let _ = remove_stale_file(provenance_path);
+    }
+    result
+}
 
 pub fn build_project(project: &Project, emit_c_only: bool) -> Result<PathBuf, String> {
     build_project_with_diagnostics(project, emit_c_only).map_err(|err| err.human())
@@ -74,7 +188,7 @@ pub fn build_project_for_target_with_profile_options(
 
 pub fn build_standalone_release_c(
     source: &Path,
-    generated_source: &str,
+    generated: &CachedStandaloneSource,
     output: Option<&Path>,
     target: &TargetTriple,
 ) -> Result<PathBuf, BuildError> {
@@ -85,6 +199,7 @@ pub fn build_standalone_release_c(
     } else {
         source_parent.join("build").join(target.to_string())
     };
+    let evidence = BuildEvidenceTransaction::acquire(&target_dir)?;
     let c_dir = target_dir.join("c");
     let object_dir = target_dir.join("obj");
     let bin_dir = target_dir.join("bin");
@@ -109,9 +224,8 @@ pub fn build_standalone_release_c(
     }
     let provenance_path = target_dir.join("release-provenance.json");
     let metadata_path = target_dir.join("nomo-build-metadata.json");
-    remove_stale_file(&provenance_path)?;
-    remove_stale_file(&metadata_path)?;
-    fs::write(&c_path, generated_source).map_err(|error| BuildError::Message(error.to_string()))?;
+    fs::write(&c_path, &generated.generated_source)
+        .map_err(|error| BuildError::Message(error.to_string()))?;
     let generated_c = FileRecord::from_path(&c_path)?;
     let toolchain = c_toolchain_for_profile(target, &host, BuildProfile::Release)?;
     let compiler_path = resolve_executable(&toolchain.program, BuildProfile::Release)?;
@@ -134,11 +248,11 @@ pub fn build_standalone_release_c(
         &bin_path,
         &ffi,
         target,
-        generated_c_uses_native_tasks(generated_source),
+        generated_c_uses_native_tasks(&generated.generated_source),
         false,
-        generated_c_uses_math(generated_source),
-        generated_c_uses_dynamic_loader(generated_source),
-        generated_c_uses_winsock(generated_source),
+        generated_c_uses_math(&generated.generated_source),
+        generated_c_uses_dynamic_loader(&generated.generated_source),
+        generated_c_uses_winsock(&generated.generated_source),
     )?;
     let link_command = run_recorded_command(link_argv, BuildProfile::Release)?;
     let object_records = objects
@@ -154,26 +268,34 @@ pub fn build_standalone_release_c(
         generated_c.clone(),
         binary.clone(),
     );
-    let provenance_record = write_release_provenance(&provenance_path, &provenance)?;
+    let provenance_record = FileRecord::for_canonical_json(&provenance_path, &provenance)?;
     let metadata = BuildMetadata::new(
         BuildProfile::Release,
         target.to_string(),
-        standalone_codegen_query_key(source, target, BuildProfile::Release, "script")?,
+        generated.query_key.clone(),
+        generated.producer_executable.clone(),
         Some(compiler),
         compile_commands,
         Some(link_command),
         None,
         generated_c,
         Some(binary),
-        Some(provenance_record),
+        Some(provenance_record.clone()),
     )?;
-    write_build_metadata(&metadata_path, &metadata)?;
+    publish_release_evidence(
+        &metadata_path,
+        &metadata,
+        &provenance_path,
+        &provenance,
+        &provenance_record,
+    )?;
+    evidence.commit();
     Ok(bin_path)
 }
 
 pub fn record_standalone_c_build_metadata(
     source: &Path,
-    generated_source: &str,
+    generated: &CachedStandaloneSource,
     output: Option<&Path>,
     target: &TargetTriple,
     profile: BuildProfile,
@@ -185,9 +307,10 @@ pub fn record_standalone_c_build_metadata(
     } else {
         source_parent.join("build").join(target.to_string())
     };
+    let evidence = BuildEvidenceTransaction::acquire(&target_dir)?;
     let c_path = match output {
         Some(path) => path.to_path_buf(),
-        None => target_dir.join("c/main.c"),
+        None => target_dir.join("c").join("main.c"),
     };
     if output.is_none() {
         let parent = c_path.parent().ok_or_else(|| {
@@ -197,17 +320,15 @@ pub fn record_standalone_c_build_metadata(
             ))
         })?;
         fs::create_dir_all(parent).map_err(|error| BuildError::Message(error.to_string()))?;
-        fs::write(&c_path, generated_source)
+        fs::write(&c_path, &generated.generated_source)
             .map_err(|error| BuildError::Message(error.to_string()))?;
     }
-    let provenance_path = target_dir.join("release-provenance.json");
     let metadata_path = target_dir.join("nomo-build-metadata.json");
-    remove_stale_file(&provenance_path)?;
-    remove_stale_file(&metadata_path)?;
     let metadata = BuildMetadata::new(
         profile,
         target.to_string(),
-        standalone_codegen_query_key(source, target, profile, "nomoc")?,
+        generated.query_key.clone(),
+        generated.producer_executable.clone(),
         None,
         Vec::new(),
         None,
@@ -217,6 +338,7 @@ pub fn record_standalone_c_build_metadata(
         None,
     )?;
     write_build_metadata(&metadata_path, &metadata)?;
+    evidence.commit();
     Ok(metadata_path)
 }
 
@@ -224,34 +346,54 @@ pub fn compile_standalone_source_with_profile_cache(
     source: &Path,
     target: &TargetTriple,
     profile: BuildProfile,
-) -> Result<String, BuildError> {
-    let cache_key = standalone_codegen_query_key(source, target, profile, "nomoc")?;
+) -> Result<CachedStandaloneSource, BuildError> {
+    let producer_executable = producer_executable_identity()?;
+    let cache_key =
+        standalone_codegen_query_key(source, target, profile, "nomoc", &producer_executable)?;
     let cache_root = source.parent().unwrap_or_else(|| Path::new("."));
     let cache = PersistentQueryCache::at_root(cache_root);
     if let Some(cached) = cache.get::<String>(&cache_key) {
-        return Ok(cached);
+        return Ok(CachedStandaloneSource {
+            generated_source: cached,
+            query_key: cache_key,
+            producer_executable,
+        });
     }
     let generated = crate::compiler::compile_source_to_c_for_target(source, target)
         .map_err(BuildError::Diagnostic)?;
     let _ = cache.insert(&cache_key, &generated);
-    Ok(generated)
+    Ok(CachedStandaloneSource {
+        generated_source: generated,
+        query_key: cache_key,
+        producer_executable,
+    })
 }
 
 pub fn compile_standalone_script_with_profile_cache(
     source: &Path,
     target: &TargetTriple,
     profile: BuildProfile,
-) -> Result<String, BuildError> {
-    let cache_key = standalone_codegen_query_key(source, target, profile, "script")?;
+) -> Result<CachedStandaloneSource, BuildError> {
+    let producer_executable = producer_executable_identity()?;
+    let cache_key =
+        standalone_codegen_query_key(source, target, profile, "script", &producer_executable)?;
     let cache_root = source.parent().unwrap_or_else(|| Path::new("."));
     let cache = PersistentQueryCache::at_root(cache_root);
     if let Some(cached) = cache.get::<String>(&cache_key) {
-        return Ok(cached);
+        return Ok(CachedStandaloneSource {
+            generated_source: cached,
+            query_key: cache_key,
+            producer_executable,
+        });
     }
     let generated = crate::compiler::compile_script_source_to_c_for_target(source, target)
         .map_err(BuildError::Diagnostic)?;
     let _ = cache.insert(&cache_key, &generated);
-    Ok(generated)
+    Ok(CachedStandaloneSource {
+        generated_source: generated,
+        query_key: cache_key,
+        producer_executable,
+    })
 }
 
 pub fn clear_project_build_metadata(
@@ -281,9 +423,188 @@ pub fn clear_standalone_build_metadata(
     clear_build_metadata_at(&target_dir)
 }
 
+pub fn clear_requested_build_metadata(
+    requested_path: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<(), BuildError> {
+    let root = requested_build_root(requested_path)?;
+    let target_dir = if target_scoped_artifacts {
+        root.join("build").join(target.to_string())
+    } else {
+        root.join("build")
+    };
+    clear_build_metadata_at(&target_dir)
+}
+
+pub fn clear_requested_workspace_build_metadata(
+    requested_path: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<(), BuildError> {
+    let workspace_root = requested_workspace_root(requested_path)?;
+    let mut manifest_roots = vec![workspace_root.clone()];
+    let mut pending = vec![workspace_root];
+    while let Some(directory) = pending.pop() {
+        let entries = fs::read_dir(&directory).map_err(|error| {
+            BuildError::Message(format!(
+                "failed to inspect workspace path {} while clearing stale build evidence: {error}",
+                directory.display()
+            ))
+        })?;
+        for entry in entries {
+            let entry = entry.map_err(|error| {
+                BuildError::Message(format!(
+                    "failed to inspect workspace entry under {} while clearing stale build evidence: {error}",
+                    directory.display()
+                ))
+            })?;
+            let file_type = entry.file_type().map_err(|error| {
+                BuildError::Message(format!(
+                    "failed to inspect workspace entry {} while clearing stale build evidence: {error}",
+                    entry.path().display()
+                ))
+            })?;
+            if !file_type.is_dir() || workspace_cleanup_excludes(entry.path().as_path()) {
+                continue;
+            }
+            let child = entry.path();
+            let manifest = child.join("nomo.toml");
+            if manifest
+                .symlink_metadata()
+                .is_ok_and(|metadata| metadata.file_type().is_file())
+            {
+                manifest_roots.push(child.clone());
+            }
+            pending.push(child);
+        }
+    }
+    manifest_roots.sort();
+    manifest_roots.dedup();
+    for root in manifest_roots {
+        let target_dir = if target_scoped_artifacts {
+            root.join("build").join(target.to_string())
+        } else {
+            root.join("build")
+        };
+        clear_build_metadata_at(&target_dir)?;
+    }
+    Ok(())
+}
+
 fn clear_build_metadata_at(target_dir: &Path) -> Result<(), BuildError> {
-    remove_stale_file(&target_dir.join("release-provenance.json"))?;
-    remove_stale_file(&target_dir.join("nomo-build-metadata.json"))
+    match fs::symlink_metadata(target_dir) {
+        Ok(metadata) if metadata.file_type().is_dir() => {}
+        Ok(_) => {
+            return Err(BuildError::Message(format!(
+                "build output path is not a directory: {}",
+                target_dir.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(()),
+        Err(error) => {
+            return Err(BuildError::Message(format!(
+                "failed to inspect build output directory {}: {error}",
+                target_dir.display()
+            )));
+        }
+    }
+    let evidence = BuildEvidenceTransaction::acquire(target_dir)?;
+    evidence.commit();
+    Ok(())
+}
+
+fn requested_workspace_root(requested_path: &Path) -> Result<PathBuf, BuildError> {
+    let requested_path = absolute_build_path(requested_path)?;
+    let requested_directory = if requested_path.is_dir() {
+        requested_path.clone()
+    } else {
+        requested_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| requested_path.clone())
+    };
+    let mut cursor = requested_directory.clone();
+    let mut outermost_manifest_root = None;
+    loop {
+        let manifest = cursor.join("nomo.toml");
+        if manifest
+            .symlink_metadata()
+            .is_ok_and(|metadata| metadata.file_type().is_file())
+        {
+            outermost_manifest_root = Some(cursor.clone());
+            if fs::read_to_string(&manifest)
+                .is_ok_and(|source| manifest_declares_workspace(&source))
+            {
+                return Ok(cursor);
+            }
+        }
+        if cursor.join(".git").exists() {
+            break;
+        }
+        let Some(parent) = cursor.parent() else {
+            break;
+        };
+        if parent == cursor {
+            break;
+        }
+        cursor = parent.to_path_buf();
+    }
+    Ok(outermost_manifest_root.unwrap_or(requested_directory))
+}
+
+fn manifest_declares_workspace(source: &str) -> bool {
+    source.lines().any(|line| {
+        let line = line.trim();
+        line == "[workspace]" || line.starts_with("[workspace.")
+    })
+}
+
+fn workspace_cleanup_excludes(path: &Path) -> bool {
+    matches!(
+        path.file_name().and_then(|name| name.to_str()),
+        Some(".git" | ".nomo" | "build" | "target" | "vendor" | "node_modules")
+    )
+}
+
+fn requested_build_root(requested_path: &Path) -> Result<PathBuf, BuildError> {
+    let requested_path = absolute_build_path(requested_path)?;
+    let mut cursor = if requested_path.is_dir() {
+        requested_path.clone()
+    } else {
+        requested_path
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_else(|| requested_path.clone())
+    };
+    loop {
+        if cursor.join("nomo.toml").exists() {
+            return Ok(cursor);
+        }
+        let Some(parent) = cursor.parent() else {
+            break;
+        };
+        if parent == cursor {
+            break;
+        }
+        cursor = parent.to_path_buf();
+    }
+    if requested_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("nomo")
+    {
+        return requested_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                BuildError::Message(format!(
+                    "standalone source has no parent: {}",
+                    requested_path.display()
+                ))
+            });
+    }
+    Ok(requested_path)
 }
 
 fn build_project_impl(
@@ -301,8 +622,7 @@ fn build_project_impl(
     };
     let provenance_path = target_dir.join("release-provenance.json");
     let metadata_path = target_dir.join("nomo-build-metadata.json");
-    remove_stale_file(&provenance_path)?;
-    remove_stale_file(&metadata_path)?;
+    let producer_executable = producer_executable_identity()?;
     let context = project_module_context_for_target_with_options(project, options, target)
         .map_err(BuildError::Message)?;
     let ffi_link_metadata =
@@ -313,6 +633,8 @@ fn build_project_impl(
         .as_deref()
         .unwrap_or(project.root.as_path());
     let cache = PersistentQueryCache::at_root(cache_root);
+    let cache_configuration =
+        codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, &producer_executable);
     let cache_key = project_query_key(
         project,
         &context.external_modules,
@@ -323,7 +645,7 @@ fn build_project_impl(
             "{}:{}:{}",
             project.name,
             project.main.display(),
-            codegen_cache_configuration(profile, PASS_PIPELINE_VERSION),
+            cache_configuration,
         ),
     );
     let c = match cache.get::<String>(&cache_key) {
@@ -342,6 +664,7 @@ fn build_project_impl(
             generated
         }
     };
+    let evidence = BuildEvidenceTransaction::acquire(&target_dir)?;
     let c_dir = target_dir.join("c");
     let object_dir = target_dir.join("obj");
     let bin_dir = target_dir.join("bin");
@@ -364,6 +687,7 @@ fn build_project_impl(
             profile,
             target.to_string(),
             cache_key.clone(),
+            producer_executable.clone(),
             None,
             Vec::new(),
             None,
@@ -373,6 +697,7 @@ fn build_project_impl(
             None,
         )?;
         write_build_metadata(&metadata_path, &metadata)?;
+        evidence.commit();
         return Ok(c_path);
     }
 
@@ -428,20 +753,27 @@ fn build_project_impl(
             generated_c.clone(),
             binary.clone(),
         );
-        let provenance_record = write_release_provenance(&provenance_path, &provenance)?;
+        let provenance_record = FileRecord::for_canonical_json(&provenance_path, &provenance)?;
         let metadata = BuildMetadata::new(
             profile,
             target.to_string(),
             cache_key.clone(),
+            producer_executable.clone(),
             Some(compiler),
             compile_commands,
             Some(link_command),
             None,
             generated_c,
             Some(binary),
-            Some(provenance_record),
+            Some(provenance_record.clone()),
         )?;
-        write_build_metadata(&metadata_path, &metadata)?;
+        publish_release_evidence(
+            &metadata_path,
+            &metadata,
+            &provenance_path,
+            &provenance,
+            &provenance_record,
+        )?;
     } else {
         let mut command = Command::new(&compiler_path);
         command.args(&toolchain.args);
@@ -460,6 +792,7 @@ fn build_project_impl(
             profile,
             target.to_string(),
             cache_key,
+            producer_executable,
             Some(compiler),
             Vec::new(),
             None,
@@ -470,6 +803,7 @@ fn build_project_impl(
         )?;
         write_build_metadata(&metadata_path, &metadata)?;
     }
+    evidence.commit();
     Ok(bin_path)
 }
 
@@ -478,6 +812,7 @@ fn standalone_codegen_query_key(
     target: &TargetTriple,
     profile: BuildProfile,
     mode: &str,
+    producer_executable: &ProducerExecutableIdentity,
 ) -> Result<QueryKey, BuildError> {
     let source_path = absolute_build_path(source)?;
     let source_bytes = fs::read(&source_path).map_err(|error| {
@@ -486,7 +821,8 @@ fn standalone_codegen_query_key(
             source_path.display()
         ))
     })?;
-    let configuration = codegen_cache_configuration(profile, PASS_PIPELINE_VERSION);
+    let configuration =
+        codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, producer_executable);
     Ok(QueryKey::new(
         target.to_string(),
         "codegen-c",
@@ -514,7 +850,7 @@ fn c_toolchain_for_profile(
     Ok(toolchain)
 }
 
-fn compile_release_translation_units(
+pub(super) fn compile_release_translation_units(
     compiler_path: &Path,
     toolchain: &CToolchain,
     main_c_path: &Path,
@@ -537,34 +873,51 @@ fn compile_release_translation_units(
             .unwrap_or("translation-unit");
         let object = object_dir.join(format!("{index}-{stem}.o"));
         remove_stale_file(&object)?;
-        let mut argv = vec![compiler_path.to_string_lossy().into_owned()];
-        argv.extend(toolchain.args.iter().cloned());
-        argv.extend(
-            release_driver_config_flags()
-                .iter()
-                .map(|flag| flag.to_string()),
-        );
-        argv.extend(release_c_flags().iter().map(|flag| flag.to_string()));
-        if uses_bundled_sqlite {
-            argv.extend(
-                nomo_codegen_c::BUNDLED_SQLITE_COMPILE_OPTIONS
-                    .iter()
-                    .map(|option| format!("-D{option}")),
-            );
-        }
-        argv.extend([
-            "-c".to_string(),
-            absolute_build_path(source)?.to_string_lossy().into_owned(),
-            "-o".to_string(),
-            absolute_build_path(&object)?.to_string_lossy().into_owned(),
-        ]);
+        let argv = release_compile_argv(
+            compiler_path,
+            toolchain,
+            source,
+            &object,
+            uses_bundled_sqlite,
+        )?;
         commands.push(run_recorded_command(argv, BuildProfile::Release)?);
         objects.push(object);
     }
     Ok((objects, commands))
 }
 
-fn release_link_argv(
+pub(super) fn release_compile_argv(
+    compiler_path: &Path,
+    toolchain: &CToolchain,
+    source: &Path,
+    object: &Path,
+    uses_bundled_sqlite: bool,
+) -> Result<Vec<String>, BuildError> {
+    let mut argv = vec![compiler_path.to_string_lossy().into_owned()];
+    argv.extend(toolchain.args.iter().cloned());
+    argv.extend(
+        release_driver_config_flags_for_compiler(compiler_path)
+            .iter()
+            .map(|flag| flag.to_string()),
+    );
+    argv.extend(release_c_flags().iter().map(|flag| flag.to_string()));
+    if uses_bundled_sqlite {
+        argv.extend(
+            nomo_codegen_c::BUNDLED_SQLITE_COMPILE_OPTIONS
+                .iter()
+                .map(|option| format!("-D{option}")),
+        );
+    }
+    argv.extend([
+        "-c".to_string(),
+        absolute_build_path(source)?.to_string_lossy().into_owned(),
+        "-o".to_string(),
+        absolute_build_path(object)?.to_string_lossy().into_owned(),
+    ]);
+    Ok(argv)
+}
+
+pub(super) fn release_link_argv(
     compiler_path: &Path,
     toolchain: &CToolchain,
     objects: &[PathBuf],
@@ -580,7 +933,7 @@ fn release_link_argv(
     let mut argv = vec![compiler_path.to_string_lossy().into_owned()];
     argv.extend(toolchain.args.iter().cloned());
     argv.extend(
-        release_driver_config_flags()
+        release_driver_config_flags_for_compiler(compiler_path)
             .iter()
             .map(|flag| flag.to_string()),
     );
@@ -708,7 +1061,8 @@ pub(super) fn generated_c_uses_math(source: &str) -> bool {
         source,
         &[
             "sqrt", "sqrtf", "pow", "powf", "fmod", "fmodf", "floor", "floorf", "ceil", "ceilf",
-            "sin", "sinf", "cos", "cosf", "tan", "tanf", "exp", "expf", "log", "logf",
+            "round", "roundf", "sin", "sinf", "cos", "cosf", "tan", "tanf", "exp", "expf", "log",
+            "logf",
         ],
     )
 }
@@ -881,23 +1235,260 @@ mod tests {
         assert!(generated_c_uses_math(
             "float value = powf /* intrinsic call */ (left, right);"
         ));
+        assert!(generated_c_uses_math("double value = round(input);"));
+        assert!(generated_c_uses_math("float value = roundf(input);"));
         assert!(!generated_c_uses_math("int main(void) { return 0; }"));
         assert!(!generated_c_uses_math(
             "const char *name = \"sqrt(\"; /* pow(left, right) */"
         ));
         assert!(!generated_c_uses_math("double my_sqrt(double value);"));
+        assert!(!generated_c_uses_math(
+            "double round_trip(double value); // round(value)"
+        ));
+        assert!(!generated_c_uses_math(
+            "const char *literal = \"roundf(value)\";"
+        ));
+    }
+
+    #[test]
+    fn release_argv_keeps_clang_formal_flags_and_uses_gnu_cross_driver_semantics() {
+        let root = std::env::temp_dir().join(format!("nomo-release-driver-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let source = root.join("main.c");
+        let object = root.join("main.o");
+        fs::write(&source, "int main(void) { return 0; }\n").unwrap();
+        let clang = root.join("clang");
+        let clang_toolchain = CToolchain {
+            program: "clang".to_string(),
+            args: Vec::new(),
+        };
+        let clang_argv =
+            release_compile_argv(&clang, &clang_toolchain, &source, &object, false).unwrap();
+        assert_eq!(
+            &clang_argv[1..6],
+            [
+                "--no-default-config",
+                "-std=c99",
+                "-O3",
+                "-DNDEBUG",
+                "-fomit-frame-pointer",
+            ]
+        );
+
+        let gcc = root.join("aarch64-linux-gnu-gcc");
+        let gcc_toolchain = CToolchain {
+            program: "aarch64-linux-gnu-gcc".to_string(),
+            args: Vec::new(),
+        };
+        let gcc_argv = release_compile_argv(&gcc, &gcc_toolchain, &source, &object, false).unwrap();
+        assert_eq!(
+            &gcc_argv[1..5],
+            ["-std=c99", "-O3", "-DNDEBUG", "-fomit-frame-pointer"]
+        );
+        assert!(
+            !gcc_argv
+                .iter()
+                .any(|argument| argument == "--no-default-config")
+        );
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn release_gnu_compiler_identity_uses_dumpmachine_without_clang_flags() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let root =
+            std::env::temp_dir().join(format!("nomo-release-gcc-probe-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let gcc = root.join("aarch64-linux-gnu-gcc");
+        fs::write(
+            &gcc,
+            "#!/bin/sh\ncase \"$1\" in\n  --version) echo 'mock gcc 1.0' ;;\n  -dumpmachine) echo 'aarch64-unknown-linux-gnu' ;;\n  *) exit 23 ;;\nesac\n",
+        )
+        .unwrap();
+        let mut permissions = fs::metadata(&gcc).unwrap().permissions();
+        permissions.set_mode(0o755);
+        fs::set_permissions(&gcc, permissions).unwrap();
+        let identity = inspect_compiler(&gcc, &[], true).unwrap();
+        assert_eq!(identity.target_triple, "aarch64-unknown-linux-gnu");
+        assert_eq!(identity.version_output, "mock gcc 1.0");
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn release_test_ffi_link_args_never_enter_translation_unit_compile_argv() {
+        let root =
+            std::env::temp_dir().join(format!("nomo-release-ffi-argv-{}", std::process::id()));
+        fs::create_dir_all(&root).unwrap();
+        let compiler = root.join("clang");
+        let source = root.join("main.c");
+        let object = root.join("main.o");
+        let binary = root.join("program");
+        fs::write(&source, "int main(void) { return 0; }\n").unwrap();
+        let toolchain = CToolchain {
+            program: "clang".to_string(),
+            args: Vec::new(),
+        };
+        let compile = release_compile_argv(&compiler, &toolchain, &source, &object, false).unwrap();
+        let ffi = FfiLinkMetadata {
+            link_args: vec!["-O0".to_string()],
+            ..FfiLinkMetadata::default()
+        };
+        let target = "x86_64-unknown-linux-gnu".parse::<TargetTriple>().unwrap();
+        let link = release_link_argv(
+            &compiler,
+            &toolchain,
+            std::slice::from_ref(&object),
+            &binary,
+            &ffi,
+            &target,
+            false,
+            false,
+            false,
+            false,
+            false,
+        )
+        .unwrap();
+        assert!(compile.iter().any(|argument| argument == "-O3"));
+        assert!(!compile.iter().any(|argument| argument == "-O0"));
+        assert!(link.iter().any(|argument| argument == "-O0"));
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn failed_metadata_or_sidecar_publication_clears_the_evidence_pair() {
+        let root = std::env::temp_dir().join(format!(
+            "nomo-release-evidence-failure-{}",
+            std::process::id()
+        ));
+        fs::create_dir_all(&root).unwrap();
+        let metadata_path = root.join("nomo-build-metadata.json");
+        let provenance_path = root.join("release-provenance.json");
+        let expected = FileRecord {
+            path: provenance_path.to_string_lossy().into_owned(),
+            sha256: "expected".to_string(),
+        };
+
+        fs::write(&metadata_path, "old metadata").unwrap();
+        fs::write(&provenance_path, "old provenance").unwrap();
+        let metadata_failure = publish_release_evidence_with(
+            &metadata_path,
+            &provenance_path,
+            &expected,
+            || {
+                Err(BuildError::Message(
+                    "injected metadata write failure".to_string(),
+                ))
+            },
+            || unreachable!(),
+        );
+        assert!(metadata_failure.is_err());
+        assert!(!metadata_path.exists());
+        assert!(!provenance_path.exists());
+
+        let sidecar_failure = publish_release_evidence_with(
+            &metadata_path,
+            &provenance_path,
+            &expected,
+            || {
+                fs::write(&metadata_path, "new metadata")
+                    .map_err(|error| BuildError::Message(error.to_string()))
+            },
+            || {
+                Err(BuildError::Message(
+                    "injected sidecar write failure".to_string(),
+                ))
+            },
+        );
+        assert!(sidecar_failure.is_err());
+        assert!(!metadata_path.exists());
+        assert!(!provenance_path.exists());
+        fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn pre_discovery_cleanup_waits_for_metadata_then_sidecar_transaction() {
+        use std::sync::mpsc;
+        use std::thread;
+        use std::time::Duration;
+
+        let root = std::env::temp_dir().join(format!(
+            "nomo-release-evidence-lock-window-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(&root).unwrap();
+        let metadata_path = root.join("nomo-build-metadata.json");
+        let provenance_path = root.join("release-provenance.json");
+        let (metadata_written_tx, metadata_written_rx) = mpsc::channel();
+        let (publish_tx, publish_rx) = mpsc::channel();
+        let publisher_root = root.clone();
+        let publisher = thread::spawn(move || {
+            let transaction = BuildEvidenceTransaction::acquire(&publisher_root).unwrap();
+            fs::write(
+                publisher_root.join("nomo-build-metadata.json"),
+                "complete metadata",
+            )
+            .unwrap();
+            metadata_written_tx.send(()).unwrap();
+            publish_rx.recv().unwrap();
+            fs::write(
+                publisher_root.join("release-provenance.json"),
+                "commit marker",
+            )
+            .unwrap();
+            transaction.commit();
+        });
+
+        metadata_written_rx.recv().unwrap();
+        assert!(metadata_path.is_file());
+        assert!(!provenance_path.exists());
+        let (cleanup_started_tx, cleanup_started_rx) = mpsc::channel();
+        let (cleanup_finished_tx, cleanup_finished_rx) = mpsc::channel();
+        let cleanup_root = root.clone();
+        let cleanup = thread::spawn(move || {
+            cleanup_started_tx.send(()).unwrap();
+            clear_build_metadata_at(&cleanup_root).unwrap();
+            cleanup_finished_tx.send(()).unwrap();
+        });
+        cleanup_started_rx.recv().unwrap();
+        thread::sleep(Duration::from_millis(50));
+        assert!(
+            cleanup_finished_rx.try_recv().is_err(),
+            "cleanup must block on the publisher's target-directory lock"
+        );
+        assert!(metadata_path.is_file());
+        assert!(!provenance_path.exists());
+
+        publish_tx.send(()).unwrap();
+        publisher.join().unwrap();
+        cleanup_finished_rx
+            .recv_timeout(Duration::from_secs(5))
+            .unwrap();
+        cleanup.join().unwrap();
+        assert!(!metadata_path.exists());
+        assert!(!provenance_path.exists());
+        fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
     fn codegen_cache_separates_profile_and_misses_after_pipeline_change() {
-        let debug = codegen_cache_configuration(BuildProfile::Debug, PASS_PIPELINE_VERSION);
-        let release = codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION);
-        let next_pipeline =
-            codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION + 1);
+        let producer = producer_executable_identity().unwrap();
+        let debug =
+            codegen_cache_configuration(BuildProfile::Debug, PASS_PIPELINE_VERSION, &producer);
+        let release =
+            codegen_cache_configuration(BuildProfile::Release, PASS_PIPELINE_VERSION, &producer);
+        let next_pipeline = codegen_cache_configuration(
+            BuildProfile::Release,
+            PASS_PIPELINE_VERSION + 1,
+            &producer,
+        );
         assert_ne!(debug, release);
         assert_ne!(release, next_pipeline);
-        assert!(release.contains(super::super::build_metadata::COMPILER_REVISION));
-        assert!(release.contains(super::super::build_metadata::RUNTIME_REVISION));
+        assert!(release.contains(&format!("exe-sha256:{}", producer.sha256)));
 
         let root = std::env::temp_dir().join(format!(
             "nomo-codegen-cache-profile-pipeline-{}",

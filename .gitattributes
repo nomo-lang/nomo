@@ -1,2 +1,8 @@
 /crates/nomo_codegen_c/vendor/sqlite/sqlite3.c text eol=lf
 /crates/nomo_codegen_c/vendor/sqlite/sqlite3.h text eol=lf
+/performance/benchmarksgame/** text eol=lf
+/scripts/benchmarksgame.py text eol=lf
+/scripts/benchmarksgame_v2.py text eol=lf
+/scripts/requirements-benchmarksgame-v2.txt text eol=lf
+/scripts/tests/test_benchmarksgame.py text eol=lf
+/scripts/tests/test_benchmarksgame_v2.py text eol=lf

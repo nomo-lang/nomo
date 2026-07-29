@@ -1,0 +1,421 @@
+{
+  "schema": 2,
+  "suite": "nomo-benchmarksgame-cpu-parity-v2",
+  "manifest_version": "2026-07-28",
+  "license": "BSD-3-Clause",
+  "rfc": {
+    "number": "0043",
+    "merge_commit": "b60f30c",
+    "allocation_clarification_merge_commit": "75a7e14adc1ea06ccdc9a28c1dc0676ce8404a1c",
+    "allocation_clarification_pr": "https://github.com/nomo-lang/rfcs/pull/59",
+    "delivery_blocked_pending_allocation_clarification": false,
+    "decision_status_at_freeze": "Proposed",
+    "implementation_status_at_freeze": "Not implemented"
+  },
+  "predecessor": {
+    "suite": "nomo-benchmarksgame-cpu-baseline",
+    "repository_commit": "c6712c1da1f65fcbdf0ce037224d11482b6a7e35",
+    "manifest_path": "manifest.json",
+    "manifest_sha256": "bd8e5016fb376741478806d13585ebc37ade2104995bd411a2a161592f65c15f",
+    "compatibility": "v1 artifacts retain their original schema, statistics, and interpretation"
+  },
+  "methodology_urls": [
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/performance/comparable.html",
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/how-programs-are-measured.html",
+    "https://benchmarksgame-team.pages.debian.net/benchmarksgame/license.html"
+  ],
+  "methodology": {
+    "formal_build_modes": [
+      "release",
+      "emit-c"
+    ],
+    "build_mode_policy": "Each build mode runs an independent complete protocol; samples and verdicts are never pooled across modes.",
+    "timed_lanes": [
+      "candidate",
+      "main",
+      "c",
+      "cpp",
+      "go"
+    ],
+    "decisive_comparators": [
+      "c",
+      "cpp",
+      "main"
+    ],
+    "diagnostic_lanes": [
+      "go",
+      "semantic-c"
+    ],
+    "semantic_c_timing": "untimed-correctness-control",
+    "warmup_runs_per_lane": 2,
+    "paired_blocks_per_batch": 30,
+    "acceptance_batches": 2,
+    "schedule": {
+      "design": "Williams balanced Latin square for five timed lanes",
+      "application": "independently repeated without pooling for release and emit-c build modes",
+      "base_order_indices": [
+        0,
+        1,
+        4,
+        2,
+        3
+      ],
+      "sequences_per_cycle": 10,
+      "cycle_repetitions": 3,
+      "property": "Each lane appears six times in each position and every directed adjacent pair appears six times per batch."
+    },
+    "statistics": {
+      "transform": "ln(candidate_wall_ns / comparator_wall_ns)",
+      "point_ratio": "exp(mean_log_ratio)",
+      "confidence_bound": "exp(mean_log_ratio + t(0.99,29) * sample_standard_error)",
+      "confidence_side": "upper-one-sided",
+      "confidence_level": 0.99,
+      "degrees_of_freedom": 29,
+      "t_critical": 2.462021360150384,
+      "suite_weighting": "equal-weight mean of the three workload log ratios within each paired block",
+      "outlier_removal": false
+    },
+    "correctness_timeout_seconds": 120,
+    "build_timeout_seconds": 600,
+    "hard_timeout_seconds": 3600,
+    "compile_time_in_run_time": false,
+    "gomaxprocs": 1,
+    "formal_stdout": "captured-and-verified-for-every-sample",
+    "environment_anomaly_policy": "invalidate the complete affected batch; retain its artifact and reason",
+    "batch_invalidation": {
+      "decisive_reference_lanes": [
+        "c",
+        "cpp"
+      ],
+      "diagnostic_reference_lanes": [
+        "go"
+      ],
+      "reference_drift_formula": "max(geomean(blocks 16..30) / geomean(blocks 1..15), inverse) - 1",
+      "reference_drift_max": 0.02,
+      "paired_ratio_comparators": [
+        "c",
+        "cpp",
+        "main"
+      ],
+      "paired_ratio_rsd_formula": "sample_stdev(candidate_wall / comparator_wall) / arithmetic_mean(candidate_wall / comparator_wall)",
+      "paired_ratio_rsd_max": 0.03,
+      "maximum_reruns": 1,
+      "outlier_removal": false
+    },
+    "claims": "Only two independently qualified passing batches in each of the release and emit-c build modes on a canonical host can be claim-eligible for this frozen suite."
+  },
+  "thresholds": {
+    "inclusive": true,
+    "workload": {
+      "c_u99_max": 1.05,
+      "cpp_u99_max": 1.05,
+      "main_u99_max": 1.03
+    },
+    "suite": {
+      "c_point_max": 1.0,
+      "c_u99_max": 1.03,
+      "cpp_point_max": 1.0,
+      "cpp_u99_max": 1.03,
+      "main_u99_max": 1.02
+    }
+  },
+  "toolchains": {
+    "nomo": {
+      "release_command": "nomo build <project> --release",
+      "emit_c_command": "nomo build <project> --emit-c, then clang --no-default-config -std=c99 -O3 -DNDEBUG -fomit-frame-pointer on the unmodified generated C",
+      "formal_build_modes": [
+        "release",
+        "emit-c"
+      ],
+      "emit_c_fallback_allowed": false,
+      "missing_release_capability": "unavailable"
+    },
+    "correctness_baseline_nomo": {
+      "required_version": "0.0.0-20260721120555",
+      "command": "nomo build <project> --emit-c",
+      "decisional": false
+    },
+    "clang": {
+      "required_family": "clang",
+      "driver_config_flags": [
+        "--no-default-config"
+      ],
+      "c_flags": [
+        "-std=c99",
+        "-O3",
+        "-DNDEBUG",
+        "-fomit-frame-pointer"
+      ],
+      "cpp_flags": [
+        "-std=c++20",
+        "-pedantic-errors",
+        "-O3",
+        "-DNDEBUG",
+        "-fomit-frame-pointer"
+      ],
+      "forbidden_flags": [
+        "-ffast-math",
+        "-Ofast",
+        "-flto",
+        "-march=native",
+        "-mcpu=native"
+      ]
+    },
+    "go": {
+      "required_version": "go1.25.12",
+      "build_environment": {
+        "GOENV": "off",
+        "GOCACHE": "isolated-empty-per-build-removed-after-build",
+        "GOMODCACHE": "isolated-empty-per-build-removed-after-build"
+      },
+      "runtime_environment": {
+        "GOMAXPROCS": "1"
+      }
+    }
+  },
+  "environment_qualification": {
+    "policy": "fail-closed",
+    "required_checks": [
+      "canonical_host_identity",
+      "os_kernel",
+      "architecture",
+      "cpu_model_topology",
+      "memory",
+      "power_mode",
+      "frequency_governor",
+      "thermal_state",
+      "virtualization",
+      "clock_source_resolution",
+      "affinity_isolation",
+      "concurrent_load",
+      "toolchain_identity",
+      "frozen_source_lock"
+    ]
+  },
+  "workloads": [
+    {
+      "id": "spectral-norm",
+      "correctness_input": "100",
+      "performance_input": "5500",
+      "link_math": true,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/spectral-norm-100.txt",
+          "sha256": "a95e11fa07f7b196ef488e73f67afbbbc16cf6a2c6de5f8d54ea49821fe604e6"
+        },
+        "performance": {
+          "path": "fixtures/spectral-norm-5500.txt",
+          "sha256": "f9d5b5e3eb7657cf1bbba4cc856651864df9cd9fd9a6be9b9bc5fcbb67150deb"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/spectral-norm/src/main.nomo",
+          "sha256": "f0caae510fbdc02d998a8c49275c4aca0b771642348286ce871515840f47fe30",
+          "project_manifest": "reference/nomo/spectral-norm/nomo.toml",
+          "project_manifest_sha256": "005bfaeb3fd3d734e5c7020857fa18927064bf014679ec309bd3385b9a28f3ca"
+        },
+        "c": {
+          "path": "reference/c/spectral-norm.c",
+          "sha256": "1f7f71ce5fc6f87432b3801fb57c3e8a619da2527c1b801154b8102c7af66c3e",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/spectralnorm-gcc-8.html",
+          "fetched_on": "2026-07-27"
+        },
+        "cpp": {
+          "path": "reference/cpp/spectral-norm.cpp",
+          "sha256": "81489a76f22b02f67cd51f03753eaf45e05c459a08c1c69e50d6812a9acdd4b2",
+          "derived_from": "reference/c/spectral-norm.c",
+          "derivation": "line-and-algorithm-equivalent ISO C++20 spelling; each C VLA stack array maps to one standard contiguous std::unique_ptr<T[]> RAII dynamic allocation constructed once without growth or reallocation; array count, element type, logical capacity, lexical lifetime, per-call allocation frequency, initialization work, and access order match; stack-to-dynamic storage differs and is disclosed",
+          "allocation_mappings": [
+            {
+              "original_count_expression": "double u[N]",
+              "iso_cpp20_representation": "std::unique_ptr<double[]> u(new double[N])",
+              "element_type": "double",
+              "logical_capacity_expression": "N",
+              "lexical_lifetime": "main function scope",
+              "allocation_frequency": "once per main invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            },
+            {
+              "original_count_expression": "double v[N]",
+              "iso_cpp20_representation": "std::unique_ptr<double[]> v(new double[N])",
+              "element_type": "double",
+              "logical_capacity_expression": "N",
+              "lexical_lifetime": "main function scope",
+              "allocation_frequency": "once per main invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            },
+            {
+              "original_count_expression": "double v[N] in eval_AtA_times_u",
+              "iso_cpp20_representation": "std::unique_ptr<double[]> v(new double[N])",
+              "element_type": "double",
+              "logical_capacity_expression": "N",
+              "lexical_lifetime": "eval_AtA_times_u function scope",
+              "allocation_frequency": "once per eval_AtA_times_u invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            }
+          ]
+        },
+        "semantic-c": {
+          "path": "reference/semantic-c/spectral-norm.c",
+          "sha256": "6951782dd59f50eb9eca1163b59d925fcda3bb8a88bdc7e722a43153fa5c1dc3",
+          "decisional": false
+        },
+        "go": {
+          "path": "reference/go/spectral-norm.go",
+          "sha256": "862a4ca6a79a7457c253e88a77b0189583201fb551b86aec7221ce7c3e079810",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/spectralnorm-go-8.html",
+          "fetched_on": "2026-07-27"
+        }
+      }
+    },
+    {
+      "id": "n-body",
+      "correctness_input": "1000",
+      "performance_input": "50000000",
+      "link_math": true,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/n-body-1000.txt",
+          "sha256": "76de83d6d51a74f82828547423f516e7815cfe8cfea6290a2831aa173f806de7"
+        },
+        "performance": {
+          "path": "fixtures/n-body-50000000.txt",
+          "sha256": "3e6c9ef9d26cfe312a4cd8e1b81b3f671b88fbce84de543e8c23c206a942504d"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/n-body/src/main.nomo",
+          "sha256": "30fb086f8d5c55e0b389b7451f921a463c953db286ec9f97bb55d8b7bc595988",
+          "project_manifest": "reference/nomo/n-body/nomo.toml",
+          "project_manifest_sha256": "0cd1b9fd7f3ae069fce5a33ab6e92ea10e72844cb77f23d4947fd51e589e313c"
+        },
+        "c": {
+          "path": "reference/c/n-body.c",
+          "sha256": "a8649dd7babc5b9178fc363f4d61b468662c703668c2f8f4ddeab206b3e7e879",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-gcc-8.html",
+          "fetched_on": "2026-07-27"
+        },
+        "cpp": {
+          "path": "reference/cpp/n-body.cpp",
+          "sha256": "1c0b0942c7075dbfcfa3a2b08ee486f284325e17525b2c2f86301c0ec0a2b492",
+          "derived_from": "reference/c/n-body.c",
+          "derivation": "line-and-algorithm-equivalent ISO C++20 spelling using std::array for the same fixed stack allocation",
+          "allocation_mappings": [
+            {
+              "original_count_expression": "struct planet bodies[NBODIES]",
+              "iso_cpp20_representation": "std::array<planet, NBODIES> bodies",
+              "element_type": "struct planet",
+              "logical_capacity_expression": "NBODIES",
+              "lexical_lifetime": "nbody function scope",
+              "allocation_frequency": "once per nbody invocation",
+              "storage_class_difference": "none; fixed automatic stack storage is preserved",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            }
+          ]
+        },
+        "semantic-c": {
+          "path": "reference/semantic-c/n-body.c",
+          "sha256": "284d2282e34a4a43c64dddc034cc7d087d7f1c62ed5c3097a7321d94f3123cd5",
+          "decisional": false
+        },
+        "go": {
+          "path": "reference/go/n-body.go",
+          "sha256": "83e645802266f9d30a1093e97fc934dbb7dc6bd55ada49f58f45d63340c6e76a",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/nbody-go-8.html",
+          "fetched_on": "2026-07-27"
+        }
+      }
+    },
+    {
+      "id": "fannkuch-redux",
+      "correctness_input": "7",
+      "performance_input": "12",
+      "link_math": false,
+      "fixtures": {
+        "correctness": {
+          "path": "fixtures/fannkuch-redux-7.txt",
+          "sha256": "2dc0a3cd4a547ba69389f97f3b447bd4d487fe6216c3cacd2f9bf8c908dc127f"
+        },
+        "performance": {
+          "path": "fixtures/fannkuch-redux-12.txt",
+          "sha256": "4265a65135c506a68d90d6474003fb9030b7ee244a06c046bd89b3932a28ce20"
+        }
+      },
+      "sources": {
+        "nomo": {
+          "path": "reference/nomo/fannkuch-redux/src/main.nomo",
+          "sha256": "0f6d0156c03cc3218b06a1adf560c5a3e3a99188fe9b7185b619b8a4ad8881e9",
+          "project_manifest": "reference/nomo/fannkuch-redux/nomo.toml",
+          "project_manifest_sha256": "73cf8d9df45479fb59dce5ac34102dafba368aa4aa7cb4655512bbd1dc5ca00e"
+        },
+        "c": {
+          "path": "reference/c/fannkuch-redux.c",
+          "sha256": "4d3135b2ed7a2fedb12b731c0f1a6bf901d763ac8421208fab6c4997c3ca9d80",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fannkuchredux-gcc-8.html",
+          "fetched_on": "2026-07-27"
+        },
+        "cpp": {
+          "path": "reference/cpp/fannkuch-redux.cpp",
+          "sha256": "28db75a4483148d430a2312dfd9088c46edf21b661c062d7ca90caf27209d962",
+          "derived_from": "reference/c/fannkuch-redux.c",
+          "derivation": "line-and-algorithm-equivalent ISO C++20 spelling; each C VLA stack array maps to one standard contiguous std::unique_ptr<T[]> RAII dynamic allocation constructed once without growth or reallocation; array count, element type, logical capacity, lexical lifetime, per-call allocation frequency, initialization work, and access order match; stack-to-dynamic storage differs and is disclosed",
+          "allocation_mappings": [
+            {
+              "original_count_expression": "int perm1[n]",
+              "iso_cpp20_representation": "std::unique_ptr<int[]> perm1(new int[n])",
+              "element_type": "int",
+              "logical_capacity_expression": "n",
+              "lexical_lifetime": "fannkuch function scope",
+              "allocation_frequency": "once per fannkuch invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            },
+            {
+              "original_count_expression": "int perm[n]",
+              "iso_cpp20_representation": "std::unique_ptr<int[]> perm(new int[n])",
+              "element_type": "int",
+              "logical_capacity_expression": "n",
+              "lexical_lifetime": "fannkuch function scope",
+              "allocation_frequency": "once per fannkuch invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            },
+            {
+              "original_count_expression": "int count[n]",
+              "iso_cpp20_representation": "std::unique_ptr<int[]> count(new int[n])",
+              "element_type": "int",
+              "logical_capacity_expression": "n",
+              "lexical_lifetime": "fannkuch function scope",
+              "allocation_frequency": "once per fannkuch invocation",
+              "storage_class_difference": "C VLA automatic stack storage to ISO C++20 RAII dynamic storage",
+              "no_growth_or_reallocation": true,
+              "custom_allocator": false
+            }
+          ]
+        },
+        "semantic-c": {
+          "path": "reference/semantic-c/fannkuch-redux.c",
+          "sha256": "35141667a9a8ac43cfcf1d47f98e401646901a108c41dceec4da35f5891b4669",
+          "decisional": false
+        },
+        "go": {
+          "path": "reference/go/fannkuch-redux.go",
+          "sha256": "806403dc4801db2c7c8894f923d18bb3f0b8ed3741ac48890a65ccd38fcaa4a2",
+          "upstream_url": "https://benchmarksgame-team.pages.debian.net/benchmarksgame/program/fannkuchredux-go-8.html",
+          "fetched_on": "2026-07-27"
+        }
+      }
+    }
+  ]
+}

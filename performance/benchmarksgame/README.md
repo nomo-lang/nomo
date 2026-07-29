@@ -1,5 +1,10 @@
 # Nomo Benchmarks Game CPU baseline
 
+This document describes the historical exploratory v1 baseline. The RFC 0043
+measurement-authority suite, strict C++20 comparator, dual Nomo build modes,
+prepared-bundle workflow, and claim protocol are documented in
+[`README-v2.md`](README-v2.md).
+
 This is a reproducible, exploratory baseline for three naive, single-thread,
 scalar Benchmarks Game `#8` programs:
 

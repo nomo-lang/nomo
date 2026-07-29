@@ -1,0 +1,39 @@
+{
+  "schema": 1,
+  "canonical_host_id": "replace-with-controlled-host-id",
+  "captured_at_utc": "2026-07-28T00:00:00Z",
+  "dynamic_policy": {
+    "require_ac_power": true,
+    "allow_low_power_mode": false,
+    "allowed_linux_governors": ["performance"],
+    "max_thermal_celsius": 85.0,
+    "max_load_per_logical_core": 1.0,
+    "max_swap_delta_bytes": 0
+  },
+  "bindings": {
+    "authority_host_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "reference_toolchains_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "frozen_source_lock_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "candidate_commit": "0000000000000000000000000000000000000000",
+    "candidate_nomo_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "main_commit": "0000000000000000000000000000000000000000",
+    "main_nomo_sha256": "0000000000000000000000000000000000000000000000000000000000000000",
+    "prepared_bundle_sha256": "0000000000000000000000000000000000000000000000000000000000000000"
+  },
+  "checks": {
+    "canonical_host_identity": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "os_kernel": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "architecture": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "cpu_model_topology": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "memory": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "power_mode": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "frequency_governor": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "thermal_state": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "virtualization": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "clock_source_resolution": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "affinity_isolation": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "concurrent_load": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "toolchain_identity": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } },
+    "frozen_source_lock": { "status": "unavailable", "value": "replace-me", "source": "operator", "evidence": { "kind": "file", "captured_at_utc": "2026-07-28T00:00:00Z", "value_sha256": "f5000531bb3e64cb0fe5a01718baf65c318ba376e001bfcc8e56b4be1e7edd8f" } }
+  }
+}

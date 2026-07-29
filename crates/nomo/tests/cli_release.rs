@@ -46,6 +46,10 @@ fn assert_success(output: &Output) {
     );
 }
 
+fn normalized_stdout(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stdout).replace("\r\n", "\n")
+}
+
 fn resolve_dependencies(path: &Path, workspace: bool) {
     let mut command = Command::new(env!("CARGO_BIN_EXE_nomo"));
     command.arg("deps").arg("resolve").arg(path);
@@ -207,12 +211,7 @@ fn build_help_and_release_artifacts_satisfy_schema_one() {
         assert!(command["duration_ns"].as_u64().is_some());
         assert_eq!(
             command["cwd"],
-            std::env::current_dir()
-                .unwrap()
-                .canonicalize()
-                .unwrap()
-                .to_string_lossy()
-                .as_ref()
+            std::env::current_dir().unwrap().to_string_lossy().as_ref()
         );
         assert_eq!(
             command["command"],
@@ -358,7 +357,7 @@ fn build_help_and_release_artifacts_satisfy_schema_one() {
 
     let run = Command::new(&binary).output().unwrap();
     assert_success(&run);
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "Hello, Nomo\n");
+    assert_eq!(normalized_stdout(&run), "Hello, Nomo\n");
     fs::write(
         project.join("src/main.nomo"),
         "package release_demo\n\nfn main( {\n",
@@ -406,7 +405,7 @@ fn main() {
         .output()
         .unwrap();
     assert_success(&run);
-    assert_eq!(String::from_utf8_lossy(&run.stdout), "--release\n");
+    assert_eq!(normalized_stdout(&run), "--release\n");
     assert_eq!(
         read_json(&project.join("build/nomo-build-metadata.json"))["selected_profile"],
         "release"
@@ -888,7 +887,7 @@ fn main() {
     assert_success(&release);
     assert_eq!(release.stdout, debug.stdout);
     assert_eq!(
-        String::from_utf8_lossy(&release.stdout),
+        normalized_stdout(&release),
         "one\ntwo\nleft\nright\nnegative f64\ncleanup\nstop\n"
     );
     let sidecar = read_json(&project.join("build/release-provenance.json"));
@@ -954,7 +953,7 @@ fn main() {
     assert_success(&release);
     assert_eq!(release.stdout, debug.stdout);
     assert_eq!(
-        String::from_utf8_lossy(&release.stdout),
+        normalized_stdout(&release),
         "cleanup\ncleanup\ncleanup\nstop\n",
         "this regression records the pre-existing direct match scrutinee gap; it is not a semantic-conformance assertion"
     );

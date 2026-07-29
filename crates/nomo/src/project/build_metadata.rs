@@ -870,7 +870,10 @@ pub(super) fn remove_stale_file(path: &Path) -> Result<(), BuildError> {
     })
 }
 
-fn atomic_write_canonical_json<T: Serialize>(path: &Path, value: &T) -> Result<(), BuildError> {
+pub(super) fn atomic_write_canonical_json<T: Serialize>(
+    path: &Path,
+    value: &T,
+) -> Result<(), BuildError> {
     let parent = path.parent().ok_or_else(|| {
         BuildError::Message(format!(
             "build metadata path has no parent: {}",
@@ -925,7 +928,7 @@ fn atomic_write_canonical_json<T: Serialize>(path: &Path, value: &T) -> Result<(
     result
 }
 
-fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, BuildError> {
+pub(super) fn canonical_json_bytes<T: Serialize>(value: &T) -> Result<Vec<u8>, BuildError> {
     let canonical = serde_json::to_value(value).map_err(|error| {
         BuildError::Message(format!("failed to encode build metadata: {error}"))
     })?;

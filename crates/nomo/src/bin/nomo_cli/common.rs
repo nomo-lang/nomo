@@ -1,10 +1,10 @@
 use nomo::project::{
-    BuildError, BuildProfile, DependencyResolutionOptions, Project,
+    BuildError, BuildProfile, DependencyResolutionOptions, Project, WorkspaceEvidenceSelection,
     build_project_for_target_with_profile_options, build_project_with_profile_options,
-    check_project_with_persistent_cache, clean_project, clear_requested_build_metadata,
-    clear_requested_workspace_build_metadata, discover_project, discover_workspace,
-    discover_workspace_for_target, project_package_id,
-    run_project_with_args_and_profile_and_diagnostics,
+    check_project_with_persistent_cache, clean_project, clear_failed_workspace_build_metadata,
+    clear_requested_build_metadata, clear_workspace_project_build_metadata, discover_project,
+    discover_workspace, discover_workspace_for_target, project_package_id,
+    refresh_workspace_build_evidence_catalog, run_project_with_args_and_profile_and_diagnostics,
     run_standalone_script_with_args_and_profile_and_diagnostics,
 };
 use nomo::target::TargetTriple;
@@ -49,22 +49,37 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
     let (path, emit_c, json, workspace, deps, target, target_explicit, profile) =
         parse_build_args(args, BUILD_USAGE)?;
     if workspace {
-        clear_requested_workspace_build_metadata(&path, &target, target_explicit)
-            .map_err(|error| error.human())?;
-    } else {
-        clear_requested_build_metadata(&path, &target, target_explicit)
-            .map_err(|error| error.human())?;
-    }
-    if emit_c && profile == BuildProfile::Release {
-        return Err("`--release` and `--emit-c` cannot be used together".to_string());
-    }
-    if workspace {
-        let workspace = if target_explicit {
-            discover_workspace_for_target(&path, &target)?
+        let discovered = if target_explicit {
+            discover_workspace_for_target(&path, &target)
         } else {
-            discover_workspace(&path)?
+            discover_workspace(&path)
         };
-        for project in workspace.members {
+        let workspace = match discovered {
+            Ok(workspace) => workspace,
+            Err(discovery_error) => {
+                let cleanup = clear_failed_workspace_build_metadata(
+                    &path,
+                    &target,
+                    target_explicit,
+                    profile,
+                    &WorkspaceEvidenceSelection::AllMembers,
+                );
+                return match cleanup {
+                    Ok(()) => Err(discovery_error),
+                    Err(cleanup_error) => {
+                        Err(format!("{discovery_error}\n{}", cleanup_error.human()))
+                    }
+                };
+            }
+        };
+        refresh_workspace_build_evidence_catalog(&workspace).map_err(|error| error.human())?;
+        let projects = workspace.members.clone();
+        clear_workspace_project_build_metadata(&projects, &target, target_explicit)
+            .map_err(|error| error.human())?;
+        if emit_c && profile == BuildProfile::Release {
+            return Err("`--release` and `--emit-c` cannot be used together".to_string());
+        }
+        for project in projects {
             let artifact = match if target_explicit {
                 build_project_for_target_with_profile_options(
                     &project, emit_c, deps, &target, profile,
@@ -79,6 +94,11 @@ pub(super) fn run_build_command(args: Vec<String>) -> Result<(), String> {
             println!("built {}", artifact.display());
         }
     } else {
+        clear_requested_build_metadata(&path, &target, target_explicit)
+            .map_err(|error| error.human())?;
+        if emit_c && profile == BuildProfile::Release {
+            return Err("`--release` and `--emit-c` cannot be used together".to_string());
+        }
         let project = discover_project(&path)?;
         let artifact = match if target_explicit {
             build_project_for_target_with_profile_options(&project, emit_c, deps, &target, profile)

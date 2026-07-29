@@ -1,8 +1,9 @@
 use super::cli_common::{filter_projects_by_package, validate_project_package};
 use nomo::project::{
-    BuildProfile, DependencyResolutionOptions, ProjectTestOptions, clear_requested_build_metadata,
-    clear_requested_workspace_build_metadata, discover_project, discover_workspace,
-    run_project_tests_with_options,
+    BuildProfile, DependencyResolutionOptions, ProjectTestOptions, WorkspaceEvidenceSelection,
+    clear_failed_workspace_build_metadata, clear_requested_build_metadata,
+    clear_workspace_project_build_metadata, discover_project, discover_workspace,
+    refresh_workspace_build_evidence_catalog, run_project_tests_with_options,
 };
 use nomo::target::TargetTriple;
 use nomo_test::{json_report, reports_have_failures, text_report};
@@ -19,18 +20,33 @@ pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
     }
     let (path, workspace, package, filter, json, deps, profile) = parse_test_args(args)?;
     let target = TargetTriple::host()?;
-    if workspace {
-        clear_requested_workspace_build_metadata(&path, &target, false)
-            .map_err(|error| error.human())?;
-    } else {
-        clear_requested_build_metadata(&path, &target, false).map_err(|error| error.human())?;
-    }
     let mut reports = Vec::new();
     if workspace {
-        let mut projects = discover_workspace(&path)?.members;
+        let selection = package
+            .as_ref()
+            .map(|package| WorkspaceEvidenceSelection::Package(package.clone()))
+            .unwrap_or(WorkspaceEvidenceSelection::AllMembers);
+        let workspace = match discover_workspace(&path) {
+            Ok(workspace) => workspace,
+            Err(discovery_error) => {
+                let cleanup = clear_failed_workspace_build_metadata(
+                    &path, &target, false, profile, &selection,
+                );
+                return match cleanup {
+                    Ok(()) => Err(discovery_error),
+                    Err(cleanup_error) => {
+                        Err(format!("{discovery_error}\n{}", cleanup_error.human()))
+                    }
+                };
+            }
+        };
+        let mut projects = workspace.members.clone();
         if let Some(package) = package.as_deref() {
             projects = filter_projects_by_package(projects, package)?;
         }
+        refresh_workspace_build_evidence_catalog(&workspace).map_err(|error| error.human())?;
+        clear_workspace_project_build_metadata(&projects, &target, false)
+            .map_err(|error| error.human())?;
         for project in projects {
             reports.push(
                 run_project_tests_with_options(
@@ -45,6 +61,7 @@ pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
             );
         }
     } else {
+        clear_requested_build_metadata(&path, &target, false).map_err(|error| error.human())?;
         let project = discover_project(&path)?;
         if let Some(package) = package.as_deref() {
             validate_project_package(&project, package)?;

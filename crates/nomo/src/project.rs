@@ -37,13 +37,14 @@ mod workspace;
 
 use build::configure_c_compile_command;
 pub use build::{
-    CachedStandaloneSource, build_project, build_project_for_target_with_options,
-    build_project_for_target_with_profile_options, build_project_with_diagnostics,
-    build_project_with_options, build_project_with_profile_options, build_standalone_release_c,
-    clean_project, clear_project_build_metadata, clear_requested_build_metadata,
-    clear_requested_workspace_build_metadata, clear_standalone_build_metadata,
-    compile_standalone_script_with_profile_cache, compile_standalone_source_with_profile_cache,
-    record_standalone_c_build_metadata,
+    CachedStandaloneSource, WorkspaceEvidenceSelection, build_project,
+    build_project_for_target_with_options, build_project_for_target_with_profile_options,
+    build_project_with_diagnostics, build_project_with_options, build_project_with_profile_options,
+    build_standalone_release_c, clean_project, clear_failed_workspace_build_metadata,
+    clear_project_build_metadata, clear_requested_build_metadata, clear_standalone_build_metadata,
+    clear_workspace_project_build_metadata, compile_standalone_script_with_profile_cache,
+    compile_standalone_source_with_profile_cache, record_standalone_c_build_metadata,
+    refresh_workspace_build_evidence_catalog,
 };
 pub use dependency_tree::{
     dependency_tree, dependency_tree_current_sources, dependency_tree_for_target_with_options,

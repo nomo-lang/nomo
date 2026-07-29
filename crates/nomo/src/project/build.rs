@@ -1,20 +1,22 @@
 use super::build_metadata::{
     BuildMetadata, FileRecord, PASS_PIPELINE_VERSION, ProducerExecutableIdentity,
-    ReleaseBackendProvenance, codegen_cache_configuration, inspect_compiler,
-    producer_executable_identity, release_c_flags, release_driver_config_flags_for_compiler,
-    remove_stale_file, resolve_executable, run_recorded_command, write_build_metadata,
-    write_release_provenance,
+    ReleaseBackendProvenance, atomic_write_canonical_json, canonical_json_bytes,
+    codegen_cache_configuration, inspect_compiler, producer_executable_identity, release_c_flags,
+    release_driver_config_flags_for_compiler, remove_stale_file, resolve_executable,
+    run_recorded_command, write_build_metadata, write_release_provenance,
 };
 use super::{
-    BuildError, BuildProfile, DependencyResolutionOptions, Project,
-    project_ffi_link_metadata_for_target_with_options,
-    project_module_context_for_target_with_options,
+    BuildError, BuildProfile, DependencyResolutionOptions, Project, WorkspaceGraph,
+    discover_workspace_for_target, project_ffi_link_metadata_for_target_with_options,
+    project_module_context_for_target_with_options, project_package_id,
 };
 use crate::compiler::compile_source_to_c_with_module_identity_for_target;
 use crate::incremental::{ContentFingerprint, PersistentQueryCache, QueryKey, project_query_key};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::{CToolchain, TargetTriple};
+use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs::{self, File, OpenOptions};
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -26,47 +28,226 @@ pub struct CachedStandaloneSource {
     producer_executable: ProducerExecutableIdentity,
 }
 
+const WORKSPACE_EVIDENCE_SCOPE_SCHEMA: u32 = 1;
+const WORKSPACE_EVIDENCE_CATALOG_SCHEMA: u32 = 1;
+const WORKSPACE_OWNERSHIP_RECEIPT_SCHEMA: u32 = 1;
+const WORKSPACE_EVIDENCE_STATE_COMPONENTS: &[&str] = &[".nomo", "state", "release-evidence", "v1"];
+const WORKSPACE_OWNERSHIP_RECEIPT_FILE: &str = ".nomo-release-owner-v1.json";
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum WorkspaceEvidenceSelection {
+    AllMembers,
+    DefaultMembers,
+    Package(String),
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceEvidenceMember {
+    package_id: String,
+    package_name: String,
+    relative_root: String,
+    member_key: String,
+    default_member: bool,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceEvidenceScopeMarker {
+    schema: u32,
+    stable_scope_id: String,
+    workspace_root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceEvidenceCatalog {
+    schema: u32,
+    stable_scope_id: String,
+    catalog_generation: String,
+    workspace_root: String,
+    members: Vec<WorkspaceEvidenceMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct WorkspaceCatalogGeneration {
+    domain: &'static str,
+    members: Vec<WorkspaceEvidenceMember>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+struct WorkspaceMemberKeyInput {
+    domain: &'static str,
+    stable_scope_id: String,
+    package_id: String,
+    relative_root: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+struct WorkspaceOwnershipReceipt {
+    schema: u32,
+    stable_scope_id: String,
+    workspace_root: String,
+    member_key: String,
+    member_root: String,
+    package_id: String,
+    package_name: String,
+    selected_profile: BuildProfile,
+    target_triple: String,
+    target_scoped_artifacts: bool,
+    metadata_sha256: String,
+    provenance_sha256: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct WorkspaceReleaseOwnerContext {
+    stable_scope_id: String,
+    workspace_root: PathBuf,
+    member_key: String,
+    member_root: PathBuf,
+    package_id: String,
+    package_name: String,
+}
+
 impl CachedStandaloneSource {
     pub fn generated_source(&self) -> &str {
         &self.generated_source
     }
 }
 
-struct BuildEvidenceTransaction {
-    target_dir: PathBuf,
-    _lock: File,
-    committed: bool,
+struct BuildEvidenceLock {
+    _file: File,
 }
 
-impl BuildEvidenceTransaction {
-    fn acquire(target_dir: &Path) -> Result<Self, BuildError> {
-        fs::create_dir_all(target_dir).map_err(|error| {
+impl BuildEvidenceLock {
+    fn acquire(target_dir: &Path, create_target: bool) -> Result<Option<Self>, BuildError> {
+        reject_existing_symlink_or_reparse_components(target_dir)?;
+        match fs::symlink_metadata(target_dir) {
+            Ok(metadata)
+                if metadata.file_type().is_dir() && !metadata_is_symlink_or_reparse(&metadata) => {}
+            Ok(_) => {
+                return Err(BuildError::Message(format!(
+                    "build output path is not a safe directory: {}",
+                    target_dir.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound && !create_target => {
+                return Ok(None);
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+                fs::create_dir_all(target_dir).map_err(|error| {
+                    BuildError::Message(format!(
+                        "failed to create build output directory {}: {error}",
+                        target_dir.display()
+                    ))
+                })?;
+                reject_existing_symlink_or_reparse_components(target_dir)?;
+            }
+            Err(error) => {
+                return Err(BuildError::Message(format!(
+                    "failed to inspect build output directory {}: {error}",
+                    target_dir.display()
+                )));
+            }
+        }
+        let lock_path = target_dir.join(".nomo-build.lock");
+        reject_existing_symlink_or_reparse_components(&lock_path)?;
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (!metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&metadata))
+        {
+            return Err(BuildError::Message(format!(
+                "build lock is not a safe regular file: {}",
+                lock_path.display()
+            )));
+        }
+        let lock = open_build_lock(&lock_path)?;
+        let lock_metadata = lock.metadata().map_err(|error| {
             BuildError::Message(format!(
-                "failed to create build output directory {}: {error}",
-                target_dir.display()
+                "failed to inspect opened build lock {}: {error}",
+                lock_path.display()
             ))
         })?;
-        let lock_path = target_dir.join(".nomo-build.lock");
-        let lock = OpenOptions::new()
-            .create(true)
-            .read(true)
-            .write(true)
-            .truncate(false)
-            .open(&lock_path)
-            .map_err(|error| {
-                BuildError::Message(format!(
-                    "failed to open build lock {}: {error}",
-                    lock_path.display()
-                ))
-            })?;
+        if !lock_metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&lock_metadata) {
+            return Err(BuildError::Message(format!(
+                "opened build lock is not a safe regular file: {}",
+                lock_path.display()
+            )));
+        }
         lock.lock().map_err(|error| {
             BuildError::Message(format!(
                 "failed to acquire build lock {}: {error}",
                 lock_path.display()
             ))
         })?;
+        Ok(Some(Self { _file: lock }))
+    }
+}
+
+struct WorkspaceCatalogLock {
+    _file: File,
+}
+
+impl WorkspaceCatalogLock {
+    fn acquire(workspace_root: &Path, create_state: bool) -> Result<Option<Self>, BuildError> {
+        let state_dir = workspace_evidence_state_dir(workspace_root);
+        if create_state {
+            ensure_workspace_evidence_state_dir(workspace_root)?;
+        } else {
+            match fs::symlink_metadata(&state_dir) {
+                Ok(metadata)
+                    if metadata.file_type().is_dir()
+                        && !metadata_is_symlink_or_reparse(&metadata) => {}
+                Ok(_) => {
+                    return Err(BuildError::Message(format!(
+                        "workspace evidence state path is not a safe directory: {}",
+                        state_dir.display()
+                    )));
+                }
+                Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+                Err(error) => {
+                    return Err(BuildError::Message(format!(
+                        "failed to inspect workspace evidence state {}: {error}",
+                        state_dir.display()
+                    )));
+                }
+            }
+        }
+        reject_existing_symlink_or_reparse_components(&state_dir)?;
+        let lock_path = state_dir.join(".catalog.lock");
+        reject_existing_symlink_or_reparse_components(&lock_path)?;
+        if let Ok(metadata) = fs::symlink_metadata(&lock_path)
+            && (!metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&metadata))
+        {
+            return Err(BuildError::Message(format!(
+                "workspace catalog lock is not a safe regular file: {}",
+                lock_path.display()
+            )));
+        }
+        let lock = open_build_lock(&lock_path)?;
+        lock.lock().map_err(|error| {
+            BuildError::Message(format!(
+                "failed to acquire workspace catalog lock {}: {error}",
+                lock_path.display()
+            ))
+        })?;
+        Ok(Some(Self { _file: lock }))
+    }
+}
+
+struct BuildEvidenceTransaction {
+    target_dir: PathBuf,
+    _lock: BuildEvidenceLock,
+    committed: bool,
+}
+
+impl BuildEvidenceTransaction {
+    fn acquire(target_dir: &Path) -> Result<Self, BuildError> {
+        let target_dir = canonical_build_target_dir(target_dir)?;
+        let lock = BuildEvidenceLock::acquire(&target_dir, true)?
+            .expect("creating the target directory must produce a build lock");
         let transaction = Self {
-            target_dir: target_dir.to_path_buf(),
+            target_dir,
             _lock: lock,
             committed: false,
         };
@@ -75,8 +256,11 @@ impl BuildEvidenceTransaction {
     }
 
     fn clear_evidence(&self) -> Result<(), BuildError> {
-        remove_stale_file(&self.target_dir.join("release-provenance.json"))?;
-        remove_stale_file(&self.target_dir.join("nomo-build-metadata.json"))
+        clear_release_evidence_paths(
+            &self.target_dir.join("release-provenance.json"),
+            &self.target_dir.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE),
+            &self.target_dir.join("nomo-build-metadata.json"),
+        )
     }
 
     fn commit(mut self) {
@@ -95,28 +279,46 @@ impl Drop for BuildEvidenceTransaction {
 fn publish_release_evidence(
     metadata_path: &Path,
     metadata: &BuildMetadata,
+    owner_receipt: Option<&WorkspaceOwnershipReceipt>,
     provenance_path: &Path,
     provenance: &ReleaseBackendProvenance,
     expected_provenance: &FileRecord,
 ) -> Result<(), BuildError> {
+    let receipt_path = metadata_path
+        .parent()
+        .ok_or_else(|| {
+            BuildError::Message(format!(
+                "build metadata path has no target directory: {}",
+                metadata_path.display()
+            ))
+        })?
+        .join(WORKSPACE_OWNERSHIP_RECEIPT_FILE);
     publish_release_evidence_with(
         metadata_path,
+        &receipt_path,
         provenance_path,
         expected_provenance,
         || write_build_metadata(metadata_path, metadata).map(|_| ()),
+        || match owner_receipt {
+            Some(receipt) => atomic_write_canonical_json(&receipt_path, receipt),
+            None => Ok(()),
+        },
         || write_release_provenance(provenance_path, provenance),
     )
 }
 
 fn publish_release_evidence_with(
     metadata_path: &Path,
+    receipt_path: &Path,
     provenance_path: &Path,
     expected_provenance: &FileRecord,
     write_metadata: impl FnOnce() -> Result<(), BuildError>,
+    write_receipt: impl FnOnce() -> Result<(), BuildError>,
     write_provenance: impl FnOnce() -> Result<FileRecord, BuildError>,
 ) -> Result<(), BuildError> {
     let result = (|| {
         write_metadata()?;
+        write_receipt()?;
         let written_provenance = write_provenance()?;
         if &written_provenance != expected_provenance {
             return Err(BuildError::Message(
@@ -125,11 +327,50 @@ fn publish_release_evidence_with(
         }
         Ok(())
     })();
-    if result.is_err() {
-        let _ = remove_stale_file(metadata_path);
-        let _ = remove_stale_file(provenance_path);
+    if let Err(error) = result {
+        return match clear_release_evidence_paths(provenance_path, receipt_path, metadata_path) {
+            Ok(()) => Err(error),
+            Err(cleanup_error) => Err(BuildError::Message(format!(
+                "{}; release evidence cleanup failed: {}",
+                error.human(),
+                cleanup_error.human()
+            ))),
+        };
     }
-    result
+    Ok(())
+}
+
+fn clear_release_evidence_paths(
+    provenance_path: &Path,
+    receipt_path: &Path,
+    metadata_path: &Path,
+) -> Result<(), BuildError> {
+    clear_release_evidence_paths_with(
+        provenance_path,
+        receipt_path,
+        metadata_path,
+        remove_stale_file,
+    )
+}
+
+fn clear_release_evidence_paths_with(
+    provenance_path: &Path,
+    receipt_path: &Path,
+    metadata_path: &Path,
+    mut remove: impl FnMut(&Path) -> Result<(), BuildError>,
+) -> Result<(), BuildError> {
+    let mut first_error = None;
+    for path in [provenance_path, receipt_path, metadata_path] {
+        if let Err(error) = remove(path)
+            && first_error.is_none()
+        {
+            first_error = Some(error);
+        }
+    }
+    match first_error {
+        Some(error) => Err(error),
+        None => Ok(()),
+    }
 }
 
 pub fn build_project(project: &Project, emit_c_only: bool) -> Result<PathBuf, String> {
@@ -285,6 +526,7 @@ pub fn build_standalone_release_c(
     publish_release_evidence(
         &metadata_path,
         &metadata,
+        None,
         &provenance_path,
         &provenance,
         &provenance_record,
@@ -437,59 +679,55 @@ pub fn clear_requested_build_metadata(
     clear_build_metadata_at(&target_dir)
 }
 
-pub fn clear_requested_workspace_build_metadata(
-    requested_path: &Path,
+pub fn clear_workspace_project_build_metadata(
+    projects: &[Project],
     target: &TargetTriple,
     target_scoped_artifacts: bool,
 ) -> Result<(), BuildError> {
-    let workspace_root = requested_workspace_root(requested_path)?;
-    let mut manifest_roots = vec![workspace_root.clone()];
-    let mut pending = vec![workspace_root];
-    while let Some(directory) = pending.pop() {
-        let entries = fs::read_dir(&directory).map_err(|error| {
-            BuildError::Message(format!(
-                "failed to inspect workspace path {} while clearing stale build evidence: {error}",
-                directory.display()
-            ))
-        })?;
-        for entry in entries {
-            let entry = entry.map_err(|error| {
-                BuildError::Message(format!(
-                    "failed to inspect workspace entry under {} while clearing stale build evidence: {error}",
-                    directory.display()
-                ))
-            })?;
-            let file_type = entry.file_type().map_err(|error| {
-                BuildError::Message(format!(
-                    "failed to inspect workspace entry {} while clearing stale build evidence: {error}",
-                    entry.path().display()
-                ))
-            })?;
-            if !file_type.is_dir() || workspace_cleanup_excludes(entry.path().as_path()) {
-                continue;
-            }
-            let child = entry.path();
-            let manifest = child.join("nomo.toml");
-            if manifest
-                .symlink_metadata()
-                .is_ok_and(|metadata| metadata.file_type().is_file())
-            {
-                manifest_roots.push(child.clone());
-            }
-            pending.push(child);
-        }
-    }
-    manifest_roots.sort();
-    manifest_roots.dedup();
-    for root in manifest_roots {
-        let target_dir = if target_scoped_artifacts {
-            root.join("build").join(target.to_string())
-        } else {
-            root.join("build")
-        };
-        clear_build_metadata_at(&target_dir)?;
+    let mut roots = projects
+        .iter()
+        .map(|project| canonical_safe_directory(&project.root, "selected workspace member"))
+        .collect::<Result<Vec<_>, _>>()?;
+    roots.sort();
+    roots.dedup();
+    for root in roots {
+        clear_project_root_build_metadata(&root, target, target_scoped_artifacts)?;
     }
     Ok(())
+}
+
+pub fn clear_failed_workspace_build_metadata(
+    requested_path: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+    profile: BuildProfile,
+    selection: &WorkspaceEvidenceSelection,
+) -> Result<(), BuildError> {
+    clear_failed_workspace_build_metadata_from_catalog(
+        requested_path,
+        target,
+        target_scoped_artifacts,
+        profile,
+        selection,
+    )
+    .map_err(|error| {
+        let message = error.human();
+        if message.starts_with(
+            "workspace discovery failed and release evidence could not be safely cleared:",
+        ) {
+            error
+        } else {
+            BuildError::Message(format!(
+                "workspace discovery failed and release evidence could not be safely cleared: {message}"
+            ))
+        }
+    })
+}
+
+pub fn refresh_workspace_build_evidence_catalog(
+    workspace: &WorkspaceGraph,
+) -> Result<(), BuildError> {
+    refresh_workspace_evidence_catalog(workspace).map(|_| ())
 }
 
 fn clear_build_metadata_at(target_dir: &Path) -> Result<(), BuildError> {
@@ -514,29 +752,292 @@ fn clear_build_metadata_at(target_dir: &Path) -> Result<(), BuildError> {
     Ok(())
 }
 
-fn requested_workspace_root(requested_path: &Path) -> Result<PathBuf, BuildError> {
-    let requested_path = absolute_build_path(requested_path)?;
-    let requested_directory = if requested_path.is_dir() {
-        requested_path.clone()
+fn clear_project_root_build_metadata(
+    root: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<(), BuildError> {
+    let target_dir = if target_scoped_artifacts {
+        root.join("build").join(target.to_string())
     } else {
-        requested_path
-            .parent()
-            .map(Path::to_path_buf)
-            .unwrap_or_else(|| requested_path.clone())
+        root.join("build")
     };
-    let mut cursor = requested_directory.clone();
-    let mut outermost_manifest_root = None;
-    loop {
-        let manifest = cursor.join("nomo.toml");
-        if manifest
-            .symlink_metadata()
-            .is_ok_and(|metadata| metadata.file_type().is_file())
+    clear_build_metadata_at(&target_dir)
+}
+
+fn clear_failed_workspace_build_metadata_from_catalog(
+    requested_path: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+    _profile: BuildProfile,
+    selection: &WorkspaceEvidenceSelection,
+) -> Result<(), BuildError> {
+    let Some(workspace_root) = find_workspace_evidence_catalog_root(requested_path)? else {
+        return Err(BuildError::Message(
+            "workspace discovery failed and release evidence could not be safely cleared: no trusted workspace evidence catalog was found"
+                .to_string(),
+        ));
+    };
+    let (catalog, member_roots) = {
+        let Some(_catalog_lock) = WorkspaceCatalogLock::acquire(&workspace_root, false)? else {
+            return Err(BuildError::Message(
+                "workspace discovery failed and release evidence could not be safely cleared: the workspace catalog lock is unavailable"
+                    .to_string(),
+            ));
+        };
+        read_validated_workspace_catalog_locked(&workspace_root)?
+    };
+    let selected_members = selected_catalog_members(&catalog, selection);
+    let mut unsafe_members = Vec::new();
+    for member in selected_members {
+        let Some(member_root) = member_roots.get(&member.member_key).cloned() else {
+            unsafe_members.push(format!(
+                "{}: catalog member root is unavailable",
+                member.member_key
+            ));
+            continue;
+        };
+        let target_dir = project_target_dir(&member_root, target, target_scoped_artifacts);
+        let Some(_target_lock) = BuildEvidenceLock::acquire(&target_dir, false)? else {
+            continue;
+        };
+        validate_member_target_dir(&member_root, &target_dir, target, target_scoped_artifacts)?;
         {
-            outermost_manifest_root = Some(cursor.clone());
-            if fs::read_to_string(&manifest)
-                .is_ok_and(|source| manifest_declares_workspace(&source))
+            let Some(_catalog_lock) = WorkspaceCatalogLock::acquire(&workspace_root, false)? else {
+                unsafe_members.push(format!(
+                    "{}: catalog disappeared while the target was locked",
+                    member.member_key
+                ));
+                continue;
+            };
+            let (current_catalog, _) = read_validated_workspace_catalog_locked(&workspace_root)?;
+            let current_member = current_catalog
+                .members
+                .iter()
+                .find(|candidate| candidate.member_key == member.member_key);
+            if current_catalog.catalog_generation != catalog.catalog_generation
+                || current_member != Some(member)
             {
-                return Ok(cursor);
+                unsafe_members.push(format!(
+                    "{}: catalog generation changed during cleanup",
+                    member.member_key
+                ));
+                continue;
+            }
+        }
+        let receipt_path = target_dir.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE);
+        let Some(receipt) = read_workspace_ownership_receipt(&receipt_path)? else {
+            if target_has_release_evidence(&target_dir)? {
+                unsafe_members.push(format!(
+                    "{}: release evidence has no matching workspace owner receipt",
+                    member.member_key
+                ));
+            }
+            continue;
+        };
+        if !workspace_ownership_receipt_matches(
+            &receipt,
+            &catalog,
+            &workspace_root,
+            member,
+            &member_root,
+            &target_dir,
+            target,
+            target_scoped_artifacts,
+        )? {
+            unsafe_members.push(format!(
+                "{}: workspace owner receipt or evidence hash does not match",
+                member.member_key
+            ));
+            continue;
+        }
+        clear_locked_workspace_evidence(&target_dir)?;
+    }
+    if unsafe_members.is_empty() {
+        Ok(())
+    } else {
+        Err(BuildError::Message(format!(
+            "workspace discovery failed and release evidence could not be safely cleared: {}",
+            unsafe_members.join("; ")
+        )))
+    }
+}
+
+fn refresh_workspace_evidence_catalog(
+    workspace: &WorkspaceGraph,
+) -> Result<(WorkspaceEvidenceCatalog, PathBuf), BuildError> {
+    let workspace_root = canonical_safe_directory(&workspace.root, "workspace root")?;
+    let _catalog_lock = WorkspaceCatalogLock::acquire(&workspace_root, true)?
+        .expect("creating workspace evidence state must produce a catalog lock");
+    let scope = read_or_create_workspace_scope_locked(&workspace_root)?;
+    let default_roots = workspace
+        .default_members
+        .iter()
+        .map(|project| canonical_safe_directory(&project.root, "default workspace member"))
+        .collect::<Result<BTreeSet<_>, _>>()?;
+    let mut members = Vec::with_capacity(workspace.members.len());
+    let mut member_keys = BTreeSet::new();
+    for project in &workspace.members {
+        let member_root = canonical_safe_directory(&project.root, "workspace member")?;
+        if !member_root.starts_with(&workspace_root)
+            || crosses_nested_repository_boundary(&workspace_root, &member_root)
+        {
+            return Err(BuildError::Message(format!(
+                "refusing to catalog workspace member outside the canonical workspace repository: {}",
+                project.root.display()
+            )));
+        }
+        let relative_root = root_relative_member_path(&workspace_root, &member_root)?;
+        if !member_keys.insert(relative_root.clone()) {
+            return Err(BuildError::Message(format!(
+                "workspace evidence catalog contains duplicate relative root `{relative_root}`"
+            )));
+        }
+        let package_id = project_package_id(project).map_err(BuildError::Message)?;
+        let member_key = workspace_member_key(&scope.stable_scope_id, &package_id, &relative_root)?;
+        members.push(WorkspaceEvidenceMember {
+            package_id,
+            package_name: project.name.clone(),
+            relative_root,
+            member_key,
+            default_member: default_roots.contains(&member_root),
+        });
+    }
+    members.sort_by(|left, right| {
+        left.relative_root
+            .cmp(&right.relative_root)
+            .then_with(|| left.package_id.cmp(&right.package_id))
+    });
+    let catalog_generation = sha256_canonical_json(&WorkspaceCatalogGeneration {
+        domain: "nomo-workspace-evidence-catalog-generation-v1",
+        members: members.clone(),
+    })?;
+    let catalog = WorkspaceEvidenceCatalog {
+        schema: WORKSPACE_EVIDENCE_CATALOG_SCHEMA,
+        stable_scope_id: scope.stable_scope_id,
+        catalog_generation,
+        workspace_root: workspace_root.to_string_lossy().into_owned(),
+        members,
+    };
+    atomic_write_canonical_json(&workspace_evidence_catalog_path(&workspace_root), &catalog)?;
+    Ok((catalog, workspace_root))
+}
+
+fn root_relative_member_path(
+    workspace_root: &Path,
+    member_root: &Path,
+) -> Result<String, BuildError> {
+    let relative = member_root.strip_prefix(workspace_root).map_err(|_| {
+        BuildError::Message(format!(
+            "workspace member {} is outside {}",
+            member_root.display(),
+            workspace_root.display()
+        ))
+    })?;
+    if relative.as_os_str().is_empty() {
+        return Ok(".".to_string());
+    }
+    if relative
+        .components()
+        .any(|component| !matches!(component, std::path::Component::Normal(_)))
+    {
+        return Err(BuildError::Message(format!(
+            "workspace member has a non-canonical relative path: {}",
+            member_root.display()
+        )));
+    }
+    Ok(relative.to_string_lossy().replace('\\', "/"))
+}
+
+fn workspace_member_key(
+    stable_scope_id: &str,
+    package_id: &str,
+    relative_root: &str,
+) -> Result<String, BuildError> {
+    sha256_canonical_json(&WorkspaceMemberKeyInput {
+        domain: "nomo-workspace-member-key-v1",
+        stable_scope_id: stable_scope_id.to_string(),
+        package_id: package_id.to_string(),
+        relative_root: relative_root.to_string(),
+    })
+}
+
+fn selected_catalog_members<'a>(
+    catalog: &'a WorkspaceEvidenceCatalog,
+    selection: &WorkspaceEvidenceSelection,
+) -> Vec<&'a WorkspaceEvidenceMember> {
+    let default_members_are_implicit = !catalog.members.iter().any(|member| member.default_member);
+    catalog
+        .members
+        .iter()
+        .filter(|member| match selection {
+            WorkspaceEvidenceSelection::AllMembers => true,
+            WorkspaceEvidenceSelection::DefaultMembers => {
+                default_members_are_implicit || member.default_member
+            }
+            WorkspaceEvidenceSelection::Package(package) => {
+                member.package_id == *package || member.package_name == *package
+            }
+        })
+        .collect()
+}
+
+fn sha256_canonical_json(value: &impl Serialize) -> Result<String, BuildError> {
+    Ok(format!(
+        "{:x}",
+        Sha256::digest(canonical_json_bytes(value)?)
+    ))
+}
+
+fn workspace_evidence_state_dir(workspace_root: &Path) -> PathBuf {
+    WORKSPACE_EVIDENCE_STATE_COMPONENTS
+        .iter()
+        .fold(workspace_root.to_path_buf(), |path, component| {
+            path.join(component)
+        })
+}
+
+fn ensure_workspace_evidence_state_dir(workspace_root: &Path) -> Result<PathBuf, BuildError> {
+    let mut path = workspace_root.to_path_buf();
+    for component in WORKSPACE_EVIDENCE_STATE_COMPONENTS {
+        path = ensure_safe_child_directory(&path, component)?;
+    }
+    Ok(path)
+}
+
+fn workspace_scope_marker_path(workspace_root: &Path) -> PathBuf {
+    workspace_evidence_state_dir(workspace_root).join("scope-id")
+}
+
+fn workspace_evidence_catalog_path(workspace_root: &Path) -> PathBuf {
+    workspace_evidence_state_dir(workspace_root).join("catalog.json")
+}
+
+fn find_workspace_evidence_catalog_root(
+    requested_path: &Path,
+) -> Result<Option<PathBuf>, BuildError> {
+    let requested_root = requested_workspace_cleanup_root(requested_path)?;
+    let mut cursor = canonical_safe_directory(&requested_root, "workspace cleanup root")?;
+    loop {
+        let catalog_path = workspace_evidence_catalog_path(&cursor);
+        match fs::symlink_metadata(&catalog_path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata_is_symlink_or_reparse(&metadata) =>
+            {
+                return canonical_safe_directory(&cursor, "workspace catalog root").map(Some);
+            }
+            Ok(_) => {
+                return Err(BuildError::Message(format!(
+                    "workspace evidence catalog is not a safe regular file: {}",
+                    catalog_path.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(BuildError::Message(format!(
+                    "failed to inspect workspace evidence catalog {}: {error}",
+                    catalog_path.display()
+                )));
             }
         }
         if cursor.join(".git").exists() {
@@ -550,21 +1051,669 @@ fn requested_workspace_root(requested_path: &Path) -> Result<PathBuf, BuildError
         }
         cursor = parent.to_path_buf();
     }
-    Ok(outermost_manifest_root.unwrap_or(requested_directory))
+    Ok(None)
 }
 
-fn manifest_declares_workspace(source: &str) -> bool {
-    source.lines().any(|line| {
-        let line = line.trim();
-        line == "[workspace]" || line.starts_with("[workspace.")
-    })
+fn read_or_create_workspace_scope_locked(
+    workspace_root: &Path,
+) -> Result<WorkspaceEvidenceScopeMarker, BuildError> {
+    let path = workspace_scope_marker_path(workspace_root);
+    match fs::symlink_metadata(&path) {
+        Ok(_) => {
+            let marker = read_canonical_workspace_state_file::<WorkspaceEvidenceScopeMarker>(
+                &path,
+                "workspace scope marker",
+            )?;
+            if marker.schema != WORKSPACE_EVIDENCE_SCOPE_SCHEMA
+                || marker.workspace_root != workspace_root.to_string_lossy()
+                || !is_sha256_hex(&marker.stable_scope_id)
+            {
+                return Err(BuildError::Message(format!(
+                    "workspace scope marker is invalid: {}",
+                    path.display()
+                )));
+            }
+            Ok(marker)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            let marker = WorkspaceEvidenceScopeMarker {
+                schema: WORKSPACE_EVIDENCE_SCOPE_SCHEMA,
+                stable_scope_id: new_workspace_scope_id(workspace_root),
+                workspace_root: workspace_root.to_string_lossy().into_owned(),
+            };
+            atomic_write_canonical_json(&path, &marker)?;
+            Ok(marker)
+        }
+        Err(error) => Err(BuildError::Message(format!(
+            "failed to inspect workspace scope marker {}: {error}",
+            path.display()
+        ))),
+    }
 }
 
-fn workspace_cleanup_excludes(path: &Path) -> bool {
-    matches!(
-        path.file_name().and_then(|name| name.to_str()),
-        Some(".git" | ".nomo" | "build" | "target" | "vendor" | "node_modules")
+fn read_validated_workspace_catalog_locked(
+    workspace_root: &Path,
+) -> Result<(WorkspaceEvidenceCatalog, BTreeMap<String, PathBuf>), BuildError> {
+    let scope = read_canonical_workspace_state_file::<WorkspaceEvidenceScopeMarker>(
+        &workspace_scope_marker_path(workspace_root),
+        "workspace scope marker",
+    )?;
+    if scope.schema != WORKSPACE_EVIDENCE_SCOPE_SCHEMA
+        || scope.workspace_root != workspace_root.to_string_lossy()
+        || !is_sha256_hex(&scope.stable_scope_id)
+    {
+        return Err(BuildError::Message(
+            "workspace evidence scope marker is invalid".to_string(),
+        ));
+    }
+    let catalog = read_canonical_workspace_state_file::<WorkspaceEvidenceCatalog>(
+        &workspace_evidence_catalog_path(workspace_root),
+        "workspace evidence catalog",
+    )?;
+    if catalog.schema != WORKSPACE_EVIDENCE_CATALOG_SCHEMA
+        || catalog.stable_scope_id != scope.stable_scope_id
+        || catalog.workspace_root != workspace_root.to_string_lossy()
+        || catalog.members.is_empty()
+    {
+        return Err(BuildError::Message(
+            "workspace evidence catalog identity is invalid".to_string(),
+        ));
+    }
+    let mut sorted_members = catalog.members.clone();
+    sorted_members.sort_by(|left, right| {
+        left.relative_root
+            .cmp(&right.relative_root)
+            .then_with(|| left.package_id.cmp(&right.package_id))
+    });
+    if sorted_members != catalog.members {
+        return Err(BuildError::Message(
+            "workspace evidence catalog members are not canonical".to_string(),
+        ));
+    }
+    let expected_generation = sha256_canonical_json(&WorkspaceCatalogGeneration {
+        domain: "nomo-workspace-evidence-catalog-generation-v1",
+        members: catalog.members.clone(),
+    })?;
+    if catalog.catalog_generation != expected_generation {
+        return Err(BuildError::Message(
+            "workspace evidence catalog generation hash does not match".to_string(),
+        ));
+    }
+    let mut member_roots = BTreeMap::new();
+    for member in &catalog.members {
+        if member.package_id.is_empty()
+            || member.package_name.is_empty()
+            || member_roots.contains_key(&member.member_key)
+        {
+            return Err(BuildError::Message(
+                "workspace evidence catalog contains an invalid member".to_string(),
+            ));
+        }
+        let expected_member_key = workspace_member_key(
+            &catalog.stable_scope_id,
+            &member.package_id,
+            &member.relative_root,
+        )?;
+        if member.member_key != expected_member_key {
+            return Err(BuildError::Message(format!(
+                "workspace member key does not match `{}`",
+                member.relative_root
+            )));
+        }
+        let root = catalog_member_root(workspace_root, &member.relative_root)?;
+        member_roots.insert(member.member_key.clone(), root);
+    }
+    Ok((catalog, member_roots))
+}
+
+fn catalog_member_root(workspace_root: &Path, relative_root: &str) -> Result<PathBuf, BuildError> {
+    let relative = Path::new(relative_root);
+    let member_root = if relative_root == "." {
+        workspace_root.to_path_buf()
+    } else {
+        if relative.is_absolute()
+            || relative
+                .components()
+                .any(|component| !matches!(component, std::path::Component::Normal(_)))
+        {
+            return Err(BuildError::Message(format!(
+                "workspace catalog path is not a canonical relative path: {relative_root}"
+            )));
+        }
+        workspace_root.join(relative)
+    };
+    let canonical_member = canonical_safe_directory(&member_root, "workspace catalog member")?;
+    if !canonical_member.starts_with(workspace_root)
+        || root_relative_member_path(workspace_root, &canonical_member)? != relative_root
+        || crosses_nested_repository_boundary(workspace_root, &canonical_member)
+    {
+        return Err(BuildError::Message(format!(
+            "workspace catalog member escapes its canonical repository boundary: {relative_root}"
+        )));
+    }
+    Ok(canonical_member)
+}
+
+fn read_canonical_workspace_state_file<T: serde::de::DeserializeOwned + Serialize>(
+    path: &Path,
+    label: &str,
+) -> Result<T, BuildError> {
+    reject_existing_symlink_or_reparse_components(path)?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&metadata) {
+        return Err(BuildError::Message(format!(
+            "{label} is not a safe regular file: {}",
+            path.display()
+        )));
+    }
+    let bytes = fs::read(path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to read {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    let value = serde_json::from_slice::<T>(&bytes).map_err(|error| {
+        BuildError::Message(format!(
+            "{label} has an unknown or truncated schema at {}: {error}",
+            path.display()
+        ))
+    })?;
+    if canonical_json_bytes(&value)? != bytes {
+        return Err(BuildError::Message(format!(
+            "{label} is not canonical JSON: {}",
+            path.display()
+        )));
+    }
+    Ok(value)
+}
+
+fn new_workspace_scope_id(workspace_root: &Path) -> String {
+    use std::sync::atomic::{AtomicU64, Ordering};
+    use std::time::{SystemTime, UNIX_EPOCH};
+
+    static SCOPE_SEQUENCE: AtomicU64 = AtomicU64::new(0);
+    let mut hasher = Sha256::new();
+    hasher.update(b"nomo-workspace-stable-scope-v1");
+    hasher.update(workspace_root.as_os_str().as_encoded_bytes());
+    hasher.update(std::process::id().to_be_bytes());
+    hasher.update(
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+            .to_be_bytes(),
+    );
+    hasher.update(SCOPE_SEQUENCE.fetch_add(1, Ordering::Relaxed).to_be_bytes());
+    format!("{:x}", hasher.finalize())
+}
+
+fn is_sha256_hex(value: &str) -> bool {
+    value.len() == 64
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_digit() || (b'a'..=b'f').contains(&byte))
+}
+
+fn target_has_release_evidence(target_dir: &Path) -> Result<bool, BuildError> {
+    for name in ["nomo-build-metadata.json", "release-provenance.json"] {
+        let path = target_dir.join(name);
+        match fs::symlink_metadata(&path) {
+            Ok(metadata)
+                if metadata.file_type().is_file() && !metadata_is_symlink_or_reparse(&metadata) =>
+            {
+                reject_existing_symlink_or_reparse_components(&path)?;
+                return Ok(true);
+            }
+            Ok(_) => {
+                return Err(BuildError::Message(format!(
+                    "release evidence is not a safe regular file: {}",
+                    path.display()
+                )));
+            }
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(BuildError::Message(format!(
+                    "failed to inspect release evidence {}: {error}",
+                    path.display()
+                )));
+            }
+        }
+    }
+    Ok(false)
+}
+
+fn safe_required_file_record(path: &Path, label: &str) -> Result<FileRecord, BuildError> {
+    reject_existing_symlink_or_reparse_components(path)?;
+    let metadata = fs::symlink_metadata(path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect {label} {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&metadata) {
+        return Err(BuildError::Message(format!(
+            "{label} is not a safe regular file: {}",
+            path.display()
+        )));
+    }
+    FileRecord::from_path(path)
+}
+
+fn read_workspace_ownership_receipt(
+    path: &Path,
+) -> Result<Option<WorkspaceOwnershipReceipt>, BuildError> {
+    match fs::symlink_metadata(path) {
+        Ok(metadata)
+            if metadata.file_type().is_file() && !metadata_is_symlink_or_reparse(&metadata) => {}
+        Ok(_) => {
+            return Err(BuildError::Message(format!(
+                "workspace ownership receipt is not a safe regular file: {}",
+                path.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(error) => {
+            return Err(BuildError::Message(format!(
+                "failed to inspect workspace ownership receipt {}: {error}",
+                path.display()
+            )));
+        }
+    }
+    reject_existing_symlink_or_reparse_components(path)?;
+    let bytes = fs::read(path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to read workspace ownership receipt {}: {error}",
+            path.display()
+        ))
+    })?;
+    let receipt = serde_json::from_slice::<WorkspaceOwnershipReceipt>(&bytes).map_err(|error| {
+        BuildError::Message(format!(
+            "workspace ownership receipt has an unknown or truncated schema at {}: {error}",
+            path.display()
+        ))
+    })?;
+    if canonical_json_bytes(&receipt)? != bytes {
+        return Err(BuildError::Message(format!(
+            "workspace ownership receipt is not canonical: {}",
+            path.display()
+        )));
+    }
+    Ok(Some(receipt))
+}
+
+#[allow(clippy::too_many_arguments)]
+fn workspace_ownership_receipt_matches(
+    receipt: &WorkspaceOwnershipReceipt,
+    catalog: &WorkspaceEvidenceCatalog,
+    workspace_root: &Path,
+    member: &WorkspaceEvidenceMember,
+    member_root: &Path,
+    target_dir: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<bool, BuildError> {
+    let metadata = safe_required_file_record(
+        &target_dir.join("nomo-build-metadata.json"),
+        "build metadata",
+    )?;
+    let provenance = safe_required_file_record(
+        &target_dir.join("release-provenance.json"),
+        "release provenance",
+    )?;
+    if receipt.schema != WORKSPACE_OWNERSHIP_RECEIPT_SCHEMA
+        || receipt.stable_scope_id != catalog.stable_scope_id
+        || receipt.workspace_root != workspace_root.to_string_lossy()
+        || receipt.member_key != member.member_key
+        || receipt.member_root != member_root.to_string_lossy()
+        || receipt.package_id != member.package_id
+        || receipt.package_name != member.package_name
+        || receipt.selected_profile != BuildProfile::Release
+        || receipt.target_triple != target.to_string()
+        || receipt.target_scoped_artifacts != target_scoped_artifacts
+        || receipt.metadata_sha256 != metadata.sha256
+        || receipt.provenance_sha256 != provenance.sha256
+    {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn clear_locked_workspace_evidence(target_dir: &Path) -> Result<(), BuildError> {
+    clear_release_evidence_paths(
+        &target_dir.join("release-provenance.json"),
+        &target_dir.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE),
+        &target_dir.join("nomo-build-metadata.json"),
     )
+}
+
+fn project_target_dir(
+    member_root: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> PathBuf {
+    if target_scoped_artifacts {
+        member_root.join("build").join(target.to_string())
+    } else {
+        member_root.join("build")
+    }
+}
+
+fn validate_member_target_dir(
+    member_root: &Path,
+    target_dir: &Path,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+) -> Result<(), BuildError> {
+    let expected = project_target_dir(member_root, target, target_scoped_artifacts);
+    if target_dir != expected {
+        return Err(BuildError::Message(format!(
+            "workspace member target path does not match its canonical build layout: {}",
+            target_dir.display()
+        )));
+    }
+    reject_existing_symlink_or_reparse_components(target_dir)?;
+    let canonical_target = fs::canonicalize(target_dir).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to resolve workspace member target {}: {error}",
+            target_dir.display()
+        ))
+    })?;
+    let canonical_build = fs::canonicalize(member_root.join("build")).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to resolve workspace member build directory {}: {error}",
+            member_root.join("build").display()
+        ))
+    })?;
+    if !canonical_target.starts_with(&canonical_build) {
+        return Err(BuildError::Message(format!(
+            "workspace member target escapes its canonical build directory: {}",
+            target_dir.display()
+        )));
+    }
+    Ok(())
+}
+
+fn workspace_release_owner_context(
+    project: &Project,
+    target: &TargetTriple,
+) -> Result<Option<WorkspaceReleaseOwnerContext>, BuildError> {
+    let Some(workspace_root) = project.workspace_root.as_deref() else {
+        return Ok(None);
+    };
+    let workspace = match discover_workspace_for_target(workspace_root, target) {
+        Ok(workspace) => workspace,
+        Err(_) => return Ok(None),
+    };
+    let (catalog, canonical_workspace_root) = refresh_workspace_evidence_catalog(&workspace)?;
+    let canonical_member_root = canonical_safe_directory(&project.root, "workspace project")?;
+    let relative_root =
+        root_relative_member_path(&canonical_workspace_root, &canonical_member_root)?;
+    let package_id = project_package_id(project).map_err(BuildError::Message)?;
+    let Some(member) = catalog.members.iter().find(|member| {
+        member.relative_root == relative_root
+            && member.package_id == package_id
+            && member.package_name == project.name
+    }) else {
+        return Ok(None);
+    };
+    Ok(Some(WorkspaceReleaseOwnerContext {
+        stable_scope_id: catalog.stable_scope_id,
+        workspace_root: canonical_workspace_root,
+        member_key: member.member_key.clone(),
+        member_root: canonical_member_root,
+        package_id,
+        package_name: project.name.clone(),
+    }))
+}
+
+fn workspace_ownership_receipt(
+    owner: &WorkspaceReleaseOwnerContext,
+    target: &TargetTriple,
+    target_scoped_artifacts: bool,
+    metadata: &FileRecord,
+    provenance: &FileRecord,
+) -> WorkspaceOwnershipReceipt {
+    WorkspaceOwnershipReceipt {
+        schema: WORKSPACE_OWNERSHIP_RECEIPT_SCHEMA,
+        stable_scope_id: owner.stable_scope_id.clone(),
+        workspace_root: owner.workspace_root.to_string_lossy().into_owned(),
+        member_key: owner.member_key.clone(),
+        member_root: owner.member_root.to_string_lossy().into_owned(),
+        package_id: owner.package_id.clone(),
+        package_name: owner.package_name.clone(),
+        selected_profile: BuildProfile::Release,
+        target_triple: target.to_string(),
+        target_scoped_artifacts,
+        metadata_sha256: metadata.sha256.clone(),
+        provenance_sha256: provenance.sha256.clone(),
+    }
+}
+
+fn canonical_safe_directory(path: &Path, label: &str) -> Result<PathBuf, BuildError> {
+    let absolute = absolute_build_path(path)?;
+    let metadata = fs::symlink_metadata(&absolute).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect {label} {}: {error}",
+            absolute.display()
+        ))
+    })?;
+    if !metadata.file_type().is_dir() || metadata_is_symlink_or_reparse(&metadata) {
+        return Err(BuildError::Message(format!(
+            "{label} is not a safe directory: {}",
+            absolute.display()
+        )));
+    }
+    let canonical = fs::canonicalize(&absolute).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to resolve {label} {}: {error}",
+            absolute.display()
+        ))
+    })?;
+    reject_existing_symlink_or_reparse_components(&canonical)?;
+    Ok(canonical)
+}
+
+fn canonical_build_target_dir(target_dir: &Path) -> Result<PathBuf, BuildError> {
+    let absolute = absolute_build_path(target_dir)?;
+    let (project_root, target_suffix) =
+        if absolute.file_name() == Some(std::ffi::OsStr::new("build")) {
+            let project_root = absolute.parent().ok_or_else(|| {
+                BuildError::Message(format!(
+                    "build target has no project root: {}",
+                    absolute.display()
+                ))
+            })?;
+            (project_root, PathBuf::from("build"))
+        } else {
+            let build_dir = absolute.parent().ok_or_else(|| {
+                BuildError::Message(format!(
+                    "target-scoped build output has no build directory: {}",
+                    absolute.display()
+                ))
+            })?;
+            if build_dir.file_name() != Some(std::ffi::OsStr::new("build")) {
+                return Err(BuildError::Message(format!(
+                    "build target does not use the canonical build layout: {}",
+                    absolute.display()
+                )));
+            }
+            let project_root = build_dir.parent().ok_or_else(|| {
+                BuildError::Message(format!(
+                    "target-scoped build output has no project root: {}",
+                    absolute.display()
+                ))
+            })?;
+            let target_name = absolute.file_name().ok_or_else(|| {
+                BuildError::Message(format!("build target has no name: {}", absolute.display()))
+            })?;
+            (project_root, Path::new("build").join(target_name))
+        };
+    let canonical_root = canonical_safe_directory(project_root, "build project root")?;
+    let canonical_target = canonical_root.join(target_suffix);
+    reject_existing_symlink_or_reparse_components(&canonical_target)?;
+    Ok(canonical_target)
+}
+
+fn ensure_safe_child_directory(parent: &Path, name: &str) -> Result<PathBuf, BuildError> {
+    reject_existing_symlink_or_reparse_components(parent)?;
+    let parent_metadata = fs::symlink_metadata(parent).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect directory {}: {error}",
+            parent.display()
+        ))
+    })?;
+    if !parent_metadata.file_type().is_dir() || metadata_is_symlink_or_reparse(&parent_metadata) {
+        return Err(BuildError::Message(format!(
+            "parent path is not a safe directory: {}",
+            parent.display()
+        )));
+    }
+    let child = parent.join(name);
+    match fs::symlink_metadata(&child) {
+        Ok(metadata)
+            if metadata.file_type().is_dir() && !metadata_is_symlink_or_reparse(&metadata) => {}
+        Ok(_) => {
+            return Err(BuildError::Message(format!(
+                "state path is not a safe directory: {}",
+                child.display()
+            )));
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            fs::create_dir(&child).map_err(|error| {
+                BuildError::Message(format!(
+                    "failed to create state directory {}: {error}",
+                    child.display()
+                ))
+            })?;
+        }
+        Err(error) => {
+            return Err(BuildError::Message(format!(
+                "failed to inspect state directory {}: {error}",
+                child.display()
+            )));
+        }
+    }
+    reject_existing_symlink_or_reparse_components(&child)?;
+    Ok(child)
+}
+
+fn reject_existing_symlink_or_reparse_components(path: &Path) -> Result<(), BuildError> {
+    let mut cursor = PathBuf::new();
+    for component in path.components() {
+        cursor.push(component.as_os_str());
+        match fs::symlink_metadata(&cursor) {
+            Ok(metadata) if metadata_is_symlink_or_reparse(&metadata) => {
+                return Err(BuildError::Message(format!(
+                    "refusing symlink or reparse-point path component: {}",
+                    cursor.display()
+                )));
+            }
+            Ok(_) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => {}
+            Err(error) => {
+                return Err(BuildError::Message(format!(
+                    "failed to inspect path component {}: {error}",
+                    cursor.display()
+                )));
+            }
+        }
+    }
+    Ok(())
+}
+
+#[cfg(not(windows))]
+fn metadata_is_symlink_or_reparse(metadata: &fs::Metadata) -> bool {
+    metadata.file_type().is_symlink()
+}
+
+#[cfg(windows)]
+fn metadata_is_symlink_or_reparse(metadata: &fs::Metadata) -> bool {
+    use std::os::windows::fs::MetadataExt;
+
+    const FILE_ATTRIBUTE_REPARSE_POINT: u32 = 0x400;
+    metadata.file_type().is_symlink()
+        || metadata.file_attributes() & FILE_ATTRIBUTE_REPARSE_POINT != 0
+}
+
+fn open_build_lock(path: &Path) -> Result<File, BuildError> {
+    let mut options = OpenOptions::new();
+    options.create(true).read(true).write(true).truncate(false);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+
+        #[cfg(any(target_os = "linux", target_os = "android"))]
+        const O_NOFOLLOW: i32 = 0x20000;
+        #[cfg(not(any(target_os = "linux", target_os = "android")))]
+        const O_NOFOLLOW: i32 = 0x100;
+        options.custom_flags(O_NOFOLLOW);
+    }
+    #[cfg(windows)]
+    {
+        use std::os::windows::fs::OpenOptionsExt;
+
+        const FILE_FLAG_OPEN_REPARSE_POINT: u32 = 0x0020_0000;
+        options.custom_flags(FILE_FLAG_OPEN_REPARSE_POINT);
+    }
+    let file = options.open(path).map_err(|error| {
+        BuildError::Message(format!(
+            "failed to safely open lock {}: {error}",
+            path.display()
+        ))
+    })?;
+    let metadata = file.metadata().map_err(|error| {
+        BuildError::Message(format!(
+            "failed to inspect safely opened lock {}: {error}",
+            path.display()
+        ))
+    })?;
+    if !metadata.file_type().is_file() || metadata_is_symlink_or_reparse(&metadata) {
+        return Err(BuildError::Message(format!(
+            "lock is not a safe regular file: {}",
+            path.display()
+        )));
+    }
+    Ok(file)
+}
+
+fn crosses_nested_repository_boundary(workspace_root: &Path, member_root: &Path) -> bool {
+    let Ok(relative) = member_root.strip_prefix(workspace_root) else {
+        return true;
+    };
+    let mut cursor = workspace_root.to_path_buf();
+    for component in relative.components() {
+        cursor.push(component);
+        if cursor.join(".git").exists() {
+            return true;
+        }
+    }
+    false
+}
+
+fn requested_workspace_cleanup_root(requested_path: &Path) -> Result<PathBuf, BuildError> {
+    let requested_path = absolute_build_path(requested_path)?;
+    if requested_path
+        .extension()
+        .and_then(|extension| extension.to_str())
+        == Some("nomo")
+    {
+        requested_path
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| {
+                BuildError::Message(format!(
+                    "workspace source has no parent: {}",
+                    requested_path.display()
+                ))
+            })
+    } else {
+        Ok(requested_path)
+    }
 }
 
 fn requested_build_root(requested_path: &Path) -> Result<PathBuf, BuildError> {
@@ -615,6 +1764,11 @@ fn build_project_impl(
     target_scoped_artifacts: bool,
     profile: BuildProfile,
 ) -> Result<PathBuf, BuildError> {
+    let workspace_owner = if profile == BuildProfile::Release {
+        workspace_release_owner_context(project, target)?
+    } else {
+        None
+    };
     let target_dir = if target_scoped_artifacts {
         project.root.join("build").join(target.to_string())
     } else {
@@ -767,9 +1921,20 @@ fn build_project_impl(
             Some(binary),
             Some(provenance_record.clone()),
         )?;
+        let metadata_record = FileRecord::for_canonical_json(&metadata_path, &metadata)?;
+        let owner_receipt = workspace_owner.as_ref().map(|owner| {
+            workspace_ownership_receipt(
+                owner,
+                target,
+                target_scoped_artifacts,
+                &metadata_record,
+                &provenance_record,
+            )
+        });
         publish_release_evidence(
             &metadata_path,
             &metadata,
+            owner_receipt.as_ref(),
             &provenance_path,
             &provenance,
             &provenance_record,
@@ -1357,13 +2522,14 @@ mod tests {
     }
 
     #[test]
-    fn failed_metadata_or_sidecar_publication_clears_the_evidence_pair() {
+    fn failed_metadata_receipt_or_sidecar_publication_clears_every_evidence_file() {
         let root = std::env::temp_dir().join(format!(
             "nomo-release-evidence-failure-{}",
             std::process::id()
         ));
         fs::create_dir_all(&root).unwrap();
         let metadata_path = root.join("nomo-build-metadata.json");
+        let receipt_path = root.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE);
         let provenance_path = root.join("release-provenance.json");
         let expected = FileRecord {
             path: provenance_path.to_string_lossy().into_owned(),
@@ -1371,24 +2537,30 @@ mod tests {
         };
 
         fs::write(&metadata_path, "old metadata").unwrap();
+        fs::write(&receipt_path, "old receipt").unwrap();
         fs::write(&provenance_path, "old provenance").unwrap();
         let metadata_failure = publish_release_evidence_with(
             &metadata_path,
+            &receipt_path,
             &provenance_path,
             &expected,
             || {
+                fs::write(&metadata_path, "partial metadata").unwrap();
                 Err(BuildError::Message(
                     "injected metadata write failure".to_string(),
                 ))
             },
             || unreachable!(),
+            || unreachable!(),
         );
         assert!(metadata_failure.is_err());
         assert!(!metadata_path.exists());
+        assert!(!receipt_path.exists());
         assert!(!provenance_path.exists());
 
-        let sidecar_failure = publish_release_evidence_with(
+        let receipt_failure = publish_release_evidence_with(
             &metadata_path,
+            &receipt_path,
             &provenance_path,
             &expected,
             || {
@@ -1396,6 +2568,33 @@ mod tests {
                     .map_err(|error| BuildError::Message(error.to_string()))
             },
             || {
+                fs::write(&receipt_path, "partial receipt").unwrap();
+                Err(BuildError::Message(
+                    "injected owner receipt write failure".to_string(),
+                ))
+            },
+            || unreachable!(),
+        );
+        assert!(receipt_failure.is_err());
+        assert!(!metadata_path.exists());
+        assert!(!receipt_path.exists());
+        assert!(!provenance_path.exists());
+
+        let sidecar_failure = publish_release_evidence_with(
+            &metadata_path,
+            &receipt_path,
+            &provenance_path,
+            &expected,
+            || {
+                fs::write(&metadata_path, "new metadata")
+                    .map_err(|error| BuildError::Message(error.to_string()))
+            },
+            || {
+                fs::write(&receipt_path, "new receipt")
+                    .map_err(|error| BuildError::Message(error.to_string()))
+            },
+            || {
+                fs::write(&provenance_path, "partial sidecar").unwrap();
                 Err(BuildError::Message(
                     "injected sidecar write failure".to_string(),
                 ))
@@ -1403,7 +2602,28 @@ mod tests {
         );
         assert!(sidecar_failure.is_err());
         assert!(!metadata_path.exists());
+        assert!(!receipt_path.exists());
         assert!(!provenance_path.exists());
+
+        let mut removal_order = Vec::new();
+        clear_release_evidence_paths_with(
+            &provenance_path,
+            &receipt_path,
+            &metadata_path,
+            |path| {
+                removal_order.push(path.to_path_buf());
+                Ok(())
+            },
+        )
+        .unwrap();
+        assert_eq!(
+            removal_order,
+            vec![
+                provenance_path.clone(),
+                receipt_path.clone(),
+                metadata_path.clone()
+            ]
+        );
         fs::remove_dir_all(root).unwrap();
     }
 
@@ -1413,15 +2633,18 @@ mod tests {
         use std::thread;
         use std::time::Duration;
 
-        let root = std::env::temp_dir().join(format!(
+        let project_root = std::env::temp_dir().join(format!(
             "nomo-release-evidence-lock-window-{}",
             std::process::id()
         ));
-        if root.exists() {
-            fs::remove_dir_all(&root).unwrap();
+        if project_root.exists() {
+            fs::remove_dir_all(&project_root).unwrap();
         }
-        fs::create_dir_all(&root).unwrap();
+        fs::create_dir_all(project_root.join("build")).unwrap();
+        let project_root = fs::canonicalize(project_root).unwrap();
+        let root = project_root.join("build");
         let metadata_path = root.join("nomo-build-metadata.json");
+        let receipt_path = root.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE);
         let provenance_path = root.join("release-provenance.json");
         let (metadata_written_tx, metadata_written_rx) = mpsc::channel();
         let (publish_tx, publish_rx) = mpsc::channel();
@@ -1431,6 +2654,11 @@ mod tests {
             fs::write(
                 publisher_root.join("nomo-build-metadata.json"),
                 "complete metadata",
+            )
+            .unwrap();
+            fs::write(
+                publisher_root.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE),
+                "complete owner receipt",
             )
             .unwrap();
             metadata_written_tx.send(()).unwrap();
@@ -1445,6 +2673,7 @@ mod tests {
 
         metadata_written_rx.recv().unwrap();
         assert!(metadata_path.is_file());
+        assert!(receipt_path.is_file());
         assert!(!provenance_path.exists());
         let (cleanup_started_tx, cleanup_started_rx) = mpsc::channel();
         let (cleanup_finished_tx, cleanup_finished_rx) = mpsc::channel();
@@ -1461,6 +2690,7 @@ mod tests {
             "cleanup must block on the publisher's target-directory lock"
         );
         assert!(metadata_path.is_file());
+        assert!(receipt_path.is_file());
         assert!(!provenance_path.exists());
 
         publish_tx.send(()).unwrap();
@@ -1470,7 +2700,58 @@ mod tests {
             .unwrap();
         cleanup.join().unwrap();
         assert!(!metadata_path.exists());
+        assert!(!receipt_path.exists());
         assert!(!provenance_path.exists());
+        fs::remove_dir_all(project_root).unwrap();
+    }
+
+    #[test]
+    fn release_evidence_paths_reject_symlink_or_reparse_components_and_lock_files() {
+        let root = std::env::temp_dir().join(format!(
+            "nomo-release-evidence-symlink-{}",
+            std::process::id()
+        ));
+        if root.exists() {
+            fs::remove_dir_all(&root).unwrap();
+        }
+        fs::create_dir_all(&root).unwrap();
+        let root = fs::canonicalize(root).unwrap();
+        let external = root.join("external");
+        fs::create_dir_all(&external).unwrap();
+        let external_file = external.join("sentinel");
+        fs::write(&external_file, "untouched").unwrap();
+
+        let target = root.join("target");
+        fs::create_dir_all(&target).unwrap();
+        let lock_path = target.join(".nomo-build.lock");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_file, &lock_path).unwrap();
+        #[cfg(windows)]
+        if std::os::windows::fs::symlink_file(&external_file, &lock_path).is_err() {
+            fs::remove_dir_all(root).unwrap();
+            return;
+        }
+        assert!(BuildEvidenceLock::acquire(&target, false).is_err());
+        assert_eq!(fs::read_to_string(&external_file).unwrap(), "untouched");
+        fs::remove_file(&lock_path).unwrap();
+
+        let receipt_path = target.join(WORKSPACE_OWNERSHIP_RECEIPT_FILE);
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external_file, &receipt_path).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_file(&external_file, &receipt_path).unwrap();
+        assert!(read_workspace_ownership_receipt(&receipt_path).is_err());
+        assert_eq!(fs::read_to_string(&external_file).unwrap(), "untouched");
+
+        let linked_parent = root.join("linked-parent");
+        #[cfg(unix)]
+        std::os::unix::fs::symlink(&external, &linked_parent).unwrap();
+        #[cfg(windows)]
+        std::os::windows::fs::symlink_dir(&external, &linked_parent).unwrap();
+        assert!(
+            reject_existing_symlink_or_reparse_components(&linked_parent.join("sentinel")).is_err()
+        );
+        assert_eq!(fs::read_to_string(&external_file).unwrap(), "untouched");
         fs::remove_dir_all(root).unwrap();
     }
 

@@ -152,26 +152,76 @@ input is the SHA-256 of those exact stored bytes. An external validator rebuilds
 the same subdocuments from the top-level metadata values before trusting their
 digests or the final framed binding.
 
-Evidence publication is serialized by `<target-dir>/.nomo-build.lock`. Every
-build, and every pre-discovery cleanup that finds an existing target directory,
-takes that same lock. Cleanup clears an old pair; a publishing build holds the
-lock through generated-output materialization and publication.
-Metadata is atomically published first and `release-provenance.json` is
-published last as the commit marker; any discovery, compilation, link, or write
-failure removes both. Workspace cleanup conservatively locates ordinary
-`nomo.toml` files below the requested workspace while skipping build, cache,
-vendor, VCS, and dependency-manager directories and never following directory
-symlinks. It removes only the two evidence files, not source or dependency
-content.
+Evidence publication is serialized by `<target-dir>/.nomo-build.lock`. A
+successful release target publishes `nomo-build-metadata.json`, then a
+workspace-owner receipt when the target is a member of a discovered workspace,
+and finally `release-provenance.json` as the commit marker. Abort and cleanup
+remove the sidecar, receipt, and metadata in the opposite order. The publisher
+holds one target lock for the complete transaction, so another cooperative
+build or cleanup cannot observe or leave a committed sidecar without its
+metadata.
 
-Both JSON files contain canonical bytes. Temporary files are flushed and
-atomically replaced, with best-effort parent-directory synchronization; a
-stronger platform-wide power-loss guarantee remains future work. A consumer
-must reject unknown schema versions, non-canonical bytes, missing files,
-changed artifact hashes, mismatched commands, or stale compiler/producer
-identity. The release sidecar remains schema-compatible with the frozen
-Benchmarks Game v2 contract; formal release-lane eligibility additionally
-requires the benchmark runner's independent metadata-binding contract.
+Workspace ownership state is outside `build/`:
+
+```text
+<workspace>/.nomo/state/release-evidence/v1/
+  scope-id
+  catalog.json
+  .catalog.lock
+```
+
+The catalog is target- and profile-neutral. Its stable scope identifier outlives
+membership changes, while its generation digest covers the current complete
+`WorkspaceGraph`. Each member record binds the package identity, normalized
+root-relative path, default-member status, and a member key derived from the
+stable scope, package identity, and relative root. Only true graph members are
+cataloged; excluded, unlisted, dependency, vendor, and nested-repository
+projects are not inferred by scanning the directory tree.
+
+Each successful workspace-member release target writes
+`<target-dir>/.nomo-release-owner-v1.json` in the target transaction. The
+receipt binds the catalog scope and member key, package/member identity,
+profile, target and layout, and the hashes of that target's metadata and
+release sidecar. A direct build of a healthy workspace member uses the same
+catalog identity. A successful standalone project build removes an obsolete
+workspace receipt instead of inheriting ownership from an old path.
+
+After normal workspace discovery, Nomo refreshes the full catalog from the real
+workspace graph and clears only members selected by that command
+(`default-members`, all members, or one `--package`). If discovery fails, Nomo
+does not recursively search for manifests. It searches upward for the nearest
+trusted catalog without crossing a repository boundary, reapplies any
+parseable package selection, derives member locations only from validated
+catalog-relative paths, and clears a target only when its receipt and current
+evidence hashes match. Missing, truncated, unknown-schema, stale, or mismatched
+catalog/receipt state fails closed with an explicit cleanup error.
+
+Catalog writers hold only `.catalog.lock`; publishers hold only one target
+lock. Failure cleanup processes one member at a time: it takes that target lock,
+then briefly takes the catalog lock to recheck the generation, and releases
+both before considering another member. It never waits for a target lock while
+holding the catalog lock and never holds two target locks.
+
+Platform aliases outside the managed project or workspace boundary (for
+example, macOS `/var` resolving to `/private/var`) are resolved before target
+paths are constructed. Inside that canonical boundary, existing symlink
+components, Windows reparse points, unsafe evidence/receipt files, and unsafe
+lock files are rejected. Canonical target directories must remain inside the
+canonical member build layout, and catalog member paths must remain inside the
+current canonical workspace repository boundary. This is a cooperative
+build-concurrency and accidental-path-substitution guarantee. It is not an
+adversarial-filesystem or directory-swap/TOCTOU guarantee; such a guarantee
+would require directory-handle-relative filesystem operations.
+
+All evidence and workspace-state JSON files contain canonical bytes. Temporary
+files are flushed and atomically replaced, with best-effort parent-directory
+synchronization; a stronger platform-wide power-loss guarantee remains future
+work. A consumer must reject unknown schema versions, non-canonical bytes,
+missing files, changed artifact hashes, mismatched commands, or stale
+compiler/producer identity. The release sidecar remains schema-compatible with
+the frozen Benchmarks Game v2 contract; formal release-lane eligibility
+additionally requires the benchmark runner's independent metadata-binding
+contract.
 
 For `nomo test --release`, the harness, generated runtime translation unit, and
 declared FFI sources are compiled separately with the fixed release compile

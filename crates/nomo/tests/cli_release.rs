@@ -23,7 +23,7 @@ fn test_root(name: &str) -> PathBuf {
         fs::remove_dir_all(&root).unwrap();
     }
     fs::create_dir_all(&root).unwrap();
-    root
+    fs::canonicalize(root).unwrap()
 }
 
 fn create_project(root: &Path, name: &str, source: Option<&str>) -> PathBuf {
@@ -70,6 +70,59 @@ fn read_json(path: &Path) -> Value {
 
 fn sha256(path: &Path) -> String {
     format!("{:x}", Sha256::digest(fs::read(path).unwrap()))
+}
+
+fn build_release(path: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(path)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&output);
+}
+
+fn build_workspace_release(path: &Path) {
+    let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(path)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert_success(&output);
+}
+
+fn release_evidence_snapshot(project: &Path) -> BTreeMap<String, Vec<u8>> {
+    [
+        "nomo-build-metadata.json",
+        ".nomo-release-owner-v1.json",
+        "release-provenance.json",
+    ]
+    .into_iter()
+    .filter_map(|name| {
+        let path = project.join("build").join(name);
+        path.is_file()
+            .then(|| (name.to_string(), fs::read(path).unwrap()))
+    })
+    .collect()
+}
+
+fn assert_release_evidence_snapshot(project: &Path, expected: &BTreeMap<String, Vec<u8>>) {
+    assert_eq!(&release_evidence_snapshot(project), expected);
+}
+
+fn assert_release_evidence_absent(project: &Path) {
+    for name in [
+        "nomo-build-metadata.json",
+        ".nomo-release-owner-v1.json",
+        "release-provenance.json",
+    ] {
+        assert!(
+            !project.join("build").join(name).exists(),
+            "{} still has {name}",
+            project.display()
+        );
+    }
 }
 
 fn recompute_content_binding(metadata: &Value) -> String {
@@ -536,74 +589,68 @@ fn manifest_failure_removes_stale_release_evidence_before_discovery() {
 }
 
 #[test]
-fn broken_workspace_discovery_clears_every_locatable_member_evidence() {
+fn workspace_cleanup_uses_real_members_and_preserves_every_nonmember_boundary() {
     let root = test_root("workspace-stale-evidence");
     let first = create_project(&root, "first-member", None);
     let second = create_project(&root, "second-member", None);
-    let workspace_manifest = "[workspace]\nmembers = [\"first-member\", \"second-member\"]\n";
+    let excluded = create_project(&root, "excluded-project", None);
+    let path_dependency = create_project(&root, "path-dependency", None);
+    let unlisted_parent = root.join("unlisted");
+    fs::create_dir_all(&unlisted_parent).unwrap();
+    let unlisted = create_project(&unlisted_parent, "unlisted-project", None);
+    let nested_repository = create_project(&root, "nested-repository", None);
+    fs::create_dir_all(nested_repository.join(".git")).unwrap();
+    let vendor_root = root.join("vendor");
+    fs::create_dir_all(&vendor_root).unwrap();
+    let vendor_dependency = create_project(&vendor_root, "vendor-dependency", None);
+    let workspace_manifest = "[workspace]\nmembers = [\"first-member\", \"second-member\", \"excluded-project\"]\nexclude = [\"excluded-project\"]\n";
     fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    let mut first_manifest = fs::read_to_string(first.join("nomo.toml")).unwrap();
+    first_manifest.push_str(
+        "\n[dependencies]\npath_dependency = { package = \"local/path-dependency\", path = \"../path-dependency\" }\n",
+    );
+    fs::write(first.join("nomo.toml"), &first_manifest).unwrap();
     resolve_dependencies(&root, true);
 
-    let first_manifest = fs::read_to_string(first.join("nomo.toml")).unwrap();
-    let seed_evidence = || {
-        for project in [&first, &second] {
-            let output = Command::new(env!("CARGO_BIN_EXE_nomo"))
-                .arg("build")
-                .arg(project)
-                .arg("--release")
-                .output()
-                .unwrap();
-            assert_success(&output);
-            assert!(
-                project
-                    .join("build")
-                    .join("release-provenance.json")
-                    .is_file()
-            );
-            assert!(
-                project
-                    .join("build")
-                    .join("nomo-build-metadata.json")
-                    .is_file()
-            );
-        }
-    };
+    let sentinels = [
+        &excluded,
+        &path_dependency,
+        &unlisted,
+        &nested_repository,
+        &vendor_dependency,
+    ];
+    build_workspace_release(&root);
+    for sentinel in sentinels {
+        build_release(sentinel);
+    }
+    let sentinel_snapshots = sentinels
+        .iter()
+        .map(|project| (project.to_path_buf(), release_evidence_snapshot(project)))
+        .collect::<Vec<_>>();
+
+    build_workspace_release(&root);
+    for (project, snapshot) in &sentinel_snapshots {
+        assert_release_evidence_snapshot(project, snapshot);
+    }
+    assert!(
+        first
+            .join("build")
+            .join(".nomo-release-owner-v1.json")
+            .is_file()
+    );
+    assert!(
+        second
+            .join("build")
+            .join(".nomo-release-owner-v1.json")
+            .is_file()
+    );
+
     let assert_member_evidence_absent = || {
         for project in [&first, &second] {
-            assert!(
-                !project
-                    .join("build")
-                    .join("release-provenance.json")
-                    .exists()
-            );
-            assert!(
-                !project
-                    .join("build")
-                    .join("nomo-build-metadata.json")
-                    .exists()
-            );
+            assert_release_evidence_absent(project);
         }
     };
 
-    let dependency = root.join("vendor").join("dependency");
-    fs::create_dir_all(dependency.join("build")).unwrap();
-    fs::write(
-        dependency.join("nomo.toml"),
-        "[package]\nname = \"dependency\"\n",
-    )
-    .unwrap();
-    fs::write(
-        dependency.join("build").join("release-provenance.json"),
-        "dependency sidecar",
-    )
-    .unwrap();
-    fs::write(
-        dependency.join("build").join("nomo-build-metadata.json"),
-        "dependency metadata",
-    )
-    .unwrap();
-
-    seed_evidence();
     fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
     fs::write(first.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
     let failed_build = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -614,10 +661,13 @@ fn broken_workspace_discovery_clears_every_locatable_member_evidence() {
         .unwrap();
     assert!(!failed_build.status.success());
     assert_member_evidence_absent();
+    for (project, snapshot) in &sentinel_snapshots {
+        assert_release_evidence_snapshot(project, snapshot);
+    }
 
     fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
     fs::write(first.join("nomo.toml"), &first_manifest).unwrap();
-    seed_evidence();
+    build_workspace_release(&root);
     fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
     fs::write(first.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
     let failed_test = Command::new(env!("CARGO_BIN_EXE_nomo"))
@@ -628,14 +678,195 @@ fn broken_workspace_discovery_clears_every_locatable_member_evidence() {
         .unwrap();
     assert!(!failed_test.status.success());
     assert_member_evidence_absent();
+    for (project, snapshot) in &sentinel_snapshots {
+        assert_release_evidence_snapshot(project, snapshot);
+    }
+    fs::remove_dir_all(root).unwrap();
+}
 
-    assert_eq!(
-        fs::read_to_string(dependency.join("build").join("release-provenance.json")).unwrap(),
-        "dependency sidecar"
+#[test]
+fn workspace_package_selection_removed_member_and_path_reuse_never_expand_cleanup_scope() {
+    let root = test_root("workspace-selection");
+    let first = create_project(&root, "first-member", None);
+    let second = create_project(&root, "second-member", None);
+    let first_manifest = fs::read_to_string(first.join("nomo.toml")).unwrap();
+    let workspace_manifest = "[workspace]\nmembers = [\"first-member\", \"second-member\"]\ndefault-members = [\"first-member\"]\n";
+    fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    resolve_dependencies(&root, true);
+
+    build_workspace_release(&root);
+    let second_before_package_test = release_evidence_snapshot(&second);
+    let package_test = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&root)
+        .args(["--workspace", "--package", "first-member", "--release"])
+        .output()
+        .unwrap();
+    assert_success(&package_test);
+    assert_release_evidence_absent(&first);
+    assert_release_evidence_snapshot(&second, &second_before_package_test);
+
+    build_workspace_release(&root);
+    let second_before_broken_package_test = release_evidence_snapshot(&second);
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    fs::write(first.join("nomo.toml"), "[package\nbroken = true\n").unwrap();
+    let failed_package_test = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&root)
+        .args(["--workspace", "--package", "first-member", "--release"])
+        .output()
+        .unwrap();
+    assert!(!failed_package_test.status.success());
+    assert_release_evidence_absent(&first);
+    assert_release_evidence_snapshot(&second, &second_before_broken_package_test);
+
+    fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    fs::write(first.join("nomo.toml"), &first_manifest).unwrap();
+    build_workspace_release(&root);
+    let first_before_missing_package = release_evidence_snapshot(&first);
+    let second_before_missing_package = release_evidence_snapshot(&second);
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    let missing_package = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&root)
+        .args(["--workspace", "--package", "missing", "--release"])
+        .output()
+        .unwrap();
+    assert!(!missing_package.status.success());
+    assert_release_evidence_snapshot(&first, &first_before_missing_package);
+    assert_release_evidence_snapshot(&second, &second_before_missing_package);
+
+    fs::write(
+        root.join("nomo.toml"),
+        "[workspace]\nmembers = [\"first-member\"]\ndefault-members = [\"first-member\"]\n",
+    )
+    .unwrap();
+    build_workspace_release(&root);
+    let second_after_removal = release_evidence_snapshot(&second);
+    fs::write(
+        second.join("nomo.toml"),
+        "manifest-version = 2\n\n[package]\nnamespace = \"replacement\"\nname = \"replacement-member\"\nversion = \"1.0.0\"\nedition = \"2026\"\npublish = false\n",
+    )
+    .unwrap();
+    fs::write(
+        second.join("src").join("main.nomo"),
+        "package replacement_member\n\nfn main() {\n}\n",
+    )
+    .unwrap();
+    build_release(&second);
+    let replacement_evidence = release_evidence_snapshot(&second);
+    assert!(
+        !replacement_evidence.contains_key(".nomo-release-owner-v1.json"),
+        "an unlisted replacement project must not inherit workspace ownership"
+    );
+    assert_ne!(replacement_evidence, second_after_removal);
+
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    let failed_after_removal = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&root)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert!(!failed_after_removal.status.success());
+    assert_release_evidence_snapshot(&second, &replacement_evidence);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn workspace_catalog_is_target_neutral_and_corruption_never_authorizes_deletion() {
+    let root = test_root("workspace-catalog-corruption");
+    let member = create_project(&root, "catalog-member", None);
+    let workspace_manifest = "[workspace]\nmembers = [\"catalog-member\"]\n";
+    fs::write(root.join("nomo.toml"), workspace_manifest).unwrap();
+    resolve_dependencies(&root, true);
+    build_workspace_release(&root);
+
+    let state = root
+        .join(".nomo")
+        .join("state")
+        .join("release-evidence")
+        .join("v1");
+    let scope_path = state.join("scope-id");
+    let catalog_path = state.join("catalog.json");
+    let scope_before = fs::read(&scope_path).unwrap();
+    let catalog_before = fs::read(&catalog_path).unwrap();
+    let catalog = read_json(&catalog_path);
+    for forbidden in [
+        "selected_profile",
+        "target_triple",
+        "target_scoped_artifacts",
+        "layout",
+    ] {
+        assert!(catalog.get(forbidden).is_none(), "{forbidden}");
+    }
+    assert!(catalog["stable_scope_id"].as_str().is_some());
+    assert!(catalog["catalog_generation"].as_str().is_some());
+    assert_eq!(catalog["members"].as_array().unwrap().len(), 1);
+    assert!(catalog["members"][0]["relative_root"].as_str().is_some());
+    assert!(catalog["members"][0]["member_key"].as_str().is_some());
+
+    let host = TargetTriple::host().unwrap().to_string();
+    let explicit_host = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&root)
+        .args(["--workspace", "--release", "--target", &host])
+        .output()
+        .unwrap();
+    assert_success(&explicit_host);
+    assert_eq!(fs::read(&scope_path).unwrap(), scope_before);
+    assert_eq!(fs::read(&catalog_path).unwrap(), catalog_before);
+    assert!(
+        member
+            .join("build")
+            .join(&host)
+            .join(".nomo-release-owner-v1.json")
+            .is_file()
+    );
+
+    let host_metadata = fs::read(member.join("build").join("nomo-build-metadata.json")).unwrap();
+    let host_sidecar = fs::read(member.join("build").join("release-provenance.json")).unwrap();
+    fs::write(root.join("nomo.toml"), "[workspace]\nmembers = [\n").unwrap();
+    fs::write(&catalog_path, b"{\n").unwrap();
+    let corrupt_catalog = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&root)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert!(!corrupt_catalog.status.success());
+    assert!(
+        String::from_utf8_lossy(&corrupt_catalog.stderr).contains("could not be safely cleared")
     );
     assert_eq!(
-        fs::read_to_string(dependency.join("build").join("nomo-build-metadata.json")).unwrap(),
-        "dependency metadata"
+        fs::read(member.join("build").join("nomo-build-metadata.json")).unwrap(),
+        host_metadata
+    );
+    assert_eq!(
+        fs::read(member.join("build").join("release-provenance.json")).unwrap(),
+        host_sidecar
+    );
+
+    fs::write(&catalog_path, &catalog_before).unwrap();
+    let receipt_path = member.join("build").join(".nomo-release-owner-v1.json");
+    fs::write(&receipt_path, b"{\n").unwrap();
+    let corrupt_receipt = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("test")
+        .arg(&root)
+        .args(["--workspace", "--release"])
+        .output()
+        .unwrap();
+    assert!(!corrupt_receipt.status.success());
+    assert!(
+        String::from_utf8_lossy(&corrupt_receipt.stderr).contains("could not be safely cleared")
+    );
+    assert_eq!(
+        fs::read(member.join("build").join("nomo-build-metadata.json")).unwrap(),
+        host_metadata
+    );
+    assert_eq!(
+        fs::read(member.join("build").join("release-provenance.json")).unwrap(),
+        host_sidecar
     );
     fs::remove_dir_all(root).unwrap();
 }
@@ -1264,6 +1495,8 @@ fn main() {
     let total: f64 = floor_value + ceil_value + round_value + sqrt_value + sin_value + cos_value + pow_value
     if total < 0.0 {
         panic("unreachable")
+    } else {
+        void
     }
 }
 "#;
@@ -1331,11 +1564,12 @@ fn formal_benchmark_projects_retain_generic_libm_capability_results() {
         .unwrap()
         .parent()
         .unwrap();
-    for (name, expected_libm) in [
-        ("spectral-norm", true),
-        ("n-body", false),
-        ("fannkuch-redux", false),
-    ] {
+    let raw_math_calls = [
+        "sqrt(", "sqrtf(", "pow(", "powf(", "fmod(", "fmodf(", "floor(", "floorf(", "ceil(",
+        "ceilf(", "round(", "roundf(", "sin(", "sinf(", "cos(", "cosf(", "tan(", "tanf(", "exp(",
+        "expf(", "log(", "logf(",
+    ];
+    for name in ["spectral-norm", "n-body", "fannkuch-redux"] {
         let source = repository
             .join("performance")
             .join("benchmarksgame")
@@ -1363,7 +1597,11 @@ fn formal_benchmark_projects_retain_generic_libm_capability_results() {
             .unwrap()
             .iter()
             .any(|argument| argument == "-lm");
-        assert_eq!(has_libm, expected_libm, "{name}");
+        let generated_c =
+            fs::read_to_string(project.join("build").join("c").join("main.c")).unwrap();
+        let generated_c_has_raw_math_call =
+            raw_math_calls.iter().any(|call| generated_c.contains(call));
+        assert_eq!(has_libm, generated_c_has_raw_math_call, "{name}");
     }
     fs::remove_dir_all(root).unwrap();
 }

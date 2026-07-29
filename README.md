@@ -141,12 +141,12 @@ Run `nomo --help` for the complete current contract.
 | --- | --- |
 | `nomo new <name>` | Create `nomo.toml` and canonical `src/main.nomo` |
 | `nomo check [path] [--workspace]` | Resolve and type-check a project/workspace |
-| `nomo build [path] [--target T] [--emit-c]` | Emit C99 and link a native artifact |
-| `nomo run [path] [-- args...]` | Build and execute |
+| `nomo build [path] [--target T] [--release] [--emit-c]` | Emit C99 and link a debug or release native artifact |
+| `nomo run [path] [--release] [-- args...]` | Build and execute with the selected profile |
 | `nomo fmt [path] [--check]` | Canonical source formatting |
 | `nomo fix module-roots [path] [--check]` | Migrate manifest-derived package roots |
 | `nomo manifest migrate [path] [--check]` | Atomically migrate manifest schema/trust policy |
-| `nomo test [path] [--workspace]` | Discover and execute `#[test]` functions |
+| `nomo test [path] [--release] [--workspace]` | Discover and execute `#[test]` functions with the selected profile |
 | `nomo doc [path] [--workspace] [--std]` | Generate HTML or JSON API documentation |
 | `nomo add`, `remove`, `search`, `yank` | Manage dependencies and registry state |
 | `nomo deps resolve`, `tree`, `update` | Resolve and inspect lockfile graphs |
@@ -159,6 +159,12 @@ Run `nomo --help` for the complete current contract.
 Common dependency/release flags include `--locked`, `--offline`, `--frozen`,
 `--json-errors`, and workspace/package selectors. Consult CLI help rather than
 copying an older snapshot's long command line.
+
+Release native builds use fixed safe optimization flags and emit canonical,
+content-bound `release-provenance.json` and `nomo-build-metadata.json`
+documents. `--release` cannot be combined with `--emit-c`; the pure emit-C
+protocol remains independent. See
+[`docs/release-builds.md`](docs/release-builds.md).
 
 ## Platforms and artifacts
 

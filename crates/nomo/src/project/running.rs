@@ -1,5 +1,8 @@
-use super::{BuildError, Project, build_project_with_diagnostics, configure_c_compile_command};
-use crate::compiler::compile_script_source_to_c;
+use super::{
+    BuildError, BuildProfile, DependencyResolutionOptions, Project,
+    build_project_with_profile_options, build_standalone_release_c,
+    compile_standalone_script_with_profile_cache, configure_c_compile_command,
+};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::TargetTriple;
 use std::collections::hash_map::DefaultHasher;
@@ -20,7 +23,20 @@ pub fn run_project_with_args_and_diagnostics(
     project: &Project,
     args: &[String],
 ) -> Result<i32, BuildError> {
-    let bin = build_project_with_diagnostics(project, false)?;
+    run_project_with_args_and_profile_and_diagnostics(project, args, BuildProfile::Debug)
+}
+
+pub fn run_project_with_args_and_profile_and_diagnostics(
+    project: &Project,
+    args: &[String],
+    profile: BuildProfile,
+) -> Result<i32, BuildError> {
+    let bin = build_project_with_profile_options(
+        project,
+        false,
+        DependencyResolutionOptions::default(),
+        profile,
+    )?;
     let bin = if bin.is_absolute() {
         bin
     } else {
@@ -40,7 +56,29 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     source: &Path,
     args: &[String],
 ) -> Result<i32, BuildError> {
-    let c = compile_script_source_to_c(source).map_err(BuildError::Diagnostic)?;
+    run_standalone_script_with_args_and_profile_and_diagnostics(source, args, BuildProfile::Debug)
+}
+
+pub fn run_standalone_script_with_args_and_profile_and_diagnostics(
+    source: &Path,
+    args: &[String],
+    profile: BuildProfile,
+) -> Result<i32, BuildError> {
+    let target = TargetTriple::host().map_err(BuildError::Message)?;
+    super::clear_standalone_build_metadata(source, &target)?;
+    let c = compile_standalone_script_with_profile_cache(source, &target, profile)?;
+    if profile == BuildProfile::Release {
+        let bin_path = build_standalone_release_c(source, &c, None, &target)?;
+        let current_dir = source.parent().unwrap_or_else(|| Path::new("."));
+        let status = Command::new(&bin_path)
+            .current_dir(current_dir)
+            .args(args)
+            .status()
+            .map_err(|error| {
+                BuildError::Message(format!("failed to run {}: {error}", bin_path.display()))
+            })?;
+        return Ok(status.code().unwrap_or(1));
+    }
     let stem = source
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -48,6 +86,7 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     let mut hasher = DefaultHasher::new();
     source.hash(&mut hasher);
     c.hash(&mut hasher);
+    profile.as_str().hash(&mut hasher);
     let build_dir = std::env::temp_dir().join(format!("nomo-script-{:016x}", hasher.finish()));
     let c_dir = build_dir.join("c");
     let bin_dir = build_dir.join("bin");
@@ -61,7 +100,6 @@ pub fn run_standalone_script_with_args_and_diagnostics(
     super::build::materialize_bundled_sqlite(&c_dir, uses_bundled_sqlite)
         .map_err(|err| BuildError::Message(err.to_string()))?;
     let bin_path = bin_dir.join(stem);
-    let target = TargetTriple::host().map_err(BuildError::Message)?;
     let toolchain = target
         .c_toolchain_from(&target)
         .map_err(BuildError::Message)?;

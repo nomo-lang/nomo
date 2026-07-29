@@ -1,10 +1,15 @@
+use super::build_metadata::{
+    PASS_PIPELINE_VERSION, codegen_cache_configuration, release_c_flags,
+    release_driver_config_flags, resolve_executable, run_recorded_command,
+};
 use super::{
-    BuildError, DependencyResolutionOptions, Project, ProjectModuleContext,
+    BuildError, BuildProfile, DependencyResolutionOptions, Project, ProjectModuleContext,
     configure_c_compile_command, package_id, project_ffi_link_metadata_with_options,
     project_module_context_with_options,
 };
 use crate::compiler::compile_source_text_to_c_with_module_identity;
 use crate::diagnostic::Diagnostic;
+use crate::incremental::{PersistentQueryCache, project_query_key};
 use crate::{lexer, parser};
 use nomo_manifest::{FfiLinkMetadata, parse_manifest_at_root};
 use nomo_target::TargetTriple;
@@ -18,6 +23,7 @@ use std::time::Instant;
 pub struct ProjectTestOptions {
     pub filter: Option<String>,
     pub resolution: DependencyResolutionOptions,
+    pub profile: BuildProfile,
 }
 
 pub fn run_project_tests_with_options(
@@ -36,8 +42,13 @@ pub fn run_project_tests_with_options(
         test_sources.retain(|test| test.name.contains(filter));
     }
 
-    let c_dir = project.root.join("build/test/c");
-    let bin_dir = project.root.join("build/test/bin");
+    let test_root = if options.profile == BuildProfile::Release {
+        project.root.join("build/test/release")
+    } else {
+        project.root.join("build/test")
+    };
+    let c_dir = test_root.join("c");
+    let bin_dir = test_root.join("bin");
     fs::create_dir_all(&c_dir).map_err(|err| BuildError::Message(err.to_string()))?;
     fs::create_dir_all(&bin_dir).map_err(|err| BuildError::Message(err.to_string()))?;
 
@@ -51,6 +62,7 @@ pub fn run_project_tests_with_options(
             &test,
             &c_dir,
             &bin_dir,
+            options.profile,
         );
         let duration_ms = started.elapsed().as_millis();
         match result {
@@ -173,17 +185,44 @@ fn run_single_project_test(
     test: &DiscoveredTest,
     c_dir: &Path,
     bin_dir: &Path,
+    profile: BuildProfile,
 ) -> Result<(), String> {
     let runner_source = test_runner_source(&test.source, &test.function_name);
-    let c = compile_source_text_to_c_with_module_identity(
-        &test.source_path,
-        &runner_source,
-        &context.local_source_root,
-        &context.local_identity,
-        &context.external_import_roots,
+    let target = TargetTriple::host()?;
+    let cache_root = project
+        .workspace_root
+        .as_deref()
+        .unwrap_or(project.root.as_path());
+    let cache = PersistentQueryCache::at_root(cache_root);
+    let cache_key = project_query_key(
+        project,
         &context.external_modules,
-    )
-    .map_err(|diag| diag.human())?;
+        &[(test.source_path.clone(), runner_source.clone())],
+        &target,
+        "codegen-c-test",
+        format!(
+            "{}:{}:{}",
+            project.name,
+            test.name,
+            codegen_cache_configuration(profile, PASS_PIPELINE_VERSION)
+        ),
+    );
+    let c = match cache.get::<String>(&cache_key) {
+        Some(cached) => cached,
+        None => {
+            let generated = compile_source_text_to_c_with_module_identity(
+                &test.source_path,
+                &runner_source,
+                &context.local_source_root,
+                &context.local_identity,
+                &context.external_import_roots,
+                &context.external_modules,
+            )
+            .map_err(|diag| diag.human())?;
+            let _ = cache.insert(&cache_key, &generated);
+            generated
+        }
+    };
     let file_stem = safe_test_artifact_name(&test.name);
     let c_path = c_dir.join(format!("{file_stem}.c"));
     let bin_path = bin_dir.join(file_stem);
@@ -192,10 +231,26 @@ fn run_single_project_test(
     fs::write(&c_path, c).map_err(|err| format!("failed to write {}: {err}", c_path.display()))?;
     super::build::materialize_bundled_sqlite(c_dir, uses_bundled_sqlite)
         .map_err(|err| format!("failed to materialize bundled SQLite: {err}"))?;
-    let target = TargetTriple::host()?;
-    let toolchain = target.c_toolchain_from(&target)?;
-    let mut command = Command::new(&toolchain.program);
+    let mut toolchain = target.c_toolchain_from(&target)?;
+    if profile == BuildProfile::Release {
+        toolchain.program = "clang".to_string();
+    }
+    let compiler = if profile == BuildProfile::Release {
+        resolve_executable(&toolchain.program, profile).map_err(|error| error.human())?
+    } else {
+        PathBuf::from(&toolchain.program)
+    };
+    let mut command = Command::new(&compiler);
     command.args(&toolchain.args);
+    if profile == BuildProfile::Release {
+        command.args(release_driver_config_flags());
+        command.args(
+            release_c_flags()
+                .iter()
+                .copied()
+                .filter(|flag| *flag != "-std=c99"),
+        );
+    }
     configure_c_compile_command(
         &mut command,
         &c_path,
@@ -205,18 +260,26 @@ fn run_single_project_test(
         uses_native_tasks,
         uses_bundled_sqlite,
     );
-    let output = command.output().map_err(|err| {
-        format!(
-            "failed to run C compiler `{}` for target `{target}`: {err}",
-            toolchain.program
-        )
-    })?;
-    if !output.status.success() {
-        return Err(format!(
-            "C compiler failed for target `{target}`:\n{}{}",
-            String::from_utf8_lossy(&output.stdout),
-            String::from_utf8_lossy(&output.stderr)
-        ));
+    if profile == BuildProfile::Release {
+        let argv = std::iter::once(command.get_program())
+            .chain(command.get_args())
+            .map(|part| part.to_string_lossy().into_owned())
+            .collect();
+        run_recorded_command(argv, profile).map_err(|error| error.human())?;
+    } else {
+        let output = command.output().map_err(|err| {
+            format!(
+                "failed to run C compiler `{}` for target `{target}`: {err}",
+                toolchain.program
+            )
+        })?;
+        if !output.status.success() {
+            return Err(format!(
+                "C compiler failed for target `{target}`:\n{}{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            ));
+        }
     }
 
     let run_path = fs::canonicalize(&bin_path)

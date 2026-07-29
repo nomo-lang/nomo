@@ -17,6 +17,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 mod build;
+mod build_metadata;
 mod dependency_resolution;
 mod dependency_tree;
 mod ffi;
@@ -36,8 +37,12 @@ mod workspace;
 
 use build::configure_c_compile_command;
 pub use build::{
-    build_project, build_project_for_target_with_options, build_project_with_diagnostics,
-    build_project_with_options, clean_project,
+    build_project, build_project_for_target_with_options,
+    build_project_for_target_with_profile_options, build_project_with_diagnostics,
+    build_project_with_options, build_project_with_profile_options, build_standalone_release_c,
+    clean_project, clear_project_build_metadata, clear_standalone_build_metadata,
+    compile_standalone_script_with_profile_cache, compile_standalone_source_with_profile_cache,
+    record_standalone_c_build_metadata,
 };
 pub use dependency_tree::{
     dependency_tree, dependency_tree_current_sources, dependency_tree_for_target_with_options,
@@ -79,7 +84,9 @@ pub use resolve::{
 };
 pub use running::{
     run_project, run_project_with_args, run_project_with_args_and_diagnostics,
+    run_project_with_args_and_profile_and_diagnostics,
     run_standalone_script_with_args_and_diagnostics,
+    run_standalone_script_with_args_and_profile_and_diagnostics,
 };
 pub use testing::{ProjectTestOptions, run_project_tests_with_options};
 pub use update::{update_project_dependencies, update_workspace_dependencies};
@@ -103,6 +110,23 @@ pub struct Project {
 pub struct DependencyResolutionOptions {
     pub locked: bool,
     pub offline: bool,
+}
+
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum BuildProfile {
+    #[default]
+    Debug,
+    Release,
+}
+
+impl BuildProfile {
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Debug => "debug",
+            Self::Release => "release",
+        }
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

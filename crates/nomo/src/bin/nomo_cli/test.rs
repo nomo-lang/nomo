@@ -1,7 +1,7 @@
 use super::cli_common::{filter_projects_by_package, validate_project_package};
 use nomo::project::{
-    DependencyResolutionOptions, ProjectTestOptions, discover_project, discover_workspace,
-    run_project_tests_with_options,
+    BuildProfile, DependencyResolutionOptions, ProjectTestOptions, discover_project,
+    discover_workspace, run_project_tests_with_options,
 };
 use nomo_test::{json_report, reports_have_failures, text_report};
 use std::env;
@@ -9,7 +9,7 @@ use std::path::PathBuf;
 use std::process;
 
 pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
-    let (path, workspace, package, filter, json, deps) = parse_test_args(args)?;
+    let (path, workspace, package, filter, json, deps, profile) = parse_test_args(args)?;
     let mut reports = Vec::new();
     if workspace {
         let mut projects = discover_workspace(&path)?.members;
@@ -23,6 +23,7 @@ pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
                     ProjectTestOptions {
                         filter: filter.clone(),
                         resolution: deps,
+                        profile,
                     },
                 )
                 .map_err(|err| err.human())?,
@@ -39,6 +40,7 @@ pub(super) fn run_test_command(args: Vec<String>) -> Result<(), String> {
                 ProjectTestOptions {
                     filter,
                     resolution: deps,
+                    profile,
                 },
             )
             .map_err(|err| err.human())?,
@@ -69,20 +71,29 @@ pub(super) fn parse_test_args(
         Option<String>,
         bool,
         DependencyResolutionOptions,
+        BuildProfile,
     ),
     String,
 > {
-    let usage = "usage: nomo test [path] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]";
+    let usage = "usage: nomo test [path] [--release] [--workspace] [--package <package>] [--filter <text>] [--json] [--locked] [--offline] [--frozen]";
     let mut workspace = false;
     let mut package = None;
     let mut filter = None;
     let mut json = false;
     let mut deps = DependencyResolutionOptions::default();
     let mut path = None;
+    let mut profile = BuildProfile::Debug;
+    let mut release_seen = false;
     let mut index = 0;
     while let Some(arg) = args.get(index) {
         if arg == "--workspace" {
             workspace = true;
+        } else if arg == "--release" {
+            if release_seen {
+                return Err("--release may only be specified once".to_string());
+            }
+            release_seen = true;
+            profile = BuildProfile::Release;
         } else if let Some(value) = arg.strip_prefix("--package=") {
             if value.is_empty() {
                 return Err("--package requires a package id or name".to_string());
@@ -128,5 +139,6 @@ pub(super) fn parse_test_args(
         filter,
         json,
         deps,
+        profile,
     ))
 }

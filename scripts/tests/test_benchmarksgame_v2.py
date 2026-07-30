@@ -2454,7 +2454,9 @@ class BenchmarksGameV2Tests(unittest.TestCase):
     def test_capability_probe_cwd_tampering_fails_embedded_and_live_authority(
         self,
     ) -> None:
-        result = self.prepared_only_result()
+        result = self.project_result_to_producer_os(
+            self.prepared_only_result(), platform.system()
+        )
         build_environment = benchmark.sanitized_build_environment()[1]
         self.bind_build_command_environments(result, build_environment)
         result["provenance"]["toolchains"][

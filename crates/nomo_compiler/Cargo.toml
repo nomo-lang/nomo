@@ -9,6 +9,7 @@ nomo-codegen-c.workspace = true
 nomo-diagnostics.workspace = true
 nomo-graph.workspace = true
 nomo-ir.workspace = true
+nomo-mir.workspace = true
 nomo-std.workspace = true
 nomo-syntax.workspace = true
 nomo-target.workspace = true

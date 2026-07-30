@@ -594,6 +594,7 @@ pub(super) fn lower_array_mutation(
                 index: Box::new(lowered_index),
                 value: Box::new(lowered_value),
                 element_type: element_type.as_ref().clone(),
+                mutation_mode: ArrayMutationMode::CheckedCow,
             })
         }
         "insert" => {

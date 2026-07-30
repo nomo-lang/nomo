@@ -274,6 +274,24 @@ pub(super) fn emit_array_helpers(out: &mut String, element_type: &ValueType) {
     emit_array_element_retain_expr(out, element_type, "value");
     out.push_str(";\n");
     out.push_str("    return array;\n");
+    out.push_str("}\n\n");
+    out.push_str("static ");
+    out.push_str(&array);
+    out.push(' ');
+    out.push_str(&array);
+    out.push_str("_set_unique(");
+    out.push_str(&array);
+    out.push_str(" array, uint64_t index, ");
+    out.push_str(&c_type(element_type));
+    out.push_str(" value) {\n");
+    out.push_str(
+        "    if (index >= array.len) { nomo_panic(\"Array.set index out of bounds\"); }\n",
+    );
+    emit_array_element_release_stmt(out, element_type, "array.data[index]");
+    out.push_str("    array.data[index] = ");
+    emit_array_element_retain_expr(out, element_type, "value");
+    out.push_str(";\n");
+    out.push_str("    return array;\n");
     out.push_str("}\n");
 }
 

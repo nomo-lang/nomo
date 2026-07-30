@@ -198,7 +198,16 @@ pub(super) fn emit_stmt(
             indices,
             array_types,
             value,
-        } => emit_array_index_assign(out, root, indices, array_types, value, indent),
+            mutation_mode,
+        } => emit_array_index_assign(
+            out,
+            root,
+            indices,
+            array_types,
+            value,
+            *mutation_mode,
+            indent,
+        ),
         Statement::Println(arg) => emit_io_output(out, arg, false, true, indent),
         Statement::Print(arg) => emit_io_output(out, arg, false, false, indent),
         Statement::Eprintln(arg) => emit_io_output(out, arg, true, true, indent),
@@ -304,6 +313,7 @@ fn emit_array_index_assign(
     indices: &[ValueExpr],
     element_types: &[ValueType],
     value: &ValueExpr,
+    mutation_mode: ArrayMutationMode,
     indent: usize,
 ) {
     let padding = "    ".repeat(indent);
@@ -351,7 +361,11 @@ fn emit_array_index_assign(
     }
     out.push_str(" = ");
     out.push_str(&c_array_ident(&element_types[leaf_depth]));
-    out.push_str("_set(");
+    if leaf_depth == 0 && mutation_mode == ArrayMutationMode::CheckedUnique {
+        out.push_str("_set_unique(");
+    } else {
+        out.push_str("_set(");
+    }
     if leaf_depth == 0 {
         out.push_str(&c_var_ident(root));
     } else {

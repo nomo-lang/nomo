@@ -434,6 +434,7 @@ dependencies = [
  "nomo-diagnostics",
  "nomo-graph",
  "nomo-ir",
+ "nomo-mir",
  "nomo-std",
  "nomo-syntax",
  "nomo-target",
@@ -500,6 +501,13 @@ dependencies = [
  "semver",
  "serde",
  "toml",
+]
+
+[[package]]
+name = "nomo-mir"
+version = "0.0.0-20260721120555"
+dependencies = [
+ "nomo-ir",
 ]
 
 [[package]]

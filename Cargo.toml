@@ -6,6 +6,7 @@ members = [
     "crates/nomo_codegen_c",
     "crates/nomo_doc",
     "crates/nomo_ir",
+    "crates/nomo_mir",
     "crates/nomo_fmt",
     "crates/nomo_lsp_bridge",
     "crates/nomo_lockfile",
@@ -38,6 +39,7 @@ nomo-doc = { path = "crates/nomo_doc" }
 nomo-fmt = { path = "crates/nomo_fmt" }
 nomo-graph = { path = "libs/graph" }
 nomo-ir = { path = "crates/nomo_ir" }
+nomo-mir = { path = "crates/nomo_mir" }
 nomo-lockfile = { path = "crates/nomo_lockfile" }
 nomo-lsp-bridge = { path = "crates/nomo_lsp_bridge" }
 nomo-manifest = { path = "crates/nomo_manifest" }

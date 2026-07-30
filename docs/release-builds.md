@@ -19,8 +19,23 @@ to that path.
 
 `--release` and `--emit-c` are deliberately separate protocols and cannot be
 combined. The combination exits nonzero, reports the conflict, and removes any
-stale release evidence files. Plain `--emit-c` keeps the debug-profile
-generated-C protocol used by external consumers.
+stale release evidence files. Plain `--emit-c` keeps the debug-profile evidence
+identity used by external consumers, but selects the same safe performance
+proof pipeline as release compilation. Its optimization mode is a distinct
+input to the persistent QueryKey, so a prior ordinary debug build cannot supply
+unoptimized C to the emit-C protocol.
+
+The current performance pipeline builds a typed CFG for ordinary synchronous
+functions and models normal terminators, panic edges, calls, moves,
+retain/release effects, and COW detach points. Its first rewrite is deliberately
+narrow: a single-index write to a root `Array<POD>` may use a checked raw store
+only when every incoming normal path proves the storage already `Unique`.
+Bounds checks and element lifecycle operations remain. Managed or nested
+elements, suspend functions, deferred work, aliases, publication, calls,
+iteration, resizing, and root reassignment retain the checked COW lowering.
+The pass does not move a detach to a loop preheader, so zero-trip loops and the
+relative order of index/RHS evaluation, bounds panic, allocation failure, and
+mutation are unchanged.
 
 ## Native release backend
 

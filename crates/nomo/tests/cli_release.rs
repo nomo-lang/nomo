@@ -92,6 +92,346 @@ fn build_workspace_release(path: &Path) {
     assert_success(&output);
 }
 
+#[test]
+fn release_and_formal_emit_c_lanes_share_the_performance_proof_pass() {
+    let root = test_root("optimizer-lanes");
+    let source = r#"package optimizer_lanes
+
+import std.array
+
+fn main() {
+    let mut values = [1, 2]
+    values[0] = 7
+}
+"#;
+    let project = create_project(&root, "optimizer-lanes", Some(source));
+
+    let debug = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .output()
+        .unwrap();
+    assert_success(&debug);
+    let debug_c = fs::read_to_string(project.join("build").join("c").join("main.c")).unwrap();
+
+    let emit_c = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert_success(&emit_c);
+    let formal_emit_c = fs::read_to_string(project.join("build").join("c").join("main.c")).unwrap();
+
+    let release = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&release);
+    let release_c = fs::read_to_string(project.join("build").join("c").join("main.c")).unwrap();
+
+    assert_eq!(debug_c.matches("_set_unique(").count(), 1);
+    assert_eq!(formal_emit_c.matches("_set_unique(").count(), 2);
+    assert_eq!(release_c.matches("_set_unique(").count(), 2);
+    assert_eq!(formal_emit_c, release_c);
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn performance_array_proof_preserves_zero_trip_panic_order_and_cow_snapshots() {
+    let root = test_root("optimizer-semantics");
+    let cases = [
+        (
+            "zero-trip",
+            r#"package zero_trip
+
+import std.array
+import std.io
+
+fn main() {
+    let mut values = [1]
+    for false {
+        values[4] = 9
+    }
+    io.println("zero-trip-ok")
+}
+"#,
+            true,
+            "zero-trip-ok\n",
+        ),
+        (
+            "rhs-order",
+            r#"package rhs_order
+
+import std.array
+
+fn fail() -> i32 {
+    panic("rhs-before-bounds")
+}
+
+fn main() {
+    let mut values = [1]
+    values[4] = fail()
+}
+"#,
+            false,
+            "panic: rhs-before-bounds",
+        ),
+        (
+            "cow-region",
+            r#"package cow_region
+
+import std.array
+import std.io
+
+fn main() {
+    let mut values = [1, 2]
+    let snapshot: Array<i32> = values
+    values[0] = 7
+    values[1] = 8
+    io.println(snapshot[0])
+    io.println(snapshot[1])
+    io.println(values[0])
+    io.println(values[1])
+}
+"#,
+            true,
+            "1\n2\n7\n8\n",
+        ),
+        (
+            "return-and-loop-exit",
+            r#"package return_and_loop_exit
+
+import std.array
+import std.io
+
+fn return_path() -> i32 {
+    let mut values = [1, 2]
+    values[0] = 9
+    return values[0]
+}
+
+fn loop_exit() -> i32 {
+    let mut values = [1, 2]
+    for true {
+        values[0] = 9
+        break
+    }
+    return values[0]
+}
+
+fn main() {
+    io.println(return_path())
+    io.println(loop_exit())
+}
+"#,
+            true,
+            "9\n9\n",
+        ),
+    ];
+
+    for (name, source, succeeds, expected) in cases {
+        let project = create_project(&root, name, Some(source));
+        let debug = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(&project)
+            .output()
+            .unwrap();
+        let release = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(&project)
+            .arg("--release")
+            .output()
+            .unwrap();
+        assert_eq!(release.status.code(), debug.status.code(), "{name}");
+        assert_eq!(
+            debug.status.success(),
+            succeeds,
+            "{name}: {}",
+            String::from_utf8_lossy(&debug.stderr)
+        );
+        assert_eq!(
+            normalized_stdout(&release),
+            normalized_stdout(&debug),
+            "{name}"
+        );
+        assert_eq!(
+            String::from_utf8_lossy(&release.stderr).replace("\r\n", "\n"),
+            String::from_utf8_lossy(&debug.stderr).replace("\r\n", "\n"),
+            "{name}"
+        );
+        if succeeds {
+            assert_eq!(normalized_stdout(&debug), expected, "{name}");
+        } else {
+            assert!(
+                String::from_utf8_lossy(&debug.stderr).contains(expected),
+                "{name}"
+            );
+        }
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[test]
+fn performance_array_proof_matches_debug_for_renamed_metamorphic_kernels() {
+    let root = test_root("optimizer-metamorphic");
+    let mut reference = None;
+    for (project_name, array_name, initial_seed) in [
+        ("metamorphic-alpha", "values", 17_u64),
+        ("metamorphic-beta", "renamed_storage", 17_u64),
+    ] {
+        let package_name = project_name.replace('-', "_");
+        let source = format!(
+            r#"package {package_name}
+
+import std.array
+import std.io
+
+fn main() {{
+    let mut {array_name} = [0, 0, 0, 0, 0, 0, 0, 0]
+    let mut seed: u64 = {initial_seed}
+    let mut step: u64 = 0
+    for step < 64 {{
+        seed = ((seed % 1000) * 17 + 23) % 997
+        let index: u64 = seed % {array_name}.len()
+        {array_name}[index] = {array_name}[index] + 1
+        step = step + 1
+    }}
+    io.println({array_name}[0])
+    io.println({array_name}[1])
+    io.println({array_name}[2])
+    io.println({array_name}[3])
+    io.println({array_name}[4])
+    io.println({array_name}[5])
+    io.println({array_name}[6])
+    io.println({array_name}[7])
+}}
+"#
+        );
+        let project = create_project(&root, project_name, Some(&source));
+        let debug = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(&project)
+            .output()
+            .unwrap();
+        let release = Command::new(env!("CARGO_BIN_EXE_nomo"))
+            .arg("run")
+            .arg(&project)
+            .arg("--release")
+            .output()
+            .unwrap();
+        assert_success(&debug);
+        assert_success(&release);
+        let debug_stdout = normalized_stdout(&debug);
+        assert_eq!(normalized_stdout(&release), debug_stdout);
+        if let Some(reference) = &reference {
+            assert_eq!(reference, &debug_stdout);
+        } else {
+            reference = Some(debug_stdout);
+        }
+    }
+    fs::remove_dir_all(root).unwrap();
+}
+
+#[cfg(unix)]
+#[test]
+fn performance_generated_c_matches_release_at_o0_and_is_sanitizer_clean() {
+    let root = test_root("optimizer-c99-sanitizer");
+    let source = r#"package optimizer_c99_sanitizer
+
+import std.array
+import std.io
+
+fn main() {
+    let mut values = [1, 2, 3]
+    let snapshot: Array<i32> = values
+    values[0] = 4
+    values[1] = 5
+    io.println(snapshot[0])
+    io.println(values[0])
+    io.println(values[1])
+}
+"#;
+    let project = create_project(&root, "optimizer-c99-sanitizer", Some(source));
+    let emit_c = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .output()
+        .unwrap();
+    assert_success(&emit_c);
+    let generated_c = project.join("build").join("c").join("main.c");
+
+    let release = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("run")
+        .arg(&project)
+        .arg("--release")
+        .output()
+        .unwrap();
+    assert_success(&release);
+
+    for compiler in ["clang", "gcc"] {
+        if !Command::new(compiler)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            continue;
+        }
+        let binary = root.join(format!("optimizer-o0-{compiler}"));
+        let mut command = Command::new(compiler);
+        if compiler == "clang" {
+            command.arg("--no-default-config");
+        }
+        let compiled = command
+            .args(["-std=c99", "-O0"])
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert_success(&compiled);
+        let output = Command::new(&binary).output().unwrap();
+        assert_success(&output);
+        assert_eq!(normalized_stdout(&output), normalized_stdout(&release));
+    }
+
+    if Command::new("clang")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        let binary = root.join("optimizer-sanitized");
+        let compiled = Command::new("clang")
+            .args([
+                "--no-default-config",
+                "-std=c99",
+                "-O0",
+                "-g",
+                "-fsanitize=address,undefined",
+            ])
+            .arg(&generated_c)
+            .arg("-o")
+            .arg(&binary)
+            .output()
+            .unwrap();
+        assert_success(&compiled);
+        let output = Command::new(&binary)
+            .env("ASAN_OPTIONS", "detect_leaks=0:halt_on_error=1")
+            .env("UBSAN_OPTIONS", "halt_on_error=1")
+            .output()
+            .unwrap();
+        assert_success(&output);
+        assert_eq!(normalized_stdout(&output), normalized_stdout(&release));
+        assert!(output.stderr.is_empty());
+    }
+
+    fs::remove_dir_all(root).unwrap();
+}
+
 fn release_evidence_snapshot(project: &Path) -> BTreeMap<String, Vec<u8>> {
     [
         "nomo-build-metadata.json",
@@ -1165,7 +1505,11 @@ fn release_tests_compile_every_translation_unit_with_fixed_optimization_flags() 
 fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
     let root = test_root("nomoc");
     let source = root.join("single.nomo");
-    fs::write(&source, "package single\n\nfn main() {\n}\n").unwrap();
+    fs::write(
+        &source,
+        "package single\n\nimport std.array\n\nfn main() {\n    let mut values = [1, 2]\n    values[0] = 7\n}\n",
+    )
+    .unwrap();
 
     let stdout_build = Command::new(env!("CARGO_BIN_EXE_nomoc"))
         .arg("build")
@@ -1176,6 +1520,7 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
     assert_success(&stdout_build);
     let stdout = String::from_utf8(stdout_build.stdout).unwrap();
     assert!(stdout.contains("#include <"), "{stdout}");
+    assert_eq!(stdout.matches("_set_unique(").count(), 2);
     assert!(!stdout.contains("built "));
     assert!(!stdout.contains("metadata"));
     assert!(stdout_build.stderr.is_empty());
@@ -1226,6 +1571,7 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
     assert_success(&debug_build);
     let debug_stdout = String::from_utf8(debug_build.stdout).unwrap();
     assert!(debug_stdout.contains("#include <"), "{debug_stdout}");
+    assert_eq!(debug_stdout.matches("_set_unique(").count(), 1);
     assert!(debug_build.stderr.is_empty());
     let debug_metadata = read_json(&metadata_path);
     assert_eq!(debug_metadata["selected_profile"], "debug");
@@ -1259,6 +1605,13 @@ fn nomoc_release_preserves_pure_c_stdout_and_out_contracts() {
         fs::read_to_string(&output_c)
             .unwrap()
             .contains("#include <")
+    );
+    assert_eq!(
+        fs::read_to_string(&output_c)
+            .unwrap()
+            .matches("_set_unique(")
+            .count(),
+        2
     );
     assert_eq!(
         read_json(&metadata_path)["generated_c"]["path"],
@@ -1458,20 +1811,41 @@ fn codegen_cache_is_warm_per_profile_and_never_crosses_profiles() {
         }
     }
     assert_ne!(debug_key, release_key);
-    let emit_c = Command::new(env!("CARGO_BIN_EXE_nomo"))
+    let emit_c_cold = Command::new(env!("CARGO_BIN_EXE_nomo"))
         .arg("build")
         .arg(&project)
         .arg("--emit-c")
         .env("NOMO_INCREMENTAL_TRACE", "1")
         .output()
         .unwrap();
-    assert_success(&emit_c);
-    assert!(String::from_utf8_lossy(&emit_c.stderr).contains("incremental-cache hit codegen-c"));
+    assert_success(&emit_c_cold);
+    assert!(
+        String::from_utf8_lossy(&emit_c_cold.stderr).contains("incremental-cache write codegen-c")
+    );
     let emit_metadata = read_json(&project.join("build").join("nomo-build-metadata.json"));
     assert_eq!(emit_metadata["selected_profile"], "debug");
+    let emit_key = emit_metadata["cache_identity"]["cache_key"]
+        .as_str()
+        .unwrap()
+        .to_string();
+    assert_ne!(Some(emit_key.clone()), debug_key);
+    assert_ne!(Some(emit_key.clone()), release_key);
+
+    let emit_c_warm = Command::new(env!("CARGO_BIN_EXE_nomo"))
+        .arg("build")
+        .arg(&project)
+        .arg("--emit-c")
+        .env("NOMO_INCREMENTAL_TRACE", "1")
+        .output()
+        .unwrap();
+    assert_success(&emit_c_warm);
+    assert!(
+        String::from_utf8_lossy(&emit_c_warm.stderr).contains("incremental-cache hit codegen-c")
+    );
+    let warm_metadata = read_json(&project.join("build").join("nomo-build-metadata.json"));
     assert_eq!(
-        emit_metadata["cache_identity"]["cache_key"],
-        Value::String(debug_key.unwrap())
+        warm_metadata["cache_identity"]["cache_key"],
+        Value::String(emit_key)
     );
     fs::remove_dir_all(root).unwrap();
 }

@@ -23,7 +23,7 @@ const CACHE_IDENTITY_SCHEMA: u32 = 1;
 const CONTENT_BINDING_SCHEMA: u32 = 1;
 const PRODUCER_EXECUTABLE_SCHEMA: u32 = 1;
 const CONTENT_BINDING_DOMAIN: &str = "nomo-build-metadata-content-binding-v1";
-pub(super) const PASS_PIPELINE_VERSION: u32 = 1;
+pub(super) const PASS_PIPELINE_VERSION: u32 = 2;
 const TOOLCHAIN_CONFIG_VERSION: u32 = 1;
 const RELEASE_DRIVER_CONFIG_FLAGS: &[&str] = &["--no-default-config"];
 const RELEASE_C_FLAGS: &[&str] = &["-std=c99", "-O3", "-DNDEBUG", "-fomit-frame-pointer"];

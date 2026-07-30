@@ -6452,13 +6452,18 @@ print(json.dumps(
             {"candidate": "2", "main": "2"},
         ):
             with self.subTest(versions=versions):
-                result = self.completed_result()
-                if platform.system() == "Windows":
-                    result = self.project_result_to_producer_os(
-                        result, "Windows"
-                    )
-                    self.rebind_static_authorization(result, eligible=True)
-                self.rebind_release_metadata(result, versions)
+                result = self.completed_result_for_producer_os(
+                    platform.system(), versions
+                )
+                authorization_sha = result["provenance"][
+                    "environment_qualification"
+                ]["qualification_sha256"]
+                for protocol in result["protocols"].values():
+                    for batch in protocol["batches"]:
+                        self.assertEqual(
+                            batch["static_authorization_sha256"],
+                            authorization_sha,
+                        )
                 benchmark.validate_result_schema(
                     result, self.result_schema_path
                 )
@@ -7100,67 +7105,11 @@ print(json.dumps(
         }
         completed_by_os = {}
         for producer_os in ("Linux", "Darwin", "Windows"):
-            completed_fixture = self.completed_result()
-            self.rebind_release_metadata(
-                completed_fixture, {"candidate": "2", "main": "1"}
+            completed_by_os[producer_os] = (
+                self.completed_result_for_producer_os(
+                    producer_os, {"candidate": "2", "main": "1"}
+                )
             )
-            completed = self.project_result_to_producer_os(
-                completed_fixture, producer_os
-            )
-            self.rebind_static_authorization(completed, eligible=True)
-            authorization = completed["provenance"][
-                "environment_qualification"
-            ]
-            bindings = authorization["expected_bindings"]
-            snapshot_counter = iter(range(1, 100))
-            linux_factory = self.dynamic_snapshot_factory()
-            for protocol in completed["protocols"].values():
-                for batch in protocol["batches"]:
-                    batch["static_authorization_sha256"] = authorization[
-                        "qualification_sha256"
-                    ]
-                    if producer_os == "Darwin":
-                        before_index = next(snapshot_counter)
-                        after_index = next(snapshot_counter)
-                        batch["dynamic_environment_before"] = (
-                            self.darwin_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                before_index,
-                                "2026-07-28T00:00:05+00:00",
-                            )
-                        )
-                        batch["dynamic_environment_after"] = (
-                            self.darwin_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                after_index,
-                                "2026-07-28T00:00:50+00:00",
-                            )
-                        )
-                    elif producer_os == "Windows":
-                        before_index = next(snapshot_counter)
-                        after_index = next(snapshot_counter)
-                        batch["dynamic_environment_before"] = (
-                            self.windows_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                before_index,
-                                "2026-07-28T00:00:05+00:00",
-                            )
-                        )
-                        batch["dynamic_environment_after"] = (
-                            self.windows_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                after_index,
-                                "2026-07-28T00:00:50+00:00",
-                            )
-                        )
-                    elif producer_os == "Linux":
-                        batch["dynamic_environment_before"] = linux_factory(
-                            bindings["authority_host_sha256"]
-                        )
-                        batch["dynamic_environment_after"] = linux_factory(
-                            bindings["authority_host_sha256"]
-                        )
-            completed_by_os[producer_os] = completed
 
         valid_cases = 0
         for producer_os in ("Linux", "Darwin", "Windows"):
@@ -8368,6 +8317,66 @@ print(json.dumps(
                 bindings,
             )
         )
+
+    def completed_result_for_producer_os(
+        self,
+        producer_os: str,
+        pass_pipeline_versions: dict[str, object] | None = None,
+    ) -> dict:
+        result = self.project_result_to_producer_os(
+            self.completed_result(), producer_os
+        )
+        self.rebind_release_metadata(result, pass_pipeline_versions)
+        self.rebind_static_authorization(result, eligible=True)
+        authorization = result["provenance"]["environment_qualification"]
+        bindings = authorization["expected_bindings"]
+        snapshot_counter = iter(range(1, 100))
+        linux_factory = self.dynamic_snapshot_factory()
+        for protocol in result["protocols"].values():
+            for batch in protocol["batches"]:
+                batch["static_authorization_sha256"] = authorization[
+                    "qualification_sha256"
+                ]
+                if producer_os == "Darwin":
+                    batch["dynamic_environment_before"] = (
+                        self.darwin_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:05+00:00",
+                        )
+                    )
+                    batch["dynamic_environment_after"] = (
+                        self.darwin_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:50+00:00",
+                        )
+                    )
+                elif producer_os == "Windows":
+                    batch["dynamic_environment_before"] = (
+                        self.windows_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:05+00:00",
+                        )
+                    )
+                    batch["dynamic_environment_after"] = (
+                        self.windows_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:50+00:00",
+                        )
+                    )
+                elif producer_os == "Linux":
+                    batch["dynamic_environment_before"] = linux_factory(
+                        bindings["authority_host_sha256"]
+                    )
+                    batch["dynamic_environment_after"] = linux_factory(
+                        bindings["authority_host_sha256"]
+                    )
+                else:
+                    self.fail(f"unsupported producer OS fixture: {producer_os}")
+        return result
 
     def darwin_dynamic_snapshot(
         self,

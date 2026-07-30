@@ -157,6 +157,7 @@ BUILD_METADATA_PRODUCER_SCHEMA = 1
 BUILD_METADATA_CACHE_SCHEMA = 1
 BUILD_METADATA_CONTENT_BINDING_SCHEMA = 1
 BUILD_METADATA_QUERY_SCHEMA = 1
+SUPPORTED_PASS_PIPELINE_VERSIONS = ("1", "2")
 BUILD_METADATA_CACHE_INPUT_ORDER = (
     "profile",
     "target_triple",
@@ -5810,7 +5811,7 @@ def validate_release_build_metadata(
     recorded_host_os: str,
     *,
     live_filesystem: bool,
-) -> None:
+) -> str:
     workload_id = str(release.get("project", {}).get("source_relative_path", ""))
     lane = str(release.get("lane", ""))
     label = f"{workload_id or 'formal workload'} {lane} release build metadata"
@@ -5989,13 +5990,20 @@ def validate_release_build_metadata(
         raise HarnessError(f"{label} QueryKey or cache digest changed")
     cache_inputs = cache["inputs"]
     toolchain_config = cache_inputs.get("toolchain_config")
+    pass_pipeline_version = cache_inputs.get("pass_pipeline_version")
     producer_sha = str(producer["sha256"])
     toolchain_pattern = (
         rf"profile-release:compiler-exe-sha256:{producer_sha}:"
-        rf"runtime-exe-sha256:{producer_sha}:pipeline-1:"
+        rf"runtime-exe-sha256:{producer_sha}:"
+        r"pipeline-(?P<pass_pipeline_version>[1-9][0-9]*):"
         r"driver-[0-9a-f]{64}:cflags-[0-9a-f]{64}:"
         r"sqlite-[^:]+:[0-9a-f]{64}:[0-9a-f]{64}:"
         r"[0-9a-f]{64}:[0-9a-f]{64}"
+    )
+    toolchain_match = (
+        re.fullmatch(toolchain_pattern, toolchain_config)
+        if isinstance(toolchain_config, str)
+        else None
     )
     expected_cache_inputs = {
         "profile": "release",
@@ -6003,7 +6011,7 @@ def validate_release_build_metadata(
         "producer_executable_sha256": producer_sha,
         "compiler_revision": f"exe-sha256:{producer_sha}",
         "runtime_revision": f"exe-sha256:{producer_sha}",
-        "pass_pipeline_version": "1",
+        "pass_pipeline_version": pass_pipeline_version,
         "toolchain_config_version": "1",
         "toolchain_config": toolchain_config,
         "toolchain_config_sha256": v1.sha256_bytes(
@@ -6017,8 +6025,11 @@ def validate_release_build_metadata(
         "query_fingerprint": str(query_key["fingerprint"]),
     }
     if (
-        not isinstance(toolchain_config, str)
-        or re.fullmatch(toolchain_pattern, toolchain_config) is None
+        not isinstance(pass_pipeline_version, str)
+        or pass_pipeline_version not in SUPPORTED_PASS_PIPELINE_VERSIONS
+        or toolchain_match is None
+        or toolchain_match.group("pass_pipeline_version")
+        != pass_pipeline_version
         or not str(query_key["identity"]).endswith(toolchain_config)
         or cache_inputs != expected_cache_inputs
     ):
@@ -6098,6 +6109,7 @@ def validate_release_build_metadata(
         or content.get("sha256") != v1.sha256_bytes(bytes(framed))
     ):
         raise HarnessError(f"{label} content binding changed")
+    return pass_pipeline_version
 
 
 def build_emit_c_lane(
@@ -6959,6 +6971,9 @@ def validate_build_provenance(
         manifest_path, recorded_host_os
     ).parent
     workloads = {workload["id"]: workload for workload in manifest["workloads"]}
+    release_pipeline_versions = {
+        lane: set() for lane in ("candidate", "main")
+    }
     for workload_id, build in result.get("builds", {}).items():
         if workload_id not in workloads:
             raise HarnessError(f"unknown workload build provenance: {workload_id}")
@@ -7451,7 +7466,7 @@ def validate_build_provenance(
                         f"{workload_id} {lane} release build metadata is "
                         "not project-bound"
                     )
-                validate_release_build_metadata(
+                pass_pipeline_version = validate_release_build_metadata(
                     metadata,
                     release,
                     lane_state,
@@ -7459,6 +7474,7 @@ def validate_build_provenance(
                     recorded_host_os,
                     live_filesystem=False,
                 )
+                release_pipeline_versions[lane].add(pass_pipeline_version)
                 for index, backend_command in enumerate(
                     [
                         *backend.get("compile_commands", []),
@@ -7671,6 +7687,12 @@ def validate_build_provenance(
                         f"{workload_id} reference {reference_lane} binary "
                         f"overlaps {project_label} project"
                     )
+    for lane, versions in release_pipeline_versions.items():
+        if len(versions) > 1:
+            raise HarnessError(
+                f"{lane} release metadata mixes pass-pipeline versions "
+                f"across workloads: {', '.join(sorted(versions))}"
+            )
 
 
 def validate_build_failure_evidence(

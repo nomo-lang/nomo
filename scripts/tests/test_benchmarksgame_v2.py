@@ -6453,6 +6453,11 @@ print(json.dumps(
         ):
             with self.subTest(versions=versions):
                 result = self.completed_result()
+                if platform.system() == "Windows":
+                    result = self.project_result_to_producer_os(
+                        result, "Windows"
+                    )
+                    self.rebind_static_authorization(result, eligible=True)
                 self.rebind_release_metadata(result, versions)
                 benchmark.validate_result_schema(
                     result, self.result_schema_path

@@ -269,6 +269,10 @@ harness builds each Nomo driver itself with
 `cargo build --locked --release --bin nomo` in a fresh isolated target
 directory, confirms the checkout remained clean at the exact commit, hashes
 the driver, then probes `nomo build --help` for `--release` and `--emit-c`.
+Each capability probe executes in its corresponding canonical candidate or
+main checkout and records that checkout as the command working directory.
+Offline replay requires the recorded working directory to match the enclosing
+lane exactly; null, another lane, a parent, or a lexical alias is rejected.
 Arbitrary prebuilt compiler paths are not accepted.
 
 Formal work is deliberately two-stage. First, `prepare` performs every

@@ -2188,13 +2188,25 @@ class BenchmarksGameV2Tests(unittest.TestCase):
         self,
     ) -> None:
         executable = Path(sys.executable)
-        record = self.full_command([str(executable), "build", "--help"])
+        checkout = Path(self.temporary.name) / "candidate"
+        checkout.mkdir()
+        record = self.full_command(
+            [str(executable), "build", "--help"],
+            cwd=str(checkout.resolve()),
+        )
         with mock.patch.object(
             benchmark,
             "run_build_capture",
             return_value=(record, b"Usage: nomo build [--emit-c]\n", b""),
-        ):
-            result = benchmark.release_capability(executable, "candidate")
+        ) as capture:
+            result = benchmark.release_capability(
+                executable, "candidate", checkout
+            )
+        capture.assert_called_once_with(
+            [str(executable), "build", "--help"],
+            30.0,
+            cwd=checkout.resolve(),
+        )
         self.assertEqual(result["status"], "unavailable")
         self.assertEqual(
             result["help_command"]["argv"],
@@ -2208,9 +2220,52 @@ class BenchmarksGameV2Tests(unittest.TestCase):
                 b"Usage: nomo build [OPTIONS]\n  --release  optimized\n",
                 b"",
             ),
-        ):
-            result = benchmark.release_capability(executable, "candidate")
+        ) as capture:
+            result = benchmark.release_capability(
+                executable, "candidate", checkout
+            )
+        capture.assert_called_once_with(
+            [str(executable), "build", "--help"],
+            30.0,
+            cwd=checkout.resolve(),
+        )
         self.assertEqual(result["status"], "available", result)
+
+    def test_capability_probes_record_each_canonical_lane_checkout(self) -> None:
+        executable = Path(sys.executable)
+        checkouts = {
+            lane: (Path(self.temporary.name) / lane).resolve()
+            for lane in ("candidate", "main")
+        }
+        for checkout in checkouts.values():
+            checkout.mkdir()
+
+        def capture(
+            command: list[str],
+            timeout_seconds: float,
+            cwd: Path | None = None,
+        ) -> tuple[dict, bytes, bytes]:
+            self.assertEqual(timeout_seconds, 30.0)
+            self.assertIn(cwd, checkouts.values())
+            return (
+                self.full_command(command, cwd=str(cwd)),
+                b"Usage: nomo build [--release] [--emit-c]\n",
+                b"",
+            )
+
+        with mock.patch.object(
+            benchmark, "run_build_capture", side_effect=capture
+        ):
+            for lane, checkout in checkouts.items():
+                for probe in (
+                    benchmark.release_capability,
+                    benchmark.emit_c_capability,
+                ):
+                    result = probe(executable, lane, checkout)
+                    self.assertEqual(result["status"], "available")
+                    self.assertEqual(
+                        result["help_command"]["cwd"], str(checkout)
+                    )
 
     def test_release_capable_driver_does_not_create_correctness_release_lanes(
         self,
@@ -2375,14 +2430,115 @@ class BenchmarksGameV2Tests(unittest.TestCase):
 
     def test_emit_c_capability_probes_build_subcommand(self) -> None:
         executable = Path(sys.executable)
-        record = self.full_command([str(executable), "build", "--help"])
+        checkout = Path(self.temporary.name) / "candidate"
+        checkout.mkdir(exist_ok=True)
+        record = self.full_command(
+            [str(executable), "build", "--help"],
+            cwd=str(checkout.resolve()),
+        )
         with mock.patch.object(
             benchmark,
             "run_build_capture",
             return_value=(record, b"Usage: nomo build [--emit-c]\n", b""),
-        ):
-            result = benchmark.emit_c_capability(executable, "candidate")
+        ) as capture:
+            result = benchmark.emit_c_capability(
+                executable, "candidate", checkout
+            )
+        capture.assert_called_once_with(
+            [str(executable), "build", "--help"],
+            30.0,
+            cwd=checkout.resolve(),
+        )
         self.assertEqual(result["status"], "available")
+
+    def test_capability_probe_cwd_tampering_fails_embedded_and_live_authority(
+        self,
+    ) -> None:
+        result = self.project_result_to_producer_os(
+            self.prepared_only_result(), platform.system()
+        )
+        build_environment = benchmark.sanitized_build_environment()[1]
+        self.bind_build_command_environments(result, build_environment)
+        result["provenance"]["toolchains"][
+            "build_environment"
+        ] = build_environment
+        candidate_checkout = result["release_lanes"]["candidate"]["checkout"]
+        main_checkout = result["release_lanes"]["main"]["checkout"]
+        invalid_cwds = {
+            "null": None,
+            "other-lane": main_checkout,
+            "parent": str(Path(candidate_checkout).parent),
+            "lexical-alias": (
+                f"{Path(candidate_checkout).parent}"
+                f"{os.sep}.{os.sep}{Path(candidate_checkout).name}"
+            ),
+        }
+        for authority in ("embedded", "live"):
+            for name, invalid_cwd in invalid_cwds.items():
+                changed = copy.deepcopy(result)
+                changed["release_lanes"]["candidate"]["capabilities"][
+                    "release"
+                ]["help_command"]["cwd"] = invalid_cwd
+                with self.subTest(
+                    authority=authority, invalid_cwd=name
+                ), self.assertRaisesRegex(
+                    benchmark.HarnessError,
+                    "candidate capability probe command changed",
+                ):
+                    if authority == "embedded":
+                        benchmark.validate_release_lane_authority(
+                            changed, live_authority=False
+                        )
+                    else:
+                        with mock.patch.object(
+                            benchmark,
+                            "cargo_config_provenance",
+                            return_value=[],
+                        ):
+                            benchmark.validate_live_release_lane_authority(
+                                changed
+                            )
+
+    def test_prepared_capability_cwd_replays_across_producer_and_reviewer_os(
+        self,
+    ) -> None:
+        valid_cases = 0
+        for producer_os in ("Linux", "Darwin", "Windows"):
+            result = self.project_result_to_producer_os(
+                self.prepared_only_result(), producer_os
+            )
+            self.rebind_static_authorization(result, eligible=False)
+            for lane in ("candidate", "main"):
+                for capability in result["release_lanes"][lane][
+                    "capabilities"
+                ].values():
+                    self.assertEqual(
+                        capability["help_command"]["cwd"],
+                        result["release_lanes"][lane]["checkout"],
+                    )
+            for reviewer_os in ("Linux", "Darwin", "Windows"):
+                with self.subTest(
+                    producer_os=producer_os, reviewer_os=reviewer_os
+                ), mock.patch.object(
+                    benchmark.platform, "system", return_value=reviewer_os
+                ), mock.patch.object(
+                    benchmark,
+                    "validate_live_release_lane_authority",
+                    side_effect=AssertionError(
+                        "offline replay inspected live lane authority"
+                    ),
+                ), mock.patch.object(
+                    benchmark,
+                    "run_build_capture",
+                    side_effect=AssertionError(
+                        "offline replay executed a capability probe"
+                    ),
+                ):
+                    benchmark.validate_result(
+                        result, self.manifest, offline_replay=True
+                    )
+                    valid_cases += 1
+        self.assertEqual(valid_cases, 9)
 
     def test_missing_release_mode_is_unavailable_before_environment_gate(self) -> None:
         arguments = Namespace(

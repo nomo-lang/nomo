@@ -2874,10 +2874,13 @@ def inspect_toolchains(
     }
 
 
-def release_capability(nomo: Path, label: str) -> Dict[str, Any]:
+def release_capability(
+    nomo: Path, label: str, checkout: Path
+) -> Dict[str, Any]:
+    checkout = checkout.resolve()
     try:
         record, stdout, stderr = run_build_capture(
-            [str(nomo), "build", "--help"], 30.0
+            [str(nomo), "build", "--help"], 30.0, cwd=checkout
         )
     except HarnessError as error:
         return {
@@ -2903,10 +2906,13 @@ def release_capability(nomo: Path, label: str) -> Dict[str, Any]:
     }
 
 
-def emit_c_capability(nomo: Path, label: str) -> Dict[str, Any]:
+def emit_c_capability(
+    nomo: Path, label: str, checkout: Path
+) -> Dict[str, Any]:
+    checkout = checkout.resolve()
     try:
         record, stdout, stderr = run_build_capture(
-            [str(nomo), "build", "--help"], 30.0
+            [str(nomo), "build", "--help"], 30.0, cwd=checkout
         )
     except HarnessError as error:
         return {
@@ -5390,8 +5396,8 @@ def release_lane_state(
             "reason": str(error),
             "emit_c_fallback_used": False,
         }
-    release_probe = release_capability(nomo, label)
-    emit_c_probe = emit_c_capability(nomo, label)
+    release_probe = release_capability(nomo, label, checkout)
+    emit_c_probe = emit_c_capability(nomo, label, checkout)
     return {
         "label": label,
         "status": "available",
@@ -10475,7 +10481,13 @@ def validate_live_release_lane_authority(result: Dict[str, Any]) -> None:
             validate_build_command_environment(
                 help_command, f"{label} capability probe"
             )
-            if help_command.get("argv") != expected_help:
+            if (
+                help_command.get("argv") != expected_help
+                or help_command.get("command")
+                != v1.command_text(expected_help)
+                or help_command.get("cwd")
+                != str(Path(lane["checkout"]).resolve())
+            ):
                 raise HarnessError(f"{label} capability probe command changed")
         validate_compiler_tool_authority(
             compiler_build,

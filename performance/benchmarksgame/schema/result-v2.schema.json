@@ -982,7 +982,7 @@
           "type": "string",
           "pattern": "^exe-sha256:[0-9a-f]{64}$"
         },
-        "pass_pipeline_version": { "const": "1" },
+        "pass_pipeline_version": { "enum": ["1", "2"] },
         "toolchain_config_version": { "const": "1" },
         "toolchain_config": { "type": "string", "minLength": 1 },
         "toolchain_config_sha256": { "$ref": "#/$defs/sha256" },

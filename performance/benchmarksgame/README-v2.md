@@ -45,6 +45,14 @@ makes the release lane unavailable. The prepared inventory content-addresses
 the original metadata bytes; offline replay recomputes its schema, QueryKey,
 cache digest, canonical subdocuments, and framed binding without consulting
 the reviewer host.
+The pass-pipeline version is producer-lane metadata, not a candidate/main role
+constant. Versions `"1"` and `"2"` are supported; every release workload in
+one lane must report the same version, while candidate and main may differ.
+The runner requires that value to match the complete `pipeline-N` toolchain
+configuration, QueryKey identity, cache inputs and digests, and content
+binding. Missing, non-string, unknown, or internally inconsistent versions
+make the lane unavailable. A future version requires an explicit authority
+update rather than silent acceptance.
 
 The fixed, independently verified Nomo producer is the trust boundary for the
 fact that the recorded QueryKey is the key used by the compiler cache. The

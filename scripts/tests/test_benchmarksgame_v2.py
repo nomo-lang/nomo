@@ -6444,6 +6444,235 @@ print(json.dumps(
                     live_filesystem=False,
                 )
 
+    def test_release_pipeline_versions_are_lane_bound_and_role_independent(
+        self,
+    ) -> None:
+        for versions in (
+            {"candidate": "2", "main": "1"},
+            {"candidate": "2", "main": "2"},
+        ):
+            with self.subTest(versions=versions):
+                result = self.completed_result_for_producer_os(
+                    platform.system(), versions
+                )
+                authorization_sha = result["provenance"][
+                    "environment_qualification"
+                ]["qualification_sha256"]
+                for protocol in result["protocols"].values():
+                    for batch in protocol["batches"]:
+                        self.assertEqual(
+                            batch["static_authorization_sha256"],
+                            authorization_sha,
+                        )
+                benchmark.validate_result_schema(
+                    result, self.result_schema_path
+                )
+                benchmark.validate_build_provenance(
+                    result,
+                    self.manifest,
+                    live_filesystem=False,
+                )
+                benchmark.validate_result(
+                    result,
+                    self.manifest,
+                    offline_replay=True,
+                )
+                for workload in benchmark.WORKLOAD_IDS:
+                    release = result["builds"][workload]["modes"]["release"]
+                    for lane, expected in versions.items():
+                        metadata = release[lane]["build_metadata"]
+                        inputs = metadata["cache_identity"]["inputs"]
+                        self.assertEqual(
+                            inputs["pass_pipeline_version"], expected
+                        )
+                        self.assertIn(
+                            f":pipeline-{expected}:",
+                            inputs["toolchain_config"],
+                        )
+
+    def test_release_pipeline_version_boundaries_fail_closed(self) -> None:
+        invalid_versions = ("0", "3", "02", "1.0", 2)
+        for invalid in invalid_versions:
+            with self.subTest(version=invalid):
+                result = self.completed_result()
+                self.rebind_release_metadata(
+                    result, {"candidate": invalid, "main": "1"}
+                )
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError, "Draft 2020-12 schema"
+                ):
+                    benchmark.validate_result_schema(
+                        result, self.result_schema_path
+                    )
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError,
+                    "cache inputs are not producer-bound",
+                ):
+                    benchmark.validate_build_provenance(
+                        result,
+                        self.manifest,
+                        live_filesystem=False,
+                    )
+
+        missing = self.completed_result()
+        self.rebind_release_metadata(
+            missing, {"candidate": "2", "main": "1"}
+        )
+        formal = missing["builds"]["spectral-norm"]["modes"]["release"][
+            "candidate"
+        ]
+        del formal["build_metadata"]["cache_identity"]["inputs"][
+            "pass_pipeline_version"
+        ]
+        formal["build_metadata_sha256"] = v1.sha256_bytes(
+            self.build_metadata_bytes(formal["build_metadata"])
+        )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "Draft 2020-12 schema"
+        ):
+            benchmark.validate_result_schema(
+                missing, self.result_schema_path
+            )
+        with self.assertRaisesRegex(
+            benchmark.HarnessError, "cache identity contract changed"
+        ):
+            benchmark.validate_build_provenance(
+                missing,
+                self.manifest,
+                live_filesystem=False,
+            )
+
+    def test_release_pipeline_version_mismatches_and_lane_mix_fail_closed(
+        self,
+    ) -> None:
+        def mutate_cache_input(metadata: dict) -> None:
+            metadata["cache_identity"]["inputs"][
+                "pass_pipeline_version"
+            ] = "1"
+
+        def mutate_toolchain_config(metadata: dict) -> None:
+            inputs = metadata["cache_identity"]["inputs"]
+            inputs["toolchain_config"] = inputs["toolchain_config"].replace(
+                ":pipeline-2:", ":pipeline-1:"
+            )
+            inputs["toolchain_config_sha256"] = v1.sha256_bytes(
+                inputs["toolchain_config"].encode("utf-8")
+            )
+
+        def mutate_query_identity(metadata: dict) -> None:
+            cache = metadata["cache_identity"]
+            query_key = cache["query_key"]
+            query_key["identity"] = query_key["identity"].replace(
+                ":pipeline-2:", ":pipeline-1:"
+            )
+            cache["query_key_json"] = json.dumps(
+                query_key,
+                ensure_ascii=False,
+                separators=(",", ":"),
+            )
+            cache["cache_key"] = v1.sha256_bytes(
+                cache["query_key_json"].encode("utf-8")
+            )
+
+        for label, mutation in {
+            "cache-input": mutate_cache_input,
+            "toolchain-config": mutate_toolchain_config,
+            "query-identity": mutate_query_identity,
+        }.items():
+            with self.subTest(mismatch=label):
+                result = self.completed_result()
+                self.rebind_release_metadata(
+                    result, {"candidate": "2", "main": "1"}
+                )
+                formal = result["builds"]["spectral-norm"]["modes"][
+                    "release"
+                ]["candidate"]
+                mutation(formal["build_metadata"])
+                formal["build_metadata_sha256"] = v1.sha256_bytes(
+                    self.build_metadata_bytes(formal["build_metadata"])
+                )
+                with self.assertRaisesRegex(
+                    benchmark.HarnessError,
+                    "cache inputs are not producer-bound",
+                ):
+                    benchmark.validate_build_provenance(
+                        result,
+                        self.manifest,
+                        live_filesystem=False,
+                    )
+
+        mixed = self.completed_result()
+        self.rebind_release_metadata(
+            mixed, {"candidate": "2", "main": "1"}
+        )
+        mixed_candidate = mixed["builds"]["n-body"]["modes"]["release"][
+            "candidate"
+        ]
+        self.rebind_release_formal_metadata(mixed_candidate, "1")
+        with self.assertRaisesRegex(
+            benchmark.HarnessError,
+            "candidate release metadata mixes pass-pipeline versions",
+        ):
+            benchmark.validate_build_provenance(
+                mixed,
+                self.manifest,
+                live_filesystem=False,
+            )
+
+    def test_prepared_mixed_pipeline_versions_replay_without_live_authority(
+        self,
+    ) -> None:
+        result, bundle = self.prepared_bundle_fixture(
+            {"candidate": "2", "main": "1"}
+        )
+        for workload in benchmark.WORKLOAD_IDS:
+            release = result["builds"][workload]["modes"]["release"]
+            self.assertEqual(
+                release["candidate"]["build_metadata"]["cache_identity"][
+                    "inputs"
+                ]["pass_pipeline_version"],
+                "2",
+            )
+            self.assertEqual(
+                release["main"]["build_metadata"]["cache_identity"]["inputs"][
+                    "pass_pipeline_version"
+                ],
+                "1",
+            )
+        for reviewer_os in ("Linux", "Darwin", "Windows"):
+            with self.subTest(reviewer_os=reviewer_os), mock.patch.object(
+                benchmark.platform, "system", return_value=reviewer_os
+            ), mock.patch.object(
+                benchmark,
+                "inspect_toolchains",
+                side_effect=AssertionError(
+                    "offline replay probed reviewer toolchains"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "sanitized_build_environment",
+                side_effect=AssertionError(
+                    "offline replay read the reviewer build environment"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "run_build_capture",
+                side_effect=AssertionError(
+                    "offline replay executed a reviewer build"
+                ),
+            ), mock.patch.object(
+                benchmark,
+                "validate_live_release_lane_authority",
+                side_effect=AssertionError(
+                    "offline replay inspected a live release lane"
+                ),
+            ):
+                path, replayed = benchmark.validate_artifact_offline(
+                    str(bundle), str(self.manifest_path)
+                )
+            self.assertEqual(path, bundle)
+            self.assertEqual(replayed, result)
+
     def test_release_metadata_target_binds_nomo_and_backend_domains(self) -> None:
         valid = (
             ("aarch64-apple-darwin-none", "arm64-apple-darwin25.5.0", "Darwin"),
@@ -6865,6 +7094,9 @@ print(json.dumps(
         failure = self.correctness_build_failure_result()
         formal_unavailable = self.formal_unavailable_result()
         prepared = self.prepared_only_result()
+        self.rebind_release_metadata(
+            prepared, {"candidate": "2", "main": "1"}
+        )
         states = {
             "success": success,
             "failure": failure,
@@ -6873,63 +7105,11 @@ print(json.dumps(
         }
         completed_by_os = {}
         for producer_os in ("Linux", "Darwin", "Windows"):
-            completed = self.project_result_to_producer_os(
-                self.completed_result(), producer_os
+            completed_by_os[producer_os] = (
+                self.completed_result_for_producer_os(
+                    producer_os, {"candidate": "2", "main": "1"}
+                )
             )
-            self.rebind_static_authorization(completed, eligible=True)
-            authorization = completed["provenance"][
-                "environment_qualification"
-            ]
-            bindings = authorization["expected_bindings"]
-            snapshot_counter = iter(range(1, 100))
-            linux_factory = self.dynamic_snapshot_factory()
-            for protocol in completed["protocols"].values():
-                for batch in protocol["batches"]:
-                    batch["static_authorization_sha256"] = authorization[
-                        "qualification_sha256"
-                    ]
-                    if producer_os == "Darwin":
-                        before_index = next(snapshot_counter)
-                        after_index = next(snapshot_counter)
-                        batch["dynamic_environment_before"] = (
-                            self.darwin_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                before_index,
-                                "2026-07-28T00:00:05+00:00",
-                            )
-                        )
-                        batch["dynamic_environment_after"] = (
-                            self.darwin_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                after_index,
-                                "2026-07-28T00:00:50+00:00",
-                            )
-                        )
-                    elif producer_os == "Windows":
-                        before_index = next(snapshot_counter)
-                        after_index = next(snapshot_counter)
-                        batch["dynamic_environment_before"] = (
-                            self.windows_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                before_index,
-                                "2026-07-28T00:00:05+00:00",
-                            )
-                        )
-                        batch["dynamic_environment_after"] = (
-                            self.windows_dynamic_snapshot(
-                                bindings["authority_host_sha256"],
-                                after_index,
-                                "2026-07-28T00:00:50+00:00",
-                            )
-                        )
-                    elif producer_os == "Linux":
-                        batch["dynamic_environment_before"] = linux_factory(
-                            bindings["authority_host_sha256"]
-                        )
-                        batch["dynamic_environment_after"] = linux_factory(
-                            bindings["authority_host_sha256"]
-                        )
-            completed_by_os[producer_os] = completed
 
         valid_cases = 0
         for producer_os in ("Linux", "Darwin", "Windows"):
@@ -7921,27 +8101,49 @@ print(json.dumps(
         self.bind_runtime_environments(projected, runtime)
         return projected
 
-    def rebind_release_metadata(self, result: dict) -> None:
+    def rebind_release_metadata(
+        self,
+        result: dict,
+        pass_pipeline_versions: dict[str, object] | None = None,
+    ) -> None:
         for build in result.get("builds", {}).values():
             for formal in build.get("modes", {}).get(
                 "release", {}
             ).values():
                 if formal.get("kind") != "real-nomo-release":
                     continue
-                previous = formal.get("build_metadata", {})
-                producer_size = (
-                    previous.get("producer_executable", {}).get(
-                        "size_bytes", 1
-                    )
+                pass_pipeline_version = (
+                    pass_pipeline_versions or {}
+                ).get(formal["lane"])
+                self.rebind_release_formal_metadata(
+                    formal, pass_pipeline_version
                 )
-                metadata = self.release_build_metadata(
-                    formal,
-                    producer_size_bytes=producer_size,
-                )
-                formal["build_metadata"] = metadata
-                formal["build_metadata_sha256"] = v1.sha256_bytes(
-                    self.build_metadata_bytes(metadata)
-                )
+
+    def rebind_release_formal_metadata(
+        self,
+        formal: dict,
+        pass_pipeline_version: object | None = None,
+    ) -> dict:
+        previous = formal.get("build_metadata", {})
+        producer_size = (
+            previous.get("producer_executable", {}).get("size_bytes", 1)
+        )
+        if pass_pipeline_version is None:
+            pass_pipeline_version = (
+                previous.get("cache_identity", {})
+                .get("inputs", {})
+                .get("pass_pipeline_version", "1")
+            )
+        metadata = self.release_build_metadata(
+            formal,
+            producer_size_bytes=producer_size,
+            pass_pipeline_version=pass_pipeline_version,
+        )
+        formal["build_metadata"] = metadata
+        formal["build_metadata_sha256"] = v1.sha256_bytes(
+            self.build_metadata_bytes(metadata)
+        )
+        return metadata
 
     def synthetic_linux_runtime_environments(self) -> dict:
         default = {
@@ -8115,6 +8317,66 @@ print(json.dumps(
                 bindings,
             )
         )
+
+    def completed_result_for_producer_os(
+        self,
+        producer_os: str,
+        pass_pipeline_versions: dict[str, object] | None = None,
+    ) -> dict:
+        result = self.project_result_to_producer_os(
+            self.completed_result(), producer_os
+        )
+        self.rebind_release_metadata(result, pass_pipeline_versions)
+        self.rebind_static_authorization(result, eligible=True)
+        authorization = result["provenance"]["environment_qualification"]
+        bindings = authorization["expected_bindings"]
+        snapshot_counter = iter(range(1, 100))
+        linux_factory = self.dynamic_snapshot_factory()
+        for protocol in result["protocols"].values():
+            for batch in protocol["batches"]:
+                batch["static_authorization_sha256"] = authorization[
+                    "qualification_sha256"
+                ]
+                if producer_os == "Darwin":
+                    batch["dynamic_environment_before"] = (
+                        self.darwin_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:05+00:00",
+                        )
+                    )
+                    batch["dynamic_environment_after"] = (
+                        self.darwin_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:50+00:00",
+                        )
+                    )
+                elif producer_os == "Windows":
+                    batch["dynamic_environment_before"] = (
+                        self.windows_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:05+00:00",
+                        )
+                    )
+                    batch["dynamic_environment_after"] = (
+                        self.windows_dynamic_snapshot(
+                            bindings["authority_host_sha256"],
+                            next(snapshot_counter),
+                            "2026-07-28T00:00:50+00:00",
+                        )
+                    )
+                elif producer_os == "Linux":
+                    batch["dynamic_environment_before"] = linux_factory(
+                        bindings["authority_host_sha256"]
+                    )
+                    batch["dynamic_environment_after"] = linux_factory(
+                        bindings["authority_host_sha256"]
+                    )
+                else:
+                    self.fail(f"unsupported producer OS fixture: {producer_os}")
+        return result
 
     def darwin_dynamic_snapshot(
         self,
@@ -8807,6 +9069,7 @@ print(json.dumps(
         release: dict,
         *,
         producer_size_bytes: int = 1,
+        pass_pipeline_version: object = "1",
     ) -> dict:
         producer_sha = release["nomo"]["sha256"]
         producer = {
@@ -8840,7 +9103,7 @@ print(json.dumps(
             "profile-release:"
             f"compiler-exe-sha256:{producer_sha}:"
             f"runtime-exe-sha256:{producer_sha}:"
-            "pipeline-1:"
+            f"pipeline-{pass_pipeline_version}:"
             f"driver-{'1' * 64}:"
             f"cflags-{'2' * 64}:"
             f"sqlite-3.50.4:{'3' * 64}:{'4' * 64}:{'5' * 64}:{'6' * 64}"
@@ -8881,7 +9144,7 @@ print(json.dumps(
             "producer_executable_sha256": producer_sha,
             "compiler_revision": f"exe-sha256:{producer_sha}",
             "runtime_revision": f"exe-sha256:{producer_sha}",
-            "pass_pipeline_version": "1",
+            "pass_pipeline_version": pass_pipeline_version,
             "toolchain_config_version": "1",
             "toolchain_config": toolchain_config,
             "toolchain_config_sha256": v1.sha256_bytes(
@@ -9605,7 +9868,10 @@ print(json.dumps(
                 )
         return result
 
-    def prepared_bundle_fixture(self) -> tuple[dict, Path]:
+    def prepared_bundle_fixture(
+        self,
+        pass_pipeline_versions: dict[str, object] | None = None,
+    ) -> tuple[dict, Path]:
         root = Path(self.temporary.name) / f"prepared-{time.time_ns()}"
         root.mkdir()
         result = self.project_result_to_producer_os(
@@ -10002,6 +10268,9 @@ print(json.dumps(
                             producer_size_bytes=Path(
                                 state["nomo_path"]
                             ).stat().st_size,
+                            pass_pipeline_version=(
+                                pass_pipeline_versions or {}
+                            ).get(lane, "1"),
                         )
                         metadata_path = (
                             project / "build" / "nomo-build-metadata.json"

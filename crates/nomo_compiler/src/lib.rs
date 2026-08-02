@@ -211,17 +211,23 @@ use builtins_task::*;
 use builtins_time::*;
 use declarations::*;
 pub use driver::{
-    build_module_graph, build_module_graph_with_module_identity_and_overrides,
-    build_module_graph_with_overrides, check_module_source_text_with_module_identity_and_overrides,
+    CodegenOptions, OptimizationMode, build_module_graph,
+    build_module_graph_with_module_identity_and_overrides, build_module_graph_with_overrides,
+    check_module_source_text_with_module_identity_and_overrides,
     check_module_source_text_with_project_modules_and_overrides, check_script_source_text,
     check_source, check_source_text, check_source_text_with_external_imports,
     check_source_text_with_module_identity_and_overrides, check_source_text_with_project_modules,
     check_source_text_with_project_modules_and_overrides, check_source_with_external_imports,
     check_source_with_external_modules, compile_script_source_to_c,
-    compile_script_source_to_c_for_target, compile_source_text_to_c_with_module_identity,
+    compile_script_source_to_c_for_target,
+    compile_script_source_to_c_for_target_with_codegen_options,
+    compile_source_text_to_c_with_module_identity,
+    compile_source_text_to_c_with_module_identity_and_codegen_options,
     compile_source_text_to_c_with_project_modules, compile_source_to_c,
-    compile_source_to_c_for_target, compile_source_to_c_with_external_imports,
-    compile_source_to_c_with_external_modules, compile_source_to_c_with_module_identity_for_target,
+    compile_source_to_c_for_target, compile_source_to_c_for_target_with_codegen_options,
+    compile_source_to_c_with_external_imports, compile_source_to_c_with_external_modules,
+    compile_source_to_c_with_module_identity_for_target,
+    compile_source_to_c_with_module_identity_for_target_and_codegen_options,
     compile_source_to_c_with_project_modules, compile_source_to_c_with_project_modules_for_target,
 };
 use expression_calls::*;
@@ -344,11 +350,11 @@ const BUILTIN_SQLITE_CLOSE_QUERY_EXPR: &str = "__nomo_sqlite_close_query";
 const BUILTIN_SQLITE_CLOSE_EXPR: &str = "__nomo_sqlite_close";
 
 pub use nomo_ir::{
-    BinaryOp, Const, CronOperation, DeferredCall, EnumType, EnumVariantType, ExternFunction,
-    Function, JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm, MatchValueArm,
-    MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Parameter, Program, QuestionCarrier,
-    Statement, StructField, StructType, TaskSelectArm, TaskSelectOperation, UnaryOp, ValueExpr,
-    ValueType,
+    ArrayMutationMode, BinaryOp, Const, CronOperation, DeferredCall, EnumType, EnumVariantType,
+    ExternFunction, Function, JsonOperation, JsonRpcOperation, LoopKind, MatchStatementArm,
+    MatchValueArm, MathBinaryFunction, MathUnaryFunction, NumBinaryFunction, Parameter, Program,
+    QuestionCarrier, Statement, StructField, StructType, TaskSelectArm, TaskSelectOperation,
+    UnaryOp, ValueExpr, ValueType,
 };
 
 #[derive(Debug, Clone, PartialEq, Eq)]

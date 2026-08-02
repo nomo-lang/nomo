@@ -109,9 +109,13 @@ pub(super) fn emit_array_expr(out: &mut String, expr: &ValueExpr) -> bool {
             index,
             value,
             element_type,
+            mutation_mode,
         } if is_supported_array_element(element_type) => {
             out.push_str(&c_array_ident(element_type));
-            out.push_str("_set(");
+            match mutation_mode {
+                ArrayMutationMode::CheckedCow => out.push_str("_set("),
+                ArrayMutationMode::CheckedUnique => out.push_str("_set_unique("),
+            }
             out.push_str(&c_var_ident(array));
             out.push_str(", ");
             emit_expr(out, index);

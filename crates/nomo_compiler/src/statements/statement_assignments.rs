@@ -106,6 +106,7 @@ pub(super) fn lower_index_assign_stmt(
         indices: lowered_indices,
         array_types,
         value,
+        mutation_mode: ArrayMutationMode::CheckedCow,
     })
 }
 

@@ -163,7 +163,9 @@ copying an older snapshot's long command line.
 Release native builds use fixed safe optimization flags and emit canonical,
 content-bound `release-provenance.json` and `nomo-build-metadata.json`
 documents. `--release` cannot be combined with `--emit-c`; the pure emit-C
-protocol remains independent. See
+protocol remains independent, while its generated C uses the same safe
+performance proof pipeline as release builds for external compiler comparison.
+See
 [`docs/release-builds.md`](docs/release-builds.md).
 
 ## Platforms and artifacts
@@ -188,6 +190,7 @@ targets even when a cross-linker is unavailable. See
 | --- | --- |
 | `crates/nomo_syntax` | AST, lexer, parser, formatter-facing syntax |
 | `crates/nomo_compiler` | Module graph, semantic analysis, typed/lowered IR |
+| `crates/nomo_mir` | Typed CFG, panic edges, ownership/effect proofs, release-only safe rewrites |
 | `crates/nomo_codegen_c` | IR-specific C99 generation |
 | `crates/nomo_runtime` | Platform-aware C runtime emission and async runtime |
 | `crates/nomo_wasm` | Browser compiler/interpreter ABI and sandbox |

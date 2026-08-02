@@ -10,7 +10,11 @@ use super::{
     discover_workspace_for_target, project_ffi_link_metadata_for_target_with_options,
     project_module_context_for_target_with_options, project_package_id,
 };
-use crate::compiler::compile_source_to_c_with_module_identity_for_target;
+use crate::compiler::{
+    CodegenOptions, OptimizationMode, compile_script_source_to_c_for_target_with_codegen_options,
+    compile_source_to_c_for_target_with_codegen_options,
+    compile_source_to_c_with_module_identity_for_target_and_codegen_options,
+};
 use crate::incremental::{ContentFingerprint, PersistentQueryCache, QueryKey, project_query_key};
 use nomo_manifest::FfiLinkMetadata;
 use nomo_target::{CToolchain, TargetTriple};
@@ -590,8 +594,15 @@ pub fn compile_standalone_source_with_profile_cache(
     profile: BuildProfile,
 ) -> Result<CachedStandaloneSource, BuildError> {
     let producer_executable = producer_executable_identity()?;
-    let cache_key =
-        standalone_codegen_query_key(source, target, profile, "nomoc", &producer_executable)?;
+    let codegen_options = codegen_options(profile, false);
+    let cache_key = standalone_codegen_query_key(
+        source,
+        target,
+        profile,
+        codegen_options,
+        "nomoc",
+        &producer_executable,
+    )?;
     let cache_root = source.parent().unwrap_or_else(|| Path::new("."));
     let cache = PersistentQueryCache::at_root(cache_root);
     if let Some(cached) = cache.get::<String>(&cache_key) {
@@ -601,8 +612,9 @@ pub fn compile_standalone_source_with_profile_cache(
             producer_executable,
         });
     }
-    let generated = crate::compiler::compile_source_to_c_for_target(source, target)
-        .map_err(BuildError::Diagnostic)?;
+    let generated =
+        compile_source_to_c_for_target_with_codegen_options(source, target, codegen_options)
+            .map_err(BuildError::Diagnostic)?;
     let _ = cache.insert(&cache_key, &generated);
     Ok(CachedStandaloneSource {
         generated_source: generated,
@@ -617,8 +629,15 @@ pub fn compile_standalone_script_with_profile_cache(
     profile: BuildProfile,
 ) -> Result<CachedStandaloneSource, BuildError> {
     let producer_executable = producer_executable_identity()?;
-    let cache_key =
-        standalone_codegen_query_key(source, target, profile, "script", &producer_executable)?;
+    let codegen_options = codegen_options(profile, false);
+    let cache_key = standalone_codegen_query_key(
+        source,
+        target,
+        profile,
+        codegen_options,
+        "script",
+        &producer_executable,
+    )?;
     let cache_root = source.parent().unwrap_or_else(|| Path::new("."));
     let cache = PersistentQueryCache::at_root(cache_root);
     if let Some(cached) = cache.get::<String>(&cache_key) {
@@ -628,8 +647,9 @@ pub fn compile_standalone_script_with_profile_cache(
             producer_executable,
         });
     }
-    let generated = crate::compiler::compile_script_source_to_c_for_target(source, target)
-        .map_err(BuildError::Diagnostic)?;
+    let generated =
+        compile_script_source_to_c_for_target_with_codegen_options(source, target, codegen_options)
+            .map_err(BuildError::Diagnostic)?;
     let _ = cache.insert(&cache_key, &generated);
     Ok(CachedStandaloneSource {
         generated_source: generated,
@@ -1780,6 +1800,7 @@ fn build_project_impl(
     target_scoped_artifacts: bool,
     profile: BuildProfile,
 ) -> Result<PathBuf, BuildError> {
+    let codegen_options = codegen_options(profile, emit_c_only);
     let workspace_owner = if profile == BuildProfile::Release {
         workspace_release_owner_context(project, target)?
     } else {
@@ -1812,24 +1833,27 @@ fn build_project_impl(
         target,
         "codegen-c",
         format!(
-            "{}:{}:{}",
+            "{}:{}:optimization={}:{}",
             project.name,
             project.main.display(),
+            codegen_options.optimization_mode.as_str(),
             cache_configuration,
         ),
     );
     let c = match cache.get::<String>(&cache_key) {
         Some(cached) => cached,
         None => {
-            let generated = compile_source_to_c_with_module_identity_for_target(
-                &project.main,
-                &context.local_source_root,
-                &context.local_identity,
-                &context.external_import_roots,
-                &context.external_modules,
-                target,
-            )
-            .map_err(BuildError::Diagnostic)?;
+            let generated =
+                compile_source_to_c_with_module_identity_for_target_and_codegen_options(
+                    &project.main,
+                    &context.local_source_root,
+                    &context.local_identity,
+                    &context.external_import_roots,
+                    &context.external_modules,
+                    target,
+                    codegen_options,
+                )
+                .map_err(BuildError::Diagnostic)?;
             let _ = cache.insert(&cache_key, &generated);
             generated
         }
@@ -1992,6 +2016,7 @@ fn standalone_codegen_query_key(
     source: &Path,
     target: &TargetTriple,
     profile: BuildProfile,
+    codegen_options: CodegenOptions,
     mode: &str,
     producer_executable: &ProducerExecutableIdentity,
 ) -> Result<QueryKey, BuildError> {
@@ -2008,11 +2033,23 @@ fn standalone_codegen_query_key(
         target.to_string(),
         "codegen-c",
         format!(
-            "standalone-{mode}:{}:{configuration}",
-            source_path.display()
+            "standalone-{mode}:{}:optimization={}:{}",
+            source_path.display(),
+            codegen_options.optimization_mode.as_str(),
+            configuration,
         ),
         ContentFingerprint::of_bytes(&source_bytes),
     ))
+}
+
+fn codegen_options(profile: BuildProfile, emit_c_only: bool) -> CodegenOptions {
+    if profile == BuildProfile::Release || emit_c_only {
+        CodegenOptions::performance()
+    } else {
+        CodegenOptions {
+            optimization_mode: OptimizationMode::Unoptimized,
+        }
+    }
 }
 
 fn c_toolchain_for_profile(
@@ -2409,6 +2446,22 @@ fn verify_bundled_sqlite_source(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn release_and_formal_emit_c_select_performance_codegen_but_debug_does_not() {
+        assert_eq!(
+            codegen_options(BuildProfile::Debug, false).optimization_mode,
+            OptimizationMode::Unoptimized
+        );
+        assert_eq!(
+            codegen_options(BuildProfile::Release, false).optimization_mode,
+            OptimizationMode::Performance
+        );
+        assert_eq!(
+            codegen_options(BuildProfile::Debug, true).optimization_mode,
+            OptimizationMode::Performance
+        );
+    }
 
     #[test]
     fn generated_c_capabilities_select_libm_without_workload_names() {

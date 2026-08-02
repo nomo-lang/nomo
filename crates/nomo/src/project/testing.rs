@@ -7,7 +7,10 @@ use super::{
     configure_c_compile_command, package_id, project_ffi_link_metadata_with_options,
     project_module_context_with_options,
 };
-use crate::compiler::compile_source_text_to_c_with_module_identity;
+use crate::compiler::{
+    CodegenOptions, OptimizationMode,
+    compile_source_text_to_c_with_module_identity_and_codegen_options,
+};
 use crate::diagnostic::Diagnostic;
 use crate::incremental::{PersistentQueryCache, project_query_key};
 use crate::{lexer, parser};
@@ -195,6 +198,13 @@ fn run_single_project_test(
         .unwrap_or(project.root.as_path());
     let cache = PersistentQueryCache::at_root(cache_root);
     let producer_executable = producer_executable_identity().map_err(|error| error.human())?;
+    let codegen_options = if profile == BuildProfile::Release {
+        CodegenOptions::performance()
+    } else {
+        CodegenOptions {
+            optimization_mode: OptimizationMode::Unoptimized,
+        }
+    };
     let cache_key = project_query_key(
         project,
         &context.external_modules,
@@ -202,22 +212,24 @@ fn run_single_project_test(
         &target,
         "codegen-c-test",
         format!(
-            "{}:{}:{}",
+            "{}:{}:optimization={}:{}",
             project.name,
             test.name,
+            codegen_options.optimization_mode.as_str(),
             codegen_cache_configuration(profile, PASS_PIPELINE_VERSION, &producer_executable)
         ),
     );
     let c = match cache.get::<String>(&cache_key) {
         Some(cached) => cached,
         None => {
-            let generated = compile_source_text_to_c_with_module_identity(
+            let generated = compile_source_text_to_c_with_module_identity_and_codegen_options(
                 &test.source_path,
                 &runner_source,
                 &context.local_source_root,
                 &context.local_identity,
                 &context.external_import_roots,
                 &context.external_modules,
+                codegen_options,
             )
             .map_err(|diag| diag.human())?;
             let _ = cache.insert(&cache_key, &generated);

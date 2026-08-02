@@ -146,6 +146,7 @@ pub enum Statement {
         indices: Vec<ValueExpr>,
         array_types: Vec<ValueType>,
         value: ValueExpr,
+        mutation_mode: ArrayMutationMode,
     },
     Eprintln(ValueExpr),
     Eprint(ValueExpr),
@@ -230,6 +231,12 @@ pub enum LoopKind {
         element_type: ValueType,
         iterable: ValueExpr,
     },
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ArrayMutationMode {
+    CheckedCow,
+    CheckedUnique,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -851,6 +858,7 @@ pub enum ValueExpr {
         index: Box<ValueExpr>,
         value: Box<ValueExpr>,
         element_type: ValueType,
+        mutation_mode: ArrayMutationMode,
     },
     ArrayInsert {
         array: String,
@@ -899,6 +907,262 @@ pub enum ValueExpr {
         message: Box<ValueExpr>,
         fallback_type: ValueType,
     },
+}
+
+impl ValueExpr {
+    /// Returns the directly nested expressions in source evaluation order.
+    ///
+    /// Ownership and effect analyses use this exhaustive accessor so a newly
+    /// added expression kind must make an explicit choice about its children.
+    pub fn child_expressions(&self) -> Vec<&ValueExpr> {
+        match self {
+            Self::Binary { left, right, .. }
+            | Self::StringCompare { left, right, .. }
+            | Self::StringConcat { left, right }
+            | Self::StringContains {
+                value: left,
+                needle: right,
+            }
+            | Self::StringStartsWith {
+                value: left,
+                prefix: right,
+            }
+            | Self::StringEndsWith {
+                value: left,
+                suffix: right,
+            }
+            | Self::StringSplit {
+                value: left,
+                separator: right,
+            }
+            | Self::PathJoin { left, right }
+            | Self::NumBinary { left, right, .. }
+            | Self::MathBinary { left, right, .. }
+            | Self::CollectionsStringMapGet {
+                map: left,
+                key: right,
+            }
+            | Self::CollectionsStringMapContains {
+                map: left,
+                key: right,
+            }
+            | Self::CollectionsStringMapRemove {
+                map: left,
+                key: right,
+            }
+            | Self::CollectionsStringSetContains {
+                set: left,
+                value: right,
+            }
+            | Self::CollectionsStringSetInsert {
+                set: left,
+                value: right,
+            }
+            | Self::CollectionsStringSetRemove {
+                set: left,
+                value: right,
+            }
+            | Self::RegexIsMatch {
+                regex: left,
+                value: right,
+            }
+            | Self::RegexCaptures {
+                regex: left,
+                value: right,
+            }
+            | Self::NetConnect {
+                host: left,
+                port: right,
+            }
+            | Self::NetListen {
+                host: left,
+                port: right,
+            }
+            | Self::NetUdpBind {
+                host: left,
+                port: right,
+            }
+            | Self::UdpSocketRecvFromString {
+                socket: left,
+                max_bytes: right,
+            }
+            | Self::TcpStreamWriteString {
+                stream: left,
+                content: right,
+            }
+            | Self::FsWriteString {
+                path: left,
+                content: right,
+            }
+            | Self::FsWriteBytes {
+                path: left,
+                bytes: right,
+            }
+            | Self::EnvSet {
+                name: left,
+                value: right,
+            }
+            | Self::HashWriteString {
+                state: left,
+                value: right,
+            }
+            | Self::HashWriteBytes {
+                state: left,
+                value: right,
+            }
+            | Self::FileWriteString {
+                file: left,
+                content: right,
+            }
+            | Self::ArrayGet {
+                array: left,
+                index: right,
+                ..
+            }
+            | Self::ArrayIndex {
+                array: left,
+                index: right,
+                ..
+            }
+            | Self::ResultUnwrapOr {
+                result: left,
+                default: right,
+                ..
+            }
+            | Self::OptionUnwrapOr {
+                option: left,
+                default: right,
+                ..
+            } => vec![left, right],
+            Self::CollectionsStringMapSet { map, key, value } => vec![map, key, value],
+            Self::UdpSocketSendToString {
+                socket,
+                content,
+                host,
+                port,
+            } => vec![socket, content, host, port],
+            Self::Call { args, .. }
+            | Self::JsonStructured { args, .. }
+            | Self::JsonRpc { args, .. }
+            | Self::Cron { args, .. } => args.iter().collect(),
+            Self::ArrayLiteral { elements, .. } => elements.iter().collect(),
+            Self::ArrayRemove { index, .. } => vec![index],
+            Self::ArraySet { index, value, .. } => vec![index, value],
+            Self::ArrayPush { value, .. } => vec![value],
+            Self::ArrayInsert { index, value, .. } => vec![index, value],
+            Self::FsReadToString { path }
+            | Self::FsReadBytes { path }
+            | Self::FsOpen { path }
+            | Self::FsExists { path }
+            | Self::FsMetadata { path }
+            | Self::FsCreateDir { path }
+            | Self::FsRemoveDir { path }
+            | Self::FsReadDir { path }
+            | Self::FileClose { file: path }
+            | Self::FileReadToString { file: path }
+            | Self::TcpListenerAccept { listener: path }
+            | Self::TcpListenerClose { listener: path }
+            | Self::TcpStreamClose { stream: path }
+            | Self::TcpStreamReadToString { stream: path }
+            | Self::UdpSocketClose { socket: path }
+            | Self::EnvGet { name: path }
+            | Self::StringLen { value: path }
+            | Self::StringIsEmpty { value: path }
+            | Self::StringTrim { value: path }
+            | Self::StringToLower { value: path }
+            | Self::StringToUpper { value: path }
+            | Self::CharIsDigit { value: path }
+            | Self::CharIsAlpha { value: path }
+            | Self::CharIsWhitespace { value: path }
+            | Self::CharToString { value: path }
+            | Self::PathBasename { path }
+            | Self::PathDirname { path }
+            | Self::PathExtension { path }
+            | Self::PathNormalize { path }
+            | Self::PathIsAbsolute { path }
+            | Self::MathUnary { value: path, .. }
+            | Self::TimeDurationMillis { millis: path }
+            | Self::TimeDurationSeconds { seconds: path }
+            | Self::TimeDurationAsMillis { duration: path }
+            | Self::TimeFormatDuration { duration: path }
+            | Self::TimeSleep { duration: path }
+            | Self::TimeSleepMillis { duration: path }
+            | Self::LogEnabled { level: path }
+            | Self::HashString { value: path }
+            | Self::HashBytes { value: path }
+            | Self::HashFinish { state: path }
+            | Self::CryptoSha256 { value: path }
+            | Self::CryptoSha512 { value: path }
+            | Self::CryptoRandomBytes { count: path }
+            | Self::JsonParse { value: path }
+            | Self::JsonStringify { value: path }
+            | Self::RegexCompile { pattern: path }
+            | Self::CollectionsStringMapLen { map: path }
+            | Self::CollectionsStringSetLen { set: path }
+            | Self::ProcessExit { code: path }
+            | Self::ProcessSpawn { command: path }
+            | Self::ProcessStatus { command: path }
+            | Self::ProcessExec { command: path }
+            | Self::ProcessOutput { command: path }
+            | Self::NumParseI64 { value: path }
+            | Self::NumParseU64 { value: path }
+            | Self::NumParseF64 { value: path }
+            | Self::NumToString { value: path, .. }
+            | Self::Unary { expr: path, .. }
+            | Self::Cast { expr: path, .. }
+            | Self::ResultMapErr { result: path, .. }
+            | Self::ResultIsOk { result: path, .. }
+            | Self::ResultIsErr { result: path, .. }
+            | Self::ResultMap { result: path, .. }
+            | Self::ResultAndThen { result: path, .. }
+            | Self::OptionIsSome { option: path, .. }
+            | Self::OptionIsNone { option: path, .. }
+            | Self::OptionMap { option: path, .. }
+            | Self::OptionAndThen { option: path, .. }
+            | Self::EnumPayload { value: path, .. }
+            | Self::EnumPayloadFieldAccess { value: path, .. }
+            | Self::ArrayIter { array: path, .. }
+            | Self::ArrayLen { array: path }
+            | Self::Panic { message: path, .. } => vec![path],
+            Self::StructLiteral { fields, .. } => fields.iter().map(|(_, value)| value).collect(),
+            Self::EnumVariant { payload, .. } => payload.iter().map(Box::as_ref).collect(),
+            Self::If {
+                condition,
+                then_branch,
+                else_branch,
+            } => vec![condition, then_branch, else_branch],
+            Self::Match { value, arms } => std::iter::once(value.as_ref())
+                .chain(arms.iter().map(|arm| &arm.value))
+                .collect(),
+            Self::StringLiteral(_)
+            | Self::IntLiteral(_)
+            | Self::FloatLiteral(_)
+            | Self::CharLiteral(_)
+            | Self::BoolLiteral(_)
+            | Self::VoidLiteral
+            | Self::HashNew
+            | Self::CollectionsStringMapNew
+            | Self::CollectionsStringSetNew
+            | Self::Variable(_)
+            | Self::FunctionRef(_)
+            | Self::MutBorrow(_)
+            | Self::EnvArgs
+            | Self::IoReadLine
+            | Self::EnvCwd
+            | Self::EnvHomeDir
+            | Self::EnvTempDir
+            | Self::OsPlatform
+            | Self::OsArch
+            | Self::OsPathSeparator
+            | Self::OsLineEnding
+            | Self::TimeNowMillis
+            | Self::TimeMonotonicMillis
+            | Self::ArrayNew { .. }
+            | Self::ArrayPop { .. }
+            | Self::ArrayClear { .. }
+            | Self::FieldAccess { .. } => Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
